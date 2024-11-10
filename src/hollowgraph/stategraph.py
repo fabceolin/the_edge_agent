@@ -1,11 +1,20 @@
+import time
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Union, Generator
+from typing import Any, Callable, Dict, List, Optional, Union, Generator, Tuple
 import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import copy
+from dataclasses import dataclass
+from collections import deque
 
+@dataclass
+class DebugConfig:
+    """Configuration for debug mode in StateGraph."""
+    enabled: bool = False
+    max_history_size: int = 1000  # Maximum number of states to store per node
+    track_timestamps: bool = True  # Whether to track execution timestamps
 
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
@@ -38,18 +47,24 @@ class StateGraph:
         Final value: 2
     """
 
-    def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False):
+    def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False, debug_mode: bool = False):
         """
-        Initialize the StateGraph.
+        Initialize the StateGraph with optional debug mode.
 
         Args:
             state_schema (Dict[str, Any]): The schema defining the structure of the state.
-            raise_exceptions (bool): If True, exceptions in node functions will be raised instead of being handled internally.
+            raise_exceptions (bool): If True, exceptions will be raised instead of being handled internally.
+            debug_mode (bool): If True, enables state tracking for debugging.
         """
         self.state_schema = state_schema
         self.graph = nx.DiGraph()
-        self.graph.add_node(START, run=None)
-        self.graph.add_node(END, run=None)
+        self.debug_mode = debug_mode
+
+        # Initialize START and END nodes with debug attributes if needed
+        debug_attrs = {'before_run': [], 'after_run': [], 'timestamps': [], 'executions': 0}
+        self.graph.add_node(START, run=None, **debug_attrs)
+        self.graph.add_node(END, run=None, **debug_attrs)
+
         self.interrupt_before: List[str] = []
         self.interrupt_after: List[str] = []
         self.raise_exceptions = raise_exceptions
@@ -68,7 +83,9 @@ class StateGraph:
         """
         if node in self.graph.nodes:
             raise ValueError(f"Node '{node}' already exists in the graph.")
-        self.graph.add_node(node, run=run)
+        debug_attrs = {'before_run': [], 'after_run': [], 'timestamps': [], 'executions': 0}
+        self.graph.add_node(node, run=run, **debug_attrs)
+
 
     def add_edge(self, in_node: str, out_node: str) -> None:
         """
@@ -133,7 +150,8 @@ class StateGraph:
         """
         if node in self.graph.nodes:
             raise ValueError(f"Node '{node}' already exists in the graph.")
-        self.graph.add_node(node, run=run, fan_in=True)
+        debug_attrs = {'before_run': [], 'after_run': [], 'timestamps': [], 'executions': 0}
+        self.graph.add_node(node, run=run, fan_in=True, **debug_attrs)
 
     def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
         """
@@ -369,17 +387,119 @@ class StateGraph:
         Raises:
             Exception: If an exception occurs during function execution.
         """
+
+         # Get node data and update tracking attributes
+        node_data = self.node(node)
+        timestamp = time.time()
+
+        # Store state before execution
+        # Track debug information only if debug mode is enabled
+        if self.debug_mode:
+            node_data['before_run'].append(state.copy())
+            node_data['timestamps'].append(time.time())
+            node_data['executions'] += 1
+
         available_params = {"state": state, "config": config, "node": node, "graph": self}
         if 'parallel_results' in state:
             available_params['parallel_results'] = state['parallel_results']
         function_params = self._prepare_function_params(func, available_params)
         result = func(**function_params)
         if isinstance(result, dict):
-            return result
+            state.update(result)
         else:
-            # If result is not a dict, wrap it in a dict
-            return {"result": result}
+            state["result"] = result
 
+        if self.debug_mode:
+            node_data['after_run'].append(state.copy())
+
+        return result
+
+    def get_node_execution_history(self, node_name: str) -> Dict[str, Any]:
+        """
+        Get the execution history of a specific node.
+
+        Args:
+            node_name (str): The name of the node.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the node's execution history:
+                - before_run: List of states before each execution
+                - after_run: List of states after each execution
+                - timestamps: List of execution timestamps
+                - executions: Total number of executions
+                - run: The node's run function
+                - other attributes of the node
+
+        Raises:
+            KeyError: If the node is not found in the graph.
+        """
+        if node_name not in self.graph.nodes:
+            raise KeyError(f"Node '{node_name}' not found in the graph")
+
+        node_data = self.node(node_name)
+        return {
+            'before_run': node_data.get('before_run', []),
+            'after_run': node_data.get('after_run', []),
+            'timestamps': node_data.get('timestamps', []),
+            'executions': node_data.get('executions', 0),
+            'run': node_data.get('run'),
+            **{k: v for k, v in node_data.items()
+               if k not in ['before_run', 'after_run', 'timestamps', 'executions', 'run']}
+        }
+
+    def get_node_state_at_execution(self, node_name: str, execution_index: int) -> Tuple[Dict[str, Any], Dict[str, Any], float]:
+        """
+        Get the before and after states of a node for a specific execution.
+
+        Args:
+            node_name (str): The name of the node.
+            execution_index (int): The index of the execution (0-based).
+
+        Returns:
+            Tuple[Dict[str, Any], Dict[str, Any], float]: A tuple containing:
+                - The state before execution
+                - The state after execution
+                - The timestamp of the execution
+
+        Raises:
+            KeyError: If the node is not found in the graph.
+            IndexError: If the execution_index is out of range.
+        """
+        if node_name not in self.graph.nodes:
+            raise KeyError(f"Node '{node_name}' not found in the graph")
+
+        node_data = self.node(node_name)
+        before_states = node_data.get('before_run', [])
+        after_states = node_data.get('after_run', [])
+        timestamps = node_data.get('timestamps', [])
+
+        if execution_index < 0 or execution_index >= len(before_states):
+            raise IndexError(f"Execution index {execution_index} out of range for node '{node_name}'")
+
+        return (
+            before_states[execution_index],
+            after_states[execution_index],
+            timestamps[execution_index]
+        )
+
+    def clear_node_history(self, node_name: str) -> None:
+        """
+        Clear the execution history of a specific node.
+
+        Args:
+            node_name (str): The name of the node.
+
+        Raises:
+            KeyError: If the node is not found in the graph.
+        """
+        if node_name not in self.graph.nodes:
+            raise KeyError(f"Node '{node_name}' not found in the graph")
+
+        node_data = self.node(node_name)
+        node_data['before_run'] = []
+        node_data['after_run'] = []
+        node_data['timestamps'] = []
+        node_data['executions'] = 0
 
     def set_entry_point(self, init_state: str) -> None:
         """
@@ -430,6 +550,14 @@ class StateGraph:
         self.interrupt_before = interrupt_before
         self.interrupt_after = interrupt_after
         return self
+
+    def enable_debug_mode(self) -> None:
+        """Enable debug mode."""
+        self.debug_mode = True
+
+    def disable_debug_mode(self) -> None:
+        """Disable debug mode."""
+        self.debug_mode = False
 
     def node(self, node_name: str) -> Dict[str, Any]:
         """
@@ -539,32 +667,6 @@ class StateGraph:
 
         # Once END is reached, yield final state
         yield {"type": "final", "state": state.copy()}
-
-    def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
-        """
-        Execute the function associated with a node.
-
-        Args:
-            func (Callable[..., Any]): The function to execute.
-            state (Dict[str, Any]): The current state.
-            config (Dict[str, Any]): The configuration.
-            node (str): The current node name.
-
-        Returns:
-            Dict[str, Any]: The result of the function execution.
-
-        Raises:
-            Exception: If an exception occurs during function execution.
-        """
-        available_params = {"state": state, "config": config, "node": node, "graph": self}
-        function_params = self._prepare_function_params(func, available_params)
-        result = func(**function_params)
-        if isinstance(result, dict):
-            return result
-        else:
-            # If result is not a dict, wrap it in a dict
-            return {"result": result}
-
 
     def _prepare_function_params(self, func: Callable[..., Any], available_params: Dict[str, Any]) -> Dict[str, Any]:
         """
