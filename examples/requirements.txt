@@ -1,2 +1,3 @@
 openai==0.28
+perplexityai
 ..
