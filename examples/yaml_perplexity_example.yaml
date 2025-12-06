@@ -2,7 +2,7 @@ name: perplexity-research-agent
 description: Deep research agent using Perplexity API (YAML configuration version)
 
 variables:
-  perplexity_model: llama-3.1-sonar-large-128k-online
+  perplexity_model: sonar
   max_search_results: 5
 
 state_schema:
@@ -19,17 +19,16 @@ nodes:
       # For now, just use the user query as-is
       return {"search_query": state["user_query"]}
 
-  # Node 2: Search using Perplexity API
+  # Node 2: Search using Perplexity API (OpenAI-compatible)
   - name: search_with_perplexity
     run: |
       import os
       try:
-          from perplexityai import PerplexityClient
+          from openai import OpenAI
       except ImportError:
-          # Fallback simulation if library not installed
           return {
               "search_results": f"Simulated search results for: {state['search_query']}\n\n"
-                               "This is a placeholder. Install perplexityai package for real results."
+                               "This is a placeholder. Install openai package for real results."
           }
 
       # Get API key from environment
@@ -39,8 +38,11 @@ nodes:
               "search_results": "Error: PERPLEXITY_API_KEY environment variable not set"
           }
 
-      # Initialize client
-      client = PerplexityClient(api_key=api_key)
+      # Initialize OpenAI-compatible client for Perplexity
+      client = OpenAI(
+          api_key=api_key,
+          base_url="https://api.perplexity.ai"
+      )
 
       # Perform search
       messages = [
@@ -56,7 +58,7 @@ nodes:
 
       # Call Perplexity API
       response = client.chat.completions.create(
-          model="${perplexity_model}",
+          model="sonar",
           messages=messages
       )
 
