@@ -8,6 +8,7 @@ The Edge Agent (tea) is a lightweight, single-app state graph library inspired b
 
 - Sequential and conditional node execution
 - Parallel fan-out/fan-in patterns using ThreadPoolExecutor
+- Checkpoint persistence for save/resume of workflow execution
 - LLM-agnostic integration (works with any language model)
 - Graph visualization using NetworkX and Graphviz
 
@@ -154,6 +155,58 @@ engine = YAMLEngine(actions_registry={
 ### Security Warning
 YAML files execute arbitrary Python code via `exec()` and `eval()`. Only load YAML from trusted sources.
 
+## Checkpoint Persistence
+
+The Edge Agent supports checkpoint persistence for saving and resuming workflow execution.
+
+### Saving and Loading Checkpoints
+
+```python
+# Save a checkpoint manually
+graph.save_checkpoint("/tmp/checkpoint.pkl", state, "node_name", config)
+
+# Load a checkpoint
+checkpoint = tea.StateGraph.load_checkpoint("/tmp/checkpoint.pkl")
+# Returns: {"state": dict, "node": str, "config": dict, "timestamp": float, "version": str}
+
+# Resume from checkpoint
+for event in graph.resume_from_checkpoint("/tmp/checkpoint.pkl"):
+    print(event)
+
+# Or use invoke/stream with checkpoint parameter
+for event in graph.invoke(checkpoint="/tmp/checkpoint.pkl"):
+    print(event)
+
+for event in graph.stream(checkpoint="/tmp/checkpoint.pkl"):
+    print(event)
+```
+
+### Auto-Save at Interrupts
+
+```python
+# Enable auto-save at interrupt points
+graph.compile(
+    interrupt_before=["node_b"],
+    interrupt_after=["node_a"],
+    checkpoint_dir="/tmp/checkpoints"
+)
+
+# Checkpoints are saved automatically before yielding interrupt events
+# Filename format: {node}_{timestamp_ms}.pkl
+```
+
+### Checkpoint with Parallel Flows
+
+- Checkpoints capture main thread state only
+- At fan-in nodes, `parallel_results` is included in the saved state
+- Parallel branch intermediate states are NOT captured individually
+
+### Resumption Behavior
+
+- Resume re-executes the saved node (not after it)
+- Config can be overridden: `resume_from_checkpoint(path, config={"key": "val"})`
+- Provided config is merged with saved config (provided takes precedence)
+
 ## Important Implementation Details
 
 - Always use `tea.END` constant instead of string "__end__" when checking for END node
@@ -161,3 +214,4 @@ YAML files execute arbitrary Python code via `exec()` and `eval()`. Only load YA
 - Fan-in nodes receive `parallel_results` parameter containing list of states from parallel flows
 - Edge conditions are re-evaluated on each traversal (allows for dynamic routing)
 - Graph compilation is required before execution to set interrupt points
+- Checkpoint files use pickle format (version 1.0)
