@@ -144,6 +144,17 @@ for event in graph.stream({"input": "hello"}):
 - `http.get` / `http.post` - HTTP requests
 - `file.read` / `file.write` - File operations
 - `actions.notify` - Notifications
+- `checkpoint.save` / `checkpoint.load` - Checkpoint persistence
+
+**Data Processing Actions** (TEA-BUILTIN-003.2):
+- `json.parse` - Parse JSON strings to Python objects (supports non-strict mode)
+- `json.transform` - Transform data with JMESPath/JSONPath expressions
+- `json.stringify` - Convert Python objects to JSON strings
+- `csv.parse` - Parse CSV from text or file (configurable delimiters/headers)
+- `csv.stringify` - Convert lists to CSV strings
+- `data.validate` - Validate data against JSON Schema
+- `data.merge` - Merge multiple dicts (deep/shallow/replace strategies)
+- `data.filter` - Filter lists with predicate expressions
 
 ### Custom Actions
 ```python

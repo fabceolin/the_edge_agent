@@ -106,6 +106,128 @@ This document provides a comprehensive overview of the 8 user stories for implem
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Visual Dependency Diagram (Mermaid)
+
+```mermaid
+flowchart TD
+    %% Starting point
+    START([Existing: llm.call])
+
+    %% Phase 1 - Foundation
+    subgraph PHASE1["🚀 PHASE 1: FOUNDATION"]
+        direction TB
+        S1["<b>001.1 Memory</b><br/>memory.store/retrieve/summarize<br/><span style='color:green'>P0 - No Blockers</span>"]
+        S3["<b>001.3 Observability</b><br/>trace.start/log/end<br/><span style='color:green'>P0 - No Blockers</span>"]
+        S8["<b>003.2 Data Processing</b><br/>json.*/csv.*/data.*<br/><span style='color:green'>P0 - No Blockers</span>"]
+    end
+
+    %% Phase 2 - LLM Core
+    subgraph PHASE2["⚡ PHASE 2: LLM CORE"]
+        S2["<b>001.2 LLM Enhanced</b><br/>llm.stream/retry/tools<br/><span style='color:blue'>P1 - OpenAI Required</span>"]
+    end
+
+    %% Phase 3 - Advanced
+    subgraph PHASE3["🔧 PHASE 3: ADVANCED"]
+        S4["<b>002.1 Web</b><br/>web.search/scrape/browse<br/><span style='color:blue'>P1</span>"]
+        S5["<b>002.2 RAG</b><br/>embedding.*/vector.*<br/><span style='color:orange'>P2</span>"]
+        S6["<b>002.3 Tools Bridge</b><br/>tools.crewai/mcp/langchain<br/><span style='color:orange'>P2</span>"]
+        S7["<b>003.1 Code Execution</b><br/>code.execute/sandbox<br/><span style='color:red'>P2 - SECURITY</span>"]
+    end
+
+    %% End point
+    DONE([All Actions Complete])
+
+    %% Dependencies
+    START -.->|extends| S2
+    S1 --> PHASE2
+    S3 --> PHASE2
+    S8 --> PHASE2
+
+    S2 -->|"blocks<br/>(OpenAI pattern)"| S5
+    S2 -->|"blocks<br/>(dispatch pattern)"| S6
+    S4 -.->|"optional feed"| S5
+    S8 -.->|"optional feed"| S7
+
+    S4 --> DONE
+    S5 --> DONE
+    S6 --> DONE
+    S7 --> DONE
+
+    %% Styling
+    classDef p0 fill:#90EE90,stroke:#228B22,stroke-width:2px
+    classDef p1 fill:#87CEEB,stroke:#4682B4,stroke-width:2px
+    classDef p2 fill:#FFB366,stroke:#FF8C00,stroke-width:2px
+    classDef security fill:#FFB366,stroke:#DC143C,stroke-width:4px
+    classDef endpoint fill:#E6E6FA,stroke:#4B0082,stroke-width:2px
+
+    class S1,S3,S8 p0
+    class S2,S4 p1
+    class S5,S6 p2
+    class S7 security
+    class START,DONE endpoint
+```
+
+### Simplified Dependency View
+
+```mermaid
+graph LR
+    subgraph P0["P0 - Foundation"]
+        M[001.1<br/>Memory]
+        O[001.3<br/>Observability]
+        D[003.2<br/>Data]
+    end
+
+    subgraph P1["P1 - Core"]
+        L[001.2<br/>LLM Enhanced]
+        W[002.1<br/>Web]
+    end
+
+    subgraph P2["P2 - Advanced"]
+        R[002.2<br/>RAG]
+        T[002.3<br/>Tools]
+        C[003.1<br/>Code]
+    end
+
+    M --> L
+    O --> L
+    D --> L
+    L -->|blocks| R
+    L -->|blocks| T
+    W -.-> R
+    D -.-> C
+
+    style M fill:#90EE90
+    style O fill:#90EE90
+    style D fill:#90EE90
+    style L fill:#87CEEB
+    style W fill:#87CEEB
+    style R fill:#FFB366
+    style T fill:#FFB366
+    style C fill:#FFB366,stroke:#DC143C,stroke-width:3px
+```
+
+### Development Timeline (Gantt)
+
+```mermaid
+gantt
+    title TEA Built-in Actions - Development Timeline
+    dateFormat YYYY-MM-DD
+
+    section Phase 1
+    001.3 Observability     :p0a, 2025-01-06, 4d
+    003.2 Data Processing   :p0b, 2025-01-06, 5d
+    001.1 Memory            :p0c, 2025-01-06, 5d
+
+    section Phase 2
+    001.2 LLM Enhanced      :p1a, after p0a p0b p0c, 7d
+
+    section Phase 3
+    002.1 Web Actions       :p2a, after p1a, 5d
+    002.2 RAG Actions       :crit, p2b, after p1a, 8d
+    002.3 Tools Bridge      :p2c, after p1a, 6d
+    003.1 Code Execution    :crit, p2d, after p0b, 10d
+```
+
 ---
 
 ## Dependency Matrix
@@ -354,3 +476,4 @@ Each story includes a 4-step rollback procedure:
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2025-12-06 | 1.0 | Initial epic overview | Sarah (PO Agent) |
+| 2025-12-06 | 1.1 | Added Mermaid diagrams (flowchart, simplified, gantt) | Sarah (PO Agent) |

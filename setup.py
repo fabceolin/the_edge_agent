@@ -22,6 +22,8 @@ setup(
         "networkx==3.3",
         "pygraphviz==1.13",
         "pyyaml>=6.0",
+        "jmespath>=1.0.0",
+        "jsonschema>=4.0.0",
     ],
     extras_require={
         "dev": ["pytest", "coverage", "hypothesis","parameterized==0.9.0"],

@@ -11,6 +11,7 @@ The Edge Agent supports declarative agent configuration using YAML files, inspir
 - [Edge Types](#edge-types)
 - [Template Variables](#template-variables)
 - [Built-in Actions](#built-in-actions)
+  - [Data Processing Actions](#data-processing-actions)
 - [Checkpoint Persistence](#checkpoint-persistence)
 - [Examples](#examples)
 
@@ -442,6 +443,251 @@ Save and load workflow checkpoints for persistence and recovery:
 **checkpoint.load** returns:
 - `{"checkpoint_state": dict, "checkpoint_node": str, "checkpoint_config": dict, "checkpoint_timestamp": float, "checkpoint_version": str}` on success
 - `{"error": str}` on failure
+
+### Data Processing Actions
+
+Actions for parsing, transforming, and validating data. Useful for building ETL pipelines and data-driven workflows.
+
+#### JSON Actions
+
+```yaml
+# Parse JSON string to Python object
+- name: parse_api_response
+  uses: json.parse
+  with:
+    text: "{{ state.raw_response }}"
+    strict: true  # Set false to allow trailing commas and comments
+    # default: {}  # Fallback value if parsing fails (requires strict: false)
+```
+
+**json.parse** returns:
+- `{"data": any, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "parse", "position": {"line": int, "column": int}}` on failure
+
+```yaml
+# Transform data with JMESPath expressions (pip install jmespath)
+- name: extract_users
+  uses: json.transform
+  with:
+    data: "{{ state.api_response }}"
+    expression: "users[?status=='active'].{name: name, email: email}"
+    engine: jmespath  # or "jsonpath" (pip install jsonpath-ng)
+```
+
+**json.transform** returns:
+- `{"result": any, "expression": str, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "transform"}` on failure
+
+Common JMESPath expressions:
+- `user.profile.name` - Extract nested value
+- `users[?status=='active']` - Filter array by condition
+- `users[*].name` - Extract all names from array
+- `{names: users[].name, count: length(users)}` - Project new structure
+
+```yaml
+# Convert Python object to JSON string
+- name: serialize_result
+  uses: json.stringify
+  with:
+    data: "{{ state.result }}"
+    indent: 2      # Pretty print with indentation
+    sort_keys: true  # Sort dictionary keys alphabetically
+```
+
+**json.stringify** returns:
+- `{"text": str, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "serialize"}` on failure
+
+#### CSV Actions
+
+```yaml
+# Parse CSV from text
+- name: parse_csv_data
+  uses: csv.parse
+  with:
+    text: "{{ state.csv_content }}"
+    delimiter: ","   # Default comma, use ";" for semicolon-separated
+    has_header: true # First row contains column names
+
+# Parse CSV from file
+- name: load_csv_file
+  uses: csv.parse
+  with:
+    path: ./data/input.csv
+    delimiter: ","
+    has_header: true
+```
+
+**csv.parse** returns:
+- With `has_header: true`: `{"data": [{"col1": "val1", ...}, ...], "headers": ["col1", ...], "row_count": int, "success": true}`
+- With `has_header: false`: `{"data": [["val1", "val2", ...], ...], "headers": null, "row_count": int, "success": true}`
+- `{"error": str, "success": false, "error_type": "parse"|"io"}` on failure
+
+```yaml
+# Convert list to CSV string
+- name: export_csv
+  uses: csv.stringify
+  with:
+    data: "{{ state.records }}"  # List of dicts or list of lists
+    headers: ["name", "email", "status"]  # Optional, auto-detected from dicts
+    delimiter: ","
+```
+
+**csv.stringify** returns:
+- `{"text": str, "row_count": int, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "serialize"}` on failure
+
+#### Data Validation Actions
+
+```yaml
+# Validate data against JSON Schema (pip install jsonschema)
+- name: validate_input
+  uses: data.validate
+  with:
+    data: "{{ state.user_input }}"
+    schema:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        age:
+          type: integer
+          minimum: 0
+      required: ["name", "email"]
+```
+
+**data.validate** returns:
+- `{"valid": true, "errors": [], "success": true}` when valid
+- `{"valid": false, "errors": [{"path": str, "message": str}, ...], "success": true}` when invalid
+- `{"error": str, "success": false, "error_type": "validate"}` on schema error
+
+#### Data Merge Actions
+
+```yaml
+# Merge multiple dictionaries
+- name: combine_configs
+  uses: data.merge
+  with:
+    sources:
+      - "{{ state.default_config }}"
+      - "{{ state.user_config }}"
+      - "{{ state.override_config }}"
+    strategy: deep  # "deep", "shallow", or "replace"
+```
+
+Merge strategies:
+- `deep`: Recursively merge nested dictionaries
+- `shallow`: Only merge top-level keys (nested dicts replaced entirely)
+- `replace`: Later sources completely replace earlier ones
+
+**data.merge** returns:
+- `{"result": dict, "source_count": int, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "merge"}` on failure
+
+#### Data Filter Actions
+
+```yaml
+# Filter list items with predicates
+- name: filter_active_users
+  uses: data.filter
+  with:
+    data: "{{ state.users }}"
+    predicate:
+      field: status
+      op: eq
+      value: active
+
+# Multiple predicates (AND logic)
+- name: filter_premium_active
+  uses: data.filter
+  with:
+    data: "{{ state.users }}"
+    predicate:
+      - field: status
+        op: eq
+        value: active
+      - field: subscription
+        op: in
+        value: ["premium", "enterprise"]
+      - field: last_login_days
+        op: lt
+        value: 30
+```
+
+Supported operators:
+- `eq`, `ne`: Equal, not equal
+- `gt`, `gte`, `lt`, `lte`: Comparison operators
+- `in`, `not_in`: Membership in list
+- `contains`, `startswith`, `endswith`: String operations
+
+**data.filter** returns:
+- `{"result": list, "original_count": int, "filtered_count": int, "success": true}` on success
+- `{"error": str, "success": false, "error_type": "filter"}` on failure
+
+#### Example: Data Processing Pipeline
+
+```yaml
+name: data-pipeline
+description: ETL pipeline using data processing actions
+
+nodes:
+  - name: fetch_data
+    uses: http.get
+    with:
+      url: https://api.example.com/users
+    output: raw_response
+
+  - name: parse_response
+    uses: json.parse
+    with:
+      text: "{{ state.raw_response }}"
+
+  - name: filter_active
+    uses: data.filter
+    with:
+      data: "{{ state.data }}"
+      predicate:
+        field: status
+        op: eq
+        value: active
+
+  - name: transform_data
+    uses: json.transform
+    with:
+      data: "{{ state.result }}"
+      expression: "[*].{id: id, name: name, email: email}"
+
+  - name: export_csv
+    uses: csv.stringify
+    with:
+      data: "{{ state.result }}"
+
+  - name: save_file
+    uses: file.write
+    with:
+      path: ./output/active_users.csv
+      content: "{{ state.text }}"
+
+edges:
+  - from: __start__
+    to: fetch_data
+  - from: fetch_data
+    to: parse_response
+  - from: parse_response
+    to: filter_active
+  - from: filter_active
+    to: transform_data
+  - from: transform_data
+    to: export_csv
+  - from: export_csv
+    to: save_file
+  - from: save_file
+    to: __end__
+```
 
 ## Checkpoint Persistence
 
