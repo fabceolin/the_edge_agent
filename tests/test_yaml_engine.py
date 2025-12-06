@@ -247,6 +247,9 @@ return {"output": value}
 
     def test_unit_012_inline_code_auto_imports_requests(self, engine):
         """YAML-001-UNIT-012: Inline code auto-imports requests when referenced."""
+        # Skip if requests is not installed
+        pytest.importorskip('requests')
+
         # Just test that the code with 'requests' reference loads without error
         config = {
             'nodes': [
