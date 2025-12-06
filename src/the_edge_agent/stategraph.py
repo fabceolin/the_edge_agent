@@ -2,18 +2,20 @@ import inspect
 import logging
 from typing import Any, Callable, Dict, List, Optional, Union, Generator
 import networkx as nx
-from networkx.drawing.nx_agraph import to_agraph
 from concurrent.futures import ThreadPoolExecutor, Future
 import threading
 import copy
 from queue import Queue, Empty
+
+from the_edge_agent.checkpoint import CheckpointMixin
+from the_edge_agent.visualization import VisualizationMixin
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
 
 START = "__start__"
 END = "__end__"
 
-class StateGraph:
+class StateGraph(CheckpointMixin, VisualizationMixin):
     """
     A graph-based state machine for managing complex workflows.
 
@@ -82,6 +84,7 @@ class StateGraph:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
         self.log_state_values = log_state_values
+        self.checkpoint_dir: Optional[str] = None
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -163,13 +166,16 @@ class StateGraph:
             raise ValueError(f"Node '{node}' already exists in the graph.")
         self.graph.add_node(node, run=run, fan_in=True)
 
-    def invoke(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def invoke(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None, checkpoint: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding interrupts and the final state.
 
         Args:
             input_state (Optional[Dict[str, Any]]): The initial state.
             config (Optional[Dict[str, Any]]): Configuration for the execution.
+            checkpoint (Optional[str]): Path to a checkpoint file to resume from.
+                If provided, execution resumes BY RE-EXECUTING the saved node
+                with the saved state. input_state is ignored when checkpoint is provided.
 
         Yields:
             Dict[str, Any]: Events during execution. Possible types:
@@ -180,6 +186,8 @@ class StateGraph:
         Raises:
             RuntimeError: If raise_exceptions=True and an error occurs in any node
                 (including parallel flows and fan-in nodes).
+            FileNotFoundError: If checkpoint file doesn't exist.
+            ValueError: If checkpoint file is corrupt or incompatible.
 
         Error Handling:
             When raise_exceptions=False (default):
@@ -187,7 +195,17 @@ class StateGraph:
                 - Execution stops after yielding the error
             When raise_exceptions=True:
                 - Errors raise RuntimeError with message: "Error in node '<node>': <msg>"
+
+        Example:
+            >>> # Resume from checkpoint
+            >>> for event in graph.invoke(checkpoint="/tmp/checkpoint.pkl"):
+            ...     print(event)
         """
+        # If checkpoint provided, resume from it
+        if checkpoint is not None:
+            yield from self.resume_from_checkpoint(checkpoint, config)
+            return
+
         if input_state is None:
             input_state = {}
         if config is None:
@@ -214,6 +232,7 @@ class StateGraph:
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
+                    self._auto_save_checkpoint(state, current_node, config)
                     yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
                 # Get node data
@@ -241,6 +260,7 @@ class StateGraph:
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
+                    self._auto_save_checkpoint(state, current_node, config)
                     yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
                 # Determine next node
@@ -340,6 +360,11 @@ class StateGraph:
                         # Collect the results in the state
                         state['parallel_results'] = results
 
+                        # Check for interrupt before fan-in execution
+                        if current_node in self.interrupt_before:
+                            self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+
                         # Execute the fan-in node's run function
                         node_data = self.node(current_node)
                         run_func = node_data.get("run")
@@ -356,6 +381,11 @@ class StateGraph:
                                 else:
                                     yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
                                     return
+
+                        # Check for interrupt after fan-in execution
+                        if current_node in self.interrupt_after:
+                            self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
                         # Continue to next node
                         next_node = self._get_next_node(current_node, state, config)
@@ -648,19 +678,27 @@ class StateGraph:
             raise ValueError(f"Node '{final_state}' does not exist in the graph.")
         self.graph.add_edge(final_state, END, cond=lambda **kwargs: True, cond_map={True: END})
 
-    def compile(self, interrupt_before: List[str] = [], interrupt_after: List[str] = []) -> 'StateGraph':
+    def compile(self, interrupt_before: List[str] = [], interrupt_after: List[str] = [], checkpoint_dir: Optional[str] = None) -> 'StateGraph':
         """
         Compile the graph and set interruption points.
 
         Args:
             interrupt_before (List[str]): Nodes to interrupt before execution.
             interrupt_after (List[str]): Nodes to interrupt after execution.
+            checkpoint_dir (Optional[str]): Directory for auto-saving checkpoints at interrupt points.
+                When set, checkpoints are automatically saved before yielding interrupt events.
+                Files are named: `{node}_{timestamp}.pkl`
+                Set to None (default) to disable auto-save.
 
         Returns:
             StateGraph: The compiled graph instance.
 
         Raises:
             ValueError: If any interrupt node doesn't exist in the graph.
+
+        Example:
+            >>> graph.compile(interrupt_before=["node_a"], checkpoint_dir="/tmp/checkpoints")
+            >>> # Checkpoints will auto-save at interrupts
         """
         for node in interrupt_before + interrupt_after:
             if node not in self.graph.nodes:
@@ -668,6 +706,7 @@ class StateGraph:
 
         self.interrupt_before = interrupt_before
         self.interrupt_after = interrupt_after
+        self.checkpoint_dir = checkpoint_dir
         return self
 
     def node(self, node_name: str) -> Dict[str, Any]:
@@ -722,7 +761,7 @@ class StateGraph:
             raise KeyError(f"Node '{node}' not found in the graph")
         return list(self.graph.successors(node))
 
-    def stream(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def stream(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None, checkpoint: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding results at each node execution, including interrupts.
 
@@ -731,6 +770,9 @@ class StateGraph:
         Args:
             input_state (Optional[Dict[str, Any]]): The initial state.
             config (Optional[Dict[str, Any]]): Configuration for the execution.
+            checkpoint (Optional[str]): Path to a checkpoint file to resume from.
+                If provided, execution resumes BY RE-EXECUTING the saved node
+                with the saved state. input_state is ignored when checkpoint is provided.
 
         Yields:
             Dict[str, Any]: Events during execution. Possible types:
@@ -744,6 +786,8 @@ class StateGraph:
 
         Raises:
             RuntimeError: If raise_exceptions=True and an error occurs in any node.
+            FileNotFoundError: If checkpoint file doesn't exist.
+            ValueError: If checkpoint file is corrupt or incompatible.
 
         Error Handling:
             When raise_exceptions=False (default):
@@ -756,7 +800,17 @@ class StateGraph:
         Note:
             Parallel branch events may interleave non-deterministically. The order of
             parallel_state events from different branches is not guaranteed.
+
+        Example:
+            >>> # Resume streaming from checkpoint
+            >>> for event in graph.stream(checkpoint="/tmp/checkpoint.pkl"):
+            ...     print(event["type"], event.get("node"))
         """
+        # If checkpoint provided, resume from it using streaming
+        if checkpoint is not None:
+            yield from self._stream_from_checkpoint(checkpoint, config)
+            return
+
         if input_state is None:
             input_state = {}
         if config is None:
@@ -786,6 +840,7 @@ class StateGraph:
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
+                    self._auto_save_checkpoint(state, current_node, config)
                     yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
 
                 # Get node data
@@ -815,6 +870,7 @@ class StateGraph:
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
+                    self._auto_save_checkpoint(state, current_node, config)
                     yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
 
                 # Determine next node - check for parallel edges
@@ -946,6 +1002,7 @@ class StateGraph:
                         run_func = node_data.get("run")
 
                         if current_node in self.interrupt_before:
+                            self._auto_save_checkpoint(state, current_node, config)
                             yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
 
                         if run_func:
@@ -964,6 +1021,7 @@ class StateGraph:
                                     return
 
                         if current_node in self.interrupt_after:
+                            self._auto_save_checkpoint(state, current_node, config)
                             yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
 
                         # Continue to next node after fan-in
@@ -1060,52 +1118,3 @@ class StateGraph:
         # No valid next node found
         return None
 
-    def render_graphviz(self):
-        """
-        Render the graph using NetworkX and Graphviz.
-
-        Returns:
-            pygraphviz.AGraph: A PyGraphviz graph object representing the StateGraph.
-        """
-        # Create a new directed graph
-        G = nx.DiGraph()
-
-        # Add nodes with attributes
-        for node in self.graph.nodes():
-            label = f"{node}\n"
-            label += f"interrupt_before: {node in self.interrupt_before}\n"
-            label += f"interrupt_after: {node in self.interrupt_after}"
-            G.add_node(node, label=label)
-
-        # Add edges with attributes
-        for u, v, data in self.graph.edges(data=True):
-            edge_label = ""
-            if 'cond' in data:
-                cond = data['cond']
-                if callable(cond) and cond.__name__ != '<lambda>':
-                    edge_label = "condition"
-                elif isinstance(cond, dict) and len(cond) > 1:
-                    edge_label = "condition"
-            G.add_edge(u, v, label=edge_label)
-
-        # Convert to a PyGraphviz graph
-        A = to_agraph(G)
-
-        # Set graph attributes
-        A.graph_attr.update(rankdir="TB", size="8,8")
-        A.node_attr.update(shape="rectangle", style="filled", fillcolor="white")
-        A.edge_attr.update(color="black")
-
-        return A
-
-
-    def save_graph_image(self, filename="state_graph.png"):
-        """
-        Save the graph as an image file.
-
-        Args:
-            filename (str): The name of the file to save the graph image to.
-        """
-        A = self.render_graphviz()
-        A.layout(prog='dot')
-        A.draw(filename)

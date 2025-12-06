@@ -1,0 +1,51 @@
+schema: 1
+story: "TD.12"
+story_title: "Extract Checkpoint and Visualization Modules (Minimal Decomposition)"
+gate: PASS
+status_reason: "Clean mixin extraction with all 17 acceptance criteria met. All 138 tests pass without modification. Line count reduced from ~1,787 to 1,120 in stategraph.py. No API changes, full backward compatibility."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-06T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+
+expires: "2025-12-20T00:00:00Z"
+
+evidence:
+  tests_reviewed: 138
+  tests_passed: 138
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Pure refactoring - no security changes. Existing pickle security warning preserved."
+  performance:
+    status: PASS
+    notes: "Zero runtime overhead - MRO resolved at class definition time."
+  reliability:
+    status: PASS
+    notes: "All 138 tests pass. Mixin pattern well-established in Python ecosystem."
+  maintainability:
+    status: PASS
+    notes: "Excellent - related functionality grouped in separate files with clear documentation."
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding __all__ exports to checkpoint.py and visualization.py"
+      refs: ["src/the_edge_agent/checkpoint.py", "src/the_edge_agent/visualization.py"]
+    - action: "Consider documenting mixin architecture pattern in CLAUDE.md"
+      refs: ["CLAUDE.md"]
