@@ -1,8 +1,9 @@
 import inspect
+import logging
 from typing import Any, Callable, Dict, List, Optional, Union, Generator
 import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, Future
 import threading
 import copy
 
@@ -23,6 +24,24 @@ class StateGraph:
         graph (nx.DiGraph): The directed graph representing the state machine.
         interrupt_before (List[str]): Nodes to interrupt before execution.
         interrupt_after (List[str]): Nodes to interrupt after execution.
+        logger (logging.Logger): Logger instance for observability.
+        log_state_values (bool): Whether to log full state values.
+
+    Logging:
+        The StateGraph uses Python's logging module for observability. Configure via:
+        - log_level: Set to logging.DEBUG for detailed trace, logging.INFO for flow info
+        - log_state_values: Set to True to log state contents (security-sensitive)
+
+        Log levels used:
+        - DEBUG: Node entry/exit, edge evaluation, state keys, transitions
+        - INFO: Node completion, parallel flow start/join, execution complete
+        - WARNING: Fallback paths, no valid next node situations
+        - ERROR: Exceptions in node execution
+
+        To capture logs, configure a handler on the logger:
+            >>> import logging
+            >>> logging.basicConfig(level=logging.DEBUG)
+            >>> graph = StateGraph({"value": int}, log_level=logging.DEBUG)
 
     Example:
         >>> graph = StateGraph({"value": int})
@@ -36,13 +55,19 @@ class StateGraph:
         Final value: 2
     """
 
-    def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False):
+    def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False, max_workers: Optional[int] = None, log_level: int = logging.WARNING, log_state_values: bool = False):
         """
         Initialize the StateGraph.
 
         Args:
             state_schema (Dict[str, Any]): The schema defining the structure of the state.
             raise_exceptions (bool): If True, exceptions in node functions will be raised instead of being handled internally.
+            max_workers (Optional[int]): Maximum number of worker threads for parallel execution.
+                If None, uses Python's default: min(32, os.cpu_count() + 4).
+            log_level (int): Logging level for the graph execution. Defaults to logging.WARNING.
+                Use logging.DEBUG for detailed trace, logging.INFO for high-level flow.
+            log_state_values (bool): If True, log full state values. Defaults to False for security
+                (state may contain secrets, API keys, or PII). Only enable in trusted environments.
         """
         self.state_schema = state_schema
         self.graph = nx.DiGraph()
@@ -52,6 +77,10 @@ class StateGraph:
         self.interrupt_after: List[str] = []
         self.raise_exceptions = raise_exceptions
         self.parallel_sync = {}
+        self.max_workers = max_workers
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
+        self.log_state_values = log_state_values
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -133,29 +162,54 @@ class StateGraph:
             raise ValueError(f"Node '{node}' already exists in the graph.")
         self.graph.add_node(node, run=run, fan_in=True)
 
-    def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
+    def invoke(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding interrupts and the final state.
 
         Args:
-            input_state (Dict[str, Any]): The initial state.
-            config (Dict[str, Any]): Configuration for the execution.
+            input_state (Optional[Dict[str, Any]]): The initial state.
+            config (Optional[Dict[str, Any]]): Configuration for the execution.
 
         Yields:
-            Dict[str, Any]: Interrupts and the final state during execution.
+            Dict[str, Any]: Events during execution. Possible types:
+                - {"type": "interrupt", "node": str, "state": dict}: Interrupt before/after node
+                - {"type": "error", "node": str, "error": str, "state": dict}: Error occurred
+                - {"type": "final", "state": dict}: Execution completed successfully
+
+        Raises:
+            RuntimeError: If raise_exceptions=True and an error occurs in any node
+                (including parallel flows and fan-in nodes).
+
+        Error Handling:
+            When raise_exceptions=False (default):
+                - Errors yield {"type": "error", "node": <node>, "error": <msg>, "state": <state>}
+                - Execution stops after yielding the error
+            When raise_exceptions=True:
+                - Errors raise RuntimeError with message: "Error in node '<node>': <msg>"
         """
+        if input_state is None:
+            input_state = {}
+        if config is None:
+            config = {}
 
         current_node = START
         state = input_state.copy()
         config = config.copy()
-        # Create a ThreadPoolExecutor for parallel flows
-        executor = ThreadPoolExecutor()
-        # Mapping from fan-in nodes to list of futures
-        fanin_futures: Dict[str, List[Future]] = {}
-        # Lock for thread-safe operations on fanin_futures
-        fanin_lock = threading.Lock()
 
-        try:
+        # Log execution start
+        self.logger.debug(f"Starting execution with state keys: {list(state.keys())}")
+        if self.log_state_values:
+            self.logger.debug(f"Initial state: {state}")
+
+        # Create a ThreadPoolExecutor for parallel flows
+        # Allow runtime override via config, fallback to instance default
+        max_workers = config.get('max_workers', self.max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Mapping from fan-in nodes to list of futures
+            fanin_futures: Dict[str, List[Future]] = {}
+            # Lock for thread-safe operations on fanin_futures
+            fanin_lock = threading.Lock()
+
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
@@ -167,10 +221,17 @@ class StateGraph:
 
                 # Execute node's run function if present
                 if run_func:
+                    self.logger.debug(f"Entering node: {current_node}")
+                    if self.log_state_values:
+                        self.logger.debug(f"Node '{current_node}' input state: {state}")
                     try:
                         result = self._execute_node_function(run_func, state, config, current_node)
                         state.update(result)
+                        self.logger.info(f"Node '{current_node}' completed successfully")
+                        if self.log_state_values:
+                            self.logger.debug(f"Node '{current_node}' output state: {state}")
                     except Exception as e:
+                        self.logger.error(f"Error in node '{current_node}': {e}")
                         if self.raise_exceptions:
                             raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
                         else:
@@ -204,8 +265,11 @@ class StateGraph:
                         normal_successors.append(successor)
 
                 # Start parallel flows
+                if parallel_edges:
+                    self.logger.info(f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'")
                 for successor, fan_in_node in parallel_edges:
                     # Start a new thread for the flow starting from successor
+                    self.logger.debug(f"Launching parallel flow to node '{successor}' (fan-in: '{fan_in_node}')")
                     future = executor.submit(self._execute_flow, successor, copy.deepcopy(state), config.copy(), fan_in_node)
                     # Register the future with the corresponding fan-in node
                     with fanin_lock:
@@ -224,19 +288,23 @@ class StateGraph:
                         available_params = {"state": state, "config": config, "node": current_node, "graph": self}
                         cond_params = self._prepare_function_params(cond_func, available_params)
                         cond_result = cond_func(**cond_params)
+                        self.logger.debug(f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}")
 
                         if cond_map:
                             next_node_candidate = cond_map.get(cond_result, None)
                             if next_node_candidate:
                                 next_node = next_node_candidate
+                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
                                 break
                         else:
                             if cond_result:
                                 next_node = successor
+                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
                                 break
                     if next_node:
                         current_node = next_node
                     else:
+                        self.logger.warning(f"No valid next node found from node '{current_node}'")
                         error_msg = f"No valid next node found from node '{current_node}'"
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
@@ -246,12 +314,28 @@ class StateGraph:
                 else:
                     # No normal successors
                     # Check if there is a fan-in node with pending futures
-                    if fanin_futures:
-                        # Proceed to the fan-in node
-                        current_node = list(fanin_futures.keys())[0]
-                        # Wait for all futures corresponding to this fan-in node
-                        futures = fanin_futures.get(current_node, [])
+                    # Use lock for thread-safe access to fanin_futures
+                    with fanin_lock:
+                        if fanin_futures:
+                            # Proceed to the fan-in node
+                            current_node = list(fanin_futures.keys())[0]
+                            # pop() atomically retrieves AND removes - prevents double processing
+                            futures = fanin_futures.pop(current_node, [])
+                        else:
+                            futures = None
+
+                    if futures is not None:
+                        # Wait for futures outside lock to avoid blocking other threads
+                        self.logger.info(f"Joining {len(futures)} parallel flow(s) at fan-in node '{current_node}'")
                         results = [future.result() for future in futures]
+                        self.logger.debug(f"All parallel flows joined at '{current_node}'")
+                        # Check for errors in parallel flow results
+                        for result in results:
+                            if isinstance(result, dict) and result.get("type") == "error":
+                                # Yield the error from the parallel flow
+                                self.logger.error(f"Error from parallel flow: {result.get('error')}")
+                                yield result
+                                return
                         # Collect the results in the state
                         state['parallel_results'] = results
 
@@ -259,10 +343,13 @@ class StateGraph:
                         node_data = self.node(current_node)
                         run_func = node_data.get("run")
                         if run_func:
+                            self.logger.debug(f"Entering fan-in node: {current_node}")
                             try:
                                 result = self._execute_node_function(run_func, state, config, current_node)
                                 state.update(result)
+                                self.logger.info(f"Fan-in node '{current_node}' completed successfully")
                             except Exception as e:
+                                self.logger.error(f"Error in fan-in node '{current_node}': {e}")
                                 if self.raise_exceptions:
                                     raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
                                 else:
@@ -272,6 +359,7 @@ class StateGraph:
                         # Continue to next node
                         next_node = self._get_next_node(current_node, state, config)
                         if not next_node:
+                            self.logger.warning(f"No valid next node found from fan-in node '{current_node}'")
                             error_msg = f"No valid next node found from node '{current_node}'"
                             if self.raise_exceptions:
                                 raise RuntimeError(error_msg)
@@ -286,9 +374,11 @@ class StateGraph:
                         else:
                             yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
                             return
-        finally:
-            executor.shutdown(wait=True)
         # Once END is reached, yield final state
+        self.logger.info("Execution completed successfully")
+        self.logger.debug(f"Final state keys: {list(state.keys())}")
+        if self.log_state_values:
+            self.logger.debug(f"Final state: {state}")
         yield {"type": "final", "state": state.copy()}
 
 
@@ -296,19 +386,37 @@ class StateGraph:
         """
         Execute a flow starting from current_node until it reaches fan_in_node.
 
+        This method is used for parallel execution paths. Each parallel flow runs
+        in its own thread and executes independently until reaching the fan-in node.
+
         Args:
             current_node (str): The starting node of the flow.
-            state (Dict[str, Any]): The state of the flow.
+            state (Dict[str, Any]): The state of the flow (deep copied for thread safety).
             config (Dict[str, Any]): Configuration for the execution.
             fan_in_node (str): The fan-in node where this flow should stop.
 
         Returns:
-            Dict[str, Any]: The final state of the flow when it reaches the fan-in node.
+            Dict[str, Any]: Either:
+                - The final state when flow reaches fan_in_node successfully
+                - Error dict {"type": "error", "node": str, "error": str, "state": dict}
+                  when raise_exceptions=False and an error occurs
+
+        Raises:
+            RuntimeError: If raise_exceptions=True and an error occurs in any node.
+
+        Error Handling:
+            When raise_exceptions=False (default):
+                - Returns {"type": "error", "node": <node>, "error": <msg>, "state": <state>}
+                - invoke() will detect this and yield the error event
+            When raise_exceptions=True:
+                - Raises RuntimeError with message: "Error in node '<node>': <msg>"
         """
+        self.logger.info(f"Parallel flow started at node '{current_node}' (target fan-in: '{fan_in_node}')")
         while current_node != END:
             # Check if current node is the fan-in node
             if current_node == fan_in_node:
                 # Return the state to be collected at fan-in node
+                self.logger.info(f"Parallel flow reached fan-in node '{fan_in_node}'")
                 return state
 
             # Get node data
@@ -317,38 +425,46 @@ class StateGraph:
 
             # Execute node's run function if present
             if run_func:
+                self.logger.debug(f"[Parallel] Entering node: {current_node}")
+                if self.log_state_values:
+                    self.logger.debug(f"[Parallel] Node '{current_node}' input state: {state}")
                 try:
                     result = self._execute_node_function(run_func, state, config, current_node)
                     state.update(result)
+                    self.logger.debug(f"[Parallel] Node '{current_node}' completed")
+                    if self.log_state_values:
+                        self.logger.debug(f"[Parallel] Node '{current_node}' output state: {state}")
                 except Exception as e:
+                    self.logger.error(f"[Parallel] Error in node '{current_node}': {e}")
                     if self.raise_exceptions:
                         raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
                     else:
-                        # Return error in state
-                        state['error'] = str(e)
-                        return state
+                        # Return consistent error dict structure
+                        return {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
 
             # Determine next node using _get_next_node
             try:
                 next_node = self._get_next_node(current_node, state, config)
             except Exception as e:
+                self.logger.error(f"[Parallel] Error getting next node from '{current_node}': {e}")
                 if self.raise_exceptions:
                     raise
                 else:
-                    state['error'] = str(e)
-                    return state
+                    return {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
 
             if next_node:
+                self.logger.debug(f"[Parallel] Transitioning from '{current_node}' to '{next_node}'")
                 current_node = next_node
             else:
                 error_msg = f"No valid next node found from node '{current_node}' in parallel flow"
+                self.logger.warning(f"[Parallel] {error_msg}")
                 if self.raise_exceptions:
                     raise RuntimeError(error_msg)
                 else:
-                    state['error'] = error_msg
-                    return state
+                    return {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
 
         # Reached END
+        self.logger.debug(f"[Parallel] Flow reached END")
         return state
 
     def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
@@ -481,20 +597,45 @@ class StateGraph:
             raise KeyError(f"Node '{node}' not found in the graph")
         return list(self.graph.successors(node))
 
-    def stream(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
+    def stream(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding results at each node execution, including interrupts.
 
         Args:
-            input_state (Dict[str, Any]): The initial state.
-            config (Dict[str, Any]): Configuration for the execution.
+            input_state (Optional[Dict[str, Any]]): The initial state.
+            config (Optional[Dict[str, Any]]): Configuration for the execution.
 
         Yields:
-            Dict[str, Any]: Intermediate states, interrupts, errors, and the final state during execution.
+            Dict[str, Any]: Events during execution. Possible types:
+                - {"type": "interrupt_before", "node": str, "state": dict}: Interrupt before node
+                - {"type": "interrupt_after", "node": str, "state": dict}: Interrupt after node
+                - {"type": "state", "node": str, "state": dict}: Intermediate state after node execution
+                - {"type": "error", "node": str, "error": str, "state": dict}: Error occurred
+                - {"type": "final", "state": dict}: Execution completed successfully
+
+        Raises:
+            RuntimeError: If raise_exceptions=True and an error occurs in any node.
+
+        Error Handling:
+            When raise_exceptions=False (default):
+                - Errors yield {"type": "error", "node": <node>, "error": <msg>, "state": <state>}
+                - Execution stops after yielding the error
+            When raise_exceptions=True:
+                - Errors raise RuntimeError with message: "Error in node '<node>': <msg>"
         """
+        if input_state is None:
+            input_state = {}
+        if config is None:
+            config = {}
+
         current_node = START
         state = input_state.copy()
         config = config.copy()
+
+        # Log execution start
+        self.logger.debug(f"Starting stream execution with state keys: {list(state.keys())}")
+        if self.log_state_values:
+            self.logger.debug(f"Initial state: {state}")
 
         while current_node != END:
             # Check for interrupt before
@@ -507,12 +648,19 @@ class StateGraph:
 
             # Execute node's run function if present
             if run_func:
+                self.logger.debug(f"Entering node: {current_node}")
+                if self.log_state_values:
+                    self.logger.debug(f"Node '{current_node}' input state: {state}")
                 try:
                     result = self._execute_node_function(run_func, state, config, current_node)
                     state.update(result)
+                    self.logger.info(f"Node '{current_node}' completed successfully")
+                    if self.log_state_values:
+                        self.logger.debug(f"Node '{current_node}' output state: {state}")
                     # Yield intermediate state after execution
                     yield {"type": "state", "node": current_node, "state": state.copy()}
                 except Exception as e:
+                    self.logger.error(f"Error in node '{current_node}': {e}")
                     if self.raise_exceptions:
                         raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
                     else:
@@ -526,6 +674,7 @@ class StateGraph:
             # Determine next node
             next_node = self._get_next_node(current_node, state, config)
             if not next_node:
+                self.logger.warning(f"No valid next node found from node '{current_node}'")
                 error_msg = f"No valid next node found from node '{current_node}'"
                 if self.raise_exceptions:
                     raise RuntimeError(error_msg)
@@ -533,36 +682,15 @@ class StateGraph:
                     yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
                     return
 
+            self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
             current_node = next_node
 
         # Once END is reached, yield final state
+        self.logger.info("Stream execution completed successfully")
+        self.logger.debug(f"Final state keys: {list(state.keys())}")
+        if self.log_state_values:
+            self.logger.debug(f"Final state: {state}")
         yield {"type": "final", "state": state.copy()}
-
-    def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
-        """
-        Execute the function associated with a node.
-
-        Args:
-            func (Callable[..., Any]): The function to execute.
-            state (Dict[str, Any]): The current state.
-            config (Dict[str, Any]): The configuration.
-            node (str): The current node name.
-
-        Returns:
-            Dict[str, Any]: The result of the function execution.
-
-        Raises:
-            Exception: If an exception occurs during function execution.
-        """
-        available_params = {"state": state, "config": config, "node": node, "graph": self}
-        function_params = self._prepare_function_params(func, available_params)
-        result = func(**function_params)
-        if isinstance(result, dict):
-            return result
-        else:
-            # If result is not a dict, wrap it in a dict
-            return {"result": result}
-
 
     def _prepare_function_params(self, func: Callable[..., Any], available_params: Dict[str, Any]) -> Dict[str, Any]:
         """
