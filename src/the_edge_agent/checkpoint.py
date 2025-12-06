@@ -196,7 +196,7 @@ class CheckpointMixin:
 
         return checkpoint
 
-    def resume_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def resume_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None, state_update: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Resume execution from a saved checkpoint.
 
@@ -209,6 +209,8 @@ class CheckpointMixin:
                 - File path (when using checkpoint_dir)
             config (Optional[Dict[str, Any]]): Optional config override. If provided, merges
                 with saved config (provided config takes precedence).
+            state_update (Optional[Dict[str, Any]]): Optional state updates to merge into the
+                checkpoint state before resuming. This is useful for human-in-the-loop workflows.
 
         Yields:
             Dict[str, Any]: Events during execution (same as invoke()):
@@ -246,8 +248,12 @@ class CheckpointMixin:
 
         self.logger.info(f"Resuming from checkpoint at node '{saved_node}'")
 
+        state = checkpoint["state"].copy()
+        if state_update:
+            state.update(state_update)
+
         yield from self._invoke_from_node(
-            checkpoint["state"].copy(),
+            state,
             merged_config,
             saved_node
         )
@@ -469,7 +475,7 @@ class CheckpointMixin:
             self.logger.debug(f"Final state: {state}")
         yield {"type": "final", "state": state.copy()}
 
-    def _stream_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def _stream_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None, state_update: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Resume streaming execution from a saved checkpoint.
 
@@ -479,6 +485,8 @@ class CheckpointMixin:
         Args:
             checkpoint_id (str): Checkpoint identifier (memory key or file path).
             config (Optional[Dict[str, Any]]): Optional config override.
+            state_update (Optional[Dict[str, Any]]): Optional state updates to merge into the
+                checkpoint state before resuming.
 
         Yields:
             Dict[str, Any]: Streaming events during execution.
@@ -502,8 +510,12 @@ class CheckpointMixin:
 
         self.logger.info(f"Resuming stream from checkpoint at node '{saved_node}'")
 
+        state = checkpoint["state"].copy()
+        if state_update:
+            state.update(state_update)
+
         yield from self._stream_from_node(
-            checkpoint["state"].copy(),
+            state,
             merged_config,
             saved_node
         )

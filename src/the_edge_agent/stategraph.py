@@ -214,7 +214,8 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
         # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
         if checkpoint is not None:
-            yield from self.resume_from_checkpoint(checkpoint, config)
+            # If input_state is provided with checkpoint, treat it as a state update
+            yield from self.resume_from_checkpoint(checkpoint, config, state_update=input_state)
             return
 
         if config is None:
@@ -856,7 +857,8 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
         # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
         if checkpoint is not None:
-            yield from self._stream_from_checkpoint(checkpoint, config)
+            # If input_state is provided with checkpoint, treat it as a state update
+            yield from self._stream_from_checkpoint(checkpoint, config, state_update=input_state)
             return
 
         if config is None:
