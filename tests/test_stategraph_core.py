@@ -7,6 +7,7 @@ from unittest.mock import patch
 from parameterized import parameterized
 from hypothesis import given, strategies as st, settings
 import the_edge_agent as tea
+from the_edge_agent import MemoryCheckpointer
 
 class TestStateGraph(unittest.TestCase):
 
@@ -119,7 +120,8 @@ class TestStateGraph(unittest.TestCase):
         """
         self.graph.add_node("node1")
         self.graph.add_node("node2")
-        compiled_graph = self.graph.compile(interrupt_before=["node1"], interrupt_after=["node2"])
+        cp = MemoryCheckpointer()
+        compiled_graph = self.graph.compile(interrupt_before=["node1"], interrupt_after=["node2"], checkpointer=cp)
         self.assertEqual(compiled_graph.interrupt_before, ["node1"])
         self.assertEqual(compiled_graph.interrupt_after, ["node2"])
 
@@ -244,14 +246,21 @@ class TestStateGraph(unittest.TestCase):
         self.graph.set_entry_point("node1")
         self.graph.add_edge("node1", "node2")
         self.graph.set_finish_point("node2")
-        self.graph.compile(interrupt_before=["node2"])
+        cp = MemoryCheckpointer()
+        self.graph.compile(interrupt_before=["node2"], checkpointer=cp)
 
-        result = list(self.graph.invoke({"value": 1}))
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["type"], "interrupt")
-        self.assertEqual(result[0]["node"], "node2")
-        self.assertEqual(result[1]["type"], "final")
-        self.assertEqual(result[1]["state"]["value"], 4)
+        # First invoke: runs until interrupt, then STOPS
+        result1 = list(self.graph.invoke({"value": 1}))
+        self.assertEqual(len(result1), 1)
+        self.assertEqual(result1[0]["type"], "interrupt")
+        self.assertEqual(result1[0]["node"], "node2")
+        self.assertIn("checkpoint_path", result1[0])
+
+        # Resume from checkpoint: continues to completion
+        result2 = list(self.graph.invoke(None, checkpoint=result1[0]["checkpoint_path"]))
+        self.assertEqual(len(result2), 1)
+        self.assertEqual(result2[0]["type"], "final")
+        self.assertEqual(result2[0]["state"]["value"], 4)
 
     def test_complex_workflow(self):
         """
@@ -372,6 +381,8 @@ class TestStateGraph(unittest.TestCase):
         which is crucial for workflows that may require external intervention or
         additional processing at specific stages.
         """
+        # Test interrupt_before with conditional routing
+        # Flow: start -> condition -> process (interrupt) -> loop back -> end
         def condition_func(state):
             return state["value"] > 10
 
@@ -384,21 +395,20 @@ class TestStateGraph(unittest.TestCase):
         self.graph.add_edge("process", "start")
         self.graph.set_finish_point("end")
 
-        self.graph.compile(interrupt_before=["process"], interrupt_after=["end"])
+        cp = MemoryCheckpointer()
+        self.graph.compile(interrupt_before=["process"], checkpointer=cp)
 
-        invoke_result = list(self.graph.invoke({"value": 1}))
+        # First invoke: value=1 -> start(+5=6) -> condition(6<10) -> process interrupt (STOP)
+        result1 = list(self.graph.invoke({"value": 1}))
+        self.assertEqual(len(result1), 1)
+        self.assertEqual(result1[0]["type"], "interrupt")
+        self.assertEqual(result1[0]["node"], "process")
+        checkpoint = result1[0]["checkpoint_path"]
 
-        self.assertGreater(len(invoke_result), 1)  # Should have at least one interrupt and one final state
-        self.assertEqual(invoke_result[-1]["type"], "final")
-        self.assertIn("result", invoke_result[-1]["state"])
-        self.assertEqual(invoke_result[-1]["state"]["result"], "Final value: 17")
-
-        # Check for interrupts
-        interrupt_before = [r for r in invoke_result if r["type"] == "interrupt" and r["node"] == "process"]
-        self.assertGreater(len(interrupt_before), 0)
-
-        interrupt_after = [r for r in invoke_result if r["type"] == "interrupt" and r["node"] == "end"]
-        self.assertEqual(len(interrupt_after), 1)
+        # Resume: process(*2=12) -> start(+5=17) -> condition(17>10) -> end
+        result2 = list(self.graph.invoke(None, checkpoint=checkpoint))
+        self.assertEqual(result2[-1]["type"], "final")
+        self.assertEqual(result2[-1]["state"]["result"], "Final value: 17")
 
     def test_cyclic_graph(self):
         """
@@ -759,7 +769,8 @@ class TestStateGraph(unittest.TestCase):
         self.graph.set_entry_point("node1")
         self.graph.add_edge("node1", "node2")
         self.graph.set_finish_point("node2")
-        self.graph.compile(interrupt_before=["node1"], interrupt_after=["node2"])
+        cp = MemoryCheckpointer()
+        self.graph.compile(interrupt_before=["node1"], interrupt_after=["node2"], checkpointer=cp)
 
         # Call render_graphviz
         result = self.graph.render_graphviz()
@@ -833,50 +844,45 @@ class TestStateGraph(unittest.TestCase):
     def test_interrupt_handling(self):
         """
         Verify the handling of interrupts, including the ability to resume execution after an interrupt.
+
+        With the new LangGraph-compatible behavior:
+        - Interrupts STOP execution completely
+        - Resume via invoke(None, checkpoint=...) from the saved checkpoint
+        - Checkpoint saves state at the time of interrupt
         """
-        def interruptible_func(state):
-            # Simulate an interrupt condition
-            if state.get("interrupt", False):
-                raise InterruptedError("Function interrupted")
-            # Increment the state's value
+        # Node functions
+        def start_func(state):
             return {"value": state["value"] + 1}
 
+        def end_func(state):
+            return {"value": state["value"] + 10}
+
         # Add nodes to the graph
-        self.graph.add_node("start", run=interruptible_func)
-        self.graph.add_node("end", run=lambda state: state)
+        self.graph.add_node("start", run=start_func)
+        self.graph.add_node("end", run=end_func)
 
         # Set the entry and finish points
         self.graph.set_entry_point("start")
         self.graph.add_edge("start", "end")
         self.graph.set_finish_point("end")
 
-        # Compile the graph with interrupts before the "start" node
-        self.graph.compile(interrupt_before=["start"])
+        # Compile the graph with interrupts before the "end" node
+        cp = MemoryCheckpointer()
+        self.graph.compile(interrupt_before=["end"], checkpointer=cp)
 
-        # Helper function to simulate handling the interrupt
-        def interrupt_handler(interrupted_state):
-            # Set the interrupt flag to True to simulate handling the interrupt
-            interrupted_state["interrupt"] = False
-            # Ensure that the value is incremented after the interrupt
-            interrupted_state["value"] += 1
-            return interrupted_state
+        # First invoke: runs start(+1=1) then stops at interrupt before end
+        results1 = list(self.graph.invoke({"value": 0}))
+        self.assertEqual(len(results1), 1)  # Only interrupt (stops execution)
+        self.assertEqual(results1[0]["type"], "interrupt")
+        self.assertEqual(results1[0]["node"], "end")
+        self.assertEqual(results1[0]["state"]["value"], 1)  # start ran
+        self.assertIn("checkpoint_path", results1[0])
 
-        # Execute the graph to trigger the interrupt
-        results = list(self.graph.invoke({"value": 0}))
-
-        # Verify that the interrupt occurs and the state is correctly returned
-        self.assertEqual(len(results), 2)  # Interrupt + final state
-        self.assertEqual(results[0]["type"], "interrupt")
-        self.assertEqual(results[0]["node"], "start")
-
-        # Simulate handling the interrupt
-        interrupt_state = interrupt_handler(results[0]["state"])
-
-        # Continue execution with the handled interrupt state
-        final_results = list(self.graph.invoke(interrupt_state))
-
-        # Verify the final state after handling the interrupt
-        self.assertEqual(final_results[-1]["state"]["value"], 2)  # Final value should be 2 after resuming execution
+        # Resume from checkpoint: runs end(+10=11)
+        results2 = list(self.graph.invoke(None, checkpoint=results1[0]["checkpoint_path"]))
+        self.assertEqual(len(results2), 1)  # Only final
+        self.assertEqual(results2[0]["type"], "final")
+        self.assertEqual(results2[0]["state"]["value"], 11)  # end ran
 
     def test_parallel_execution_simulation(self):
         """
@@ -1085,7 +1091,13 @@ class TestStateGraph(unittest.TestCase):
 
         interrupt_before = ["B", "E", "G", "K"]
         interrupt_after = []
-        compiled_graph = self.graph.compile(interrupt_before=interrupt_before, interrupt_after=interrupt_after)
+        # Interrupts require a checkpointer
+        checkpointer = tea.MemoryCheckpointer()
+        compiled_graph = self.graph.compile(
+            interrupt_before=interrupt_before,
+            interrupt_after=interrupt_after,
+            checkpointer=checkpointer
+        )
 
         render_and_save_graph(compiled_graph, "anonymized_graph.png")
 
@@ -1094,10 +1106,30 @@ class TestStateGraph(unittest.TestCase):
 
         max_iterations = 100
         events = []
-        for i, event in enumerate(compiled_graph.stream(initial_state, config)):
+        checkpoint_path = None
+
+        # First execution - runs until first interrupt
+        for event in compiled_graph.stream(initial_state, config):
             events.append(event)
-            if i >= max_iterations:
-                raise RuntimeError(f"Maximum number of iterations ({max_iterations}) reached. Possible infinite loop detected.")
+            if event.get("type", "").startswith("interrupt"):
+                checkpoint_path = event.get("checkpoint_path")
+                break
+
+        # Resume loop - continue from each interrupt until completion
+        resume_count = 0
+        while checkpoint_path and resume_count < max_iterations:
+            resume_count += 1
+            for event in compiled_graph.stream(None, config, checkpoint=checkpoint_path):
+                events.append(event)
+                if event.get("type", "").startswith("interrupt"):
+                    checkpoint_path = event.get("checkpoint_path")
+                    break
+                elif event.get("type") == "final":
+                    checkpoint_path = None  # Done
+                    break
+
+        if resume_count >= max_iterations:
+            raise RuntimeError(f"Maximum number of iterations ({max_iterations}) reached. Possible infinite loop detected.")
 
         interrupt_points = [event for event in events if event.get("type", "").startswith("interrupt")]
         assert len(interrupt_points) > 0, "No interrupts occurred"
@@ -1141,21 +1173,21 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(result2[-1]["state"]["value"], 110)
 
         # Third invoke call with empty state - should start fresh
-        result3 = list(graph.invoke())
+        result3 = list(graph.invoke({}))
         self.assertEqual(result3[-1]["state"]["value"], 10)
 
         # Fourth invoke call with empty state - should still start fresh
-        result4 = list(graph.invoke())
+        result4 = list(graph.invoke({}))
         self.assertEqual(result4[-1]["state"]["value"], 10)
 
         # Test stream() similarly
         stream_result1 = list(graph.stream({"value": 7}))
         self.assertEqual(stream_result1[-1]["state"]["value"], 17)
 
-        stream_result2 = list(graph.stream())
+        stream_result2 = list(graph.stream({}))
         self.assertEqual(stream_result2[-1]["state"]["value"], 10)
 
-        stream_result3 = list(graph.stream())
+        stream_result3 = list(graph.stream({}))
         self.assertEqual(stream_result3[-1]["state"]["value"], 10)
 
     def test_max_workers_parameter(self):

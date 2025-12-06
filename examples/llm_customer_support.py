@@ -107,7 +107,9 @@ def create_customer_support_graph():
     graph.add_conditional_edges("determine_escalation", lambda state: state["escalate"], {True: "human_escalation", False: tea.END})
     graph.add_edge("human_escalation", "determine_escalation")
 
-    return graph.compile(interrupt_before=["human_escalation"])
+    # Interrupts require a checkpointer for stop/resume behavior
+    checkpointer = tea.MemoryCheckpointer()
+    return graph.compile(interrupt_before=["human_escalation"], checkpointer=checkpointer)
 
 def print_graph_chart(graph):
     try:
@@ -122,19 +124,37 @@ def customer_support_workflow(customer_query):
     initial_state = {"customer_query": customer_query}
 
     final_state = None
+    checkpoint_path = None
     try:
-        for event in graph.stream(initial_state):
-            logging.debug(f"Current event: {event}")
-            if isinstance(event, dict):
-                if "type" in event and event["type"] == "interrupt":
-                    print("\nInterrupt detected. Human intervention required.")
-                    # The human_escalation function will be called automatically after this interrupt
-                elif "type" in event and event["type"] == "final":
-                    final_state = event["state"]
-                    break
-                elif all(key in event for key in ["customer_query", "category", "response", "escalate"]):
-                    final_state = event
-                    break
+        # With stop/resume behavior, we loop until completion
+        while True:
+            if checkpoint_path:
+                stream = graph.stream(None, checkpoint=checkpoint_path)
+            else:
+                stream = graph.stream(initial_state)
+
+            for event in stream:
+                logging.debug(f"Current event: {event}")
+                if isinstance(event, dict):
+                    if "type" in event and event["type"] == "interrupt":
+                        print("\nInterrupt detected. Human intervention required.")
+                        # Execution stops here - save checkpoint for resume
+                        checkpoint_path = event.get("checkpoint_path")
+                        # In a real app, you'd wait for human input here
+                        # For demo, we auto-resume
+                        break
+                    elif "type" in event and event["type"] == "final":
+                        final_state = event["state"]
+                        checkpoint_path = None  # Done
+                        break
+                    elif all(key in event for key in ["customer_query", "category", "response", "escalate"]):
+                        final_state = event
+                        checkpoint_path = None  # Done
+                        break
+
+            if checkpoint_path is None:
+                break  # Completed or got final state
+
     except Exception as e:
         logging.error(f"Error during graph execution: {str(e)}")
         raise

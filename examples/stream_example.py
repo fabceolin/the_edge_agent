@@ -14,15 +14,34 @@ graph.set_finish_point("end")
 # Add edges
 graph.add_edge("start", "end")
 
-# Compile the graph (optional interrupts)
-graph.compile(interrupt_before=["start"], interrupt_after=["end"])
+# Compile the graph with interrupts (requires checkpointer)
+# Interrupts STOP execution and require explicit resume
+checkpointer = tea.MemoryCheckpointer()
+graph.compile(interrupt_before=["start"], interrupt_after=["end"], checkpointer=checkpointer)
 
 # Execute the graph using stream (yields intermediate states and interrupts)
-for output in graph.stream({"value": 1}):
-    if output["type"] == "state":
-        print(f"Intermediate state at node {output['node']}: {output['state']}")
-    elif output["type"].startswith("interrupt"):
-        print(f"Interrupt at node {output['node']}: {output['state']}")
-    elif output["type"] == "final":
-        print(f"Final state: {output['state']}")
+# With stop/resume behavior, we need to handle interrupts explicitly
+checkpoint_path = None
+input_state = {"value": 1}
+
+while True:
+    # Use checkpoint to resume if we have one, otherwise start fresh
+    if checkpoint_path:
+        stream = graph.stream(None, checkpoint=checkpoint_path)
+    else:
+        stream = graph.stream(input_state)
+
+    for output in stream:
+        if output["type"] == "state":
+            print(f"Intermediate state at node {output['node']}: {output['state']}")
+        elif output["type"].startswith("interrupt"):
+            print(f"Interrupt at node {output['node']}: {output['state']}")
+            # Save checkpoint path to resume later
+            checkpoint_path = output.get("checkpoint_path")
+        elif output["type"] == "final":
+            print(f"Final state: {output['state']}")
+            checkpoint_path = None  # Done, exit loop
+
+    if checkpoint_path is None:
+        break
 
