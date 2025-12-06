@@ -177,9 +177,9 @@ Interrupts now STOP execution completely and require explicit resume:
 ```python
 from the_edge_agent import StateGraph, MemoryCheckpointer
 
-graph = StateGraph({"value": int})
+graph = StateGraph({"value": int, "approved": bool})
 graph.add_node("node_a", run=node_a_func)
-graph.add_node("node_b", run=node_b_func)
+graph.add_node("node_b", run=node_b_func)  # Needs approval
 graph.set_entry_point("node_a")
 graph.add_edge("node_a", "node_b")
 graph.set_finish_point("node_b")
@@ -193,8 +193,10 @@ events = list(graph.invoke({"value": 1}))
 interrupt_event = events[-1]
 # interrupt_event = {"type": "interrupt", "node": "node_b", "state": {...}, "checkpoint_path": "..."}
 
-# Resume execution using invoke(None, checkpoint=...)
-resume_events = list(graph.invoke(None, checkpoint=interrupt_event["checkpoint_path"]))
+# Resume with state update (human-in-the-loop pattern)
+# Pass new state values to merge into checkpoint state
+resume_events = list(graph.invoke({"approved": True}, checkpoint=interrupt_event["checkpoint_path"]))
+# State now has both value=1 AND approved=True
 ```
 
 ### Auto-Save at Interrupts
@@ -226,7 +228,25 @@ graph.compile(
 
 - `interrupt_before`: Resume re-executes the interrupted node
 - `interrupt_after`: Resume continues to the next node (doesn't re-execute)
-- Config can be overridden: `invoke(None, checkpoint=path, config={"key": "val"})`
+- **State update on resume**: `invoke({"key": "val"}, checkpoint=path)` merges new state into checkpoint
+- Config can be overridden: `invoke({"key": "val"}, checkpoint=path, config={"cfg": "val"})`
+
+### Human-in-the-Loop Pattern
+
+```python
+# 1. Run until interrupt (needs human decision)
+events = list(graph.invoke({"data": "input"}))
+checkpoint = events[-1]["checkpoint_path"]
+state = events[-1]["state"]
+
+# 2. Human reviews state and makes decision...
+print(f"Review required: {state}")
+user_decision = {"approved": True, "feedback": "Looks good"}
+
+# 3. Resume with human input merged into state
+result = list(graph.invoke(user_decision, checkpoint=checkpoint))
+# Resumed state has original data + user_decision merged in
+```
 
 ## Important Implementation Details
 

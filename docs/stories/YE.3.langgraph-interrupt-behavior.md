@@ -391,8 +391,8 @@ edges:
 2025-12-06
 
 ### Test Results
-- Total tests: 172
-- Passed: 172
+- Total tests: 174
+- Passed: 174
 - Failed: 0
 - Skipped: 0
 
@@ -400,11 +400,12 @@ edges:
 
 **New Files:**
 - `src/the_edge_agent/checkpointers.py` - MemoryCheckpointer class
+- `tests/test_interrupt_state_update.py` - Tests for state update on resume
 
 **Modified Source Files:**
 - `src/the_edge_agent/__init__.py` - Added MemoryCheckpointer export
-- `src/the_edge_agent/stategraph.py` - Updated compile() with checkpointer validation, updated invoke() with stop behavior and resume detection
-- `src/the_edge_agent/checkpoint.py` - Updated _auto_save_checkpoint for MemoryCheckpointer support, updated _invoke_from_node and _stream_from_node with skip_first_interrupt logic
+- `src/the_edge_agent/stategraph.py` - Updated compile() with checkpointer validation, updated invoke() with stop behavior, resume detection, and state update on resume
+- `src/the_edge_agent/checkpoint.py` - Updated _auto_save_checkpoint for MemoryCheckpointer support, updated _invoke_from_node and _stream_from_node with skip_first_interrupt logic, added state_update parameter to resume_from_checkpoint and _stream_from_checkpoint
 - `src/the_edge_agent/yaml_engine.py` - Added checkpointer parameter support
 
 **Modified Test Files:**
@@ -413,8 +414,22 @@ edges:
 - `tests/test_stategraph_stream.py` - Updated parallel interrupt test to use checkpointer
 - `tests/test_yaml_engine.py` - Updated interrupt tests to use checkpointer
 
+**Modified Examples:**
+- `examples/stream_example.py` - Updated for stop/resume behavior
+- `examples/llm_customer_support.py` - Added checkpointer and stop/resume loop
+- `examples/yaml_customer_support_example.yaml` - Added checkpoint_dir config
+
 **Modified Documentation:**
-- `CLAUDE.md` - Updated interrupt and checkpoint documentation
+- `CLAUDE.md` - Updated interrupt and checkpoint documentation, added human-in-the-loop pattern
+
+### Key Features Implemented
+
+1. **Stop Behavior**: Interrupts STOP execution completely (no more yield-and-continue)
+2. **Resume Mechanism**: `invoke(state_update, checkpoint=path)` resumes from checkpoint
+3. **State Update on Resume**: New state values are merged into checkpoint state (human-in-the-loop)
+4. **MemoryCheckpointer**: In-memory checkpoint storage for testing and simple use cases
+5. **Checkpointer Required**: Compile-time validation ensures checkpointer when interrupts defined
+6. **Auto-create Checkpoint Dir**: File-based checkpoints auto-create directory if needed
 
 ## Change Log
 | Date | Version | Description | Author |
@@ -424,3 +439,4 @@ edges:
 | 2025-12-06 | 0.3 | Removed thread_id, added MemoryCheckpointer, simplified resume | Sarah (PO Agent) |
 | 2025-12-06 | 0.4 | QA Test Design Review completed - 43 test scenarios defined | Quinn (QA Agent) |
 | 2025-12-06 | 1.0 | **Implementation Complete** - All tasks done, 172 tests passing | Claude Code |
+| 2025-12-06 | 1.1 | **Merged state update on resume** - Human-in-the-loop support, 174 tests | Claude Code + Jules |
