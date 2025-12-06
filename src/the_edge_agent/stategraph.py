@@ -6,6 +6,7 @@ from networkx.drawing.nx_agraph import to_agraph
 from concurrent.futures import ThreadPoolExecutor, Future
 import threading
 import copy
+from queue import Queue, Empty
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
 
@@ -467,6 +468,130 @@ class StateGraph:
         self.logger.debug(f"[Parallel] Flow reached END")
         return state
 
+    def _stream_parallel_flow(self, start_node: str, state: Dict[str, Any], config: Dict[str, Any], fan_in_node: str, result_queue: Queue) -> None:
+        """
+        Execute a parallel flow and put yields into a queue for streaming.
+
+        This method is used for parallel streaming execution. Each parallel flow
+        runs in its own thread and puts events into the shared queue.
+
+        Args:
+            start_node (str): The starting node of the parallel flow.
+            state (Dict[str, Any]): The state (deep copied for thread safety).
+            config (Dict[str, Any]): Configuration for the execution.
+            fan_in_node (str): The fan-in node where this flow should stop.
+            result_queue (Queue): Queue to put events into for the main thread.
+
+        Queue Events:
+            - {"type": "parallel_state", "branch": str, "node": str, "state": dict}
+            - {"type": "parallel_error", "branch": str, "node": str, "error": str, "state": dict}
+            - {"type": "branch_complete", "branch": str, "state": dict}
+        """
+        current_node = start_node
+        flow_state = state  # Already deep copied by caller
+
+        self.logger.info(f"[Parallel Stream] Flow started at node '{start_node}' (target fan-in: '{fan_in_node}')")
+
+        while current_node != END:
+            # Check if current node is the fan-in node
+            if current_node == fan_in_node:
+                self.logger.info(f"[Parallel Stream] Flow '{start_node}' reached fan-in node '{fan_in_node}'")
+                result_queue.put({
+                    "type": "branch_complete",
+                    "branch": start_node,
+                    "state": flow_state.copy()
+                })
+                return
+
+            # Get node data
+            node_data = self.node(current_node)
+            run_func = node_data.get("run")
+
+            # Execute node's run function if present
+            if run_func:
+                self.logger.debug(f"[Parallel Stream] Entering node: {current_node}")
+                if self.log_state_values:
+                    self.logger.debug(f"[Parallel Stream] Node '{current_node}' input state: {flow_state}")
+                try:
+                    result = self._execute_node_function(run_func, flow_state, config, current_node)
+                    flow_state.update(result)
+                    self.logger.debug(f"[Parallel Stream] Node '{current_node}' completed")
+                    if self.log_state_values:
+                        self.logger.debug(f"[Parallel Stream] Node '{current_node}' output state: {flow_state}")
+                    # Put state event into queue
+                    result_queue.put({
+                        "type": "parallel_state",
+                        "branch": start_node,
+                        "node": current_node,
+                        "state": flow_state.copy()
+                    })
+                except Exception as e:
+                    self.logger.error(f"[Parallel Stream] Error in node '{current_node}': {e}")
+                    result_queue.put({
+                        "type": "parallel_error",
+                        "branch": start_node,
+                        "node": current_node,
+                        "error": str(e),
+                        "state": flow_state.copy()
+                    })
+                    # Signal branch completion with error state
+                    result_queue.put({
+                        "type": "branch_complete",
+                        "branch": start_node,
+                        "state": flow_state.copy(),
+                        "error": True
+                    })
+                    return
+
+            # Determine next node
+            try:
+                next_node = self._get_next_node(current_node, flow_state, config)
+            except Exception as e:
+                self.logger.error(f"[Parallel Stream] Error getting next node from '{current_node}': {e}")
+                result_queue.put({
+                    "type": "parallel_error",
+                    "branch": start_node,
+                    "node": current_node,
+                    "error": str(e),
+                    "state": flow_state.copy()
+                })
+                result_queue.put({
+                    "type": "branch_complete",
+                    "branch": start_node,
+                    "state": flow_state.copy(),
+                    "error": True
+                })
+                return
+
+            if next_node:
+                self.logger.debug(f"[Parallel Stream] Transitioning from '{current_node}' to '{next_node}'")
+                current_node = next_node
+            else:
+                error_msg = f"No valid next node found from node '{current_node}' in parallel flow"
+                self.logger.warning(f"[Parallel Stream] {error_msg}")
+                result_queue.put({
+                    "type": "parallel_error",
+                    "branch": start_node,
+                    "node": current_node,
+                    "error": error_msg,
+                    "state": flow_state.copy()
+                })
+                result_queue.put({
+                    "type": "branch_complete",
+                    "branch": start_node,
+                    "state": flow_state.copy(),
+                    "error": True
+                })
+                return
+
+        # Reached END (should not normally happen for parallel flows)
+        self.logger.debug(f"[Parallel Stream] Flow '{start_node}' reached END")
+        result_queue.put({
+            "type": "branch_complete",
+            "branch": start_node,
+            "state": flow_state.copy()
+        })
+
     def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
         """
         Execute the function associated with a node.
@@ -601,6 +726,8 @@ class StateGraph:
         """
         Execute the graph, yielding results at each node execution, including interrupts.
 
+        Supports parallel execution with intermediate state streaming from all branches.
+
         Args:
             input_state (Optional[Dict[str, Any]]): The initial state.
             config (Optional[Dict[str, Any]]): Configuration for the execution.
@@ -610,6 +737,8 @@ class StateGraph:
                 - {"type": "interrupt_before", "node": str, "state": dict}: Interrupt before node
                 - {"type": "interrupt_after", "node": str, "state": dict}: Interrupt after node
                 - {"type": "state", "node": str, "state": dict}: Intermediate state after node execution
+                - {"type": "parallel_state", "branch": str, "node": str, "state": dict}: State from parallel branch
+                - {"type": "parallel_error", "branch": str, "node": str, "error": str, "state": dict}: Error in parallel branch
                 - {"type": "error", "node": str, "error": str, "state": dict}: Error occurred
                 - {"type": "final", "state": dict}: Execution completed successfully
 
@@ -619,9 +748,14 @@ class StateGraph:
         Error Handling:
             When raise_exceptions=False (default):
                 - Errors yield {"type": "error", "node": <node>, "error": <msg>, "state": <state>}
-                - Execution stops after yielding the error
+                - Parallel errors yield {"type": "parallel_error", ...} but don't stop other branches
+                - Execution stops after yielding a main-flow error
             When raise_exceptions=True:
                 - Errors raise RuntimeError with message: "Error in node '<node>': <msg>"
+
+        Note:
+            Parallel branch events may interleave non-deterministically. The order of
+            parallel_state events from different branches is not guaranteed.
         """
         if input_state is None:
             input_state = {}
@@ -637,53 +771,219 @@ class StateGraph:
         if self.log_state_values:
             self.logger.debug(f"Initial state: {state}")
 
-        while current_node != END:
-            # Check for interrupt before
-            if current_node in self.interrupt_before:
-                yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+        # Create ThreadPoolExecutor for parallel flows
+        max_workers = config.get('max_workers', self.max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Queue for collecting events from parallel flows
+            result_queue: Queue = Queue()
+            # Track active branches per fan-in node
+            active_branches: Dict[str, set] = {}
+            # Track completed branch states per fan-in node
+            branch_states: Dict[str, List[Dict[str, Any]]] = {}
+            # Lock for thread-safe operations
+            stream_lock = threading.Lock()
 
-            # Get node data
-            node_data = self.node(current_node)
-            run_func = node_data.get("run")
+            while current_node != END:
+                # Check for interrupt before
+                if current_node in self.interrupt_before:
+                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
 
-            # Execute node's run function if present
-            if run_func:
-                self.logger.debug(f"Entering node: {current_node}")
-                if self.log_state_values:
-                    self.logger.debug(f"Node '{current_node}' input state: {state}")
-                try:
-                    result = self._execute_node_function(run_func, state, config, current_node)
-                    state.update(result)
-                    self.logger.info(f"Node '{current_node}' completed successfully")
+                # Get node data
+                node_data = self.node(current_node)
+                run_func = node_data.get("run")
+
+                # Execute node's run function if present
+                if run_func:
+                    self.logger.debug(f"Entering node: {current_node}")
                     if self.log_state_values:
-                        self.logger.debug(f"Node '{current_node}' output state: {state}")
-                    # Yield intermediate state after execution
-                    yield {"type": "state", "node": current_node, "state": state.copy()}
-                except Exception as e:
-                    self.logger.error(f"Error in node '{current_node}': {e}")
-                    if self.raise_exceptions:
-                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                        self.logger.debug(f"Node '{current_node}' input state: {state}")
+                    try:
+                        result = self._execute_node_function(run_func, state, config, current_node)
+                        state.update(result)
+                        self.logger.info(f"Node '{current_node}' completed successfully")
+                        if self.log_state_values:
+                            self.logger.debug(f"Node '{current_node}' output state: {state}")
+                        # Yield intermediate state after execution
+                        yield {"type": "state", "node": current_node, "state": state.copy()}
+                    except Exception as e:
+                        self.logger.error(f"Error in node '{current_node}': {e}")
+                        if self.raise_exceptions:
+                            raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                        else:
+                            yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                            return
+
+                # Check for interrupt after
+                if current_node in self.interrupt_after:
+                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+
+                # Determine next node - check for parallel edges
+                successors = self.successors(current_node)
+
+                # Separate parallel and normal edges
+                parallel_edges = []
+                normal_successors = []
+
+                for successor in successors:
+                    edge_data = self.edge(current_node, successor)
+                    if edge_data.get('parallel', False):
+                        fan_in_node = edge_data.get('fan_in_node', None)
+                        if fan_in_node is None:
+                            error_msg = f"Parallel edge from '{current_node}' to '{successor}' must have 'fan_in_node' specified"
+                            if self.raise_exceptions:
+                                raise RuntimeError(error_msg)
+                            else:
+                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                return
+                        parallel_edges.append((successor, fan_in_node))
                     else:
-                        yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
-                        return
+                        normal_successors.append(successor)
 
-            # Check for interrupt after
-            if current_node in self.interrupt_after:
-                yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+                # Start parallel flows
+                if parallel_edges:
+                    self.logger.info(f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'")
+                    for successor, fan_in_node in parallel_edges:
+                        self.logger.debug(f"Launching parallel stream flow to node '{successor}' (fan-in: '{fan_in_node}')")
+                        # Register branch with fan-in node
+                        with stream_lock:
+                            if fan_in_node not in active_branches:
+                                active_branches[fan_in_node] = set()
+                                branch_states[fan_in_node] = []
+                            active_branches[fan_in_node].add(successor)
+                        # Submit thread
+                        executor.submit(
+                            self._stream_parallel_flow,
+                            successor,
+                            copy.deepcopy(state),
+                            config.copy(),
+                            fan_in_node,
+                            result_queue
+                        )
 
-            # Determine next node
-            next_node = self._get_next_node(current_node, state, config)
-            if not next_node:
-                self.logger.warning(f"No valid next node found from node '{current_node}'")
-                error_msg = f"No valid next node found from node '{current_node}'"
-                if self.raise_exceptions:
-                    raise RuntimeError(error_msg)
+                # Handle normal successors
+                if normal_successors:
+                    # Find first valid normal successor
+                    next_node = None
+                    for successor in normal_successors:
+                        edge_data = self.edge(current_node, successor)
+                        cond_func = edge_data.get("cond", lambda **kwargs: True)
+                        cond_map = edge_data.get("cond_map", None)
+                        available_params = {"state": state, "config": config, "node": current_node, "graph": self}
+                        cond_params = self._prepare_function_params(cond_func, available_params)
+                        cond_result = cond_func(**cond_params)
+                        self.logger.debug(f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}")
+
+                        if cond_map:
+                            next_node_candidate = cond_map.get(cond_result, None)
+                            if next_node_candidate:
+                                next_node = next_node_candidate
+                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                break
+                        else:
+                            if cond_result:
+                                next_node = successor
+                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                break
+
+                    if next_node:
+                        current_node = next_node
+                    else:
+                        self.logger.warning(f"No valid next node found from node '{current_node}'")
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
                 else:
-                    yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
-                    return
+                    # No normal successors - check for pending parallel flows
+                    with stream_lock:
+                        pending_fan_ins = [fn for fn, branches in active_branches.items() if branches]
 
-            self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
-            current_node = next_node
+                    if pending_fan_ins:
+                        # Wait for parallel flows and yield their events
+                        fan_in_node = pending_fan_ins[0]
+                        self.logger.info(f"Waiting for parallel flows to complete at fan-in '{fan_in_node}'")
+
+                        # Drain queue until all branches complete
+                        while True:
+                            with stream_lock:
+                                remaining = len(active_branches.get(fan_in_node, set()))
+                            if remaining == 0:
+                                break
+
+                            try:
+                                event = result_queue.get(timeout=0.1)
+                                event_type = event.get("type")
+                                event_branch = event.get("branch")
+
+                                if event_type == "parallel_state":
+                                    yield event
+                                elif event_type == "parallel_error":
+                                    yield event
+                                elif event_type == "branch_complete":
+                                    with stream_lock:
+                                        if event_branch in active_branches.get(fan_in_node, set()):
+                                            active_branches[fan_in_node].discard(event_branch)
+                                            # Only collect state if no error
+                                            if not event.get("error"):
+                                                branch_states[fan_in_node].append(event.get("state", {}))
+                                            self.logger.debug(f"Branch '{event_branch}' completed, {len(active_branches[fan_in_node])} remaining")
+                            except Empty:
+                                continue
+
+                        # All branches complete - execute fan-in node
+                        self.logger.info(f"All parallel flows joined at fan-in node '{fan_in_node}'")
+                        with stream_lock:
+                            parallel_results = branch_states.pop(fan_in_node, [])
+                            active_branches.pop(fan_in_node, None)
+
+                        state['parallel_results'] = parallel_results
+                        current_node = fan_in_node
+
+                        # Execute the fan-in node
+                        node_data = self.node(current_node)
+                        run_func = node_data.get("run")
+
+                        if current_node in self.interrupt_before:
+                            yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+
+                        if run_func:
+                            self.logger.debug(f"Entering fan-in node: {current_node}")
+                            try:
+                                result = self._execute_node_function(run_func, state, config, current_node)
+                                state.update(result)
+                                self.logger.info(f"Fan-in node '{current_node}' completed successfully")
+                                yield {"type": "state", "node": current_node, "state": state.copy()}
+                            except Exception as e:
+                                self.logger.error(f"Error in fan-in node '{current_node}': {e}")
+                                if self.raise_exceptions:
+                                    raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                                else:
+                                    yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                                    return
+
+                        if current_node in self.interrupt_after:
+                            yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+
+                        # Continue to next node after fan-in
+                        next_node = self._get_next_node(current_node, state, config)
+                        if not next_node:
+                            self.logger.warning(f"No valid next node found from fan-in node '{current_node}'")
+                            error_msg = f"No valid next node found from node '{current_node}'"
+                            if self.raise_exceptions:
+                                raise RuntimeError(error_msg)
+                            else:
+                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                return
+                        current_node = next_node
+                    else:
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
 
         # Once END is reached, yield final state
         self.logger.info("Stream execution completed successfully")
