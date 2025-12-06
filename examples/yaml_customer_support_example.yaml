@@ -1,0 +1,172 @@
+name: customer-support-agent
+description: Multi-path customer support workflow with parallel processing
+
+variables:
+  support_email: support@example.com
+  escalation_threshold: 0.8
+
+state_schema:
+  customer_message: str
+  customer_id: str
+  intent: str
+  confidence: float
+  response: str
+  escalate: bool
+  ticket_id: str
+
+nodes:
+  # Stage 1: Intent Classification
+  - name: classify_intent
+    run: |
+      # Simulate intent classification
+      message = state["customer_message"].lower()
+
+      if "bill" in message or "payment" in message or "charge" in message:
+          intent = "billing"
+          confidence = 0.95
+      elif "not working" in message or "error" in message or "broken" in message:
+          intent = "technical"
+          confidence = 0.90
+      elif "cancel" in message or "refund" in message:
+          intent = "retention"
+          confidence = 0.85
+      else:
+          intent = "general"
+          confidence = 0.60
+
+      return {
+          "intent": intent,
+          "confidence": confidence,
+          "escalate": confidence < ${escalation_threshold}
+      }
+
+  # Stage 2a: Handle Billing
+  - name: handle_billing
+    steps:
+      - name: check_account
+        run: |
+          # Simulate account check
+          return {
+            "account_status": "active",
+            "balance": 99.99
+          }
+
+      - name: generate_response
+        run: |
+          return {
+            "response": f"Hi! I checked your account (ID: {state['customer_id']}). Your current balance is ${state['balance']}. How can I help with your billing question?",
+            "ticket_id": f"BILL-{state['customer_id'][:8]}"
+          }
+
+  # Stage 2b: Handle Technical
+  - name: handle_technical
+    run: |
+      # Simulate technical support
+      return {
+        "response": f"I understand you're experiencing a technical issue. Let me help troubleshoot. Can you provide more details about the error?",
+        "ticket_id": f"TECH-{state['customer_id'][:8]}",
+        "escalate": True  # Technical issues often need escalation
+      }
+
+  # Stage 2c: Handle Retention
+  - name: handle_retention
+    run: |
+      # Retention requires human touch
+      return {
+        "response": "I'm sorry to hear you're considering cancellation. Let me connect you with our retention specialist who can help.",
+        "ticket_id": f"RET-{state['customer_id'][:8]}",
+        "escalate": True
+      }
+
+  # Stage 2d: Handle General
+  - name: handle_general
+    run: |
+      return {
+        "response": "Thank you for contacting us! How can I assist you today?",
+        "ticket_id": f"GEN-{state['customer_id'][:8]}",
+        "escalate": False
+      }
+
+  # Stage 3a: Send automated response
+  - name: send_response
+    run: |
+      print(f"[EMAIL] To: {state['customer_id']}")
+      print(f"[EMAIL] Subject: Re: Support Ticket {state['ticket_id']}")
+      print(f"[EMAIL] Body: {state['response']}")
+      return {"sent": True}
+
+  # Stage 3b: Escalate to human
+  - name: escalate_to_human
+    uses: actions.notify
+    with:
+      channel: slack
+      message: |
+        🚨 Escalation Required
+        Ticket: {{ state.ticket_id }}
+        Intent: {{ state.intent }}
+        Customer: {{ state.customer_id }}
+        Confidence: {{ state.confidence }}
+
+edges:
+  # Entry
+  - from: __start__
+    to: classify_intent
+
+  # Route based on intent
+  - from: classify_intent
+    to: handle_billing
+    condition:
+      type: expression
+      value: state["intent"] == "billing"
+    when: true
+
+  - from: classify_intent
+    to: handle_technical
+    condition:
+      type: expression
+      value: state["intent"] == "technical"
+    when: true
+
+  - from: classify_intent
+    to: handle_retention
+    condition:
+      type: expression
+      value: state["intent"] == "retention"
+    when: true
+
+  - from: classify_intent
+    to: handle_general
+    condition:
+      type: expression
+      value: state["intent"] == "general"
+    when: true
+
+  # Route to response or escalation
+  - from: handle_billing
+    to: send_response
+    when: "!escalate"
+
+  - from: handle_billing
+    to: escalate_to_human
+    when: "escalate"
+
+  - from: handle_technical
+    to: escalate_to_human
+
+  - from: handle_retention
+    to: escalate_to_human
+
+  - from: handle_general
+    to: send_response
+
+  # Exit
+  - from: send_response
+    to: __end__
+
+  - from: escalate_to_human
+    to: __end__
+
+config:
+  raise_exceptions: true
+  interrupt_before: []
+  interrupt_after: [classify_intent]  # Pause after classification for review
