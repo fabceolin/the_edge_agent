@@ -1,0 +1,88 @@
+schema: 1
+story: 'TD.7'
+story_title: 'Add Parallel Execution Support to stream()'
+gate: CONCERNS
+status_reason: 'Pre-implementation review found 4 gaps that should be addressed during implementation: queue exhaustion handling, early termination cleanup, branch_complete event clarification, and stale line numbers.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-12-06T00:00:00Z'
+
+top_issues:
+  - severity: medium
+    description: 'Queue exhaustion scenario not documented - what if queue fills up?'
+    suggested_owner: dev
+  - severity: medium
+    description: 'Early termination cleanup not addressed - generator not fully consumed'
+    suggested_owner: dev
+  - severity: low
+    description: 'branch_complete event mentioned in code but not in acceptance criteria'
+    suggested_owner: sm
+  - severity: low
+    description: 'Line number references may be stale (story says 500-560, actual is 530+)'
+    suggested_owner: sm
+
+waiver:
+  active: false
+
+quality_score: 70  # 100 - (0*20 FAILs) - (3*10 medium CONCERNS)
+expires: '2025-12-20T00:00:00Z'
+
+evidence:
+  tests_reviewed: 0  # Pre-implementation review
+  risks_identified: 5
+  review_type: pre-implementation
+  dependencies_status:
+    TD.4: Done
+    TD.5: Done
+  trace:
+    ac_covered: []  # Pre-implementation - no tests yet
+    ac_gaps: [1, 2, 3, 4, 5, 6, 7]  # All ACs pending implementation
+
+test_design:
+  document: 'docs/qa/assessments/TD.7-test-design-20251206.md'
+  scenarios_total: 15
+  by_level:
+    unit: 3
+    integration: 9
+    e2e: 3
+  by_priority:
+    p0: 6
+    p1: 5
+    p2: 4
+  coverage_gaps: []  # All ACs have planned test coverage
+  risk_mitigations:
+    - risk: 'Race conditions in queue access'
+      tests: ['TD.7-INT-011']
+    - risk: 'Deadlock in fan-in synchronization'
+      tests: ['TD.7-INT-006', 'TD.7-INT-007']
+    - risk: 'Thread exception crashes main thread'
+      tests: ['TD.7-INT-009', 'TD.7-INT-010']
+    - risk: 'Lost events from parallel branches'
+      tests: ['TD.7-INT-004', 'TD.7-INT-005']
+    - risk: 'Parity gap with invoke()'
+      tests: ['TD.7-INT-003']
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'Internal threading only, no external exposure'
+  performance:
+    status: CONCERNS
+    notes: 'Queue polling with 0.1s timeout could add latency; consider configurable timeout'
+  reliability:
+    status: CONCERNS
+    notes: 'No guidance on queue.put() blocking; recommend timeout parameter'
+  maintainability:
+    status: PASS
+    notes: 'Good documentation, clear patterns, complexity warning appropriate'
+
+recommendations:
+  immediate:
+    - action: 'Add queue exhaustion handling to Edge Cases table'
+      refs: ['docs/stories/TD.7.stream-parallel-support.md']
+    - action: 'Document early termination cleanup behavior'
+      refs: ['docs/stories/TD.7.stream-parallel-support.md']
+  future:
+    - action: 'Add debug logging for queue operations'
+      refs: ['src/the_edge_agent/stategraph.py']
+    - action: 'Consider async/await alternative for cleaner implementation'
+      refs: ['src/the_edge_agent/stategraph.py']

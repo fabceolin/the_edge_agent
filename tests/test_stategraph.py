@@ -1,4 +1,5 @@
 import unittest
+import logging
 import pygraphviz as pgv
 
 
@@ -577,6 +578,175 @@ class TestStateGraph(unittest.TestCase):
         with self.assertRaises(ValueError):
             list(self.graph.invoke({"value": 0}))
 
+    def test_error_handling_stream_yields_error_dict(self):
+        """
+        Test that stream() yields consistent error dict when raise_exceptions=False.
+
+        Error dict structure: {"type": "error", "node": str, "error": str, "state": dict}
+        """
+        def error_func(state):
+            raise ValueError("Stream error test")
+
+        graph = tea.StateGraph(state_schema={}, raise_exceptions=False)
+        graph.add_node("error_node", run=error_func)
+        graph.set_entry_point("error_node")
+        graph.set_finish_point("error_node")
+
+        results = list(graph.stream({"value": 42}))
+
+        # Should yield exactly one error event
+        self.assertEqual(len(results), 1)
+        error_event = results[0]
+
+        # Verify error dict structure
+        self.assertEqual(error_event["type"], "error")
+        self.assertEqual(error_event["node"], "error_node")
+        self.assertIn("Stream error test", error_event["error"])
+        self.assertIsInstance(error_event["state"], dict)
+        self.assertEqual(error_event["state"]["value"], 42)
+
+    def test_error_handling_stream_raises_exception(self):
+        """
+        Test that stream() raises RuntimeError when raise_exceptions=True.
+        """
+        def error_func(state):
+            raise ValueError("Stream exception test")
+
+        graph = tea.StateGraph(state_schema={}, raise_exceptions=True)
+        graph.add_node("error_node", run=error_func)
+        graph.set_entry_point("error_node")
+        graph.set_finish_point("error_node")
+
+        with self.assertRaises(RuntimeError) as context:
+            list(graph.stream({"value": 1}))
+
+        self.assertIn("Stream exception test", str(context.exception))
+
+    def test_error_in_fan_in_node_yields_error_dict(self):
+        """
+        Test that errors in fan-in nodes yield consistent error dict structure.
+
+        This tests the invoke() error handling when the fan-in node itself fails.
+        """
+        def start_run(state):
+            return {"value": state.get("value", 0)}
+
+        def flow1_run(state):
+            return {"flow1_value": state["value"] + 1}
+
+        def flow2_run(state):
+            return {"flow2_value": state["value"] + 2}
+
+        def fan_in_error(state, parallel_results):
+            raise ValueError("Fan-in node error")
+
+        def end_run(state):
+            return {"final": state.get("result", 0)}
+
+        graph = tea.StateGraph(state_schema={}, raise_exceptions=False)
+        graph.add_node("start", run=start_run)
+        graph.add_node("flow1", run=flow1_run)
+        graph.add_node("flow2", run=flow2_run)
+        graph.add_fanin_node("fan_in", run=fan_in_error)
+        graph.add_node("end", run=end_run)
+
+        graph.set_entry_point("start")
+        graph.add_parallel_edge("start", "flow1", "fan_in")
+        graph.add_parallel_edge("start", "flow2", "fan_in")
+        graph.add_edge("flow1", "fan_in")
+        graph.add_edge("flow2", "fan_in")
+        graph.add_edge("fan_in", "end")
+        graph.set_finish_point("end")
+
+        results = list(graph.invoke({"value": 10}))
+
+        # Should yield exactly one error event
+        self.assertEqual(len(results), 1)
+        error_event = results[0]
+
+        # Verify error dict structure
+        self.assertEqual(error_event["type"], "error")
+        self.assertEqual(error_event["node"], "fan_in")
+        self.assertIn("Fan-in node error", error_event["error"])
+        self.assertIsInstance(error_event["state"], dict)
+
+    def test_error_in_fan_in_node_raises_exception(self):
+        """
+        Test that errors in fan-in nodes raise RuntimeError when raise_exceptions=True.
+        """
+        def start_run(state):
+            return {"value": state.get("value", 0)}
+
+        def flow1_run(state):
+            return {"flow1_value": state["value"] + 1}
+
+        def fan_in_error(state, parallel_results):
+            raise ValueError("Fan-in raises exception")
+
+        graph = tea.StateGraph(state_schema={}, raise_exceptions=True)
+        graph.add_node("start", run=start_run)
+        graph.add_node("flow1", run=flow1_run)
+        graph.add_fanin_node("fan_in", run=fan_in_error)
+        graph.add_node("end", run=lambda state: state)
+
+        graph.set_entry_point("start")
+        graph.add_parallel_edge("start", "flow1", "fan_in")
+        graph.add_edge("flow1", "fan_in")
+        graph.add_edge("fan_in", "end")
+        graph.set_finish_point("end")
+
+        with self.assertRaises(RuntimeError) as context:
+            list(graph.invoke({"value": 5}))
+
+        self.assertIn("Fan-in raises exception", str(context.exception))
+
+    def test_error_in_parallel_flow_yields_error_dict(self):
+        """
+        Test that errors in parallel flows (_execute_flow) yield consistent error dict.
+
+        When raise_exceptions=False, errors in parallel flows should return
+        error dict structure: {"type": "error", "node": str, "error": str, "state": dict}
+        and invoke() should yield this error and stop execution.
+        """
+        def start_run(state):
+            return {"value": state.get("value", 0)}
+
+        def flow1_error(state):
+            raise ValueError("Parallel flow error test")
+
+        def flow2_run(state):
+            return {"flow2_value": state["value"] + 2}
+
+        def fan_in_run(state, parallel_results):
+            return {"result": "aggregated"}
+
+        graph = tea.StateGraph(state_schema={}, raise_exceptions=False)
+        graph.add_node("start", run=start_run)
+        graph.add_node("flow1", run=flow1_error)
+        graph.add_node("flow2", run=flow2_run)
+        graph.add_fanin_node("fan_in", run=fan_in_run)
+        graph.add_node("end", run=lambda state: state)
+
+        graph.set_entry_point("start")
+        graph.add_parallel_edge("start", "flow1", "fan_in")
+        graph.add_parallel_edge("start", "flow2", "fan_in")
+        graph.add_edge("flow1", "fan_in")
+        graph.add_edge("flow2", "fan_in")
+        graph.add_edge("fan_in", "end")
+        graph.set_finish_point("end")
+
+        results = list(graph.invoke({"value": 10}))
+
+        # Should yield exactly one error event
+        self.assertEqual(len(results), 1)
+        error_event = results[0]
+
+        # Verify error dict structure
+        self.assertEqual(error_event["type"], "error")
+        self.assertEqual(error_event["node"], "flow1")
+        self.assertIn("Parallel flow error test", error_event["error"])
+        self.assertIsInstance(error_event["state"], dict)
+
     def test_render_graphviz(self):
         """
         Test the render_graphviz method to ensure it correctly creates a PyGraphviz AGraph
@@ -949,6 +1119,102 @@ class TestStateGraph(unittest.TestCase):
         assert final_event["state"]["result"] == "Executed L", "Unexpected final state"
         assert final_event["state"]["revision_number"] == 4, "Unexpected revision number in final state"
 
+    def test_state_isolation_between_calls(self):
+        """
+        Test that mutable default arguments don't leak state between multiple calls.
+
+        This verifies the fix for mutable default arguments (= {} -> = None pattern).
+        Multiple sequential calls to invoke() and stream() should not share state.
+        """
+        # Create a graph that modifies state
+        graph = tea.StateGraph({"value": int})
+        graph.add_node("process", run=lambda state: {"value": state.get("value", 0) + 10})
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+
+        # First invoke call with explicit state
+        result1 = list(graph.invoke({"value": 5}))
+        self.assertEqual(result1[-1]["state"]["value"], 15)
+
+        # Second invoke call with explicit state - should NOT be affected by first call
+        result2 = list(graph.invoke({"value": 100}))
+        self.assertEqual(result2[-1]["state"]["value"], 110)
+
+        # Third invoke call with empty state - should start fresh
+        result3 = list(graph.invoke())
+        self.assertEqual(result3[-1]["state"]["value"], 10)
+
+        # Fourth invoke call with empty state - should still start fresh
+        result4 = list(graph.invoke())
+        self.assertEqual(result4[-1]["state"]["value"], 10)
+
+        # Test stream() similarly
+        stream_result1 = list(graph.stream({"value": 7}))
+        self.assertEqual(stream_result1[-1]["state"]["value"], 17)
+
+        stream_result2 = list(graph.stream())
+        self.assertEqual(stream_result2[-1]["state"]["value"], 10)
+
+        stream_result3 = list(graph.stream())
+        self.assertEqual(stream_result3[-1]["state"]["value"], 10)
+
+    def test_max_workers_parameter(self):
+        """
+        Test that max_workers parameter is correctly passed to ThreadPoolExecutor.
+
+        This verifies:
+        1. max_workers can be set at initialization
+        2. max_workers can be overridden via config at invoke time
+        3. Default behavior (None) works correctly
+        """
+        # Test 1: max_workers set at initialization
+        with patch('the_edge_agent.stategraph.ThreadPoolExecutor') as mock_executor:
+            mock_executor.return_value.__enter__ = lambda self: self
+            mock_executor.return_value.__exit__ = lambda self, *args: None
+            mock_executor.return_value.shutdown = lambda wait: None
+
+            graph = tea.StateGraph({"value": int}, max_workers=4)
+            graph.add_node("start", run=lambda state: {"value": 1})
+            graph.set_entry_point("start")
+            graph.set_finish_point("start")
+
+            list(graph.invoke({"value": 0}))
+
+            # Verify ThreadPoolExecutor was called with max_workers=4
+            mock_executor.assert_called_once_with(max_workers=4)
+
+        # Test 2: max_workers overridden via config
+        with patch('the_edge_agent.stategraph.ThreadPoolExecutor') as mock_executor:
+            mock_executor.return_value.__enter__ = lambda self: self
+            mock_executor.return_value.__exit__ = lambda self, *args: None
+            mock_executor.return_value.shutdown = lambda wait: None
+
+            graph = tea.StateGraph({"value": int}, max_workers=4)
+            graph.add_node("start", run=lambda state: {"value": 1})
+            graph.set_entry_point("start")
+            graph.set_finish_point("start")
+
+            # Override max_workers via config
+            list(graph.invoke({"value": 0}, config={"max_workers": 8}))
+
+            # Verify ThreadPoolExecutor was called with config override
+            mock_executor.assert_called_once_with(max_workers=8)
+
+        # Test 3: Default behavior (None)
+        with patch('the_edge_agent.stategraph.ThreadPoolExecutor') as mock_executor:
+            mock_executor.return_value.__enter__ = lambda self: self
+            mock_executor.return_value.__exit__ = lambda self, *args: None
+            mock_executor.return_value.shutdown = lambda wait: None
+
+            graph = tea.StateGraph({"value": int})  # No max_workers specified
+            graph.add_node("start", run=lambda state: {"value": 1})
+            graph.set_entry_point("start")
+            graph.set_finish_point("start")
+
+            list(graph.invoke({"value": 0}))
+
+            # Verify ThreadPoolExecutor was called with max_workers=None (Python default)
+            mock_executor.assert_called_once_with(max_workers=None)
 
 
 class TestStateGraphFanOutFanIn(unittest.TestCase):
@@ -1307,6 +1573,241 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         # Verify the exception message
         self.assertIn("Error in node 'flow1_start': Intentional error in flow1", str(context.exception))
 
+    def test_parallel_stress_thread_safety(self):
+        """
+        Stress test: many parallel flows completing near-simultaneously.
+
+        This test verifies thread-safe access to fanin_futures dictionary.
+        Runs 20 parallel flows 10 times to catch race conditions.
+        """
+        import time
+        import random
+        import threading
+
+        def slow_work(state):
+            """Simulate work with random timing to increase race window."""
+            time.sleep(random.uniform(0.01, 0.05))
+            return {"value": threading.current_thread().name}
+
+        def aggregate(state, parallel_results):
+            """Collect all results from parallel flows."""
+            return {"results": [r.get("value") for r in parallel_results if r.get("value")]}
+
+        # Run multiple times to catch intermittent failures
+        for iteration in range(10):
+            graph = tea.StateGraph({"results": list}, raise_exceptions=True)
+
+            # Setup: 20 parallel flows fanning into one node
+            graph.add_node("start", run=lambda state: state)
+            graph.add_fanin_node("aggregate", run=aggregate)
+            graph.add_node("end", run=lambda state: state)
+
+            for i in range(20):
+                graph.add_node(f"worker_{i}", run=slow_work)
+                graph.add_parallel_edge("start", f"worker_{i}", "aggregate")
+                graph.add_edge(f"worker_{i}", "aggregate")
+
+            graph.set_entry_point("start")
+            graph.add_edge("aggregate", "end")
+            graph.set_finish_point("end")
+
+            # Execute and verify
+            result = list(graph.compile().invoke({"results": []}))
+
+            # Verify all 20 parallel results were collected
+            final_state = result[-1]["state"]
+            self.assertIn("results", final_state,
+                          f"Iteration {iteration}: 'results' key missing from final state")
+            self.assertEqual(len(final_state["results"]), 20,
+                             f"Iteration {iteration}: Expected 20 results, got {len(final_state['results'])}. "
+                             f"Possible race condition causing lost futures.")
+
+    def test_executor_cleanup_on_exception(self):
+        """
+        Verify ThreadPoolExecutor is properly cleaned up when exception occurs.
+
+        This test verifies TD.8: context manager pattern ensures resources are
+        cleaned up even on unexpected exceptions.
+        """
+        import threading
+        import time
+
+        # Count active threads before test
+        threads_before = threading.active_count()
+
+        def start_run(state):
+            return {"value": 1}
+
+        def error_node_run(state):
+            raise RuntimeError("Intentional error for cleanup test")
+
+        # Create graph that will fail
+        graph = tea.StateGraph({"value": int}, raise_exceptions=True)
+        graph.add_node("start", run=start_run)
+        graph.add_node("error_node", run=error_node_run)
+        graph.add_node("end", run=lambda state: state)
+
+        graph.set_entry_point("start")
+        graph.add_edge("start", "error_node")
+        graph.add_edge("error_node", "end")
+        graph.set_finish_point("end")
+
+        # Execute and expect exception
+        with self.assertRaises(RuntimeError) as context:
+            list(graph.compile().invoke({"value": 0}))
+
+        self.assertIn("Intentional error for cleanup test", str(context.exception))
+
+        # Give threads time to clean up
+        time.sleep(0.1)
+
+        # Verify no thread leak
+        threads_after = threading.active_count()
+        self.assertEqual(
+            threads_before, threads_after,
+            f"Thread leak detected: {threads_before} before, {threads_after} after"
+        )
+
+
+class TestStateGraphLogging(unittest.TestCase):
+    """Tests for logging functionality in StateGraph."""
+
+    def test_logging_node_entry_debug(self):
+        """Test DEBUG logs appear for node entry when log_level=DEBUG."""
+        graph = tea.StateGraph({"value": int}, log_level=logging.DEBUG)
+        graph.add_node("process", run=lambda state: {"value": state["value"] + 1})
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.DEBUG) as cm:
+            list(graph.invoke({"value": 1}))
+
+        # Check for node entry log
+        self.assertTrue(
+            any("Entering node: process" in log for log in cm.output),
+            f"Expected 'Entering node: process' in logs, got: {cm.output}"
+        )
+
+    def test_logging_info_node_completion(self):
+        """Test INFO logs appear for node completion."""
+        graph = tea.StateGraph({"value": int}, log_level=logging.INFO)
+        graph.add_node("process", run=lambda state: {"value": state["value"] + 1})
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.INFO) as cm:
+            list(graph.invoke({"value": 1}))
+
+        # Check for node completion log
+        self.assertTrue(
+            any("Node 'process' completed successfully" in log for log in cm.output),
+            f"Expected node completion log in: {cm.output}"
+        )
+
+    def test_logging_parallel_flow_start_join(self):
+        """Test INFO logs appear for parallel flow start/join."""
+        graph = tea.StateGraph({"value": int}, log_level=logging.INFO)
+        graph.add_node("start", run=lambda state: {"value": state["value"]})
+        graph.add_node("flow1", run=lambda state: {"flow1": True})
+        graph.add_node("flow2", run=lambda state: {"flow2": True})
+        graph.add_fanin_node("fan_in", run=lambda state, parallel_results: {"collected": len(parallel_results)})
+        graph.add_node("end", run=lambda state: state)
+        graph.set_entry_point("start")
+        graph.add_parallel_edge("start", "flow1", "fan_in")
+        graph.add_parallel_edge("start", "flow2", "fan_in")
+        graph.add_edge("fan_in", "end")
+        graph.set_finish_point("end")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.INFO) as cm:
+            list(graph.invoke({"value": 1}))
+
+        # Check for parallel flow logs
+        self.assertTrue(
+            any("Starting" in log and "parallel flow" in log for log in cm.output),
+            f"Expected parallel flow start log in: {cm.output}"
+        )
+        self.assertTrue(
+            any("Joining" in log and "parallel flow" in log for log in cm.output),
+            f"Expected parallel flow join log in: {cm.output}"
+        )
+
+    def test_logging_error_on_exception(self):
+        """Test ERROR logs appear when node raises exception."""
+        def error_func(state):
+            raise ValueError("Test error")
+
+        graph = tea.StateGraph({"value": int}, log_level=logging.ERROR)
+        graph.add_node("error_node", run=error_func)
+        graph.set_entry_point("error_node")
+        graph.set_finish_point("error_node")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.ERROR) as cm:
+            list(graph.invoke({"value": 1}))
+
+        # Check for error log
+        self.assertTrue(
+            any("Error in node 'error_node'" in log for log in cm.output),
+            f"Expected error log in: {cm.output}"
+        )
+
+    def test_state_values_not_logged_by_default(self):
+        """Test state values are NOT logged when log_state_values=False (default)."""
+        secret_value = "super_secret_api_key_12345"
+        graph = tea.StateGraph({"secret": str}, log_level=logging.DEBUG, log_state_values=False)
+        graph.add_node("process", run=lambda state: state)
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.DEBUG) as cm:
+            list(graph.invoke({"secret": secret_value}))
+
+        # Secret should NOT appear in any log
+        all_logs = ' '.join(cm.output)
+        self.assertNotIn(
+            secret_value, all_logs,
+            f"Secret value should not be logged when log_state_values=False"
+        )
+
+    def test_state_values_logged_when_enabled(self):
+        """Test state values ARE logged when log_state_values=True."""
+        test_value = "visible_test_value_67890"
+        graph = tea.StateGraph({"data": str}, log_level=logging.DEBUG, log_state_values=True)
+        graph.add_node("process", run=lambda state: state)
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.DEBUG) as cm:
+            list(graph.invoke({"data": test_value}))
+
+        # Value should appear in logs
+        all_logs = ' '.join(cm.output)
+        self.assertIn(
+            test_value, all_logs,
+            f"Test value should be logged when log_state_values=True"
+        )
+
+    def test_stream_logging(self):
+        """Test logging works with stream() method."""
+        graph = tea.StateGraph({"value": int}, log_level=logging.DEBUG)
+        graph.add_node("process", run=lambda state: {"value": state["value"] + 1})
+        graph.set_entry_point("process")
+        graph.set_finish_point("process")
+        graph.compile()
+
+        with self.assertLogs('the_edge_agent.stategraph', level=logging.DEBUG) as cm:
+            list(graph.stream({"value": 1}))
+
+        # Check for stream-specific log
+        self.assertTrue(
+            any("Starting stream execution" in log for log in cm.output),
+            f"Expected 'Starting stream execution' in logs, got: {cm.output}"
+        )
 
 
 if __name__ == '__main__':
