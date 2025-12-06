@@ -29,40 +29,20 @@ jobs:
       - name: Build package
         run: python setup.py sdist bdist_wheel
 
-      - name: Create Release
-        id: create_release  # Add this line to assign an ID to the step
+      - name: List dist contents
+        run: ls -la dist/
+
+      - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref }}
-          name: Release ${{ github.ref }}
+          name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get Asset name
-        run: |
-          export PKG_NAME=$(ls dist/*.whl | head -n1 | xargs basename)
-          echo "PKG_NAME=${PKG_NAME}" >> $GITHUB_ENV
-
-      - name: Upload Release Asset (Wheel)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}  # Referencing the output of the Create Release step
-          asset_path: ./dist/${{ env.PKG_NAME }}
-          asset_name: ${{ env.PKG_NAME }}
-          asset_content_type: application/octet-stream
-
-      - name: Upload Release Asset (Source)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}  # Same fix here
-          asset_path: ./dist/${{ github.event.repository.name }}-${{ github.ref_name }}.tar.gz
-          asset_name: ${{ github.event.repository.name }}-${{ github.ref_name }}.tar.gz
-          asset_content_type: application/gzip
 
 
