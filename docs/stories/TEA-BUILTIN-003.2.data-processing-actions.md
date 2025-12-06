@@ -212,6 +212,11 @@ filter:
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Security - Injection prevention, path traversal
+- **P1**: Core - Basic parsing, transformation, validation
+- **P2**: Advanced - Pretty print, complex predicates
+
 **Testing Standards**:
 - Test with various edge cases
 - Include malformed input tests
@@ -220,40 +225,56 @@ filter:
 **Unit Test Cases**:
 ```python
 class TestDataProcessingActions(unittest.TestCase):
-    # JSON tests
-    def test_json_parse_valid(self): ...
-    def test_json_parse_invalid(self): ...
-    def test_json_parse_with_default(self): ...
-    def test_json_transform_simple(self): ...
-    def test_json_transform_filter(self): ...
-    def test_json_transform_invalid_expression(self): ...
-    def test_json_stringify_basic(self): ...
-    def test_json_stringify_pretty(self): ...
+    # P0 - Security tests
+    def test_json_parse_deeply_nested_attack(self): ...  # (P0) - Security: limit nesting depth
+    def test_csv_parse_path_traversal_protection(self): ...  # (P0) - Security: block ../../../etc/passwd
 
-    # CSV tests
-    def test_csv_parse_with_headers(self): ...
-    def test_csv_parse_no_headers(self): ...
-    def test_csv_parse_custom_delimiter(self): ...
-    def test_csv_parse_malformed_row(self): ...
-    def test_csv_stringify_from_dicts(self): ...
-    def test_csv_stringify_from_lists(self): ...
+    # P1 - JSON tests (Core)
+    def test_json_parse_valid(self): ...  # (P0)
+    def test_json_parse_invalid(self): ...  # (P0)
+    def test_json_parse_with_default(self): ...  # (P1)
+    def test_json_transform_simple(self): ...  # (P1)
+    def test_json_transform_filter(self): ...  # (P1)
+    def test_json_transform_invalid_expression(self): ...  # (P1)
+    def test_json_stringify_basic(self): ...  # (P1)
+    def test_json_transform_large_array(self): ...  # (P1) - Performance: verify efficiency for AC6
 
-    # Data tests
-    def test_data_validate_valid(self): ...
-    def test_data_validate_invalid(self): ...
-    def test_data_merge_deep(self): ...
-    def test_data_merge_shallow(self): ...
-    def test_data_filter_eq(self): ...
-    def test_data_filter_multiple(self): ...
+    # P1 - CSV tests (Core)
+    def test_csv_parse_with_headers(self): ...  # (P1)
+    def test_csv_parse_no_headers(self): ...  # (P1)
+    def test_csv_parse_custom_delimiter(self): ...  # (P1)
+    def test_csv_parse_malformed_row(self): ...  # (P1)
+    def test_csv_stringify_from_dicts(self): ...  # (P1)
+    def test_csv_stringify_from_lists(self): ...  # (P1)
+    def test_csv_parse_large_file_streaming(self): ...  # (P1) - Performance: verify streaming for AC6
+
+    # P1 - Data tests (Core)
+    def test_data_validate_valid(self): ...  # (P1)
+    def test_data_validate_invalid(self): ...  # (P1)
+    def test_data_merge_deep(self): ...  # (P1)
+    def test_data_merge_shallow(self): ...  # (P1)
+    def test_data_filter_eq(self): ...  # (P1)
+    def test_data_filter_multiple(self): ...  # (P1)
+
+    # P1 - Registration tests
+    def test_builtin_actions_registration(self): ...  # (P1) - AC7: Verify all 8 actions registered
+    def test_action_aliases_both_formats(self): ...  # (P1) - AC8: Verify json.parse and json_parse work
+
+    # P2 - Advanced features
+    def test_json_stringify_pretty(self): ...  # (P2)
+    def test_csv_parse_formula_injection(self): ...  # (P2) - Security: handle =CMD() in cells
 ```
 
 **Integration Test Cases**:
 ```python
 class TestDataProcessingActionsIntegration(unittest.TestCase):
-    def test_json_parse_in_yaml_workflow(self): ...
-    def test_csv_parse_with_file_read(self): ...
-    def test_data_transform_chain(self): ...
+    def test_json_parse_in_yaml_workflow(self): ...  # (P1)
+    def test_csv_parse_with_file_read(self): ...  # (P1)
+    def test_data_transform_chain(self): ...  # (P1)
+    def test_data_pipeline_workflow(self): ...  # (P1) - Integration: parse → transform → validate → stringify
 ```
+
+**Test Summary**: 31 tests (27 unit + 4 integration) | P0: 4 | P1: 24 | P2: 3
 
 ## Definition of Done
 

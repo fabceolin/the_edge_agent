@@ -140,6 +140,11 @@ def memory_summarize(state, messages_key, max_tokens=1000, model=None, **kwargs)
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Critical - Must pass for basic functionality
+- **P1**: Core - Required for production readiness
+- **P2**: Edge cases - Important but not blocking
+
 **Testing Standards**:
 - Use `unittest` framework consistent with existing tests
 - Mock OpenAI client for `memory.summarize` tests
@@ -149,24 +154,36 @@ def memory_summarize(state, messages_key, max_tokens=1000, model=None, **kwargs)
 **Unit Test Cases**:
 ```python
 class TestMemoryActions(unittest.TestCase):
-    def test_memory_store_basic(self): ...
-    def test_memory_store_with_ttl(self): ...
-    def test_memory_retrieve_found(self): ...
-    def test_memory_retrieve_not_found_default(self): ...
-    def test_memory_retrieve_expired(self): ...
-    def test_memory_summarize(self): ...
-    def test_memory_namespace_isolation(self): ...
-    def test_memory_checkpoint_persistence(self): ...
+    # P0 - Critical
+    def test_memory_store_basic(self): ...  # (P0)
+    def test_memory_retrieve_found(self): ...  # (P0)
+    def test_memory_checkpoint_persistence(self): ...  # (P0)
+
+    # P1 - Core functionality
+    def test_memory_store_with_ttl(self): ...  # (P1)
+    def test_memory_retrieve_not_found_default(self): ...  # (P1)
+    def test_memory_retrieve_expired(self): ...  # (P1)
+    def test_memory_summarize(self): ...  # (P1)
+    def test_memory_dual_namespace_access(self): ...  # (P1) - AC8: Verify both memory.* and actions.memory_* work
+    def test_memory_store_non_serializable(self): ...  # (P1) - Error handling for non-serializable data
+    def test_memory_summarize_llm_unavailable(self): ...  # (P1) - Graceful handling when OpenAI unavailable
+
+    # P2 - Edge cases
+    def test_memory_namespace_isolation(self): ...  # (P2)
+    def test_memory_backend_switching(self): ...  # (P2) - AC4: Verify custom backends can be injected
+    def test_memory_backend_failure(self): ...  # (P2) - Error handling when backend fails
 ```
 
 **Integration Test Cases**:
 ```python
 class TestMemoryActionsIntegration(unittest.TestCase):
-    def test_memory_in_yaml_workflow(self): ...
-    def test_memory_with_checkpoint_save_resume(self): ...
-    def test_memory_in_parallel_execution(self): ...
-    def test_memory_across_multiple_invokes(self): ...
+    def test_memory_in_yaml_workflow(self): ...  # (P0)
+    def test_memory_with_checkpoint_save_resume(self): ...  # (P0)
+    def test_memory_across_multiple_invokes(self): ...  # (P1)
+    def test_memory_in_parallel_execution(self): ...  # (P2)
 ```
+
+**Test Summary**: 17 tests (13 unit + 4 integration) | P0: 5 | P1: 8 | P2: 4
 
 ## Definition of Done
 

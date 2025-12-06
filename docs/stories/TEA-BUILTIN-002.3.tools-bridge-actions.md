@@ -192,6 +192,11 @@ def tools_langchain(state, tool, **params):
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Critical - Basic execution, async handling, security, timeouts
+- **P1**: Core - Schema translation, discovery, action compliance
+- **P2**: Advanced - Filtered discovery, caching
+
 **Testing Standards**:
 - Mock external libraries for unit tests
 - Skip tests if dependencies not installed
@@ -200,32 +205,52 @@ def tools_langchain(state, tool, **params):
 **Unit Test Cases**:
 ```python
 class TestToolsBridgeActions(unittest.TestCase):
+    # P0 - Critical (CrewAI)
     @unittest.skipUnless(has_crewai, "CrewAI not installed")
-    def test_tools_crewai_basic(self): ...
-    def test_tools_crewai_not_installed(self): ...
-    def test_tools_crewai_schema_translation(self): ...
+    def test_tools_crewai_basic(self): ...  # (P0)
+    def test_tools_crewai_not_installed(self): ...  # (P0)
+    def test_async_tool_in_sync_context_crewai(self): ...  # (P0) - Handle async CrewAI tools
 
+    # P0 - Critical (MCP)
     @unittest.skipUnless(has_mcp, "MCP not installed")
-    def test_tools_mcp_basic(self): ...
-    def test_tools_mcp_not_installed(self): ...
-    def test_tools_mcp_schema_translation(self): ...
+    def test_tools_mcp_basic(self): ...  # (P0)
+    def test_tools_mcp_not_installed(self): ...  # (P0)
+    def test_async_tool_in_sync_context_mcp(self): ...  # (P0) - Handle async MCP tools
 
+    # P0 - Critical (LangChain)
     @unittest.skipUnless(has_langchain, "LangChain not installed")
-    def test_tools_langchain_basic(self): ...
-    def test_tools_langchain_not_installed(self): ...
-    def test_tools_langchain_schema_translation(self): ...
+    def test_tools_langchain_basic(self): ...  # (P0)
+    def test_tools_langchain_not_installed(self): ...  # (P0)
+    def test_async_tool_in_sync_context_langchain(self): ...  # (P0) - Handle async LangChain tools
 
-    def test_tools_discover_all(self): ...
-    def test_tools_discover_filtered(self): ...
+    # P0 - Security & Timeouts
+    def test_tool_execution_timeout(self): ...  # (P0) - Respect timeout limits
+    def test_tool_parameter_injection_blocked(self): ...  # (P0) - Security: prevent malicious params
+
+    # P1 - Core functionality
+    def test_tools_crewai_schema_translation(self): ...  # (P1)
+    def test_tools_mcp_schema_translation(self): ...  # (P1)
+    def test_tools_langchain_schema_translation(self): ...  # (P1)
+    def test_tools_discover_all(self): ...  # (P1)
+    def test_action_pattern_compliance(self): ...  # (P1) - AC5: Verify exact dict structure returned
+    def test_dual_namespace_access(self): ...  # (P1) - AC8: Verify tools.* and actions.tools_* both work
+    def test_non_dict_result_wrapped(self): ...  # (P1) - Non-dict returns wrapped as {"result": value}
+    def test_invalid_yaml_config_rejected(self): ...  # (P1) - Reject malformed tool configs
+
+    # P2 - Advanced features
+    def test_tools_discover_filtered(self): ...  # (P2)
+    def test_discovery_cache_hit(self): ...  # (P2) - Verify caching works
 ```
 
 **Integration Test Cases**:
 ```python
 class TestToolsBridgeActionsIntegration(unittest.TestCase):
-    def test_tools_bridge_in_yaml_workflow(self): ...
-    def test_tools_with_llm_tools_action(self): ...
-    def test_tools_error_handling_in_workflow(self): ...
+    def test_tools_bridge_in_yaml_workflow(self): ...  # (P0)
+    def test_tools_error_handling_in_workflow(self): ...  # (P0)
+    def test_tools_with_llm_tools_action(self): ...  # (P2)
 ```
+
+**Test Summary**: 25 tests (22 unit + 3 integration) | P0: 13 | P1: 9 | P2: 3
 
 ## Definition of Done
 

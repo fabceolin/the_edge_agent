@@ -180,6 +180,11 @@ if response.choices[0].message.tool_calls:
 
 **Test File Location**: `tests/test_yaml_engine.py` (add to existing or new class)
 
+**Priority Levels**:
+- **P0**: Critical - Backward compatibility, security, error handling
+- **P1**: Core - Streaming, retry success, tool dispatch
+- **P2**: Advanced - Retry-after header, multi-turn, edge cases
+
 **Testing Standards**:
 - Mock OpenAI client for all tests
 - Simulate streaming with generator mock
@@ -189,25 +194,41 @@ if response.choices[0].message.tool_calls:
 **Unit Test Cases**:
 ```python
 class TestLLMEnhancedActions(unittest.TestCase):
-    def test_llm_stream_yields_chunks(self): ...
-    def test_llm_stream_final_result(self): ...
-    def test_llm_retry_succeeds_first_try(self): ...
-    def test_llm_retry_succeeds_after_failures(self): ...
-    def test_llm_retry_respects_max_retries(self): ...
-    def test_llm_retry_uses_retry_after_header(self): ...
-    def test_llm_tools_dispatches_to_action(self): ...
-    def test_llm_tools_multi_turn(self): ...
-    def test_llm_tools_invalid_action_error(self): ...
+    # P0 - Critical
+    def test_llm_retry_respects_max_retries(self): ...  # (P0) - Prevents infinite loops
+    def test_llm_tools_invalid_action_error(self): ...  # (P0) - Error handling
+    def test_llm_retry_handles_timeout_error(self): ...  # (P0) - Retry on connection/read timeout
+    def test_llm_retry_handles_5xx_errors(self): ...  # (P0) - Retry on 500, 502, 503
+    def test_llm_tools_action_injection_blocked(self): ...  # (P0) - Security: prevent arbitrary code reference
+
+    # P1 - Core functionality
+    def test_llm_stream_yields_chunks(self): ...  # (P1)
+    def test_llm_stream_final_result(self): ...  # (P1)
+    def test_llm_retry_succeeds_first_try(self): ...  # (P1)
+    def test_llm_retry_succeeds_after_failures(self): ...  # (P1)
+    def test_llm_tools_dispatches_to_action(self): ...  # (P1)
+    def test_llm_stream_connection_failure(self): ...  # (P1) - Handle mid-stream disconnection
+    def test_tool_schema_validation_invalid(self): ...  # (P1) - Reject invalid tool definitions
+    def test_dual_namespace_llm_stream(self): ...  # (P1) - AC8: Verify llm.stream and actions.llm_stream work
+    def test_dual_namespace_llm_retry(self): ...  # (P1) - AC8: Verify both namespaces work
+    def test_dual_namespace_llm_tools(self): ...  # (P1) - AC8: Verify both namespaces work
+
+    # P2 - Advanced features
+    def test_llm_retry_uses_retry_after_header(self): ...  # (P2)
+    def test_llm_tools_multi_turn(self): ...  # (P2)
+    def test_llm_stream_empty_response(self): ...  # (P2) - Handle empty streaming response
 ```
 
 **Integration Test Cases**:
 ```python
 class TestLLMEnhancedActionsIntegration(unittest.TestCase):
-    def test_llm_stream_in_yaml_workflow(self): ...
-    def test_llm_retry_with_checkpoint(self): ...
-    def test_llm_tools_with_registered_actions(self): ...
-    def test_existing_llm_call_unchanged(self): ...
+    def test_existing_llm_call_unchanged(self): ...  # (P0) - Backward compatibility critical
+    def test_llm_stream_in_yaml_workflow(self): ...  # (P1)
+    def test_llm_retry_with_checkpoint(self): ...  # (P1)
+    def test_llm_tools_with_registered_actions(self): ...  # (P1)
 ```
+
+**Test Summary**: 22 tests (18 unit + 4 integration) | P0: 6 | P1: 13 | P2: 3
 
 ## Definition of Done
 

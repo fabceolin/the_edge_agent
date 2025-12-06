@@ -194,6 +194,11 @@ BLOCKED_MODULES = [
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: ALL security tests - MUST pass before any deployment
+- **P1**: Core functionality - Required for basic usage
+- **P2**: Optional features - Can skip if dependencies unavailable
+
 **Testing Standards**:
 - Test security restrictions thoroughly
 - Verify dangerous operations are blocked
@@ -202,40 +207,56 @@ BLOCKED_MODULES = [
 **Unit Test Cases**:
 ```python
 class TestCodeExecutionActions(unittest.TestCase):
-    def test_code_execute_simple(self): ...
-    def test_code_execute_returns_value(self): ...
-    def test_code_execute_captures_stdout(self): ...
-    def test_code_execute_captures_stderr(self): ...
-    def test_code_execute_timeout(self): ...
-    def test_code_execute_blocks_file_access(self): ...
-    def test_code_execute_blocks_network(self): ...
-    def test_code_execute_blocks_imports(self): ...
-    def test_code_execute_blocks_exec(self): ...
-    def test_code_sandbox_create_destroy(self): ...
-    def test_code_sandbox_session_persistence(self): ...
+    # P1 - Core functionality
+    def test_code_execute_simple(self): ...  # (P1)
+    def test_code_execute_returns_value(self): ...  # (P1)
+    def test_code_execute_captures_stdout(self): ...  # (P1)
+    def test_code_execute_captures_stderr(self): ...  # (P1)
+    def test_code_execute_timeout(self): ...  # (P1)
+    def test_code_sandbox_create_destroy(self): ...  # (P1)
+    def test_code_sandbox_session_persistence(self): ...  # (P1)
+    def test_code_execute_shell_simple(self): ...  # (P1) - AC4: Basic shell script execution
+    def test_dual_namespace_access(self): ...  # (P1) - AC8: Verify code.* and actions.code_* work
+    def test_concurrent_execution_safety(self): ...  # (P1) - Multiple concurrent executions
+    def test_sandbox_cleanup_after_crash(self): ...  # (P1) - Resources cleaned on abnormal exit
+    def test_invalid_language_raises_error(self): ...  # (P1) - Error for unsupported language
+    def test_max_output_bytes_truncation(self): ...  # (P1) - Output size limits enforced
+
+    # P2 - Optional features
     @unittest.skipUnless(has_minirace, "PyMiniRacer not installed")
-    def test_code_execute_javascript(self): ...
+    def test_code_execute_javascript(self): ...  # (P2)
 ```
 
 **Integration Test Cases**:
 ```python
 class TestCodeExecutionActionsIntegration(unittest.TestCase):
-    def test_code_execute_in_yaml_workflow(self): ...
-    def test_code_sandbox_with_checkpoint(self): ...
-    def test_code_execute_with_llm_generated_code(self): ...
+    def test_code_execute_in_yaml_workflow(self): ...  # (P1)
+    def test_code_sandbox_with_checkpoint(self): ...  # (P1)
+    def test_code_execute_with_llm_generated_code(self): ...  # (P1)
 ```
 
-**Security Test Cases** (Critical):
+**Security Test Cases** (ALL P0 - Critical):
 ```python
 class TestCodeExecutionSecurity(unittest.TestCase):
-    def test_blocks_os_access(self): ...
-    def test_blocks_network_socket(self): ...
-    def test_blocks_file_write(self): ...
-    def test_blocks_subprocess(self): ...
-    def test_blocks_eval_exec(self): ...
-    def test_resource_limit_memory(self): ...
-    def test_resource_limit_cpu(self): ...
+    # P0 - ALL security tests must pass
+    def test_code_execute_blocks_file_access(self): ...  # (P0)
+    def test_code_execute_blocks_network(self): ...  # (P0)
+    def test_code_execute_blocks_imports(self): ...  # (P0)
+    def test_code_execute_blocks_exec(self): ...  # (P0)
+    def test_blocks_os_access(self): ...  # (P0)
+    def test_blocks_network_socket(self): ...  # (P0)
+    def test_blocks_file_write(self): ...  # (P0)
+    def test_blocks_subprocess(self): ...  # (P0)
+    def test_blocks_eval_exec(self): ...  # (P0)
+    def test_resource_limit_memory(self): ...  # (P0)
+    def test_resource_limit_cpu(self): ...  # (P0)
+    def test_code_execute_shell_blocks_rm(self): ...  # (P0) - Block dangerous shell commands
+    def test_code_execute_shell_blocks_sudo(self): ...  # (P0) - Block privilege escalation
+    def test_code_execute_shell_readonly_filesystem(self): ...  # (P0) - Verify filesystem restrictions
+    def test_sandbox_isolation_between_sessions(self): ...  # (P0) - Sessions don't share state
 ```
+
+**Test Summary**: 31 tests (14 unit + 3 integration + 15 security) | P0: 15 | P1: 15 | P2: 1
 
 ## Definition of Done
 

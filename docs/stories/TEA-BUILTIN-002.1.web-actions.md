@@ -145,6 +145,11 @@ secrets:
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Security-critical - SSRF prevention, robots.txt, rate limiting
+- **P1**: Core functionality - Search, scrape, selectors
+- **P2**: Advanced features - Extraction modes, JavaScript rendering
+
 **Testing Standards**:
 - Mock HTTP requests for unit tests
 - Use local HTML fixtures for scraping tests
@@ -153,26 +158,43 @@ secrets:
 **Unit Test Cases**:
 ```python
 class TestWebActions(unittest.TestCase):
-    def test_web_search_duckduckgo(self): ...
-    def test_web_search_with_provider(self): ...
-    def test_web_scrape_text(self): ...
-    def test_web_scrape_css_selector(self): ...
-    def test_web_scrape_xpath_selector(self): ...
-    def test_web_scrape_extract_links(self): ...
-    def test_web_scrape_extract_tables(self): ...
-    def test_web_scrape_respects_robots(self): ...
-    def test_web_scrape_rate_limiting(self): ...
+    # P0 - Security-critical
+    def test_web_scrape_respects_robots(self): ...  # (P0)
+    def test_web_scrape_rate_limiting(self): ...  # (P0)
+    def test_web_scrape_blocks_internal_urls(self): ...  # (P0) - SSRF prevention: block localhost/internal IPs
+    def test_web_scrape_enforces_timeout(self): ...  # (P0) - DoS prevention: respect timeout limits
+    def test_web_browse_blocks_file_urls(self): ...  # (P0) - Prevent file:// access
+
+    # P1 - Core functionality
+    def test_web_search_duckduckgo(self): ...  # (P1)
+    def test_web_search_with_provider(self): ...  # (P1)
+    def test_web_scrape_text(self): ...  # (P1)
+    def test_web_scrape_css_selector(self): ...  # (P1)
+    def test_web_scrape_xpath_selector(self): ...  # (P1)
+    def test_web_scrape_sanitizes_content(self): ...  # (P1) - Injection prevention
+    def test_web_search_provider_registration(self): ...  # (P1) - AC4: Verify plugin mechanism
+    def test_web_actions_dual_namespace(self): ...  # (P1) - AC8: Verify web.* and actions.web_* work
+    def test_web_scrape_network_error(self): ...  # (P1) - Handle network failures gracefully
+
+    # P2 - Advanced features
+    def test_web_scrape_extract_links(self): ...  # (P2)
+    def test_web_scrape_extract_tables(self): ...  # (P2)
+    def test_web_scrape_extract_images(self): ...  # (P2) - AC6: Cover all extraction modes
+    def test_web_search_zero_results(self): ...  # (P2) - Handle empty search results
+    def test_web_scrape_invalid_html(self): ...  # (P2) - Handle malformed HTML gracefully
     @unittest.skipUnless(has_playwright, "Playwright not installed")
-    def test_web_browse_javascript(self): ...
+    def test_web_browse_javascript(self): ...  # (P2)
 ```
 
 **Integration Test Cases**:
 ```python
 class TestWebActionsIntegration(unittest.TestCase):
-    def test_web_search_in_yaml_workflow(self): ...
-    def test_web_scrape_with_checkpoint(self): ...
-    def test_web_actions_rate_limit_across_nodes(self): ...
+    def test_web_actions_rate_limit_across_nodes(self): ...  # (P0)
+    def test_web_search_in_yaml_workflow(self): ...  # (P1)
+    def test_web_scrape_with_checkpoint(self): ...  # (P1)
 ```
+
+**Test Summary**: 23 tests (20 unit + 3 integration) | P0: 6 | P1: 11 | P2: 6
 
 ## Definition of Done
 

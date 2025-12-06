@@ -181,6 +181,11 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Critical - Basic embedding/store/query operations
+- **P1**: Core - Batch operations, filters, abstractions
+- **P2**: Advanced - Auto-embed, optional integrations
+
 **Testing Standards**:
 - Mock OpenAI for embedding tests
 - Use deterministic embeddings for search tests
@@ -189,27 +194,43 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 **Unit Test Cases**:
 ```python
 class TestRAGActions(unittest.TestCase):
-    def test_embedding_create_single(self): ...
-    def test_embedding_create_batch(self): ...
-    def test_vector_store_single(self): ...
-    def test_vector_store_batch(self): ...
-    def test_vector_store_auto_embed(self): ...
-    def test_vector_query_basic(self): ...
-    def test_vector_query_with_filter(self): ...
-    def test_vector_query_top_k(self): ...
-    def test_collection_isolation(self): ...
-    def test_inmemory_persistence(self): ...
+    # P0 - Critical
+    def test_embedding_create_single(self): ...  # (P0)
+    def test_vector_store_single(self): ...  # (P0)
+    def test_vector_query_basic(self): ...  # (P0)
+    def test_embedding_create_handles_api_error(self): ...  # (P0) - Handle OpenAI API failures
+
+    # P1 - Core functionality
+    def test_embedding_create_batch(self): ...  # (P1)
+    def test_vector_store_batch(self): ...  # (P1)
+    def test_vector_query_with_filter(self): ...  # (P1)
+    def test_vector_query_top_k(self): ...  # (P1)
+    def test_collection_isolation(self): ...  # (P1)
+    def test_inmemory_persistence(self): ...  # (P1)
+    def test_vector_store_rejects_mismatched_dimensions(self): ...  # (P1) - Validate embedding dimensions
+    def test_vector_query_handles_empty_store(self): ...  # (P1) - Query on empty collection
+    def test_metadata_filter_invalid_syntax(self): ...  # (P1) - Reject malformed filter expressions
+    def test_embedding_provider_protocol_compliance(self): ...  # (P1) - AC4: Verify provider abstraction
+    def test_vector_store_protocol_compliance(self): ...  # (P1) - AC5: Verify store abstraction
+    def test_action_registration_namespaces(self): ...  # (P1) - AC8: Verify both namespaces work
+    def test_vector_store_with_checkpoint(self): ...  # (P1) - Persistence across checkpoint save/load
+
+    # P2 - Advanced features
+    def test_vector_store_auto_embed(self): ...  # (P2)
+    def test_vector_store_handles_duplicate_ids(self): ...  # (P2) - Handle duplicate document IDs
+    def test_cosine_similarity_pure_python(self): ...  # (P2) - Fallback when numpy unavailable
     @unittest.skipUnless(has_chroma, "Chroma not installed")
-    def test_chroma_integration(self): ...
+    def test_chroma_integration(self): ...  # (P2)
 ```
 
 **Integration Test Cases**:
 ```python
 class TestRAGActionsIntegration(unittest.TestCase):
-    def test_rag_pipeline_in_yaml_workflow(self): ...
-    def test_vector_store_with_checkpoint(self): ...
-    def test_embedding_with_llm_call(self): ...
+    def test_rag_pipeline_in_yaml_workflow(self): ...  # (P1)
+    def test_embedding_with_llm_call(self): ...  # (P1)
 ```
+
+**Test Summary**: 24 tests (21 unit + 3 integration) | P0: 4 | P1: 16 | P2: 4
 
 ## Definition of Done
 

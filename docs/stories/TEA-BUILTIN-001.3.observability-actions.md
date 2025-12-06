@@ -175,6 +175,11 @@ nodes:
 
 **Test File Location**: `tests/test_yaml_engine.py` (add new test class)
 
+**Priority Levels**:
+- **P0**: Critical - Core tracing, resilience
+- **P1**: Core - Logging, exporters, thread safety
+- **P2**: Edge cases - Parallel execution, sanitization
+
 **Testing Standards**:
 - Use `unittest` framework
 - Capture console output for console exporter tests
@@ -184,28 +189,43 @@ nodes:
 **Unit Test Cases**:
 ```python
 class TestObservabilityActions(unittest.TestCase):
-    def test_trace_start_creates_span(self): ...
-    def test_trace_start_with_parent(self): ...
-    def test_trace_log_adds_event(self): ...
-    def test_trace_log_adds_metrics(self): ...
-    def test_trace_log_snapshots_state(self): ...
-    def test_trace_end_closes_span(self): ...
-    def test_trace_end_calculates_duration(self): ...
-    def test_hierarchical_spans(self): ...
-    def test_console_exporter(self): ...
-    def test_file_exporter(self): ...
-    def test_callback_exporter(self): ...
-    def test_auto_instrumentation(self): ...
+    # P0 - Critical
+    def test_trace_start_creates_span(self): ...  # (P0)
+    def test_trace_start_with_parent(self): ...  # (P0)
+    def test_trace_end_closes_span(self): ...  # (P0)
+    def test_trace_end_calculates_duration(self): ...  # (P0)
+    def test_hierarchical_spans(self): ...  # (P0)
+    def test_exporter_failure_handling(self): ...  # (P0) - Exporters don't crash graph execution
+
+    # P1 - Core functionality
+    def test_trace_log_adds_event(self): ...  # (P1)
+    def test_trace_log_adds_metrics(self): ...  # (P1)
+    def test_trace_log_snapshots_state(self): ...  # (P1)
+    def test_console_exporter(self): ...  # (P1)
+    def test_file_exporter(self): ...  # (P1)
+    def test_callback_exporter(self): ...  # (P1)
+    def test_auto_instrumentation(self): ...  # (P1)
+    def test_dual_namespace_access(self): ...  # (P1) - AC8: Verify trace.* and actions.trace_* work
+    def test_trace_end_without_start(self): ...  # (P1) - Graceful error handling
+    def test_span_serialization(self): ...  # (P1) - Spans can be pickled for checkpoints
+    def test_concurrent_span_creation(self): ...  # (P1) - Thread safety: multiple threads
+
+    # P2 - Edge cases
+    def test_trace_log_outside_span(self): ...  # (P2) - Behavior when no active span
+    def test_state_snapshot_sanitization(self): ...  # (P2) - Sensitive keys can be excluded
 ```
 
 **Integration Test Cases**:
 ```python
 class TestObservabilityActionsIntegration(unittest.TestCase):
-    def test_trace_in_yaml_workflow(self): ...
-    def test_trace_with_parallel_execution(self): ...
-    def test_trace_with_checkpoint(self): ...
-    def test_trace_captures_llm_usage(self): ...
+    def test_trace_in_yaml_workflow(self): ...  # (P0)
+    def test_trace_with_checkpoint(self): ...  # (P1)
+    def test_trace_captures_llm_usage(self): ...  # (P1)
+    def test_trace_with_parallel_execution(self): ...  # (P2)
+    def test_parallel_execution_isolated_spans(self): ...  # (P1) - Parallel flows don't corrupt each other
 ```
+
+**Test Summary**: 24 tests (19 unit + 5 integration) | P0: 7 | P1: 14 | P2: 3
 
 ## Definition of Done
 
