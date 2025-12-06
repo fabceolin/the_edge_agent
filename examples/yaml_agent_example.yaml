@@ -1,0 +1,114 @@
+name: simple-research-agent
+description: A simple research agent that queries, processes, and formats results
+
+variables:
+  max_results: 5
+  output_dir: ./output
+
+state_schema:
+  query: str
+  search_results: list
+  summary: str
+  formatted_output: str
+
+nodes:
+  # Node 1: Simulate search (inline Python)
+  - name: search
+    run: |
+      # Simulate search results
+      query = state["query"]
+      results = [
+        {"title": f"Result {i}", "snippet": f"Info about {query} - {i}"}
+        for i in range(1, 6)
+      ]
+      return {"search_results": results}
+
+  # Node 2: Check if we have results (expression)
+  - name: validate_results
+    run:
+      type: expression
+      value: len(state.get("search_results", [])) > 0
+      output_key: has_results
+
+  # Node 3: Multi-step summarization (GitHub Actions style)
+  - name: summarize
+    steps:
+      - name: prepare_context
+        run: |
+          results = state["search_results"][:${max_results}]
+          context = "\n".join([
+            f"- {r['title']}: {r['snippet']}"
+            for r in results
+          ])
+          return {"context": context}
+
+      - name: create_summary
+        run: |
+          # Simple summarization (in real use, would call LLM)
+          context = state["context"]
+          summary = f"Summary of '{state['query']}':\n{context}"
+          return {"summary": summary}
+
+  # Node 4: Format output
+  - name: format_output
+    run: |
+      header = f"# Research Report: {state['query']}"
+      summary_section = f"## Summary\n{state['summary']}"
+      results_header = f"## Search Results ({len(state['search_results'])} found)"
+      results_items = ""
+      for i, result in enumerate(state['search_results'], 1):
+          results_items += f"\n{i}. **{result['title']}**\n   {result['snippet']}\n"
+      output = f"{header}\n\n{summary_section}\n\n{results_header}\n{results_items}"
+      return {"formatted_output": output}
+
+  # Node 5: Save to file (built-in action)
+  - name: save_report
+    uses: file.write
+    with:
+      path: "{{ variables.output_dir }}/{{ state.query }}.md"
+      content: "{{ state.formatted_output }}"
+
+  # Node 6: Empty results handler
+  - name: handle_empty
+    run: |
+      return {
+        "formatted_output": f"No results found for query: {state['query']}"
+      }
+
+edges:
+  - from: __start__
+    to: search
+
+  - from: search
+    to: validate_results
+
+  - from: validate_results
+    to: summarize
+    condition:
+      type: expression
+      value: state["has_results"]
+    when: true
+
+  - from: validate_results
+    to: handle_empty
+    condition:
+      type: expression
+      value: state["has_results"]
+    when: false
+
+  - from: summarize
+    to: format_output
+
+  - from: format_output
+    to: save_report
+
+  - from: handle_empty
+    to: __end__
+
+  - from: save_report
+    to: __end__
+
+config:
+  raise_exceptions: true
+  interrupt_before: []
+  interrupt_after: []

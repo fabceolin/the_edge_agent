@@ -21,6 +21,7 @@ setup(
     install_requires=[
         "networkx==3.3",
         "pygraphviz==1.13",
+        "pyyaml>=6.0",
     ],
     extras_require={
         "dev": ["pytest", "coverage", "hypothesis","parameterized==0.9.0"],
