@@ -2,13 +2,26 @@
 YAML-based StateGraph engine for declarative agent workflows.
 
 Inspired by GitHub Actions and GitLab CI/CD pipelines.
+
+Supports checkpoint persistence for save/resume of workflow execution:
+- config.checkpoint_dir: Enable auto-save at interrupt points
+- config.checkpoint: Resume from a saved checkpoint
+- checkpoint.save/load actions: Manual checkpoint operations
+- {{ checkpoint.dir }}, {{ checkpoint.last }}: Template variables
+
+Example:
+    >>> engine = YAMLEngine()
+    >>> graph = engine.load_from_file("agent.yaml", checkpoint="./chk/state.pkl")
+    >>> for event in graph.invoke():
+    ...     print(event)
 """
 
 import yaml
 import importlib
 import inspect
+import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Union
 from pathlib import Path
 import json
 import ast
@@ -38,16 +51,22 @@ class YAMLEngine:
 
     Supports:
     - Inline Python code execution
-    - Built-in actions (HTTP, LLM, file operations)
-    - Template variables ({{ state.key }})
+    - Built-in actions (HTTP, LLM, file operations, checkpoint operations)
+    - Template variables ({{ state.key }}, {{ checkpoint.dir }}, {{ checkpoint.last }})
     - Conditional expressions
     - Multi-step nodes (GitHub Actions style)
     - Parallel execution with matrix strategy
+    - Checkpoint persistence for save/resume workflow execution
 
     Example:
         >>> engine = YAMLEngine()
         >>> graph = engine.load_from_file("agent_config.yaml")
         >>> result = list(graph.invoke({"query": "AI research"}))
+
+        >>> # Resume from checkpoint
+        >>> graph = engine.load_from_file("agent.yaml", checkpoint="./chk/state.pkl")
+        >>> for event in graph.invoke():
+        ...     print(event)
     """
 
     def __init__(self, actions_registry: Optional[Dict[str, Callable]] = None):
@@ -61,42 +80,92 @@ class YAMLEngine:
         if actions_registry:
             self.actions_registry.update(actions_registry)
 
-        self.variables = {}
-        self.secrets = {}
+        self.variables: Dict[str, Any] = {}
+        self.secrets: Dict[str, Any] = {}
 
-    def load_from_file(self, yaml_path: str) -> StateGraph:
+        # Checkpoint tracking
+        self._last_checkpoint_path: Optional[str] = None
+        self._current_graph: Optional[StateGraph] = None
+        self._checkpoint_dir: Optional[str] = None
+
+    def load_from_file(
+        self,
+        yaml_path: str,
+        checkpoint: Optional[str] = None
+    ) -> StateGraph:
         """
         Load a StateGraph from a YAML file.
 
         Args:
             yaml_path: Path to the YAML configuration file
+            checkpoint: Optional path to checkpoint file to resume from.
+                If provided, overrides config.checkpoint in YAML.
 
         Returns:
-            Compiled StateGraph instance
+            Compiled StateGraph instance. If checkpoint is provided,
+            the graph is configured to resume from that checkpoint
+            when invoke() or stream() is called.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> # Normal load
+            >>> graph = engine.load_from_file("agent.yaml")
+            >>> # Resume from checkpoint
+            >>> graph = engine.load_from_file("agent.yaml", checkpoint="./chk/node.pkl")
         """
         with open(yaml_path, 'r') as f:
             config = yaml.safe_load(f)
 
-        return self.load_from_dict(config)
+        return self.load_from_dict(config, checkpoint=checkpoint)
 
-    def load_from_dict(self, config: Dict[str, Any]) -> StateGraph:
+    def load_from_dict(
+        self,
+        config: Dict[str, Any],
+        checkpoint: Optional[str] = None
+    ) -> StateGraph:
         """
         Load a StateGraph from a configuration dictionary.
 
         Args:
             config: Configuration dictionary from YAML
+            checkpoint: Optional path to checkpoint file to resume from.
+                Overrides config['config']['checkpoint'] if provided.
 
         Returns:
-            Compiled StateGraph instance
+            Compiled StateGraph instance. If checkpoint is provided (or
+            config.checkpoint is set), the graph is configured to resume
+            from that checkpoint when invoke() or stream() is called.
+
+        Checkpoint precedence (highest to lowest):
+            1. checkpoint parameter
+            2. config['config']['checkpoint']
+            3. None (normal execution)
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> config = {
+            ...     'config': {'checkpoint_dir': './checkpoints'},
+            ...     'nodes': [...],
+            ...     'edges': [...]
+            ... }
+            >>> graph = engine.load_from_dict(config)
         """
         # Extract global variables
         self.variables = config.get('variables', {})
 
         # Create graph
+        compile_config = config.get('config', {})
         graph = StateGraph(
             state_schema=config.get('state_schema', {}),
-            raise_exceptions=config.get('config', {}).get('raise_exceptions', False)
+            raise_exceptions=compile_config.get('raise_exceptions', False)
         )
+
+        # Store reference for checkpoint actions
+        self._current_graph = graph
+
+        # Extract checkpoint configuration
+        checkpoint_dir = compile_config.get('checkpoint_dir')
+        self._checkpoint_dir = checkpoint_dir
 
         # Add nodes
         for node_config in config.get('nodes', []):
@@ -106,12 +175,61 @@ class YAMLEngine:
         for edge_config in config.get('edges', []):
             self._add_edge_from_config(graph, edge_config)
 
-        # Compile
-        compile_config = config.get('config', {})
-        return graph.compile(
+        # Compile with checkpoint_dir for auto-save
+        compiled_graph = graph.compile(
             interrupt_before=compile_config.get('interrupt_before', []),
-            interrupt_after=compile_config.get('interrupt_after', [])
+            interrupt_after=compile_config.get('interrupt_after', []),
+            checkpoint_dir=checkpoint_dir
         )
+
+        # Determine checkpoint path (parameter overrides config)
+        checkpoint_path = checkpoint or compile_config.get('checkpoint')
+
+        if checkpoint_path:
+            # Store checkpoint path for resume
+            compiled_graph._resume_checkpoint_path = checkpoint_path
+
+        return compiled_graph
+
+    def resume_from_checkpoint(
+        self,
+        yaml_path: str,
+        checkpoint_path: str,
+        config: Optional[Dict[str, Any]] = None
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Load YAML config, create graph, and resume execution from checkpoint.
+
+        This is a convenience method that:
+        1. Loads the YAML configuration to get graph structure
+        2. Creates and compiles the StateGraph
+        3. Resumes execution from the checkpoint
+
+        Args:
+            yaml_path: Path to YAML configuration file (defines graph structure)
+            checkpoint_path: Path to checkpoint file to resume from
+            config: Optional config overrides to merge with checkpoint config
+
+        Yields:
+            Events during execution (same as graph.invoke()):
+                - {"type": "interrupt", "node": str, "state": dict}
+                - {"type": "error", "node": str, "error": str, "state": dict}
+                - {"type": "final", "state": dict}
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> for event in engine.resume_from_checkpoint(
+            ...     "agent.yaml",
+            ...     "./checkpoints/node_a_1733500000.pkl",
+            ...     config={"new_param": "value"}
+            ... ):
+            ...     print(event)
+        """
+        # Load YAML to get graph structure
+        graph = self.load_from_file(yaml_path)
+
+        # Resume from checkpoint
+        yield from graph.resume_from_checkpoint(checkpoint_path, config)
 
     def _add_node_from_config(self, graph: StateGraph, node_config: Dict[str, Any]) -> None:
         """Add a node to the graph from configuration."""
@@ -384,7 +502,9 @@ class YAMLEngine:
         Supports:
         - {{ state.key }} - access state values
         - {{ variables.key }} - access global variables
-        - ${{ secrets.key }} - access secrets
+        - {{ secrets.key }} - access secrets
+        - {{ checkpoint.dir }} - configured checkpoint directory
+        - {{ checkpoint.last }} - most recent auto-saved checkpoint path
         - {{ state.key | json }} - apply filters
         """
         if not isinstance(text, str):
@@ -404,13 +524,20 @@ class YAMLEngine:
             else:
                 filters = []
 
+            # Build evaluation context with checkpoint support
+            eval_context = {
+                'state': DotDict(state),
+                'variables': DotDict(self.variables),
+                'secrets': DotDict(self.secrets),
+                'checkpoint': DotDict({
+                    'dir': self._checkpoint_dir or '',
+                    'last': self._last_checkpoint_path or ''
+                })
+            }
+
             # Evaluate expression
             try:
-                value = eval(expr, {
-                    'state': DotDict(state),
-                    'variables': DotDict(self.variables),
-                    'secrets': DotDict(self.secrets)
-                })
+                value = eval(expr, eval_context)
 
                 # Apply filters
                 for filter_name in filters:
@@ -548,5 +675,95 @@ class YAMLEngine:
 
         actions['actions.notify'] = notify
         actions['notify'] = notify
+
+        # Checkpoint actions
+        def checkpoint_save(state, path, graph=None, node=None, config=None, **kwargs):
+            """
+            Save checkpoint to specified path.
+
+            Args:
+                state: Current state dictionary
+                path: File path where checkpoint will be saved
+                graph: StateGraph instance (injected via context)
+                node: Current node name (injected via context)
+                config: Current config dict (injected via context)
+
+            Returns:
+                {"checkpoint_path": str, "saved": True} on success
+                {"checkpoint_path": str, "saved": False, "error": str} on failure
+            """
+            # Use injected graph or fall back to engine's current graph
+            target_graph = graph or self._current_graph
+
+            if target_graph is None:
+                return {
+                    "checkpoint_path": path,
+                    "saved": False,
+                    "error": "No graph available for checkpoint"
+                }
+
+            try:
+                # Ensure parent directory exists
+                path_obj = Path(path)
+                path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+                # Save checkpoint
+                target_graph.save_checkpoint(
+                    str(path_obj),
+                    state,
+                    node or "unknown",
+                    config or {}
+                )
+
+                # Track as last checkpoint
+                self._last_checkpoint_path = str(path_obj)
+
+                return {
+                    "checkpoint_path": str(path_obj),
+                    "saved": True
+                }
+            except Exception as e:
+                return {
+                    "checkpoint_path": path,
+                    "saved": False,
+                    "error": str(e)
+                }
+
+        def checkpoint_load(state, path, **kwargs):
+            """
+            Load checkpoint from specified path.
+
+            Args:
+                state: Current state (for template processing, not used)
+                path: File path to checkpoint
+
+            Returns:
+                {
+                    "checkpoint_state": dict,
+                    "checkpoint_node": str,
+                    "checkpoint_config": dict,
+                    "checkpoint_timestamp": float,
+                    "checkpoint_version": str
+                }
+                Or {"error": str} on failure
+            """
+            try:
+                checkpoint = StateGraph.load_checkpoint(path)
+                return {
+                    "checkpoint_state": checkpoint["state"],
+                    "checkpoint_node": checkpoint["node"],
+                    "checkpoint_config": checkpoint.get("config", {}),
+                    "checkpoint_timestamp": checkpoint.get("timestamp"),
+                    "checkpoint_version": checkpoint.get("version")
+                }
+            except FileNotFoundError:
+                return {"error": f"Checkpoint file not found: {path}"}
+            except ValueError as e:
+                return {"error": f"Invalid checkpoint file: {e}"}
+            except Exception as e:
+                return {"error": f"Failed to load checkpoint: {e}"}
+
+        actions['checkpoint.save'] = checkpoint_save
+        actions['checkpoint.load'] = checkpoint_load
 
         return actions
