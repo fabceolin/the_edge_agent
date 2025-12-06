@@ -11,6 +11,7 @@ The Edge Agent supports declarative agent configuration using YAML files, inspir
 - [Edge Types](#edge-types)
 - [Template Variables](#template-variables)
 - [Built-in Actions](#built-in-actions)
+- [Checkpoint Persistence](#checkpoint-persistence)
 - [Examples](#examples)
 
 ## Overview
@@ -414,6 +415,221 @@ nodes:
     message: "Task completed: {{ state.task_id }}"
 ```
 
+### Checkpoint Actions
+
+Save and load workflow checkpoints for persistence and recovery:
+
+```yaml
+# Save checkpoint to file
+- name: save_progress
+  uses: checkpoint.save
+  with:
+    path: ./checkpoints/{{ state.step_name }}.pkl
+  output: save_result
+
+# Load checkpoint from file
+- name: load_previous
+  uses: checkpoint.load
+  with:
+    path: ./checkpoints/previous.pkl
+  output: loaded_checkpoint
+```
+
+**checkpoint.save** returns:
+- `{"checkpoint_path": str, "saved": True}` on success
+- `{"checkpoint_path": str, "saved": False, "error": str}` on failure
+
+**checkpoint.load** returns:
+- `{"checkpoint_state": dict, "checkpoint_node": str, "checkpoint_config": dict, "checkpoint_timestamp": float, "checkpoint_version": str}` on success
+- `{"error": str}` on failure
+
+## Checkpoint Persistence
+
+YAML agents support checkpoint persistence for saving and resuming workflow execution. This is useful for:
+
+- Long-running workflows that may be interrupted
+- Debugging by stopping at specific points
+- Recovering from failures
+- Implementing human-in-the-loop workflows
+
+### Configuration
+
+Enable checkpoint features in the `config` section:
+
+```yaml
+config:
+  # Directory for auto-save checkpoints at interrupt points
+  checkpoint_dir: ./checkpoints
+
+  # Resume from a specific checkpoint on load
+  checkpoint: ./checkpoints/resume_point.pkl
+
+  # Interrupt at specific nodes (triggers auto-save)
+  interrupt_before: [critical_node]
+  interrupt_after: [validation_node]
+```
+
+### Auto-Save at Interrupts
+
+When `checkpoint_dir` is configured, checkpoints are automatically saved before yielding interrupt events:
+
+```yaml
+config:
+  checkpoint_dir: ./checkpoints
+  interrupt_before: [review_node]
+```
+
+Checkpoint files are saved as `{checkpoint_dir}/{node}_{timestamp_ms}.pkl`.
+
+### Resume from Checkpoint
+
+Resume execution from a saved checkpoint:
+
+```yaml
+config:
+  checkpoint: ./checkpoints/review_node_1733500000.pkl
+```
+
+Or in Python:
+
+```python
+engine = YAMLEngine()
+# Load with checkpoint parameter (overrides config.checkpoint)
+graph = engine.load_from_file("agent.yaml", checkpoint="./checkpoints/state.pkl")
+# Resume from checkpoint
+for event in graph.resume_from_checkpoint("./checkpoints/state.pkl"):
+    print(event)
+```
+
+### Manual Checkpoints with Actions
+
+Use `checkpoint.save` and `checkpoint.load` actions for manual control:
+
+```yaml
+nodes:
+  - name: prepare_data
+    run: |
+      return {"data": "processed", "step": "prepare"}
+
+  - name: save_before_expensive
+    uses: checkpoint.save
+    with:
+      path: "{{ checkpoint.dir }}/before_expensive.pkl"
+    output: checkpoint_info
+
+  - name: expensive_operation
+    run: |
+      # Long-running operation
+      return {"result": "completed"}
+```
+
+### Template Variables for Checkpoints
+
+Two template variables are available for checkpoint paths:
+
+- `{{ checkpoint.dir }}` - The configured `checkpoint_dir` value (empty string if not set)
+- `{{ checkpoint.last }}` - Path to the most recent checkpoint saved via `checkpoint.save` action
+
+```yaml
+config:
+  checkpoint_dir: ./checkpoints
+
+nodes:
+  - name: save_checkpoint
+    uses: checkpoint.save
+    with:
+      path: "{{ checkpoint.dir }}/{{ state.run_id }}.pkl"
+
+  - name: reference_last
+    run: |
+      last_checkpoint = "{{ checkpoint.last }}"
+      return {"last_saved": last_checkpoint}
+```
+
+### Example: Workflow with Checkpoints
+
+```yaml
+name: long-running-agent
+description: Agent with checkpoint persistence
+
+config:
+  checkpoint_dir: ./checkpoints
+  interrupt_before: [human_review]
+
+variables:
+  output_dir: ./output
+
+state_schema:
+  data: list
+  processed: list
+  approved: bool
+  result: str
+
+nodes:
+  - name: fetch_data
+    run: |
+      data = [{"id": i, "value": i * 10} for i in range(100)]
+      return {"data": data}
+
+  - name: process_batch
+    run: |
+      processed = [{"id": d["id"], "result": d["value"] * 2}
+                   for d in state["data"]]
+      return {"processed": processed}
+
+  - name: human_review
+    # Execution pauses here with auto-save checkpoint
+    # Resume later with: graph.resume_from_checkpoint("checkpoint.pkl")
+    run: |
+      # Check for approval flag set after resume
+      return {"approved": state.get("approved", False)}
+
+  - name: finalize
+    run: |
+      result = f"Processed {len(state['processed'])} items"
+      return {"result": result}
+
+edges:
+  - from: __start__
+    to: fetch_data
+  - from: fetch_data
+    to: process_batch
+  - from: process_batch
+    to: human_review
+  - from: human_review
+    to: finalize
+    when: "state['approved']"
+  - from: finalize
+    to: __end__
+```
+
+### Python API
+
+```python
+from the_edge_agent import YAMLEngine
+
+engine = YAMLEngine()
+
+# Load with checkpoint_dir configured in YAML
+graph = engine.load_from_file("agent.yaml")
+
+# Or load with explicit checkpoint to resume
+graph = engine.load_from_file("agent.yaml", checkpoint="./chk/state.pkl")
+
+# Or use load_from_dict with checkpoint parameter
+config = {...}
+graph = engine.load_from_dict(config, checkpoint="./chk/state.pkl")
+
+# Resume using the engine's convenience method
+for event in engine.resume_from_checkpoint(
+    "agent.yaml",
+    "./checkpoints/human_review_1733500000.pkl",
+    config={"approved": True}  # Override config for resume
+):
+    if event["type"] == "final":
+        print("Completed:", event["state"]["result"])
+```
+
 ## Examples
 
 ### Example 1: Simple Research Agent
@@ -673,3 +889,7 @@ Planned features:
 - [ ] Schema validation for YAML files
 - [ ] Visual workflow editor
 - [ ] Metrics and monitoring hooks
+
+Recently implemented:
+
+- [x] Checkpoint persistence for save/resume workflows (v0.5.0)
