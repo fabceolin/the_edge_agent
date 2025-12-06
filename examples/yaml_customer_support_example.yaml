@@ -168,5 +168,6 @@ edges:
 
 config:
   raise_exceptions: true
+  checkpoint_dir: ./checkpoints  # Required when using interrupts
   interrupt_before: []
   interrupt_after: [classify_intent]  # Pause after classification for review

@@ -85,6 +85,7 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         self.logger.setLevel(log_level)
         self.log_state_values = log_state_values
         self.checkpoint_dir: Optional[str] = None
+        self.checkpointer: Optional[Any] = None  # MemoryCheckpointer or compatible
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -171,43 +172,52 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         Execute the graph, yielding interrupts and the final state.
 
         Args:
-            input_state (Optional[Dict[str, Any]]): The initial state.
+            input_state (Optional[Dict[str, Any]]): The initial state. Pass None to resume
+                from a checkpoint (requires checkpoint parameter).
             config (Optional[Dict[str, Any]]): Configuration for the execution.
-            checkpoint (Optional[str]): Path to a checkpoint file to resume from.
-                If provided, execution resumes BY RE-EXECUTING the saved node
-                with the saved state. input_state is ignored when checkpoint is provided.
+            checkpoint (Optional[str]): Checkpoint identifier to resume from. Can be:
+                - File path (when using checkpoint_dir)
+                - Memory key (when using MemoryCheckpointer)
 
         Yields:
             Dict[str, Any]: Events during execution. Possible types:
-                - {"type": "interrupt", "node": str, "state": dict}: Interrupt before/after node
+                - {"type": "interrupt", "node": str, "state": dict, "checkpoint_path": str}: Interrupt
                 - {"type": "error", "node": str, "error": str, "state": dict}: Error occurred
                 - {"type": "final", "state": dict}: Execution completed successfully
 
         Raises:
             RuntimeError: If raise_exceptions=True and an error occurs in any node
                 (including parallel flows and fan-in nodes).
+            ValueError: If input_state is None without checkpoint parameter.
             FileNotFoundError: If checkpoint file doesn't exist.
-            ValueError: If checkpoint file is corrupt or incompatible.
+            KeyError: If checkpoint key doesn't exist in MemoryCheckpointer.
 
-        Error Handling:
-            When raise_exceptions=False (default):
-                - Errors yield {"type": "error", "node": <node>, "error": <msg>, "state": <state>}
-                - Execution stops after yielding the error
-            When raise_exceptions=True:
-                - Errors raise RuntimeError with message: "Error in node '<node>': <msg>"
+        Resume Pattern:
+            Interrupts STOP execution. To continue, call invoke(None, checkpoint=...).
 
         Example:
+            >>> # First invoke: runs until interrupt
+            >>> events = list(graph.invoke({"x": 1}))
+            >>> checkpoint_path = events[-1]["checkpoint_path"]
             >>> # Resume from checkpoint
-            >>> for event in graph.invoke(checkpoint="/tmp/checkpoint.pkl"):
-            ...     print(event)
+            >>> events = list(graph.invoke(None, checkpoint=checkpoint_path))
         """
-        # If checkpoint provided, resume from it
-        if checkpoint is not None:
+        # Resume case: input_state is None signals resume
+        if input_state is None:
+            if checkpoint is None:
+                raise ValueError(
+                    "checkpoint parameter required when input_state is None. "
+                    "Use invoke(None, checkpoint='...') to resume from an interrupt."
+                )
             yield from self.resume_from_checkpoint(checkpoint, config)
             return
 
-        if input_state is None:
-            input_state = {}
+        # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
+        if checkpoint is not None:
+            # If input_state is provided with checkpoint, treat it as a state update
+            yield from self.resume_from_checkpoint(checkpoint, config, state_update=input_state)
+            return
+
         if config is None:
             config = {}
 
@@ -232,8 +242,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                 # Get node data
                 node_data = self.node(current_node)
@@ -260,8 +271,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                 # Determine next node
                 successors = self.successors(current_node)
@@ -362,8 +374,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                         # Check for interrupt before fan-in execution
                         if current_node in self.interrupt_before:
-                            self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                         # Execute the fan-in node's run function
                         node_data = self.node(current_node)
@@ -384,8 +397,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                         # Check for interrupt after fan-in execution
                         if current_node in self.interrupt_after:
-                            self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                         # Continue to next node
                         next_node = self._get_next_node(current_node, state, config)
@@ -678,35 +692,58 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             raise ValueError(f"Node '{final_state}' does not exist in the graph.")
         self.graph.add_edge(final_state, END, cond=lambda **kwargs: True, cond_map={True: END})
 
-    def compile(self, interrupt_before: List[str] = [], interrupt_after: List[str] = [], checkpoint_dir: Optional[str] = None) -> 'StateGraph':
+    def compile(self, interrupt_before: List[str] = [], interrupt_after: List[str] = [],
+                checkpoint_dir: Optional[str] = None, checkpointer: Optional[Any] = None) -> 'StateGraph':
         """
         Compile the graph and set interruption points.
 
         Args:
             interrupt_before (List[str]): Nodes to interrupt before execution.
             interrupt_after (List[str]): Nodes to interrupt after execution.
-            checkpoint_dir (Optional[str]): Directory for auto-saving checkpoints at interrupt points.
+            checkpoint_dir (Optional[str]): Directory for file-based checkpoint storage.
                 When set, checkpoints are automatically saved before yielding interrupt events.
                 Files are named: `{node}_{timestamp}.pkl`
-                Set to None (default) to disable auto-save.
+            checkpointer (Optional[Any]): A checkpointer instance (e.g., MemoryCheckpointer)
+                for in-memory or custom checkpoint storage.
 
         Returns:
             StateGraph: The compiled graph instance.
 
         Raises:
             ValueError: If any interrupt node doesn't exist in the graph.
+            ValueError: If interrupts are defined without a checkpointer.
+
+        Note:
+            When using interrupt_before or interrupt_after, you MUST provide either
+            checkpoint_dir (for file-based storage) or checkpointer (for in-memory/custom storage).
+            Interrupts STOP execution until explicitly resumed via invoke(None, checkpoint=...).
 
         Example:
+            >>> from the_edge_agent import MemoryCheckpointer
+            >>> checkpointer = MemoryCheckpointer()
+            >>> graph.compile(interrupt_before=["node_a"], checkpointer=checkpointer)
+            >>> # Or use file-based storage:
             >>> graph.compile(interrupt_before=["node_a"], checkpoint_dir="/tmp/checkpoints")
-            >>> # Checkpoints will auto-save at interrupts
         """
         for node in interrupt_before + interrupt_after:
             if node not in self.graph.nodes:
                 raise ValueError(f"Interrupt node '{node}' does not exist in the graph.")
 
+        # Validate: interrupts require a checkpointer
+        has_interrupts = bool(interrupt_before or interrupt_after)
+        has_checkpointer = bool(checkpoint_dir or checkpointer)
+
+        if has_interrupts and not has_checkpointer:
+            raise ValueError(
+                "A checkpointer is required when using interrupt_before or interrupt_after. "
+                "Provide either checkpoint_dir='/path' for file-based storage "
+                "or checkpointer=MemoryCheckpointer() for in-memory storage."
+            )
+
         self.interrupt_before = interrupt_before
         self.interrupt_after = interrupt_after
         self.checkpoint_dir = checkpoint_dir
+        self.checkpointer = checkpointer
         return self
 
     def node(self, node_name: str) -> Dict[str, Any]:
@@ -802,17 +839,28 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             parallel_state events from different branches is not guaranteed.
 
         Example:
-            >>> # Resume streaming from checkpoint
-            >>> for event in graph.stream(checkpoint="/tmp/checkpoint.pkl"):
-            ...     print(event["type"], event.get("node"))
+            >>> # First stream: runs until interrupt
+            >>> events = list(graph.stream({"x": 1}))
+            >>> checkpoint_path = events[-1]["checkpoint_path"]
+            >>> # Resume from checkpoint
+            >>> events = list(graph.stream(None, checkpoint=checkpoint_path))
         """
-        # If checkpoint provided, resume from it using streaming
-        if checkpoint is not None:
+        # Resume case: input_state is None signals resume
+        if input_state is None:
+            if checkpoint is None:
+                raise ValueError(
+                    "checkpoint parameter required when input_state is None. "
+                    "Use stream(None, checkpoint='...') to resume from an interrupt."
+                )
             yield from self._stream_from_checkpoint(checkpoint, config)
             return
 
-        if input_state is None:
-            input_state = {}
+        # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
+        if checkpoint is not None:
+            # If input_state is provided with checkpoint, treat it as a state update
+            yield from self._stream_from_checkpoint(checkpoint, config, state_update=input_state)
+            return
+
         if config is None:
             config = {}
 
@@ -840,8 +888,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                 # Get node data
                 node_data = self.node(current_node)
@@ -870,8 +919,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                 # Determine next node - check for parallel edges
                 successors = self.successors(current_node)
@@ -1002,8 +1052,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         run_func = node_data.get("run")
 
                         if current_node in self.interrupt_before:
-                            self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt_before", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                         if run_func:
                             self.logger.debug(f"Entering fan-in node: {current_node}")
@@ -1021,8 +1072,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                     return
 
                         if current_node in self.interrupt_after:
-                            self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                            yield {"type": "interrupt_after", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                         # Continue to next node after fan-in
                         next_node = self._get_next_node(current_node, state, config)

@@ -75,7 +75,7 @@ python setup.py sdist bdist_wheel
 
 ### Key Design Patterns
 
-1. **Interrupts**: Set via `compile(interrupt_before=[], interrupt_after=[])` for debugging/control flow
+1. **Interrupts**: Set via `compile(interrupt_before=[], interrupt_after=[], checkpointer=...)` for human-in-the-loop workflows. Interrupts STOP execution completely and require explicit resume via `invoke(None, checkpoint=...)`. A checkpointer is required when using interrupts.
 2. **Exception Handling**: Controlled by `raise_exceptions` parameter (False by default)
 3. **Graph Visualization**: `render_graphviz()` and `save_graph_image()` for debugging workflows
 
@@ -157,42 +157,65 @@ YAML files execute arbitrary Python code via `exec()` and `eval()`. Only load YA
 
 ## Checkpoint Persistence
 
-The Edge Agent supports checkpoint persistence for saving and resuming workflow execution.
+The Edge Agent supports checkpoint persistence for saving and resuming workflow execution. Checkpointing is required when using interrupts.
 
-### Saving and Loading Checkpoints
+### Checkpointer Types
 
 ```python
-# Save a checkpoint manually
-graph.save_checkpoint("/tmp/checkpoint.pkl", state, "node_name", config)
+# In-memory checkpointer (for testing and simple use cases)
+from the_edge_agent import MemoryCheckpointer
+checkpointer = MemoryCheckpointer()
 
-# Load a checkpoint
-checkpoint = tea.StateGraph.load_checkpoint("/tmp/checkpoint.pkl")
-# Returns: {"state": dict, "node": str, "config": dict, "timestamp": float, "version": str}
+# File-based checkpoints (for persistent storage)
+checkpoint_dir = "/tmp/checkpoints"
+```
 
-# Resume from checkpoint
-for event in graph.resume_from_checkpoint("/tmp/checkpoint.pkl"):
-    print(event)
+### Stop/Resume with Interrupts (LangGraph-Compatible)
 
-# Or use invoke/stream with checkpoint parameter
-for event in graph.invoke(checkpoint="/tmp/checkpoint.pkl"):
-    print(event)
+Interrupts now STOP execution completely and require explicit resume:
 
-for event in graph.stream(checkpoint="/tmp/checkpoint.pkl"):
-    print(event)
+```python
+from the_edge_agent import StateGraph, MemoryCheckpointer
+
+graph = StateGraph({"value": int, "approved": bool})
+graph.add_node("node_a", run=node_a_func)
+graph.add_node("node_b", run=node_b_func)  # Needs approval
+graph.set_entry_point("node_a")
+graph.add_edge("node_a", "node_b")
+graph.set_finish_point("node_b")
+
+# Compile with checkpointer - REQUIRED when using interrupts
+checkpointer = MemoryCheckpointer()
+graph.compile(interrupt_before=["node_b"], checkpointer=checkpointer)
+
+# First execution - stops at node_b
+events = list(graph.invoke({"value": 1}))
+interrupt_event = events[-1]
+# interrupt_event = {"type": "interrupt", "node": "node_b", "state": {...}, "checkpoint_path": "..."}
+
+# Resume with state update (human-in-the-loop pattern)
+# Pass new state values to merge into checkpoint state
+resume_events = list(graph.invoke({"approved": True}, checkpoint=interrupt_event["checkpoint_path"]))
+# State now has both value=1 AND approved=True
 ```
 
 ### Auto-Save at Interrupts
 
 ```python
-# Enable auto-save at interrupt points
+# With file-based checkpoints
 graph.compile(
     interrupt_before=["node_b"],
-    interrupt_after=["node_a"],
     checkpoint_dir="/tmp/checkpoints"
 )
 
-# Checkpoints are saved automatically before yielding interrupt events
-# Filename format: {node}_{timestamp_ms}.pkl
+# With in-memory checkpointer
+graph.compile(
+    interrupt_before=["node_b"],
+    checkpointer=MemoryCheckpointer()
+)
+
+# Checkpoints are saved automatically when interrupt is triggered
+# File checkpoint format: {node}_{timestamp_ms}.pkl
 ```
 
 ### Checkpoint with Parallel Flows
@@ -203,9 +226,27 @@ graph.compile(
 
 ### Resumption Behavior
 
-- Resume re-executes the saved node (not after it)
-- Config can be overridden: `resume_from_checkpoint(path, config={"key": "val"})`
-- Provided config is merged with saved config (provided takes precedence)
+- `interrupt_before`: Resume re-executes the interrupted node
+- `interrupt_after`: Resume continues to the next node (doesn't re-execute)
+- **State update on resume**: `invoke({"key": "val"}, checkpoint=path)` merges new state into checkpoint
+- Config can be overridden: `invoke({"key": "val"}, checkpoint=path, config={"cfg": "val"})`
+
+### Human-in-the-Loop Pattern
+
+```python
+# 1. Run until interrupt (needs human decision)
+events = list(graph.invoke({"data": "input"}))
+checkpoint = events[-1]["checkpoint_path"]
+state = events[-1]["state"]
+
+# 2. Human reviews state and makes decision...
+print(f"Review required: {state}")
+user_decision = {"approved": True, "feedback": "Looks good"}
+
+# 3. Resume with human input merged into state
+result = list(graph.invoke(user_decision, checkpoint=checkpoint))
+# Resumed state has original data + user_decision merged in
+```
 
 ## Important Implementation Details
 

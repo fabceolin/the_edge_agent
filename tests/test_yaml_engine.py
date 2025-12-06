@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch, MagicMock
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from the_edge_agent import YAMLEngine, StateGraph, START, END
+from the_edge_agent import YAMLEngine, StateGraph, START, END, MemoryCheckpointer
 from the_edge_agent.yaml_engine import DotDict
 
 
@@ -190,7 +190,8 @@ class TestLoadFromDict:
                 {'from': 'node_b', 'to': '__end__'}
             ]
         }
-        graph = engine.load_from_dict(config)
+        # Interrupts require a checkpointer
+        graph = engine.load_from_dict(config, checkpointer=MemoryCheckpointer())
         assert 'node_a' in graph.interrupt_before
         assert 'node_b' in graph.interrupt_after
 
@@ -1022,13 +1023,24 @@ class TestE2EExamples:
         if not yaml_path.exists():
             pytest.skip("Example file not found")
 
-        graph = engine.load_from_file(str(yaml_path))
+        # YAML file has interrupt_after, so we need checkpointer
+        checkpointer = MemoryCheckpointer()
+        graph = engine.load_from_file(str(yaml_path), checkpointer=checkpointer)
 
-        # Test billing path
+        # Test billing path - executes until interrupt_after classify_intent
         events = list(graph.stream({
             'customer_id': 'CUST-001',
             'customer_message': 'I was charged twice for my bill!'
         }))
+
+        # Find interrupt event and resume
+        interrupt_event = next((e for e in events if e.get('type', '').startswith('interrupt')), None)
+        if interrupt_event:
+            # Resume from checkpoint
+            checkpoint_path = interrupt_event.get('checkpoint_path')
+            resume_events = list(graph.stream(None, checkpoint=checkpoint_path))
+            events.extend(resume_events)
+
         final_state = events[-1]['state']
         assert final_state['intent'] == 'billing'
         assert 'BILL-' in final_state.get('ticket_id', '')
@@ -1147,7 +1159,8 @@ class TestCheckpointConfig:
                     {'from': 'node_c', 'to': '__end__'}
                 ]
             }
-            graph1 = engine.load_from_dict(config1)
+            # Interrupts require a checkpointer
+            graph1 = engine.load_from_dict(config1, checkpointer=MemoryCheckpointer())
 
             # Run until interrupt
             events1 = list(graph1.invoke({}))
@@ -1701,7 +1714,8 @@ class TestCheckpointIntegration:
                 ]
             }
 
-            graph = engine.load_from_dict(config)
+            # Interrupts require a checkpointer
+            graph = engine.load_from_dict(config, checkpointer=MemoryCheckpointer())
             events = list(graph.invoke({}))
 
             # Should interrupt at fan_in, after parallel flows complete

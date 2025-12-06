@@ -62,6 +62,7 @@ class CheckpointMixin:
     logger: logging.Logger
     raise_exceptions: bool
     checkpoint_dir: Optional[str]
+    checkpointer: Optional[Any]  # MemoryCheckpointer or compatible
     log_state_values: bool
     max_workers: Optional[int]
     interrupt_before: List[str]
@@ -103,6 +104,10 @@ class CheckpointMixin:
         }
 
         try:
+            # Ensure directory exists
+            dir_path = os.path.dirname(file_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
             with open(file_path, 'wb') as f:
                 pickle.dump(checkpoint, f)
             self.logger.info(f"Checkpoint saved to '{file_path}' at node '{node}'")
@@ -114,9 +119,11 @@ class CheckpointMixin:
 
     def _auto_save_checkpoint(self, state: Dict[str, Any], node: str, config: Dict[str, Any]) -> Optional[str]:
         """
-        Auto-save checkpoint if checkpoint_dir is configured.
+        Auto-save checkpoint using configured checkpointer or checkpoint_dir.
 
-        Called internally before yielding interrupt events when checkpoint_dir is set.
+        Called internally before yielding interrupt events. Supports both:
+        - File-based storage (when checkpoint_dir is set)
+        - In-memory storage (when checkpointer is set, e.g., MemoryCheckpointer)
 
         Args:
             state (Dict[str, Any]): Current state dictionary.
@@ -124,17 +131,26 @@ class CheckpointMixin:
             config (Dict[str, Any]): Current configuration.
 
         Returns:
-            Optional[str]: Path to saved checkpoint file, or None if auto-save is disabled.
+            Optional[str]: Checkpoint identifier (file path or memory key),
+                or None if no checkpointer is configured.
         """
-        if self.checkpoint_dir is None:
-            return None
-
         timestamp_ms = int(time.time() * 1000)
-        filename = f"{node}_{timestamp_ms}.pkl"
-        file_path = os.path.join(self.checkpoint_dir, filename)
 
-        self.save_checkpoint(file_path, state, node, config)
-        return file_path
+        # Check for in-memory checkpointer first
+        if self.checkpointer is not None:
+            checkpoint_id = f"{node}_{timestamp_ms}"
+            self.checkpointer.save(checkpoint_id, state, node, config)
+            self.logger.info(f"Checkpoint saved to memory: '{checkpoint_id}'")
+            return checkpoint_id
+
+        # Fall back to file-based storage
+        if self.checkpoint_dir is not None:
+            filename = f"{node}_{timestamp_ms}.pkl"
+            file_path = os.path.join(self.checkpoint_dir, filename)
+            self.save_checkpoint(file_path, state, node, config)
+            return file_path
+
+        return None
 
     @classmethod
     def load_checkpoint(cls, file_path: str) -> Dict[str, Any]:
@@ -180,7 +196,7 @@ class CheckpointMixin:
 
         return checkpoint
 
-    def resume_from_checkpoint(self, file_path: str, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def resume_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None, state_update: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Resume execution from a saved checkpoint.
 
@@ -188,27 +204,37 @@ class CheckpointMixin:
         (not after it). The saved state is restored, and execution proceeds normally from there.
 
         Args:
-            file_path (str): Path to the checkpoint file.
+            checkpoint_id (str): Checkpoint identifier. Can be:
+                - Memory key (when using MemoryCheckpointer)
+                - File path (when using checkpoint_dir)
             config (Optional[Dict[str, Any]]): Optional config override. If provided, merges
                 with saved config (provided config takes precedence).
+            state_update (Optional[Dict[str, Any]]): Optional state updates to merge into the
+                checkpoint state before resuming. This is useful for human-in-the-loop workflows.
 
         Yields:
             Dict[str, Any]: Events during execution (same as invoke()):
-                - {"type": "interrupt", "node": str, "state": dict}: Interrupt before/after node
+                - {"type": "interrupt", "node": str, "state": dict, "checkpoint_path": str}: Interrupt
                 - {"type": "error", "node": str, "error": str, "state": dict}: Error occurred
                 - {"type": "final", "state": dict}: Execution completed successfully
 
         Raises:
+            KeyError: If checkpoint not found in MemoryCheckpointer.
             FileNotFoundError: If checkpoint file doesn't exist.
-            ValueError: If checkpoint file is corrupt, incompatible, or node doesn't exist.
+            ValueError: If checkpoint is corrupt, incompatible, or node doesn't exist.
             RuntimeError: If raise_exceptions=True and an error occurs.
 
         Example:
             >>> # Resume from saved checkpoint
-            >>> for event in graph.resume_from_checkpoint("/tmp/checkpoint.pkl"):
+            >>> for event in graph.resume_from_checkpoint(checkpoint_path):
             ...     print(event["type"])
         """
-        checkpoint = self.load_checkpoint(file_path)
+        # Try MemoryCheckpointer first
+        if self.checkpointer is not None:
+            checkpoint = self.checkpointer.load(checkpoint_id)
+        else:
+            # Fall back to file-based loading
+            checkpoint = self.load_checkpoint(checkpoint_id)
 
         # Validate saved node exists in this graph
         saved_node = checkpoint["node"]
@@ -222,13 +248,18 @@ class CheckpointMixin:
 
         self.logger.info(f"Resuming from checkpoint at node '{saved_node}'")
 
+        state = checkpoint["state"].copy()
+        if state_update:
+            state.update(state_update)
+
         yield from self._invoke_from_node(
-            checkpoint["state"].copy(),
+            state,
             merged_config,
             saved_node
         )
 
-    def _invoke_from_node(self, state: Dict[str, Any], config: Dict[str, Any], start_node: str) -> Generator[Dict[str, Any], None, None]:
+    def _invoke_from_node(self, state: Dict[str, Any], config: Dict[str, Any], start_node: str,
+                          skip_first_interrupt: bool = True) -> Generator[Dict[str, Any], None, None]:
         """
         Internal method to execute the graph starting from a specific node.
 
@@ -240,6 +271,8 @@ class CheckpointMixin:
             state (Dict[str, Any]): The state to resume with.
             config (Dict[str, Any]): Configuration for the execution.
             start_node (str): The node to start execution from (will be re-executed).
+            skip_first_interrupt (bool): If True, skip interrupt_before check on start_node.
+                This is used when resuming from an interrupt to avoid re-triggering it.
 
         Yields:
             Dict[str, Any]: Events during execution.
@@ -248,6 +281,7 @@ class CheckpointMixin:
         END = "__end__"
 
         current_node = start_node
+        is_first_node = skip_first_interrupt  # Track if we're on the first node
 
         # Log execution start
         self.logger.debug(f"Resuming execution from node '{start_node}' with state keys: {list(state.keys())}")
@@ -261,10 +295,29 @@ class CheckpointMixin:
             fanin_lock = threading.Lock()
 
             while current_node != END:
-                # Check for interrupt before
-                if current_node in self.interrupt_before:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                # Check for interrupt before (skip on first node when resuming)
+                if current_node in self.interrupt_before and not is_first_node:
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via invoke(None, checkpoint=...)
+
+                # For interrupt_after resumes: skip execution and go to next node
+                # (the node was already executed before the interrupt was saved)
+                if is_first_node and current_node in self.interrupt_after:
+                    is_first_node = False
+                    next_node = self._get_next_node(current_node, state, config)
+                    if not next_node:
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
+                    current_node = next_node
+                    continue
+
+                # After first node, enable interrupt checks
+                is_first_node = False
 
                 # Get node data
                 node_data = self.node(current_node)
@@ -291,8 +344,9 @@ class CheckpointMixin:
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                 # Determine next node
                 successors = self.successors(current_node)
@@ -421,7 +475,7 @@ class CheckpointMixin:
             self.logger.debug(f"Final state: {state}")
         yield {"type": "final", "state": state.copy()}
 
-    def _stream_from_checkpoint(self, file_path: str, config: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
+    def _stream_from_checkpoint(self, checkpoint_id: str, config: Optional[Dict[str, Any]] = None, state_update: Optional[Dict[str, Any]] = None) -> Generator[Dict[str, Any], None, None]:
         """
         Resume streaming execution from a saved checkpoint.
 
@@ -429,13 +483,20 @@ class CheckpointMixin:
         Uses streaming event types (interrupt_before/after, state) rather than invoke types.
 
         Args:
-            file_path (str): Path to the checkpoint file.
+            checkpoint_id (str): Checkpoint identifier (memory key or file path).
             config (Optional[Dict[str, Any]]): Optional config override.
+            state_update (Optional[Dict[str, Any]]): Optional state updates to merge into the
+                checkpoint state before resuming.
 
         Yields:
             Dict[str, Any]: Streaming events during execution.
         """
-        checkpoint = self.load_checkpoint(file_path)
+        # Try MemoryCheckpointer first
+        if self.checkpointer is not None:
+            checkpoint = self.checkpointer.load(checkpoint_id)
+        else:
+            # Fall back to file-based loading
+            checkpoint = self.load_checkpoint(checkpoint_id)
 
         # Validate saved node exists
         saved_node = checkpoint["node"]
@@ -449,13 +510,18 @@ class CheckpointMixin:
 
         self.logger.info(f"Resuming stream from checkpoint at node '{saved_node}'")
 
+        state = checkpoint["state"].copy()
+        if state_update:
+            state.update(state_update)
+
         yield from self._stream_from_node(
-            checkpoint["state"].copy(),
+            state,
             merged_config,
             saved_node
         )
 
-    def _stream_from_node(self, state: Dict[str, Any], config: Dict[str, Any], start_node: str) -> Generator[Dict[str, Any], None, None]:
+    def _stream_from_node(self, state: Dict[str, Any], config: Dict[str, Any], start_node: str,
+                          skip_first_interrupt: bool = True) -> Generator[Dict[str, Any], None, None]:
         """
         Internal method to stream the graph starting from a specific node.
 
@@ -466,6 +532,8 @@ class CheckpointMixin:
             state (Dict[str, Any]): The state to resume with.
             config (Dict[str, Any]): Configuration for the execution.
             start_node (str): The node to start execution from (will be re-executed).
+            skip_first_interrupt (bool): If True, skip interrupt_before check on start_node.
+                This is used when resuming from an interrupt to avoid re-triggering it.
 
         Yields:
             Dict[str, Any]: Streaming events during execution.
@@ -474,6 +542,7 @@ class CheckpointMixin:
         END = "__end__"
 
         current_node = start_node
+        is_first_node = skip_first_interrupt  # Track if we're on the first node
 
         self.logger.debug(f"Resuming stream from node '{start_node}' with state keys: {list(state.keys())}")
         if self.log_state_values:
@@ -487,10 +556,29 @@ class CheckpointMixin:
             stream_lock = threading.Lock()
 
             while current_node != END:
-                # Check for interrupt before
-                if current_node in self.interrupt_before:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+                # Check for interrupt before (skip on first node when resuming)
+                if current_node in self.interrupt_before and not is_first_node:
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via stream(None, checkpoint=...)
+
+                # For interrupt_after resumes: skip execution and go to next node
+                # (the node was already executed before the interrupt was saved)
+                if is_first_node and current_node in self.interrupt_after:
+                    is_first_node = False
+                    next_node = self._get_next_node(current_node, state, config)
+                    if not next_node:
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
+                    current_node = next_node
+                    continue
+
+                # After first node, enable interrupt checks
+                is_first_node = False
 
                 # Get node data
                 node_data = self.node(current_node)
@@ -518,8 +606,9 @@ class CheckpointMixin:
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
+                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                 # Determine next node
                 successors = self.successors(current_node)

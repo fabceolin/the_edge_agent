@@ -326,21 +326,261 @@ class TestStateGraphCheckpoint(unittest.TestCase):
             self.assertIn("override_key", config_seen)
 
     def test_no_checkpoint_when_checkpoint_dir_none(self):
-        """Test that no checkpoint files are created when checkpoint_dir is None."""
+        """Test that no checkpoint files are created when using MemoryCheckpointer."""
         graph = tea.StateGraph({"value": int})
         graph.add_node("node_a", run=lambda state: state)
         graph.set_entry_point("node_a")
         graph.set_finish_point("node_a")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Compile WITHOUT checkpoint_dir
-            graph.compile(interrupt_before=["node_a"])
+            # Compile with MemoryCheckpointer (not file-based)
+            checkpointer = tea.MemoryCheckpointer()
+            graph.compile(interrupt_before=["node_a"], checkpointer=checkpointer)
 
             list(graph.invoke({"value": 5}))
 
-            # No files should be created in tmpdir (we didn't set checkpoint_dir)
-            # The tmpdir was just created for checking, nothing should be in it
+            # No files should be created in tmpdir when using MemoryCheckpointer
             self.assertEqual(len(os.listdir(tmpdir)), 0)
+
+
+class TestStopResumeBehavior(unittest.TestCase):
+    """Tests for LangGraph-compatible stop/resume interrupt behavior (YE.3)."""
+
+    def test_interrupt_before_stops_execution(self):
+        """Test that interrupt_before stops execution completely (doesn't continue)."""
+        graph = tea.StateGraph({"value": int})
+        execution_order = []
+
+        def node_a(state):
+            execution_order.append("a")
+            return {"value": 1}
+
+        def node_b(state):
+            execution_order.append("b")
+            return {"value": 2}
+
+        def node_c(state):
+            execution_order.append("c")
+            return {"value": 3}
+
+        graph.add_node("node_a", run=node_a)
+        graph.add_node("node_b", run=node_b)
+        graph.add_node("node_c", run=node_c)
+        graph.set_entry_point("node_a")
+        graph.add_edge("node_a", "node_b")
+        graph.add_edge("node_b", "node_c")
+        graph.set_finish_point("node_c")
+
+        checkpointer = tea.MemoryCheckpointer()
+        graph.compile(interrupt_before=["node_b"], checkpointer=checkpointer)
+
+        events = list(graph.invoke({}))
+
+        # Only node_a should have executed
+        self.assertEqual(execution_order, ["a"])
+
+        # Should have an interrupt event
+        interrupt_events = [e for e in events if e.get("type") == "interrupt"]
+        self.assertEqual(len(interrupt_events), 1)
+        self.assertEqual(interrupt_events[0]["node"], "node_b")
+
+    def test_invoke_none_with_checkpoint_resumes(self):
+        """Test that invoke(None, checkpoint=...) resumes from checkpoint."""
+        graph = tea.StateGraph({"value": int})
+        execution_order = []
+
+        def node_a(state):
+            execution_order.append("a")
+            return {"value": 1}
+
+        def node_b(state):
+            execution_order.append("b")
+            return {"value": 2}
+
+        def node_c(state):
+            execution_order.append("c")
+            return {"value": 3}
+
+        graph.add_node("node_a", run=node_a)
+        graph.add_node("node_b", run=node_b)
+        graph.add_node("node_c", run=node_c)
+        graph.set_entry_point("node_a")
+        graph.add_edge("node_a", "node_b")
+        graph.add_edge("node_b", "node_c")
+        graph.set_finish_point("node_c")
+
+        checkpointer = tea.MemoryCheckpointer()
+        graph.compile(interrupt_before=["node_b"], checkpointer=checkpointer)
+
+        # First execution - stops at node_b
+        events1 = list(graph.invoke({}))
+        interrupt_event = events1[-1]
+        checkpoint_path = interrupt_event.get("checkpoint_path")
+        self.assertIsNotNone(checkpoint_path)
+
+        # Resume execution using invoke(None, checkpoint=...)
+        events2 = list(graph.invoke(None, checkpoint=checkpoint_path))
+
+        # node_b and node_c should have executed on resume
+        self.assertEqual(execution_order, ["a", "b", "c"])
+
+        # Should have final event
+        final_events = [e for e in events2 if e.get("type") == "final"]
+        self.assertEqual(len(final_events), 1)
+        self.assertEqual(final_events[0]["state"]["value"], 3)
+
+    def test_stream_none_with_checkpoint_resumes(self):
+        """Test that stream(None, checkpoint=...) resumes from checkpoint."""
+        graph = tea.StateGraph({"value": int})
+
+        graph.add_node("node_a", run=lambda state: {"value": 1})
+        graph.add_node("node_b", run=lambda state: {"value": 2})
+        graph.set_entry_point("node_a")
+        graph.add_edge("node_a", "node_b")
+        graph.set_finish_point("node_b")
+
+        checkpointer = tea.MemoryCheckpointer()
+        graph.compile(interrupt_before=["node_b"], checkpointer=checkpointer)
+
+        # First execution
+        events1 = list(graph.stream({}))
+        checkpoint_path = events1[-1].get("checkpoint_path")
+
+        # Resume with stream
+        events2 = list(graph.stream(None, checkpoint=checkpoint_path))
+
+        final_event = events2[-1]
+        self.assertEqual(final_event["type"], "final")
+        self.assertEqual(final_event["state"]["value"], 2)
+
+    def test_checkpoint_required_for_interrupts(self):
+        """Test that ValueError is raised when interrupts used without checkpointer."""
+        graph = tea.StateGraph({"value": int})
+        graph.add_node("node_a", run=lambda state: state)
+        graph.set_entry_point("node_a")
+        graph.set_finish_point("node_a")
+
+        with self.assertRaises(ValueError) as ctx:
+            graph.compile(interrupt_before=["node_a"])
+
+        self.assertIn("checkpointer", str(ctx.exception).lower())
+
+    def test_invoke_none_without_checkpoint_raises(self):
+        """Test that invoke(None) without checkpoint parameter raises ValueError."""
+        graph = tea.StateGraph({"value": int})
+        graph.add_node("node_a", run=lambda state: state)
+        graph.set_entry_point("node_a")
+        graph.set_finish_point("node_a")
+        graph.compile()
+
+        with self.assertRaises(ValueError) as ctx:
+            list(graph.invoke(None))
+
+        self.assertIn("checkpoint", str(ctx.exception).lower())
+
+    def test_multiple_interrupts_require_multiple_resumes(self):
+        """Test that multiple interrupts each require a separate resume."""
+        graph = tea.StateGraph({"value": int})
+        execution_order = []
+
+        def node_a(state):
+            execution_order.append("a")
+            return {"value": 1}
+
+        def node_b(state):
+            execution_order.append("b")
+            return {"value": 2}
+
+        def node_c(state):
+            execution_order.append("c")
+            return {"value": 3}
+
+        graph.add_node("node_a", run=node_a)
+        graph.add_node("node_b", run=node_b)
+        graph.add_node("node_c", run=node_c)
+        graph.set_entry_point("node_a")
+        graph.add_edge("node_a", "node_b")
+        graph.add_edge("node_b", "node_c")
+        graph.set_finish_point("node_c")
+
+        checkpointer = tea.MemoryCheckpointer()
+        graph.compile(interrupt_before=["node_b", "node_c"], checkpointer=checkpointer)
+
+        # First execution - stops at node_b
+        events1 = list(graph.invoke({}))
+        self.assertEqual(execution_order, ["a"])
+        checkpoint1 = events1[-1]["checkpoint_path"]
+
+        # Resume - executes node_b, stops at node_c
+        events2 = list(graph.invoke(None, checkpoint=checkpoint1))
+        self.assertEqual(execution_order, ["a", "b"])
+        interrupt_events2 = [e for e in events2 if e.get("type") == "interrupt"]
+        self.assertEqual(interrupt_events2[0]["node"], "node_c")
+        checkpoint2 = events2[-1]["checkpoint_path"]
+
+        # Second resume - executes node_c to completion
+        events3 = list(graph.invoke(None, checkpoint=checkpoint2))
+        self.assertEqual(execution_order, ["a", "b", "c"])
+        self.assertEqual(events3[-1]["type"], "final")
+
+    def test_memory_checkpointer_stores_checkpoints(self):
+        """Test that MemoryCheckpointer correctly stores and retrieves checkpoints."""
+        checkpointer = tea.MemoryCheckpointer()
+
+        # Initially empty
+        self.assertEqual(len(checkpointer), 0)
+        self.assertEqual(checkpointer.list(), [])
+
+        # Save a checkpoint
+        checkpointer.save("cp1", {"value": 1}, "node_a", {"key": "val"})
+
+        # Verify storage
+        self.assertEqual(len(checkpointer), 1)
+        self.assertIn("cp1", checkpointer)
+        self.assertEqual(checkpointer.list(), ["cp1"])
+
+        # Load and verify contents
+        data = checkpointer.load("cp1")
+        self.assertEqual(data["state"], {"value": 1})
+        self.assertEqual(data["node"], "node_a")
+        self.assertEqual(data["config"], {"key": "val"})
+        self.assertIn("timestamp", data)
+        self.assertIn("version", data)
+
+    def test_interrupt_after_skips_reexecution_on_resume(self):
+        """Test that resuming from interrupt_after doesn't re-execute the node."""
+        graph = tea.StateGraph({"value": int})
+        execution_counts = {"a": 0, "b": 0}
+
+        def node_a(state):
+            execution_counts["a"] += 1
+            return {"value": 1}
+
+        def node_b(state):
+            execution_counts["b"] += 1
+            return {"value": 2}
+
+        graph.add_node("node_a", run=node_a)
+        graph.add_node("node_b", run=node_b)
+        graph.set_entry_point("node_a")
+        graph.add_edge("node_a", "node_b")
+        graph.set_finish_point("node_b")
+
+        checkpointer = tea.MemoryCheckpointer()
+        graph.compile(interrupt_after=["node_a"], checkpointer=checkpointer)
+
+        # First execution - executes node_a, then interrupts
+        events1 = list(graph.invoke({}))
+        self.assertEqual(execution_counts["a"], 1)
+        self.assertEqual(execution_counts["b"], 0)
+
+        # Resume - should NOT re-execute node_a
+        checkpoint = events1[-1]["checkpoint_path"]
+        events2 = list(graph.invoke(None, checkpoint=checkpoint))
+
+        # node_a should still only have been called once
+        self.assertEqual(execution_counts["a"], 1)
+        self.assertEqual(execution_counts["b"], 1)
 
 
 if __name__ == '__main__':

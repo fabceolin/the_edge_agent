@@ -87,11 +87,13 @@ class YAMLEngine:
         self._last_checkpoint_path: Optional[str] = None
         self._current_graph: Optional[StateGraph] = None
         self._checkpoint_dir: Optional[str] = None
+        self._checkpointer: Optional[Any] = None
 
     def load_from_file(
         self,
         yaml_path: str,
-        checkpoint: Optional[str] = None
+        checkpoint: Optional[str] = None,
+        checkpointer: Optional[Any] = None
     ) -> StateGraph:
         """
         Load a StateGraph from a YAML file.
@@ -100,6 +102,9 @@ class YAMLEngine:
             yaml_path: Path to the YAML configuration file
             checkpoint: Optional path to checkpoint file to resume from.
                 If provided, overrides config.checkpoint in YAML.
+            checkpointer: Optional checkpointer instance (e.g., MemoryCheckpointer)
+                for in-memory checkpoint storage. Required when using interrupts
+                without checkpoint_dir.
 
         Returns:
             Compiled StateGraph instance. If checkpoint is provided,
@@ -107,21 +112,25 @@ class YAMLEngine:
             when invoke() or stream() is called.
 
         Example:
+            >>> from the_edge_agent import MemoryCheckpointer
             >>> engine = YAMLEngine()
-            >>> # Normal load
+            >>> # With file-based checkpoints
             >>> graph = engine.load_from_file("agent.yaml")
+            >>> # With in-memory checkpointer
+            >>> graph = engine.load_from_file("agent.yaml", checkpointer=MemoryCheckpointer())
             >>> # Resume from checkpoint
             >>> graph = engine.load_from_file("agent.yaml", checkpoint="./chk/node.pkl")
         """
         with open(yaml_path, 'r') as f:
             config = yaml.safe_load(f)
 
-        return self.load_from_dict(config, checkpoint=checkpoint)
+        return self.load_from_dict(config, checkpoint=checkpoint, checkpointer=checkpointer)
 
     def load_from_dict(
         self,
         config: Dict[str, Any],
-        checkpoint: Optional[str] = None
+        checkpoint: Optional[str] = None,
+        checkpointer: Optional[Any] = None
     ) -> StateGraph:
         """
         Load a StateGraph from a configuration dictionary.
@@ -130,6 +139,9 @@ class YAMLEngine:
             config: Configuration dictionary from YAML
             checkpoint: Optional path to checkpoint file to resume from.
                 Overrides config['config']['checkpoint'] if provided.
+            checkpointer: Optional checkpointer instance (e.g., MemoryCheckpointer)
+                for in-memory checkpoint storage. Required when using interrupts
+                without checkpoint_dir.
 
         Returns:
             Compiled StateGraph instance. If checkpoint is provided (or
@@ -142,13 +154,14 @@ class YAMLEngine:
             3. None (normal execution)
 
         Example:
+            >>> from the_edge_agent import MemoryCheckpointer
             >>> engine = YAMLEngine()
             >>> config = {
             ...     'config': {'checkpoint_dir': './checkpoints'},
             ...     'nodes': [...],
             ...     'edges': [...]
             ... }
-            >>> graph = engine.load_from_dict(config)
+            >>> graph = engine.load_from_dict(config, checkpointer=MemoryCheckpointer())
         """
         # Extract global variables
         self.variables = config.get('variables', {})
@@ -175,11 +188,15 @@ class YAMLEngine:
         for edge_config in config.get('edges', []):
             self._add_edge_from_config(graph, edge_config)
 
-        # Compile with checkpoint_dir for auto-save
+        # Store checkpointer reference for resume
+        self._checkpointer = checkpointer
+
+        # Compile with checkpoint support
         compiled_graph = graph.compile(
             interrupt_before=compile_config.get('interrupt_before', []),
             interrupt_after=compile_config.get('interrupt_after', []),
-            checkpoint_dir=checkpoint_dir
+            checkpoint_dir=checkpoint_dir,
+            checkpointer=checkpointer
         )
 
         # Determine checkpoint path (parameter overrides config)

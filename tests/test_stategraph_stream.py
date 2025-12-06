@@ -300,8 +300,9 @@ class TestStateGraphStreamParallel(unittest.TestCase):
         graph.add_edge("fan_in", "end")
         graph.set_finish_point("end")
 
-        # Interrupt before fan_in
-        events = list(graph.compile(interrupt_before=["fan_in"]).stream({"value": 1}))
+        # Interrupt before fan_in - requires checkpointer
+        checkpointer = tea.MemoryCheckpointer()
+        events = list(graph.compile(interrupt_before=["fan_in"], checkpointer=checkpointer).stream({"value": 1}))
 
         # Should have interrupt_before for fan_in
         interrupt_events = [e for e in events if e.get("type") == "interrupt_before"]
