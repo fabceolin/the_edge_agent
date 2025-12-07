@@ -156,6 +156,358 @@ for event in graph.stream({"input": "hello"}):
 - `data.merge` - Merge multiple dicts (deep/shallow/replace strategies)
 - `data.filter` - Filter lists with predicate expressions
 
+**Code Execution Actions** (TEA-BUILTIN-003.1):
+- `code.execute` - Execute Python code in RestrictedPython sandbox
+- `code.sandbox` - Manage persistent sandbox sessions for multi-step execution
+
+**SECURITY WARNING**: Code execution is DISABLED by default. Only enable for trusted code patterns.
+RestrictedPython provides bytecode transformation, not true process isolation.
+Do NOT use for arbitrary LLM-generated code.
+
+Required dependency:
+- `pip install RestrictedPython`
+
+Code Execution usage:
+```python
+# Enable code execution (required - disabled by default)
+engine = YAMLEngine(enable_code_execution=True)
+
+# Execute simple Python code
+result = engine.actions_registry['code.execute'](
+    state={},
+    code="x = 1 + 2; result = x * 10",
+    timeout=30,  # seconds
+    max_output_bytes=65536
+)
+# Returns: {"success": True, "stdout": str, "stderr": str, "return_value": 30, "execution_time_ms": float}
+
+# Capture print output
+result = engine.actions_registry['code.execute'](
+    state={},
+    code="print('Hello, World!')"
+)
+# Returns: {"success": True, "stdout": "Hello, World!\n", "return_value": None, ...}
+
+# Persistent sandbox sessions
+result = engine.actions_registry['code.sandbox'](
+    state={}, action="create"
+)
+sandbox_id = result['sandbox_id']
+
+# Variables persist across executions
+engine.actions_registry['code.sandbox'](
+    state={}, action="execute", sandbox_id=sandbox_id,
+    code="counter = 10"
+)
+result = engine.actions_registry['code.sandbox'](
+    state={}, action="execute", sandbox_id=sandbox_id,
+    code="counter += 5; result = counter"
+)
+# Returns: {"success": True, "return_value": 15, ...}
+
+# Cleanup
+engine.actions_registry['code.sandbox'](
+    state={}, action="destroy", sandbox_id=sandbox_id
+)
+```
+
+Security model (whitelist approach):
+- **Allowed**: Math operations, type conversions, iteration, list/dict operations
+- **Blocked**: imports, file access, network, exec/eval, dangerous dunders
+- Timeout prevents infinite loops
+- Output size limits prevent memory exhaustion
+
+All code actions are available via dual namespaces: `code.*` and `actions.code_*`.
+
+**Observability Actions** (TEA-BUILTIN-001.3):
+- `trace.start` - Start a trace span with name, metadata, and optional parent
+- `trace.log` - Log events, metrics, and state snapshots within a span
+- `trace.end` - End the current span with status and optional error details
+
+**Memory Actions** (TEA-BUILTIN-001.1):
+- `memory.store` - Store key-value pairs with optional TTL and namespace
+- `memory.retrieve` - Retrieve values by key with optional default fallback
+- `memory.summarize` - Summarize conversation history using LLM to fit token windows
+
+**LLM Enhanced Actions** (TEA-BUILTIN-001.2):
+- `llm.stream` - Stream LLM responses with chunk aggregation
+- `llm.retry` - LLM calls with exponential backoff retry logic
+- `llm.tools` - Function/tool calling with automatic action dispatch
+
+**Web Actions** (TEA-BUILTIN-002.1):
+- `web.scrape` - Scrape web content via Firecrawl API (returns LLM-ready markdown)
+- `web.crawl` - Crawl multiple pages from a URL via Firecrawl API
+- `web.search` - Web search via Perplexity API
+
+Web actions use external API delegation for Firebase Cloud Functions compatibility:
+- **Firecrawl** (https://firecrawl.dev): Handles scraping/crawling with JS rendering
+- **Perplexity** (https://perplexity.ai): Handles web search
+
+Required environment variables:
+- `FIRECRAWL_API_KEY` - For web.scrape and web.crawl
+- `PERPLEXITY_API_KEY` - For web.search
+
+Web Actions usage:
+```python
+# Scrape a single page
+result = engine.actions_registry['web.scrape'](
+    state={},
+    url="https://example.com",
+    formats=["markdown", "links"],
+    only_main_content=True
+)
+# Returns: {"success": True, "markdown": str, "links": list, "metadata": dict}
+
+# Scrape with structured extraction
+result = engine.actions_registry['web.scrape'](
+    state={},
+    url="https://example.com/products",
+    extract_schema={
+        "type": "object",
+        "properties": {
+            "products": {"type": "array", "items": {"type": "object"}}
+        }
+    }
+)
+# Returns: {"success": True, "markdown": str, "extract": dict, ...}
+
+# Crawl multiple pages
+result = engine.actions_registry['web.crawl'](
+    state={},
+    url="https://docs.example.com",
+    max_depth=2,
+    limit=10,
+    include_paths=["/docs/*"]
+)
+# Returns: {"success": True, "pages": list, "total_pages": int, "job_id": str}
+
+# Web search
+result = engine.actions_registry['web.search'](
+    state={},
+    query="AI developments 2025",
+    num_results=5
+)
+# Returns: {"success": True, "results": list, "answer": str, "query": str}
+```
+
+All web actions are available via dual namespaces: `web.*` and `actions.web_*`.
+
+**RAG Actions** (TEA-BUILTIN-002.2):
+- `embedding.create` - Generate embeddings from text (OpenAI or Ollama)
+- `vector.store` - Store documents with embeddings in vector store
+- `vector.query` - Semantic similarity search with metadata filtering
+
+RAG actions support pluggable embedding providers:
+- **OpenAI** (remote/local compatible API): text-embedding-3-small, text-embedding-3-large, ada-002
+- **Ollama** (local): nomic-embed-text, mxbai-embed-large, all-minilm, bge-m3
+
+Vector stores are pluggable:
+- **InMemoryVectorStore**: Zero dependencies, pure Python (default)
+- **ChromaVectorStore**: Persistent storage (requires: pip install chromadb)
+
+Required environment variables:
+- `OPENAI_API_KEY` - For OpenAI embedding provider
+
+RAG Actions usage:
+```python
+# Create embedding
+result = engine.actions_registry['embedding.create'](
+    state={},
+    text="Hello world",
+    model="text-embedding-3-small"
+)
+# Returns: {"embedding": List[float], "model": str, "dimensions": int}
+
+# Batch embedding
+result = engine.actions_registry['embedding.create'](
+    state={},
+    text=["Text 1", "Text 2", "Text 3"]
+)
+# Returns: {"embeddings": List[List[float]], "model": str, "count": int}
+
+# Store documents (auto-generates embeddings)
+result = engine.actions_registry['vector.store'](
+    state={},
+    texts=["Doc 1", "Doc 2", "Doc 3"],
+    metadata=[{"type": "article"}, {"type": "blog"}, {"type": "article"}],
+    collection="my_collection"
+)
+# Returns: {"stored": int, "collection": str, "ids": List[str]}
+
+# Query with metadata filter
+result = engine.actions_registry['vector.query'](
+    state={},
+    query="search text",
+    k=5,
+    collection="my_collection",
+    filter={"type": "article"}
+)
+# Returns: {"results": [{"id": str, "text": str, "score": float, "metadata": dict}], ...}
+
+# Use Ollama instead of OpenAI
+result = engine.actions_registry['embedding.create'](
+    state={},
+    text="Hello world",
+    provider="ollama",
+    model="nomic-embed-text"
+)
+```
+
+RAG configuration in YAML:
+```yaml
+settings:
+  rag:
+    embedding_provider: openai  # or "ollama"
+    embedding_model: text-embedding-3-small
+    # ollama_base_url: http://localhost:11434  # for Ollama
+    vector_store: memory  # or "chroma"
+    chroma_path: ./chroma_db  # for persistent Chroma
+```
+
+All RAG actions are available via dual namespaces: `embedding.*`, `vector.*` and `actions.embedding_*`, `actions.vector_*`.
+
+**Tools Bridge Actions** (TEA-BUILTIN-002.3):
+- `tools.crewai` - Execute CrewAI tools (700+ available)
+- `tools.mcp` - Execute MCP (Model Context Protocol) server tools
+- `tools.langchain` - Execute LangChain tools
+- `tools.discover` - Discover available tools from all sources
+
+Tools bridge actions provide access to external tool ecosystems without writing Python code. All bridges are optional - they gracefully degrade if dependencies are not installed.
+
+Required dependencies (all optional):
+- `pip install crewai crewai-tools` - For CrewAI bridge
+- `pip install mcp` - For MCP bridge
+- `pip install langchain langchain-community` - For LangChain bridge
+
+Tools Bridge Actions usage:
+```python
+# Use a CrewAI tool
+result = engine.actions_registry['tools.crewai'](
+    state={},
+    tool="SerperDevTool",
+    query="AI news 2025"
+)
+# Returns: {"result": str, "tool": str, "success": True}
+
+# Use an MCP server tool
+result = engine.actions_registry['tools.mcp'](
+    state={},
+    server={"command": "npx", "args": ["-y", "@anthropic/mcp-server-filesystem"]},
+    tool="read_file",
+    path="/tmp/test.txt"
+)
+# Returns: {"result": str, "tool": str, "server": str, "success": True}
+
+# Use a LangChain tool
+result = engine.actions_registry['tools.langchain'](
+    state={},
+    tool="DuckDuckGoSearchRun",
+    query="Python programming"
+)
+# Returns: {"result": str, "tool": str, "success": True}
+
+# Discover available tools
+result = engine.actions_registry['tools.discover'](
+    state={},
+    source="all",  # "crewai", "mcp", "langchain", or "all"
+    filter="search"  # Optional filter
+)
+# Returns: {"tools": list, "sources": list, "count": int, "success": True}
+```
+
+Tools configuration in YAML:
+```yaml
+settings:
+  tools:
+    crewai:
+      enabled: true
+      tools: [SerperDevTool, ScrapeWebsiteTool]
+    mcp:
+      servers:
+        - name: filesystem
+          command: npx
+          args: ["-y", "@anthropic/mcp-server-filesystem"]
+    langchain:
+      enabled: true
+      tools: [DuckDuckGoSearchRun, WikipediaQueryRun]
+```
+
+All tools bridge actions are available via dual namespaces: `tools.*` and `actions.tools_*`.
+
+LLM Enhanced Actions usage:
+```python
+# Streaming (aggregates chunks, returns final result)
+result = engine.actions_registry['llm.stream'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+# Returns: {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
+
+# Retry with exponential backoff
+result = engine.actions_registry['llm.retry'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_retries=3,
+    base_delay=1.0,
+    max_delay=60.0
+)
+# Returns: {"content": str, "usage": dict, "attempts": int, "total_delay": float}
+
+# Tool/function calling with action dispatch
+result = engine.actions_registry['llm.tools'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Search for AI news"}],
+    tools=[{
+        "name": "search",
+        "description": "Search the web",
+        "parameters": {"query": {"type": "string", "required": True}},
+        "action": "web.search"  # Maps to registered action
+    }]
+)
+# Returns: {"content": str, "tool_calls": list, "tool_results": list, "rounds": int}
+```
+
+All LLM enhanced actions are available via dual namespaces: `llm.*` and `actions.llm_*`.
+
+Memory backends are pluggable (in-memory default, custom implementations supported):
+```python
+from the_edge_agent import YAMLEngine, InMemoryBackend
+
+# Default in-memory backend
+engine = YAMLEngine()
+
+# Custom backend injection
+custom_backend = InMemoryBackend()
+engine = YAMLEngine(memory_backend=custom_backend)
+
+# Memory state serialization for checkpoints
+memory_state = engine.get_memory_state()
+engine.restore_memory_state(memory_state)
+```
+
+Tracing is enabled by default. Configure exporters via YAMLEngine:
+```python
+from the_edge_agent import YAMLEngine, ConsoleExporter, FileExporter
+
+# Console output
+engine = YAMLEngine(trace_exporter="console", trace_verbose=True)
+
+# File output (JSON lines)
+engine = YAMLEngine(trace_exporter="file", trace_file="./traces.jsonl")
+
+# Custom callback
+engine = YAMLEngine(
+    trace_exporter="callback",
+    trace_callback=lambda span: print(f"Span: {span['name']}")
+)
+
+# Disable tracing
+engine = YAMLEngine(enable_tracing=False)
+```
+
 ### Custom Actions
 ```python
 engine = YAMLEngine(actions_registry={

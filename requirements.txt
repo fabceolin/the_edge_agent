@@ -1,2 +1,30 @@
+# Core dependencies
 networkx==3.3
 pygraphviz==1.13
+pyyaml>=6.0
+jmespath>=1.0.0
+jsonschema>=4.20.0
+
+# Optional: LLM actions (llm.call, llm.stream, llm.retry, llm.tools)
+# openai>=1.13.3
+
+# Optional: RAG actions (embedding.create, vector.store, vector.query)
+# openai>=1.13.3
+# numpy>=2.1.0
+
+# Optional: RAG with Chroma vector store
+# chromadb>=0.4.0
+
+# Optional: Web actions (web.scrape, web.crawl, web.search)
+# requests>=2.32.5
+
+# Optional: CrewAI tools bridge (TEA-BUILTIN-002.3)
+# crewai>=1.6.0
+# crewai-tools>=0.38.0
+
+# Optional: MCP tools bridge (TEA-BUILTIN-002.3)
+# mcp>=1.23.0
+
+# Optional: LangChain tools bridge (TEA-BUILTIN-002.3)
+# langchain>=1.1.0
+# langchain-community>=0.4.0

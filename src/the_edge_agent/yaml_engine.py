@@ -17,19 +17,15 @@ Example:
 """
 
 import yaml
-import importlib
-import inspect
-import os
-import re
-from typing import Any, Callable, Dict, Generator, List, Optional, Union
-from pathlib import Path
 import json
-import csv
-import io
-import ast
-import copy
+import re
+import time
+from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 from .stategraph import StateGraph, START, END
+from .memory import MemoryBackend, InMemoryBackend
+from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
+from .actions import build_actions_registry
 
 
 class DotDict(dict):
@@ -72,14 +68,70 @@ class YAMLEngine:
         ...     print(event)
     """
 
-    def __init__(self, actions_registry: Optional[Dict[str, Callable]] = None):
+    def __init__(
+        self,
+        actions_registry: Optional[Dict[str, Callable]] = None,
+        enable_tracing: bool = True,
+        trace_exporter: Optional[Union[str, List[Any]]] = None,
+        trace_file: Optional[str] = None,
+        trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        trace_verbose: bool = False,
+        memory_backend: Optional[Any] = None,
+        enable_code_execution: bool = False
+    ):
         """
         Initialize the YAML engine.
 
         Args:
             actions_registry: Custom actions to register beyond built-ins
+            enable_tracing: Enable trace actions (default: True)
+            trace_exporter: Exporter configuration. Can be:
+                - "console": Print to stdout
+                - "file": Write to trace_file (requires trace_file)
+                - "callback": Call trace_callback (requires trace_callback)
+                - List of exporter instances
+            trace_file: File path for file exporter (JSON lines format)
+            trace_callback: Callback function for callback exporter
+            trace_verbose: Enable verbose console output (default: False)
+            memory_backend: Optional custom MemoryBackend implementation.
+                           If None, uses InMemoryBackend by default.
+            enable_code_execution: Enable code.execute and code.sandbox actions.
+                                  Default: False (SECURITY: disabled by default).
+                                  Only enable for trusted code patterns.
         """
-        self.actions_registry = self._setup_builtin_actions()
+        # Initialize tracing
+        self._enable_tracing = enable_tracing
+        self._trace_context: Optional[TraceContext] = None
+
+        if enable_tracing:
+            exporters = []
+
+            if isinstance(trace_exporter, list):
+                # User provided exporter instances
+                exporters = trace_exporter
+            elif trace_exporter == "console":
+                exporters.append(ConsoleExporter(verbose=trace_verbose))
+            elif trace_exporter == "file" and trace_file:
+                exporters.append(FileExporter(trace_file))
+            elif trace_exporter == "callback" and trace_callback:
+                exporters.append(CallbackExporter(trace_callback))
+            elif trace_exporter is None:
+                # No exporter configured, but tracing is enabled
+                # Spans will be collected but not exported
+                pass
+
+            self._trace_context = TraceContext(exporters=exporters)
+
+        # Auto-trace flag (can be enabled via YAML settings)
+        self._auto_trace = False
+
+        # Initialize memory backend (TEA-BUILTIN-001.1)
+        self._memory_backend: Any = memory_backend if memory_backend is not None else InMemoryBackend()
+
+        # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
+        self._enable_code_execution = enable_code_execution
+
+        self.actions_registry = build_actions_registry(self)
         if actions_registry:
             self.actions_registry.update(actions_registry)
 
@@ -91,6 +143,58 @@ class YAMLEngine:
         self._current_graph: Optional[StateGraph] = None
         self._checkpoint_dir: Optional[str] = None
         self._checkpointer: Optional[Any] = None
+
+    @property
+    def memory_backend(self) -> Any:
+        """
+        Get the memory backend instance.
+
+        Returns:
+            The current memory backend (InMemoryBackend by default, or custom).
+        """
+        return self._memory_backend
+
+    def get_memory_state(self) -> Dict[str, Any]:
+        """
+        Get serializable memory state for checkpoint persistence.
+
+        Returns:
+            Dictionary containing all memory data needed for restoration.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> # ... store some values ...
+            >>> memory_state = engine.get_memory_state()
+            >>> # Save memory_state to checkpoint
+        """
+        return self._memory_backend.get_state()
+
+    def restore_memory_state(self, state: Dict[str, Any]) -> None:
+        """
+        Restore memory state from checkpoint.
+
+        Args:
+            state: Memory state dictionary from get_memory_state()
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> # Load memory_state from checkpoint
+            >>> engine.restore_memory_state(memory_state)
+        """
+        self._memory_backend.restore_state(state)
+
+    def clear_memory(self, namespace: Optional[str] = None) -> int:
+        """
+        Clear memory, optionally within a specific namespace.
+
+        Args:
+            namespace: If provided, only clear this namespace.
+                      If None, clear all namespaces.
+
+        Returns:
+            Number of keys cleared.
+        """
+        return self._memory_backend.clear(namespace)
 
     def load_from_file(
         self,
@@ -168,6 +272,23 @@ class YAMLEngine:
         """
         # Extract global variables
         self.variables = config.get('variables', {})
+
+        # Extract settings (YAML-level configuration)
+        settings = config.get('settings', {})
+
+        # Handle auto-trace from YAML settings
+        if settings.get('auto_trace', False) and self._enable_tracing:
+            self._auto_trace = True
+            # Configure trace exporter from settings if not already set
+            if self._trace_context is not None and not self._trace_context.exporters:
+                trace_exporter = settings.get('trace_exporter', 'console')
+                trace_file = settings.get('trace_file')
+                if trace_exporter == 'console':
+                    self._trace_context.exporters.append(ConsoleExporter(verbose=False))
+                elif trace_exporter == 'file' and trace_file:
+                    self._trace_context.exporters.append(FileExporter(trace_file))
+        else:
+            self._auto_trace = False
 
         # Create graph
         compile_config = config.get('config', {})
@@ -261,11 +382,88 @@ class YAMLEngine:
         # Create the run function based on configuration
         run_func = self._create_run_function(node_config)
 
+        # Wrap with auto-trace if enabled
+        if run_func is not None and self._auto_trace and self._trace_context is not None:
+            run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+
         # Add node to graph
         if is_fan_in:
             graph.add_fanin_node(node_name, run=run_func)
         else:
             graph.add_node(node_name, run=run_func)
+
+    def _wrap_with_auto_trace(
+        self,
+        func: Callable,
+        node_name: str,
+        node_config: Dict[str, Any]
+    ) -> Callable:
+        """
+        Wrap a node function with automatic tracing.
+
+        Captures:
+        - Node execution timing
+        - LLM token usage (if present in result)
+        - HTTP latency (if http.* action)
+        - Errors
+
+        Args:
+            func: The original run function
+            node_name: Name of the node
+            node_config: Node configuration dictionary
+
+        Returns:
+            Wrapped function with auto-tracing
+        """
+        trace_context = self._trace_context
+
+        def traced_func(state, **kwargs):
+            # Determine action type for metadata
+            action_type = node_config.get('uses', 'inline')
+            metadata = {
+                "node": node_name,
+                "action_type": action_type
+            }
+
+            # Start span
+            trace_context.start_span(name=node_name, metadata=metadata)
+
+            try:
+                # Execute the original function
+                start_time = time.time()
+                result = func(state, **kwargs)
+                duration_ms = (time.time() - start_time) * 1000
+
+                # Auto-capture metrics from result
+                metrics = {"duration_ms": duration_ms}
+
+                # Capture LLM token usage
+                if isinstance(result, dict):
+                    if 'usage' in result:
+                        usage = result['usage']
+                        if isinstance(usage, dict):
+                            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                                if key in usage:
+                                    metrics[key] = usage[key]
+
+                    # Capture HTTP latency if present
+                    if action_type in ('http.get', 'http.post'):
+                        metrics['http_latency_ms'] = duration_ms
+
+                # Log metrics
+                trace_context.log_event(metrics=metrics)
+
+                # End span successfully
+                trace_context.end_span(status="ok")
+
+                return result
+
+            except Exception as e:
+                # End span with error
+                trace_context.end_span(status="error", error=str(e))
+                raise
+
+        return traced_func
 
     def _create_run_function(self, node_config: Dict[str, Any]) -> Optional[Callable]:
         """
@@ -658,841 +856,3 @@ class YAMLEngine:
 
         # Otherwise return as-is
         return expr
-
-    def _setup_builtin_actions(self) -> Dict[str, Callable]:
-        """Setup built-in actions registry."""
-        actions = {}
-
-        # LLM action
-        def llm_call(state, model, messages, temperature=0.7, **kwargs):
-            """Call a language model."""
-            try:
-                from openai import OpenAI
-                client = OpenAI()
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature
-                )
-
-                return {
-                    'content': response.choices[0].message.content,
-                    'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-                }
-            except ImportError:
-                raise ImportError("OpenAI library not installed. Install with: pip install openai")
-
-        actions['llm.call'] = llm_call
-        actions['actions.llm_call'] = llm_call
-
-        # HTTP actions
-        def http_get(state, url, headers=None, **kwargs):
-            """Make HTTP GET request."""
-            import requests
-            response = requests.get(url, headers=headers or {})
-            response.raise_for_status()
-            return response.json()
-
-        def http_post(state, url, json=None, headers=None, **kwargs):
-            """Make HTTP POST request."""
-            import requests
-            response = requests.post(url, json=json, headers=headers or {})
-            response.raise_for_status()
-            return response.json()
-
-        actions['http.get'] = http_get
-        actions['actions.http_get'] = http_get
-        actions['http.post'] = http_post
-        actions['actions.http_post'] = http_post
-
-        # File actions
-        def file_write(state, path, content, **kwargs):
-            """Write content to a file."""
-            path_obj = Path(path)
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
-            path_obj.write_text(content)
-            return {'path': str(path_obj)}
-
-        def file_read(state, path, **kwargs):
-            """Read content from a file."""
-            return {'content': Path(path).read_text()}
-
-        actions['file.write'] = file_write
-        actions['actions.file_write'] = file_write
-        actions['file.read'] = file_read
-        actions['actions.file_read'] = file_read
-
-        # Notify action (placeholder)
-        def notify(state, channel, message, **kwargs):
-            """Send a notification."""
-            print(f"[{channel.upper()}] {message}")
-            return {'sent': True}
-
-        actions['actions.notify'] = notify
-        actions['notify'] = notify
-
-        # Checkpoint actions
-        def checkpoint_save(state, path, graph=None, node=None, config=None, **kwargs):
-            """
-            Save checkpoint to specified path.
-
-            Args:
-                state: Current state dictionary
-                path: File path where checkpoint will be saved
-                graph: StateGraph instance (injected via context)
-                node: Current node name (injected via context)
-                config: Current config dict (injected via context)
-
-            Returns:
-                {"checkpoint_path": str, "saved": True} on success
-                {"checkpoint_path": str, "saved": False, "error": str} on failure
-            """
-            # Use injected graph or fall back to engine's current graph
-            target_graph = graph or self._current_graph
-
-            if target_graph is None:
-                return {
-                    "checkpoint_path": path,
-                    "saved": False,
-                    "error": "No graph available for checkpoint"
-                }
-
-            try:
-                # Ensure parent directory exists
-                path_obj = Path(path)
-                path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-                # Save checkpoint
-                target_graph.save_checkpoint(
-                    str(path_obj),
-                    state,
-                    node or "unknown",
-                    config or {}
-                )
-
-                # Track as last checkpoint
-                self._last_checkpoint_path = str(path_obj)
-
-                return {
-                    "checkpoint_path": str(path_obj),
-                    "saved": True
-                }
-            except Exception as e:
-                return {
-                    "checkpoint_path": path,
-                    "saved": False,
-                    "error": str(e)
-                }
-
-        def checkpoint_load(state, path, **kwargs):
-            """
-            Load checkpoint from specified path.
-
-            Args:
-                state: Current state (for template processing, not used)
-                path: File path to checkpoint
-
-            Returns:
-                {
-                    "checkpoint_state": dict,
-                    "checkpoint_node": str,
-                    "checkpoint_config": dict,
-                    "checkpoint_timestamp": float,
-                    "checkpoint_version": str
-                }
-                Or {"error": str} on failure
-            """
-            try:
-                checkpoint = StateGraph.load_checkpoint(path)
-                return {
-                    "checkpoint_state": checkpoint["state"],
-                    "checkpoint_node": checkpoint["node"],
-                    "checkpoint_config": checkpoint.get("config", {}),
-                    "checkpoint_timestamp": checkpoint.get("timestamp"),
-                    "checkpoint_version": checkpoint.get("version")
-                }
-            except FileNotFoundError:
-                return {"error": f"Checkpoint file not found: {path}"}
-            except ValueError as e:
-                return {"error": f"Invalid checkpoint file: {e}"}
-            except Exception as e:
-                return {"error": f"Failed to load checkpoint: {e}"}
-
-        actions['checkpoint.save'] = checkpoint_save
-        actions['checkpoint.load'] = checkpoint_load
-
-        # ============================================================
-        # Data Processing Actions (TEA-BUILTIN-003.2)
-        # ============================================================
-
-        # JSON Actions
-        def json_parse(state, text, strict=True, default=None, **kwargs):
-            """
-            Parse a JSON string into a Python object.
-
-            Args:
-                state: Current state dictionary
-                text: JSON string to parse
-                strict: If True, use standard JSON parsing. If False, allow
-                       trailing commas and comments (best effort)
-                default: Default value to return on parse error (only used
-                        when strict=False)
-
-            Returns:
-                {"data": any, "success": True} on success
-                {"error": str, "success": False, "error_type": "parse"} on failure
-            """
-            if text is None:
-                return {
-                    "success": False,
-                    "error": "Input text is None",
-                    "error_type": "parse"
-                }
-
-            try:
-                # Standard JSON parsing
-                data = json.loads(text)
-                return {"data": data, "success": True}
-            except json.JSONDecodeError as e:
-                if not strict and default is not None:
-                    return {"data": default, "success": True}
-
-                # Try non-strict parsing if requested
-                if not strict:
-                    try:
-                        # Remove single-line comments
-                        cleaned = re.sub(r'//.*$', '', text, flags=re.MULTILINE)
-                        # Remove multi-line comments
-                        cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
-                        # Remove trailing commas before } or ]
-                        cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
-                        data = json.loads(cleaned)
-                        return {"data": data, "success": True}
-                    except json.JSONDecodeError:
-                        pass  # Fall through to error
-
-                return {
-                    "success": False,
-                    "error": f"JSON parse error: {e.msg}",
-                    "error_type": "parse",
-                    "position": {"line": e.lineno, "column": e.colno}
-                }
-
-        actions['json.parse'] = json_parse
-        actions['json_parse'] = json_parse
-
-        def json_transform(state, data, expression, engine="jmespath", **kwargs):
-            """
-            Transform data using JMESPath or JSONPath expressions.
-
-            Args:
-                state: Current state dictionary
-                data: Data to transform (dict or list)
-                expression: JMESPath or JSONPath expression string
-                engine: "jmespath" (default) or "jsonpath"
-
-            Returns:
-                {"result": any, "expression": str, "success": True} on success
-                {"error": str, "success": False, "error_type": "transform"} on failure
-
-            Examples:
-                expression: "user.name" -> extracts nested value
-                expression: "[?status=='active'].name" -> filters array
-                expression: "{names: [].name, count: length(@)}" -> projects fields
-            """
-            if data is None:
-                return {
-                    "success": False,
-                    "error": "Input data is None",
-                    "error_type": "transform"
-                }
-
-            if not expression:
-                return {
-                    "success": False,
-                    "error": "Expression is required",
-                    "error_type": "transform"
-                }
-
-            try:
-                if engine == "jmespath":
-                    try:
-                        import jmespath
-                    except ImportError:
-                        return {
-                            "success": False,
-                            "error": "jmespath library not installed. Install with: pip install jmespath",
-                            "error_type": "transform"
-                        }
-
-                    try:
-                        result = jmespath.search(expression, data)
-                        return {
-                            "result": result,
-                            "expression": expression,
-                            "success": True
-                        }
-                    except jmespath.exceptions.JMESPathError as e:
-                        return {
-                            "success": False,
-                            "error": f"JMESPath error: {str(e)}",
-                            "error_type": "transform",
-                            "expression": expression
-                        }
-
-                elif engine == "jsonpath":
-                    try:
-                        from jsonpath_ng import parse as jsonpath_parse
-                    except ImportError:
-                        return {
-                            "success": False,
-                            "error": "jsonpath-ng library not installed. Install with: pip install jsonpath-ng",
-                            "error_type": "transform"
-                        }
-
-                    try:
-                        jsonpath_expr = jsonpath_parse(expression)
-                        matches = jsonpath_expr.find(data)
-                        result = [match.value for match in matches]
-                        # Return single value if only one match
-                        if len(result) == 1:
-                            result = result[0]
-                        return {
-                            "result": result,
-                            "expression": expression,
-                            "success": True
-                        }
-                    except Exception as e:
-                        return {
-                            "success": False,
-                            "error": f"JSONPath error: {str(e)}",
-                            "error_type": "transform",
-                            "expression": expression
-                        }
-
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Unknown engine: {engine}. Use 'jmespath' or 'jsonpath'",
-                        "error_type": "transform"
-                    }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Transform error: {str(e)}",
-                    "error_type": "transform"
-                }
-
-        actions['json.transform'] = json_transform
-        actions['json_transform'] = json_transform
-
-        def json_stringify(state, data, indent=None, sort_keys=False, **kwargs):
-            """
-            Convert a Python object to a JSON string.
-
-            Args:
-                state: Current state dictionary
-                data: Python object to serialize
-                indent: Indentation level for pretty printing (None for compact)
-                sort_keys: Sort dictionary keys alphabetically
-
-            Returns:
-                {"text": str, "success": True} on success
-                {"error": str, "success": False, "error_type": "serialize"} on failure
-            """
-            try:
-                text = json.dumps(data, indent=indent, sort_keys=sort_keys, default=str)
-                return {"text": text, "success": True}
-            except (TypeError, ValueError) as e:
-                return {
-                    "success": False,
-                    "error": f"JSON serialization error: {str(e)}",
-                    "error_type": "serialize"
-                }
-
-        actions['json.stringify'] = json_stringify
-        actions['json_stringify'] = json_stringify
-
-        # CSV Actions
-        def csv_parse(state, text=None, path=None, delimiter=",", has_header=True, **kwargs):
-            """
-            Parse CSV data from text or file.
-
-            Args:
-                state: Current state dictionary
-                text: CSV string to parse (mutually exclusive with path)
-                path: File path to read CSV from (mutually exclusive with text)
-                delimiter: Field delimiter character (default: ",")
-                has_header: If True, first row is treated as headers
-
-            Returns:
-                {
-                    "data": List[dict] | List[List],
-                    "headers": Optional[List[str]],
-                    "row_count": int,
-                    "success": True
-                }
-                Or {"error": str, "success": False, "error_type": "parse"|"io"} on failure
-            """
-            if text is None and path is None:
-                return {
-                    "success": False,
-                    "error": "Either 'text' or 'path' must be provided",
-                    "error_type": "parse"
-                }
-
-            if text is not None and path is not None:
-                return {
-                    "success": False,
-                    "error": "Only one of 'text' or 'path' should be provided, not both",
-                    "error_type": "parse"
-                }
-
-            try:
-                # Read from file if path provided
-                if path is not None:
-                    try:
-                        with open(path, 'r', newline='', encoding='utf-8') as f:
-                            text = f.read()
-                    except FileNotFoundError:
-                        return {
-                            "success": False,
-                            "error": f"File not found: {path}",
-                            "error_type": "io"
-                        }
-                    except IOError as e:
-                        return {
-                            "success": False,
-                            "error": f"IO error reading file: {str(e)}",
-                            "error_type": "io"
-                        }
-
-                # Parse CSV
-                reader = csv.reader(io.StringIO(text), delimiter=delimiter)
-                rows = list(reader)
-
-                if not rows:
-                    return {
-                        "data": [],
-                        "headers": None,
-                        "row_count": 0,
-                        "success": True
-                    }
-
-                if has_header:
-                    headers = rows[0]
-                    data_rows = rows[1:]
-                    # Convert to list of dicts
-                    data = []
-                    for i, row in enumerate(data_rows):
-                        if len(row) != len(headers):
-                            # Handle malformed rows gracefully
-                            row_dict = {}
-                            for j, header in enumerate(headers):
-                                row_dict[header] = row[j] if j < len(row) else None
-                            data.append(row_dict)
-                        else:
-                            data.append(dict(zip(headers, row)))
-                    return {
-                        "data": data,
-                        "headers": headers,
-                        "row_count": len(data),
-                        "success": True
-                    }
-                else:
-                    return {
-                        "data": rows,
-                        "headers": None,
-                        "row_count": len(rows),
-                        "success": True
-                    }
-
-            except csv.Error as e:
-                return {
-                    "success": False,
-                    "error": f"CSV parse error: {str(e)}",
-                    "error_type": "parse"
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Unexpected error: {str(e)}",
-                    "error_type": "parse"
-                }
-
-        actions['csv.parse'] = csv_parse
-        actions['csv_parse'] = csv_parse
-
-        def csv_stringify(state, data, headers=None, delimiter=",", **kwargs):
-            """
-            Convert a list of dicts or list of lists to a CSV string.
-
-            Args:
-                state: Current state dictionary
-                data: List of dicts or list of lists to convert
-                headers: Column headers (auto-detected from dict keys if not provided)
-                delimiter: Field delimiter character (default: ",")
-
-            Returns:
-                {"text": str, "row_count": int, "success": True} on success
-                {"error": str, "success": False, "error_type": "serialize"} on failure
-            """
-            if data is None:
-                return {
-                    "success": False,
-                    "error": "Input data is None",
-                    "error_type": "serialize"
-                }
-
-            if not isinstance(data, list):
-                return {
-                    "success": False,
-                    "error": "Data must be a list",
-                    "error_type": "serialize"
-                }
-
-            if not data:
-                return {
-                    "text": "",
-                    "row_count": 0,
-                    "success": True
-                }
-
-            try:
-                output = io.StringIO()
-
-                # Determine if data is list of dicts or list of lists
-                first_item = data[0]
-                is_dict_list = isinstance(first_item, dict)
-
-                if is_dict_list:
-                    # Auto-detect headers from dict keys if not provided
-                    if headers is None:
-                        headers = list(first_item.keys())
-
-                    writer = csv.DictWriter(output, fieldnames=headers, delimiter=delimiter)
-                    writer.writeheader()
-                    for row in data:
-                        writer.writerow(row)
-                else:
-                    writer = csv.writer(output, delimiter=delimiter)
-                    # Write headers if provided
-                    if headers:
-                        writer.writerow(headers)
-                    for row in data:
-                        writer.writerow(row)
-
-                text = output.getvalue()
-                row_count = len(data)
-
-                return {
-                    "text": text,
-                    "row_count": row_count,
-                    "success": True
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"CSV serialization error: {str(e)}",
-                    "error_type": "serialize"
-                }
-
-        actions['csv.stringify'] = csv_stringify
-        actions['csv_stringify'] = csv_stringify
-
-        # Data Actions
-        def data_validate(state, data, schema, **kwargs):
-            """
-            Validate data against a JSON Schema.
-
-            Args:
-                state: Current state dictionary
-                data: Data to validate
-                schema: JSON Schema to validate against
-
-            Returns:
-                {
-                    "valid": bool,
-                    "errors": List[{"path": str, "message": str}],
-                    "success": True
-                }
-                Or {"error": str, "success": False, "error_type": "validate"} on failure
-            """
-            if data is None:
-                return {
-                    "valid": False,
-                    "errors": [{"path": "", "message": "Data is None"}],
-                    "success": True
-                }
-
-            if schema is None:
-                return {
-                    "success": False,
-                    "error": "Schema is required",
-                    "error_type": "validate"
-                }
-
-            try:
-                import jsonschema
-                from jsonschema import Draft7Validator
-            except ImportError:
-                return {
-                    "success": False,
-                    "error": "jsonschema library not installed. Install with: pip install jsonschema",
-                    "error_type": "validate"
-                }
-
-            try:
-                validator = Draft7Validator(schema)
-                errors = []
-
-                for error in validator.iter_errors(data):
-                    path = ".".join(str(p) for p in error.absolute_path) if error.absolute_path else ""
-                    errors.append({
-                        "path": path,
-                        "message": error.message
-                    })
-
-                return {
-                    "valid": len(errors) == 0,
-                    "errors": errors,
-                    "success": True
-                }
-
-            except jsonschema.SchemaError as e:
-                return {
-                    "success": False,
-                    "error": f"Invalid schema: {str(e)}",
-                    "error_type": "validate"
-                }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Validation error: {str(e)}",
-                    "error_type": "validate"
-                }
-
-        actions['data.validate'] = data_validate
-        actions['data_validate'] = data_validate
-
-        def data_merge(state, sources, strategy="deep", **kwargs):
-            """
-            Merge multiple dictionaries/objects.
-
-            Args:
-                state: Current state dictionary
-                sources: List of dictionaries to merge
-                strategy: Merge strategy - "shallow", "deep", or "replace"
-                    - shallow: Only merge top-level keys
-                    - deep: Recursively merge nested dictionaries
-                    - replace: Later sources completely replace earlier ones
-
-            Returns:
-                {"result": dict, "source_count": int, "success": True} on success
-                {"error": str, "success": False, "error_type": "merge"} on failure
-            """
-            if sources is None:
-                return {
-                    "success": False,
-                    "error": "Sources is required",
-                    "error_type": "merge"
-                }
-
-            if not isinstance(sources, list):
-                return {
-                    "success": False,
-                    "error": "Sources must be a list",
-                    "error_type": "merge"
-                }
-
-            if not sources:
-                return {
-                    "result": {},
-                    "source_count": 0,
-                    "success": True
-                }
-
-            if strategy not in ("shallow", "deep", "replace"):
-                return {
-                    "success": False,
-                    "error": f"Unknown strategy: {strategy}. Use 'shallow', 'deep', or 'replace'",
-                    "error_type": "merge"
-                }
-
-            def deep_merge(base, override):
-                """Recursively merge override into base."""
-                result = copy.deepcopy(base)
-                for key, value in override.items():
-                    if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                        result[key] = deep_merge(result[key], value)
-                    else:
-                        result[key] = copy.deepcopy(value)
-                return result
-
-            try:
-                result = {}
-
-                for source in sources:
-                    if source is None:
-                        continue
-                    if not isinstance(source, dict):
-                        return {
-                            "success": False,
-                            "error": f"All sources must be dictionaries, got {type(source).__name__}",
-                            "error_type": "merge"
-                        }
-
-                    if strategy == "replace":
-                        result = copy.deepcopy(source)
-                    elif strategy == "shallow":
-                        result.update(source)
-                    elif strategy == "deep":
-                        result = deep_merge(result, source)
-
-                return {
-                    "result": result,
-                    "source_count": len(sources),
-                    "success": True
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Merge error: {str(e)}",
-                    "error_type": "merge"
-                }
-
-        actions['data.merge'] = data_merge
-        actions['data_merge'] = data_merge
-
-        def data_filter(state, data, predicate, **kwargs):
-            """
-            Filter list items using predicate expressions.
-
-            Args:
-                state: Current state dictionary
-                data: List to filter
-                predicate: Single predicate dict or list of predicates (AND logic)
-                    Each predicate: {"field": str, "op": str, "value": any}
-                    Supported ops: eq, ne, gt, gte, lt, lte, in, not_in, contains, startswith, endswith
-
-            Returns:
-                {
-                    "result": List,
-                    "original_count": int,
-                    "filtered_count": int,
-                    "success": True
-                }
-                Or {"error": str, "success": False, "error_type": "filter"} on failure
-
-            Examples:
-                predicate: {"field": "status", "op": "eq", "value": "active"}
-                predicate: [
-                    {"field": "status", "op": "eq", "value": "active"},
-                    {"field": "role", "op": "in", "value": ["admin", "moderator"]}
-                ]
-            """
-            if data is None:
-                return {
-                    "success": False,
-                    "error": "Data is required",
-                    "error_type": "filter"
-                }
-
-            if not isinstance(data, list):
-                return {
-                    "success": False,
-                    "error": "Data must be a list",
-                    "error_type": "filter"
-                }
-
-            if predicate is None:
-                return {
-                    "success": False,
-                    "error": "Predicate is required",
-                    "error_type": "filter"
-                }
-
-            # Normalize predicate to list
-            predicates = predicate if isinstance(predicate, list) else [predicate]
-
-            def get_nested_value(obj, field):
-                """Get value from nested dict using dot notation."""
-                keys = field.split(".")
-                value = obj
-                for key in keys:
-                    if isinstance(value, dict):
-                        value = value.get(key)
-                    else:
-                        return None
-                return value
-
-            def evaluate_predicate(item, pred):
-                """Evaluate a single predicate against an item."""
-                field = pred.get("field")
-                op = pred.get("op", "eq")
-                expected = pred.get("value")
-
-                if field is None:
-                    return True  # No field = always match
-
-                actual = get_nested_value(item, field) if isinstance(item, dict) else None
-
-                try:
-                    if op == "eq":
-                        return actual == expected
-                    elif op == "ne":
-                        return actual != expected
-                    elif op == "gt":
-                        return actual is not None and actual > expected
-                    elif op == "gte":
-                        return actual is not None and actual >= expected
-                    elif op == "lt":
-                        return actual is not None and actual < expected
-                    elif op == "lte":
-                        return actual is not None and actual <= expected
-                    elif op == "in":
-                        return actual in expected if expected else False
-                    elif op == "not_in":
-                        return actual not in expected if expected else True
-                    elif op == "contains":
-                        return expected in actual if actual else False
-                    elif op == "startswith":
-                        return actual.startswith(expected) if isinstance(actual, str) else False
-                    elif op == "endswith":
-                        return actual.endswith(expected) if isinstance(actual, str) else False
-                    else:
-                        return False  # Unknown op
-                except (TypeError, AttributeError):
-                    return False
-
-            try:
-                original_count = len(data)
-                result = []
-
-                for item in data:
-                    # All predicates must match (AND logic)
-                    if all(evaluate_predicate(item, p) for p in predicates):
-                        result.append(item)
-
-                return {
-                    "result": result,
-                    "original_count": original_count,
-                    "filtered_count": len(result),
-                    "success": True
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Filter error: {str(e)}",
-                    "error_type": "filter"
-                }
-
-        actions['data.filter'] = data_filter
-        actions['data_filter'] = data_filter
-
-        return actions

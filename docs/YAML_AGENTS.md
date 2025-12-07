@@ -11,7 +11,14 @@ The Edge Agent supports declarative agent configuration using YAML files, inspir
 - [Edge Types](#edge-types)
 - [Template Variables](#template-variables)
 - [Built-in Actions](#built-in-actions)
+  - [LLM Enhanced Actions](#llm-enhanced-actions-tea-builtin-0012)
   - [Data Processing Actions](#data-processing-actions)
+  - [Code Execution Actions](#code-execution-actions-tea-builtin-0031)
+  - [Observability Actions](#observability-actions)
+  - [Memory Actions](#memory-actions)
+  - [Web Actions](#web-actions-tea-builtin-0021)
+  - [RAG Actions](#rag-actions-tea-builtin-0022)
+  - [Tools Bridge Actions](#tools-bridge-actions-tea-builtin-0023)
 - [Checkpoint Persistence](#checkpoint-persistence)
 - [Examples](#examples)
 
@@ -365,6 +372,194 @@ nodes:
   output: llm_response
 ```
 
+### LLM Enhanced Actions (TEA-BUILTIN-001.2)
+
+Production-grade LLM actions with streaming, retry, and tool calling support.
+
+#### llm.stream
+
+Stream LLM responses with chunk aggregation:
+
+```yaml
+- name: stream_response
+  uses: llm.stream
+  with:
+    model: gpt-4
+    messages:
+      - role: user
+        content: "{{ state.query }}"
+    temperature: 0.7
+  output: stream_result
+```
+
+**llm.stream** returns:
+- `{"content": str, "usage": dict, "streamed": true, "chunk_count": int}` on success
+- `{"error": str, "success": false}` on failure
+
+The action uses OpenAI's streaming API internally, collecting chunks and returning the aggregated result. This provides the benefits of streaming (faster time to first token) while fitting within the action return model.
+
+#### llm.retry
+
+LLM calls with exponential backoff retry logic:
+
+```yaml
+- name: resilient_call
+  uses: llm.retry
+  with:
+    model: gpt-4
+    messages:
+      - role: user
+        content: "{{ state.query }}"
+    max_retries: 3      # Maximum retry attempts (default: 3)
+    base_delay: 1.0     # Initial delay in seconds (default: 1.0)
+    max_delay: 60.0     # Maximum delay between retries (default: 60.0)
+    temperature: 0.7
+  output: retry_result
+```
+
+**llm.retry** returns:
+- `{"content": str, "usage": dict, "attempts": int, "total_delay": float}` on success
+- `{"error": str, "success": false, "attempts": int, "total_delay": float}` on failure
+
+Retry behavior:
+- **Retryable errors**: HTTP 429 (rate limit), HTTP 5xx, timeouts, connection errors
+- **Non-retryable errors**: HTTP 4xx (except 429) - immediate failure
+- **Retry-After header**: Respected when present in rate limit responses
+- **Exponential backoff**: `delay = min(base_delay * 2^attempt, max_delay)`
+
+#### llm.tools
+
+Function/tool calling with automatic action dispatch:
+
+```yaml
+- name: agent_with_tools
+  uses: llm.tools
+  with:
+    model: gpt-4
+    messages:
+      - role: system
+        content: You are a helpful assistant with access to tools.
+      - role: user
+        content: "{{ state.query }}"
+    tools:
+      - name: search_web
+        description: Search the web for information
+        parameters:
+          query:
+            type: string
+            description: Search query
+            required: true
+        action: http.get  # Maps to registered action
+      - name: save_note
+        description: Save a note to file
+        parameters:
+          filename:
+            type: string
+            required: true
+          content:
+            type: string
+            required: true
+        action: file.write
+    tool_choice: auto   # "auto", "none", or specific tool name
+    max_tool_rounds: 10 # Maximum tool call iterations
+  output: tools_result
+```
+
+**Tool Definition Schema:**
+
+Tools can be defined in YAML-style (recommended) or OpenAI format:
+
+```yaml
+# YAML-style (recommended)
+tools:
+  - name: tool_name
+    description: What the tool does
+    parameters:
+      param1:
+        type: string       # string, number, integer, boolean, array, object
+        description: Parameter description
+        required: true     # Mark as required
+        enum: [opt1, opt2] # Optional: restrict values
+    action: registered.action  # Maps to action registry
+
+# OpenAI format (also supported)
+tools:
+  - type: function
+    function:
+      name: tool_name
+      description: What the tool does
+      parameters:
+        type: object
+        properties:
+          param1:
+            type: string
+            description: Parameter description
+        required: [param1]
+```
+
+**llm.tools** returns:
+- Success: `{"content": str, "tool_calls": list, "tool_results": list, "rounds": int}`
+- Failure: `{"error": str, "success": false, "tool_calls": list, "tool_results": list}`
+
+Tool dispatch:
+- When the LLM requests a tool call, the action specified in `action` is invoked
+- Tool arguments are passed as keyword arguments to the action
+- Results are automatically fed back to the LLM for multi-turn conversations
+- Tools without `action` mapping return info about the call for manual handling
+
+**Security:** Action references are validated against the registry. Path traversal attempts (e.g., `../etc/passwd`) are blocked.
+
+#### Example: Agent with Tools
+
+```yaml
+name: research-agent
+description: Agent that can search and save results
+
+variables:
+  api_base: https://api.example.com
+
+nodes:
+  - name: research
+    uses: llm.tools
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: |
+            You are a research assistant. Use the search tool to find
+            information, then save important findings to files.
+        - role: user
+          content: "{{ state.query }}"
+      tools:
+        - name: search
+          description: Search for information on a topic
+          parameters:
+            query:
+              type: string
+              description: The search query
+              required: true
+          action: http.get
+        - name: save_finding
+          description: Save an important finding to a file
+          parameters:
+            filename:
+              type: string
+              required: true
+            content:
+              type: string
+              required: true
+          action: file.write
+      max_tool_rounds: 5
+
+edges:
+  - from: __start__
+    to: research
+  - from: research
+    to: __end__
+```
+
+All LLM enhanced actions are available via dual namespaces: `llm.*` and `actions.llm_*`.
+
 ### HTTP Actions
 
 ```yaml
@@ -688,6 +883,1248 @@ edges:
   - from: save_file
     to: __end__
 ```
+
+### Code Execution Actions (TEA-BUILTIN-003.1)
+
+Actions for sandboxed Python code execution. Uses RestrictedPython for security.
+
+**SECURITY WARNING**: Code execution is DISABLED by default. Only enable for trusted code patterns.
+
+**Required:**
+- `pip install RestrictedPython`
+- `YAMLEngine(enable_code_execution=True)` to enable
+
+#### code.execute
+
+Execute Python code in a sandboxed environment:
+
+```yaml
+# Simple arithmetic
+- name: compute
+  uses: code.execute
+  with:
+    code: |
+      x = 1 + 2
+      y = x * 10
+      result = y  # Set 'result' to return a value
+    timeout: 30  # Optional: max execution time in seconds (default: 30)
+    max_output_bytes: 65536  # Optional: max output size (default: 64KB)
+
+# Using state values
+- name: process_data
+  uses: code.execute
+  with:
+    code: |
+      data = {{ state.input_data | json }}
+      total = sum(item['value'] for item in data)
+      result = {'total': total, 'count': len(data)}
+
+# Capture print output
+- name: generate_report
+  uses: code.execute
+  with:
+    code: |
+      print("Processing started...")
+      for i in range(5):
+          print(f"Step {i + 1} complete")
+      result = "done"
+```
+
+**code.execute** returns:
+- `{"success": true, "stdout": str, "stderr": str, "return_value": any, "execution_time_ms": float}` on success
+- `{"success": false, "error": str, "stdout": "", "stderr": "", "return_value": null}` on failure
+
+**Security model (whitelist approach):**
+
+Allowed operations:
+- Math: `abs`, `round`, `min`, `max`, `sum`, `pow`, `divmod`
+- Types: `int`, `float`, `str`, `bool`, `list`, `dict`, `tuple`, `set`
+- Iteration: `len`, `range`, `enumerate`, `zip`, `map`, `filter`, `sorted`, `reversed`
+- Predicates: `all`, `any`, `isinstance`
+- String: `chr`, `ord`, `repr`
+- Exceptions: `try`/`except` blocks work
+
+Blocked operations:
+- Imports (`import os`, `from sys import ...`)
+- File access (`open()`)
+- Code generation (`exec`, `eval`, `compile`)
+- Dangerous introspection (`__class__`, `__mro__`, `__subclasses__`, `getattr`)
+- System access (`input`, `help`, `vars`, `dir`)
+
+#### code.sandbox
+
+Manage persistent sandbox sessions for multi-step code execution:
+
+```yaml
+# Create a new sandbox session
+- name: create_session
+  uses: code.sandbox
+  with:
+    action: create
+  output: sandbox_info
+# Returns: {"sandbox_id": str, "created": true, "success": true}
+
+# Execute code in the session (variables persist)
+- name: init_counter
+  uses: code.sandbox
+  with:
+    action: execute
+    sandbox_id: "{{ state.sandbox_info.sandbox_id }}"
+    code: "counter = 0"
+
+- name: increment_counter
+  uses: code.sandbox
+  with:
+    action: execute
+    sandbox_id: "{{ state.sandbox_info.sandbox_id }}"
+    code: |
+      counter += 1
+      result = counter
+
+# List active sessions
+- name: list_sessions
+  uses: code.sandbox
+  with:
+    action: list
+# Returns: {"sandboxes": [str, ...], "count": int, "success": true}
+
+# Destroy session when done
+- name: cleanup
+  uses: code.sandbox
+  with:
+    action: destroy
+    sandbox_id: "{{ state.sandbox_info.sandbox_id }}"
+# Returns: {"destroyed": true, "sandbox_id": str, "success": true}
+```
+
+Sandbox actions:
+- `create`: Create new session, returns `sandbox_id`
+- `execute`: Run code in session, variables persist
+- `list`: Get all active session IDs
+- `destroy`: Clean up session
+
+#### Example: Code Agent
+
+```yaml
+name: code-agent
+description: Agent that executes generated Python code safely
+
+nodes:
+  - name: generate_code
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: |
+            Generate Python code to solve the user's math problem.
+            Only use basic operations: +, -, *, /, **, //, %.
+            Store the answer in a variable called 'result'.
+        - role: user
+          content: "{{ state.problem }}"
+    output: llm_response
+
+  - name: execute_code
+    uses: code.execute
+    with:
+      code: "{{ state.llm_response.content }}"
+      timeout: 5
+
+  - name: format_result
+    run: |
+      if state.get('success'):
+          return {"answer": state.get('return_value'), "error": None}
+      else:
+          return {"answer": None, "error": state.get('error')}
+
+edges:
+  - from: __start__
+    to: generate_code
+  - from: generate_code
+    to: execute_code
+  - from: execute_code
+    to: format_result
+  - from: format_result
+    to: __end__
+
+config:
+  raise_exceptions: false
+```
+
+**Usage:**
+```python
+from the_edge_agent import YAMLEngine
+
+# IMPORTANT: Enable code execution explicitly
+engine = YAMLEngine(enable_code_execution=True)
+graph = engine.load_from_file("code_agent.yaml")
+
+result = list(graph.invoke({"problem": "Calculate the sum of squares from 1 to 10"}))
+print(result[-1]["state"]["answer"])  # 385
+```
+
+### Observability Actions
+
+Actions for tracing, logging, and debugging workflow execution. Useful for debugging, performance analysis, and observability.
+
+#### trace.start
+
+Start a new trace span to track an operation:
+
+```yaml
+- name: start_trace
+  uses: trace.start
+  with:
+    name: "process_data"  # Required: operation name
+    metadata:             # Optional: attach metadata
+      user_id: "{{ state.user_id }}"
+      operation: "data_processing"
+    parent_id: "{{ state.parent_span }}"  # Optional: explicit parent span
+```
+
+**trace.start** returns:
+- `{"span_id": str, "name": str, "parent_id": str | null, "success": true}` on success
+- `{"error": str, "success": false}` if tracing is disabled
+
+#### trace.log
+
+Log events, metrics, or state snapshots to the current span:
+
+```yaml
+# Log a message
+- name: log_progress
+  uses: trace.log
+  with:
+    message: "Processing step completed"
+
+# Log metrics
+- name: log_metrics
+  uses: trace.log
+  with:
+    metrics:
+      items_processed: 100
+      duration_ms: 250
+
+# Snapshot state (with sensitive key redaction)
+- name: log_state
+  uses: trace.log
+  with:
+    message: "Before API call"
+    snapshot_state: true
+    sanitize_keys: ["api_key", "password", "token"]
+```
+
+**trace.log** returns:
+- `{"logged": true, "span_id": str, "event_count": int, "success": true}` on success
+- `{"error": str, "success": false, "logged": false}` if no active span
+
+#### trace.end
+
+End the current trace span:
+
+```yaml
+# End successfully
+- name: end_trace
+  uses: trace.end
+  with:
+    status: ok
+
+# End with error
+- name: end_trace_error
+  uses: trace.end
+  with:
+    status: error
+    error: "API call failed: {{ state.error_message }}"
+```
+
+**trace.end** returns:
+- `{"span_id": str, "duration_ms": float, "status": str, "success": true}` on success
+- `{"error": str, "success": false}` if no active span
+
+#### Auto-Instrumentation
+
+Enable automatic tracing of all nodes via YAML settings:
+
+```yaml
+settings:
+  auto_trace: true         # Auto-wrap all nodes with tracing
+  trace_exporter: console  # "console", "file"
+  trace_file: ./traces.jsonl  # For file exporter
+```
+
+When `auto_trace: true`:
+- Every node automatically starts/ends a span
+- Node execution time is captured
+- LLM token usage is auto-captured from `llm.call` results
+- HTTP latency is auto-captured from `http.*` results
+- Errors are automatically recorded
+
+#### Example: Traced Workflow
+
+```yaml
+name: traced-workflow
+description: Workflow with manual tracing for debugging
+
+settings:
+  auto_trace: false  # We'll trace manually
+
+nodes:
+  - name: process
+    steps:
+      - name: start_trace
+        uses: trace.start
+        with:
+          name: "process_user_request"
+          metadata:
+            request_id: "{{ state.request_id }}"
+
+      - name: fetch_data
+        uses: http.get
+        with:
+          url: "https://api.example.com/data"
+
+      - name: log_fetch
+        uses: trace.log
+        with:
+          message: "Data fetched successfully"
+          metrics:
+            response_size: "{{ state.fetch_data.content_length }}"
+
+      - name: process_data
+        run: |
+          return {"result": process(state["fetch_data"])}
+
+      - name: end_trace
+        uses: trace.end
+        with:
+          status: ok
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__
+```
+
+#### Python Configuration
+
+Configure trace exporters when creating the engine:
+
+```python
+from the_edge_agent import YAMLEngine, ConsoleExporter, FileExporter, CallbackExporter
+
+# Console exporter (verbose mode shows full span details)
+engine = YAMLEngine(
+    trace_exporter="console",
+    trace_verbose=True
+)
+
+# File exporter (JSON lines format)
+engine = YAMLEngine(
+    trace_exporter="file",
+    trace_file="./traces.jsonl"
+)
+
+# Custom callback exporter
+def handle_span(span):
+    print(f"Completed: {span['name']} in {span['duration_ms']:.2f}ms")
+
+engine = YAMLEngine(
+    trace_exporter="callback",
+    trace_callback=handle_span
+)
+
+# Multiple exporters
+engine = YAMLEngine(
+    trace_exporter=[
+        ConsoleExporter(verbose=False),
+        FileExporter("./traces.jsonl"),
+        CallbackExporter(lambda s: send_to_observability_platform(s))
+    ]
+)
+
+# Disable tracing entirely
+engine = YAMLEngine(enable_tracing=False)
+```
+
+### Memory Actions
+
+Actions for storing and retrieving data across graph invocations. Useful for building conversational agents with persistent context.
+
+#### memory.store
+
+Store a key-value pair in memory with optional TTL:
+
+```yaml
+- name: remember_user
+  uses: memory.store
+  with:
+    key: "user_name"
+    value: "{{ state.name }}"
+    ttl: 3600        # Optional: Time-to-live in seconds (null = no expiration)
+    namespace: "session_123"  # Optional: Namespace for key isolation
+```
+
+**memory.store** returns:
+- `{"stored": true, "key": str, "namespace": str}` on success
+- `{"stored": false, "key": str, "error": str}` on failure
+
+#### memory.retrieve
+
+Retrieve a value from memory:
+
+```yaml
+- name: recall_user
+  uses: memory.retrieve
+  with:
+    key: "user_name"
+    default: "Guest"       # Optional: Default value if key not found/expired
+    namespace: "session_123"  # Optional: Namespace to look in
+```
+
+**memory.retrieve** returns:
+- `{"value": any, "found": true, "key": str}` if key exists and not expired
+- `{"value": default, "found": false, "key": str}` if key not found or expired
+
+#### memory.summarize
+
+Summarize conversation history using LLM to fit token windows:
+
+```yaml
+- name: compress_history
+  uses: memory.summarize
+  with:
+    messages_key: "conversation"  # State key containing messages list
+    max_tokens: 1000              # Maximum tokens for summary
+    model: "gpt-3.5-turbo"        # Optional: Model to use
+```
+
+**memory.summarize** returns:
+- `{"summary": str, "original_count": int, "token_estimate": int, "success": true}` on success
+- `{"error": str, "success": false}` on failure
+
+Messages should be in the format: `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`
+
+#### Example: Conversational Agent with Memory
+
+```yaml
+name: conversational-agent
+description: Agent with persistent memory across invocations
+
+state_schema:
+  user_input: str
+  conversation: list
+  response: str
+
+nodes:
+  - name: load_context
+    uses: memory.retrieve
+    with:
+      key: "conversation_history"
+      default: []
+
+  - name: update_conversation
+    run: |
+      history = state.get("value", [])
+      history.append({"role": "user", "content": state["user_input"]})
+      return {"conversation": history}
+
+  - name: generate_response
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages: "{{ state.conversation }}"
+      temperature: 0.7
+    output: llm_result
+
+  - name: save_context
+    steps:
+      - name: append_response
+        run: |
+          history = state["conversation"]
+          history.append({"role": "assistant", "content": state["llm_result"]["content"]})
+          return {"conversation": history, "response": state["llm_result"]["content"]}
+
+      - name: persist_history
+        uses: memory.store
+        with:
+          key: "conversation_history"
+          value: "{{ state.conversation }}"
+
+edges:
+  - from: __start__
+    to: load_context
+  - from: load_context
+    to: update_conversation
+  - from: update_conversation
+    to: generate_response
+  - from: generate_response
+    to: save_context
+  - from: save_context
+    to: __end__
+```
+
+#### Python Configuration
+
+```python
+from the_edge_agent import YAMLEngine, InMemoryBackend
+
+# Default in-memory backend (persists across invocations within same engine)
+engine = YAMLEngine()
+
+# Custom backend injection
+custom_backend = InMemoryBackend()
+engine = YAMLEngine(memory_backend=custom_backend)
+
+# Memory state serialization for checkpoints
+memory_state = engine.get_memory_state()
+# ... save to checkpoint ...
+# Restore later
+engine.restore_memory_state(memory_state)
+
+# Clear memory
+engine.clear_memory()  # Clear all namespaces
+engine.clear_memory(namespace="session_123")  # Clear specific namespace
+```
+
+### Web Actions (TEA-BUILTIN-002.1)
+
+Web actions for scraping, crawling, and searching the web. Designed for Firebase Cloud Functions compatibility using external API delegation.
+
+- **Firecrawl** (https://firecrawl.dev): Handles scraping/crawling with JS rendering
+- **Perplexity** (https://perplexity.ai): Handles web search with AI-powered answers
+
+All web actions are available via dual namespaces: `web.*` and `actions.web_*`.
+
+#### web.scrape
+
+Scrape web content via Firecrawl API (returns LLM-ready markdown):
+
+```yaml
+- name: fetch_article
+  uses: web.scrape
+  with:
+    url: "{{ state.target_url }}"
+    formats: ["markdown", "links"]  # Optional: markdown, html, links, screenshot, extract
+    only_main_content: true         # Exclude headers/footers/nav
+    timeout: 30000                  # Request timeout in ms
+  output: scraped_content
+```
+
+**web.scrape** returns:
+- Success: `{"success": true, "url": str, "markdown": str, "links": list, "metadata": {...}}`
+- Failure: `{"success": false, "error": str, "error_type": str}`
+
+Error types: `configuration`, `rate_limit`, `payment_required`, `timeout`, `connection`, `api_error`
+
+Advanced features:
+```yaml
+# Structured extraction with JSON schema
+- name: extract_products
+  uses: web.scrape
+  with:
+    url: "https://example.com/products"
+    extract_schema:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              price: { type: number }
+
+# Natural language extraction prompt
+- name: extract_with_prompt
+  uses: web.scrape
+  with:
+    url: "https://example.com/article"
+    extract_prompt: "Extract the author name and publication date"
+
+# Browser actions before scraping (for interactive pages)
+- name: scrape_with_interaction
+  uses: web.scrape
+  with:
+    url: "https://example.com/lazy-load"
+    actions:
+      - type: click
+        selector: "#load-more-btn"
+      - type: wait
+        milliseconds: 2000
+    formats: ["markdown"]
+
+# Mobile viewport and tag filtering
+- name: scrape_mobile
+  uses: web.scrape
+  with:
+    url: "https://example.com"
+    mobile: true
+    include_tags: ["article", "main"]
+    exclude_tags: ["nav", "footer"]
+```
+
+#### web.crawl
+
+Crawl multiple pages from a starting URL:
+
+```yaml
+- name: crawl_docs
+  uses: web.crawl
+  with:
+    url: "https://docs.example.com"
+    max_depth: 2                # Maximum crawl depth (default: 2)
+    limit: 20                   # Maximum pages to crawl (default: 10)
+    include_paths: ["/api/*"]   # Only crawl matching paths
+    exclude_paths: ["/admin/*"] # Skip matching paths
+    allow_external_links: false # Follow external links (default: false)
+    poll_interval: 2.0          # Seconds between status checks (default: 2.0)
+    max_poll_time: 300.0        # Max seconds to wait (default: 300.0)
+  output: crawled_pages
+```
+
+**web.crawl** returns:
+- Success: `{"success": true, "pages": [{"url": str, "markdown": str, "metadata": dict}, ...], "total_pages": int, "job_id": str}`
+- Failure: `{"success": false, "error": str, "error_type": str, "job_id": str}`
+
+#### web.search
+
+Search the web via Perplexity API:
+
+```yaml
+- name: search_topic
+  uses: web.search
+  with:
+    query: "{{ state.topic }} latest news 2025"
+    num_results: 10
+  output: search_results
+```
+
+**web.search** returns:
+- Success: `{"success": true, "results": [{"title": str, "url": str, "snippet": str, "position": int}], "query": str, "total_results": int, "answer": str}`
+- Failure: `{"success": false, "error": str, "error_type": str}`
+
+The `answer` field contains Perplexity's AI-synthesized answer based on search results.
+
+#### Environment Variables
+
+Web actions require external API keys:
+
+```bash
+# Required for web.scrape and web.crawl
+export FIRECRAWL_API_KEY="your-firecrawl-api-key"  # From https://firecrawl.dev
+
+# Required for web.search
+export PERPLEXITY_API_KEY="your-perplexity-api-key"  # From https://perplexity.ai
+```
+
+#### Example: Research Agent
+
+```yaml
+name: research-agent
+description: Agent that researches a topic and extracts structured data
+
+state_schema:
+  topic: str
+  search_results: dict
+  article_content: dict
+  summary: str
+
+nodes:
+  - name: search
+    uses: web.search
+    with:
+      query: "{{ state.topic }}"
+      num_results: 5
+    output: search_results
+
+  - name: scrape_top_result
+    uses: web.scrape
+    with:
+      url: "{{ state.search_results.results[0].url }}"
+      formats: ["markdown"]
+      only_main_content: true
+    output: article_content
+
+  - name: summarize
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: Summarize the following article concisely.
+        - role: user
+          content: "{{ state.article_content.markdown }}"
+    output: summary
+
+edges:
+  - from: __start__
+    to: search
+  - from: search
+    to: scrape_top_result
+  - from: scrape_top_result
+    to: summarize
+  - from: summarize
+    to: __end__
+```
+
+#### Python Usage
+
+```python
+from the_edge_agent import YAMLEngine
+
+engine = YAMLEngine()
+
+# Scrape a page
+result = engine.actions_registry['web.scrape'](
+    state={},
+    url="https://example.com",
+    formats=["markdown", "links"],
+    only_main_content=True
+)
+
+if result['success']:
+    print(result['markdown'])
+else:
+    print(f"Error ({result['error_type']}): {result['error']}")
+
+# Search the web
+result = engine.actions_registry['web.search'](
+    state={},
+    query="AI developments 2025",
+    num_results=5
+)
+
+if result['success']:
+    print(f"Answer: {result['answer']}")
+    for r in result['results']:
+        print(f"- {r['title']}: {r['url']}")
+```
+
+### RAG Actions (TEA-BUILTIN-002.2)
+
+RAG (Retrieval-Augmented Generation) actions provide embedding creation, vector storage, and semantic search capabilities for building knowledge-augmented agents.
+
+#### Embedding Providers
+
+RAG actions support pluggable embedding providers:
+
+| Provider | Models | Dimensions | Notes |
+|----------|--------|------------|-------|
+| **OpenAI** | text-embedding-3-small (default) | 1536 | Remote API, requires OPENAI_API_KEY |
+| | text-embedding-3-large | 3072 | Higher quality, larger vectors |
+| | text-embedding-ada-002 | 1536 | Legacy model |
+| **Ollama** | nomic-embed-text (default) | 768 | Local, 8K context |
+| | mxbai-embed-large | 1024 | High accuracy |
+| | all-minilm | 384 | Lightweight, fast |
+| | bge-m3 | 1024 | Highest retrieval accuracy |
+
+#### Vector Stores
+
+| Store | Dependencies | Persistence | Notes |
+|-------|--------------|-------------|-------|
+| **InMemoryVectorStore** | None | Via checkpoints | Default, pure Python |
+| **ChromaVectorStore** | chromadb | Automatic | Persistent storage |
+
+#### embedding.create
+
+Generate embeddings from text:
+
+```yaml
+# Single text
+- name: embed_query
+  uses: embedding.create
+  with:
+    text: "{{ state.query }}"
+    model: text-embedding-3-small  # optional
+  output: embedding_result
+
+# Batch embedding
+- name: embed_documents
+  uses: embedding.create
+  with:
+    text: "{{ state.documents }}"  # List of texts
+  output: embeddings_result
+```
+
+**embedding.create** returns:
+- Single: `{"embedding": List[float], "model": str, "dimensions": int}`
+- Batch: `{"embeddings": List[List[float]], "model": str, "count": int, "dimensions": int}`
+- Error: `{"error": str, "success": false}`
+
+#### vector.store
+
+Store documents with embeddings:
+
+```yaml
+# Store with auto-generated embeddings
+- name: store_docs
+  uses: vector.store
+  with:
+    texts:
+      - "First document content"
+      - "Second document content"
+    metadata:
+      - type: article
+        date: "2024-01-15"
+      - type: blog
+        date: "2024-01-20"
+    collection: my_knowledge_base
+  output: store_result
+
+# Store with pre-computed embeddings
+- name: store_with_embeddings
+  uses: vector.store
+  with:
+    texts: "{{ state.texts }}"
+    embeddings: "{{ state.embeddings }}"
+    ids: "{{ state.doc_ids }}"
+    collection: my_collection
+  output: store_result
+```
+
+**vector.store** returns:
+- Success: `{"stored": int, "collection": str, "ids": List[str]}`
+- Error: `{"error": str, "success": false}`
+
+#### vector.query
+
+Semantic similarity search:
+
+```yaml
+# Basic query
+- name: search_knowledge
+  uses: vector.query
+  with:
+    query: "{{ state.question }}"
+    k: 5
+    collection: my_knowledge_base
+  output: search_results
+
+# Query with metadata filter
+- name: search_filtered
+  uses: vector.query
+  with:
+    query: "{{ state.question }}"
+    k: 10
+    collection: my_knowledge_base
+    filter:
+      type: article
+      date_gte: "2024-01-01"
+  output: search_results
+```
+
+**vector.query** returns:
+- Success: `{"results": [{"id": str, "text": str, "score": float, "metadata": dict}], "query": str, "collection": str, "k": int}`
+- Error: `{"error": str, "success": false}`
+
+**Metadata Filter Operators**:
+- `field`: Exact match (`{"type": "article"}`)
+- `field_gte`: Greater than or equal (`{"count_gte": 10}`)
+- `field_lte`: Less than or equal (`{"date_lte": "2024-12-31"}`)
+- `field_gt`: Greater than (`{"score_gt": 0.8}`)
+- `field_lt`: Less than (`{"priority_lt": 3}`)
+- `field_ne`: Not equal (`{"status_ne": "deleted"}`)
+- `field_in`: In list (`{"category_in": ["tech", "science"]}`)
+
+#### RAG Configuration in Settings
+
+```yaml
+settings:
+  rag:
+    # Embedding provider: "openai" (default) or "ollama"
+    embedding_provider: openai
+    embedding_model: text-embedding-3-small
+
+    # For OpenAI with custom base URL (LocalAI, vLLM, etc.)
+    # openai_base_url: http://localhost:8080/v1
+
+    # For Ollama provider
+    # embedding_provider: ollama
+    # embedding_model: nomic-embed-text
+    # ollama_base_url: http://localhost:11434
+    # ollama_timeout: 60.0
+
+    # Vector store: "memory" (default) or "chroma"
+    vector_store: memory
+    # chroma_path: ./chroma_db  # For persistent Chroma
+```
+
+#### RAG Agent Example
+
+A complete example of a knowledge-augmented agent:
+
+```yaml
+name: knowledge-agent
+description: Agent that answers questions using a knowledge base
+
+state_schema:
+  question: str
+  context: list
+  answer: str
+
+settings:
+  rag:
+    embedding_provider: openai
+    embedding_model: text-embedding-3-small
+    vector_store: memory
+
+nodes:
+  - name: search_knowledge
+    uses: vector.query
+    with:
+      query: "{{ state.question }}"
+      k: 3
+      collection: knowledge_base
+    output: search_results
+
+  - name: build_context
+    run: |
+      results = state.get('search_results', {}).get('results', [])
+      context = [r['text'] for r in results]
+      return {"context": context}
+
+  - name: generate_answer
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: |
+            Answer the question using only the provided context.
+            If the context doesn't contain the answer, say "I don't know."
+        - role: user
+          content: |
+            Context:
+            {% for doc in state.context %}
+            - {{ doc }}
+            {% endfor %}
+
+            Question: {{ state.question }}
+    output: llm_result
+
+  - name: extract_answer
+    run: |
+      return {"answer": state.get('llm_result', {}).get('content', 'Error')}
+
+edges:
+  - from: __start__
+    to: search_knowledge
+  - from: search_knowledge
+    to: build_context
+  - from: build_context
+    to: generate_answer
+  - from: generate_answer
+    to: extract_answer
+  - from: extract_answer
+    to: __end__
+```
+
+#### Python Usage
+
+```python
+from the_edge_agent import YAMLEngine
+
+engine = YAMLEngine()
+
+# Store knowledge (typically done once during setup)
+engine.actions_registry['vector.store'](
+    state={},
+    texts=[
+        "The capital of France is Paris.",
+        "Python was created by Guido van Rossum in 1991.",
+        "The speed of light is approximately 299,792,458 m/s."
+    ],
+    metadata=[
+        {"topic": "geography"},
+        {"topic": "programming"},
+        {"topic": "physics"}
+    ],
+    collection="knowledge_base"
+)
+
+# Query the knowledge base
+result = engine.actions_registry['vector.query'](
+    state={},
+    query="Who created Python?",
+    k=2,
+    collection="knowledge_base"
+)
+
+for r in result['results']:
+    print(f"Score: {r['score']:.3f} - {r['text']}")
+
+# Use Ollama for local embeddings (no API key needed)
+result = engine.actions_registry['embedding.create'](
+    state={},
+    text="Hello world",
+    provider="ollama",
+    model="nomic-embed-text"
+)
+print(f"Embedding dimensions: {result['dimensions']}")
+```
+
+### Tools Bridge Actions (TEA-BUILTIN-002.3)
+
+Tools bridge actions provide access to external tool ecosystems (CrewAI, MCP, LangChain) without writing Python code. All bridges are optional - they gracefully degrade if dependencies are not installed.
+
+#### Dependencies
+
+All dependencies are optional - install only what you need:
+
+```bash
+# For CrewAI tools (700+ available)
+pip install crewai crewai-tools
+
+# For MCP (Model Context Protocol) servers
+pip install mcp
+
+# For LangChain tools
+pip install langchain langchain-community
+```
+
+#### tools.crewai
+
+Execute CrewAI tools by name:
+
+```yaml
+- name: search_web
+  uses: tools.crewai
+  with:
+    tool: SerperDevTool
+    query: "{{ state.search_query }}"
+    timeout: 30.0  # Optional timeout in seconds
+  output: search_result
+```
+
+**tools.crewai** returns:
+- Success: `{"result": any, "tool": str, "success": true}`
+- Failure: `{"error": str, "error_type": str, "tool": str, "success": false}`
+
+Error types: `import` (library not installed), `execution`, `timeout`
+
+Available CrewAI tools include: `SerperDevTool`, `ScrapeWebsiteTool`, `WebsiteSearchTool`, `FileReadTool`, `DirectoryReadTool`, `CodeDocsSearchTool`, `YoutubeVideoSearchTool`, `GithubSearchTool`, `PDFSearchTool`, and many more.
+
+#### tools.mcp
+
+Connect to MCP servers and execute their tools:
+
+```yaml
+- name: read_file
+  uses: tools.mcp
+  with:
+    server:
+      command: npx
+      args: ["-y", "@anthropic/mcp-server-filesystem"]
+    tool: read_file
+    path: "/tmp/data.txt"
+    timeout: 30.0
+  output: file_result
+```
+
+Or use a named server from settings:
+
+```yaml
+settings:
+  tools:
+    mcp:
+      servers:
+        - name: filesystem
+          command: npx
+          args: ["-y", "@anthropic/mcp-server-filesystem"]
+
+nodes:
+  - name: read_file
+    uses: tools.mcp
+    with:
+      server: filesystem  # Reference by name
+      tool: read_file
+      path: "/tmp/data.txt"
+```
+
+**tools.mcp** returns:
+- Success: `{"result": any, "tool": str, "server": str, "success": true}`
+- Failure: `{"error": str, "error_type": str, "tool": str, "success": false}`
+
+#### tools.langchain
+
+Execute LangChain tools:
+
+```yaml
+- name: search
+  uses: tools.langchain
+  with:
+    tool: DuckDuckGoSearchRun
+    query: "{{ state.query }}"
+    timeout: 30.0
+  output: search_result
+```
+
+**tools.langchain** returns:
+- Success: `{"result": any, "tool": str, "success": true}`
+- Failure: `{"error": str, "error_type": str, "tool": str, "success": false}`
+
+Available LangChain tools include: `DuckDuckGoSearchRun`, `WikipediaQueryRun`, `ArxivQueryRun`, `PubmedQueryRun`, `TavilySearchResults`, `GoogleSearchRun`, `ReadFileTool`, `WriteFileTool`, and many more.
+
+#### tools.discover
+
+Discover available tools from configured sources:
+
+```yaml
+- name: list_tools
+  uses: tools.discover
+  with:
+    source: all  # "crewai", "mcp", "langchain", or "all"
+    filter: search  # Optional: filter by name
+    use_cache: true  # Use cached discovery results
+  output: available_tools
+```
+
+**tools.discover** returns:
+```json
+{
+  "tools": [
+    {
+      "name": "SerperDevTool",
+      "description": "Search the web using Serper API",
+      "parameters": {"query": {"type": "string", "required": true}},
+      "source": "crewai"
+    }
+  ],
+  "sources": ["crewai", "langchain", "mcp"],
+  "count": 15,
+  "success": true
+}
+```
+
+#### Tools Configuration in Settings
+
+Configure tools bridges globally in your YAML settings:
+
+```yaml
+settings:
+  tools:
+    crewai:
+      enabled: true
+      tools: [SerperDevTool, ScrapeWebsiteTool]
+    mcp:
+      servers:
+        - name: filesystem
+          command: npx
+          args: ["-y", "@anthropic/mcp-server-filesystem"]
+        - name: brave-search
+          command: npx
+          args: ["-y", "@anthropic/mcp-server-brave-search"]
+          env:
+            BRAVE_API_KEY: "{{ secrets.brave_api_key }}"
+    langchain:
+      enabled: true
+      tools: [DuckDuckGoSearchRun, WikipediaQueryRun]
+```
+
+#### Example: Multi-Tool Research Agent
+
+```yaml
+name: research-agent
+description: Agent that uses multiple tool ecosystems
+
+state_schema:
+  topic: str
+  search_results: dict
+  wiki_results: dict
+  summary: str
+
+settings:
+  tools:
+    crewai:
+      enabled: true
+    langchain:
+      enabled: true
+
+nodes:
+  - name: discover_tools
+    uses: tools.discover
+    with:
+      source: all
+      filter: search
+    output: available_tools
+
+  - name: web_search
+    uses: tools.crewai
+    with:
+      tool: SerperDevTool
+      query: "{{ state.topic }}"
+    output: search_results
+
+  - name: wiki_search
+    uses: tools.langchain
+    with:
+      tool: WikipediaQueryRun
+      query: "{{ state.topic }}"
+    output: wiki_results
+
+  - name: summarize
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: Summarize the research findings.
+        - role: user
+          content: |
+            Web results: {{ state.search_results.result }}
+            Wiki results: {{ state.wiki_results.result }}
+    output: summary
+
+edges:
+  - from: __start__
+    to: discover_tools
+  - from: discover_tools
+    to: web_search
+  - from: web_search
+    to: wiki_search
+  - from: wiki_search
+    to: summarize
+  - from: summarize
+    to: __end__
+```
+
+#### Python Usage
+
+```python
+from the_edge_agent import YAMLEngine
+
+engine = YAMLEngine()
+
+# Use CrewAI tool
+result = engine.actions_registry['tools.crewai'](
+    state={},
+    tool="SerperDevTool",
+    query="AI developments 2025"
+)
+print(f"Search result: {result['result']}")
+
+# Use LangChain tool
+result = engine.actions_registry['tools.langchain'](
+    state={},
+    tool="DuckDuckGoSearchRun",
+    query="Python programming"
+)
+print(f"DDG result: {result['result']}")
+
+# Discover all available tools
+result = engine.actions_registry['tools.discover'](
+    state={},
+    source="all"
+)
+for tool in result['tools']:
+    print(f"[{tool['source']}] {tool['name']}: {tool['description'][:50]}...")
+
+# Clear discovery cache
+engine.actions_registry['tools.clear_cache'](state={})
+```
+
+All tools bridge actions are available via dual namespaces: `tools.*` and `actions.tools_*`.
 
 ## Checkpoint Persistence
 
@@ -1128,7 +2565,7 @@ config:
 Planned features:
 
 - [ ] Matrix strategy for parallel execution
-- [ ] Retry logic with backoff
+- [x] Retry logic with backoff (llm.retry)
 - [ ] Caching of node results
 - [ ] Workflow composition (import/include)
 - [ ] Environment-specific configs
@@ -1138,4 +2575,7 @@ Planned features:
 
 Recently implemented:
 
+- [x] RAG Actions: embedding.create, vector.store, vector.query (TEA-BUILTIN-002.2)
+- [x] Web Actions: web.scrape, web.crawl, web.search (TEA-BUILTIN-002.1)
+- [x] LLM Enhanced Actions: llm.stream, llm.retry, llm.tools (TEA-BUILTIN-001.2)
 - [x] Checkpoint persistence for save/resume workflows (v0.5.0)
