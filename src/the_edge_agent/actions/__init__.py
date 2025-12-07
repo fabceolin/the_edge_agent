@@ -9,6 +9,8 @@ Actions are organized by domain:
 - data_actions: JSON/CSV parsing, transformation, validation (TEA-BUILTIN-003.2)
 - observability_actions: Tracing spans and event logging (TEA-BUILTIN-001.3)
 - memory_actions: Key-value storage with TTL (TEA-BUILTIN-001.1)
+- ltm_actions: Long-term persistent key-value storage with FTS5 (TEA-BUILTIN-001.4)
+- graph_actions: Graph database with Datalog and HNSW vectors (TEA-BUILTIN-001.4)
 - web_actions: Web scraping, crawling, and search via Firecrawl/Perplexity (TEA-BUILTIN-002.1)
 - rag_actions: Embedding creation, vector storage, and semantic search (TEA-BUILTIN-002.2)
 - tools_actions: Bridges to CrewAI, MCP, and LangChain tool ecosystems (TEA-BUILTIN-002.3)
@@ -37,6 +39,8 @@ from .core_actions import register_actions as register_core
 from .data_actions import register_actions as register_data
 from .observability_actions import register_actions as register_observability
 from .memory_actions import register_actions as register_memory
+from .ltm_actions import register_actions as register_ltm
+from .graph_actions import register_actions as register_graph
 from .web_actions import register_actions as register_web
 from .rag_actions import register_actions as register_rag
 from .tools_actions import register_actions as register_tools
@@ -76,6 +80,8 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     register_data(registry, engine)
     register_observability(registry, engine)
     register_memory(registry, engine)
+    register_ltm(registry, engine)
+    register_graph(registry, engine)
     register_web(registry, engine)
     register_rag(registry, engine)
     register_tools(registry, engine)

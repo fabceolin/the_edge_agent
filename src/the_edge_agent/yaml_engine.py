@@ -23,7 +23,11 @@ import time
 from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 from .stategraph import StateGraph, START, END
-from .memory import MemoryBackend, InMemoryBackend
+from .memory import (
+    MemoryBackend, InMemoryBackend,
+    LongTermMemoryBackend, SQLiteBackend,
+    GraphBackend, COZO_AVAILABLE
+)
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 from .actions import build_actions_registry
 
@@ -77,7 +81,13 @@ class YAMLEngine:
         trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         trace_verbose: bool = False,
         memory_backend: Optional[Any] = None,
-        enable_code_execution: bool = False
+        enable_code_execution: bool = False,
+        ltm_backend: Optional[Any] = None,
+        enable_ltm: bool = True,
+        ltm_path: Optional[str] = None,
+        graph_backend: Optional[Any] = None,
+        enable_graph: bool = True,
+        graph_path: Optional[str] = None
     ):
         """
         Initialize the YAML engine.
@@ -98,6 +108,17 @@ class YAMLEngine:
             enable_code_execution: Enable code.execute and code.sandbox actions.
                                   Default: False (SECURITY: disabled by default).
                                   Only enable for trusted code patterns.
+            ltm_backend: Optional custom LongTermMemoryBackend implementation.
+                        If None and enable_ltm=True, uses SQLiteBackend.
+            enable_ltm: Enable long-term memory actions (default: True).
+            ltm_path: Path to SQLite database for ltm.* actions.
+                     If None, uses in-memory SQLite.
+            graph_backend: Optional custom GraphBackend implementation.
+                          If None and enable_graph=True, uses CozoBackend if available.
+            enable_graph: Enable graph database actions (default: True).
+                         Requires pycozo to be installed for CozoBackend.
+            graph_path: Path to CozoDB database for graph.* actions.
+                       If None, uses in-memory storage.
         """
         # Initialize tracing
         self._enable_tracing = enable_tracing
@@ -128,6 +149,31 @@ class YAMLEngine:
         # Initialize memory backend (TEA-BUILTIN-001.1)
         self._memory_backend: Any = memory_backend if memory_backend is not None else InMemoryBackend()
 
+        # Initialize long-term memory backend (TEA-BUILTIN-001.4)
+        self._ltm_backend: Optional[Any] = None
+        self._enable_ltm = enable_ltm
+        if enable_ltm:
+            if ltm_backend is not None:
+                self._ltm_backend = ltm_backend
+            else:
+                # Use SQLiteBackend with specified path or in-memory
+                self._ltm_backend = SQLiteBackend(ltm_path or ":memory:")
+
+        # Initialize graph backend (TEA-BUILTIN-001.4)
+        self._graph_backend: Optional[Any] = None
+        self._enable_graph = enable_graph
+        if enable_graph:
+            if graph_backend is not None:
+                self._graph_backend = graph_backend
+            elif COZO_AVAILABLE:
+                # Use CozoBackend with specified path or in-memory
+                from .memory import CozoBackend
+                try:
+                    self._graph_backend = CozoBackend(graph_path or ":memory:")
+                except ImportError:
+                    # CozoDB not installed, graph actions will return informative errors
+                    pass
+
         # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
         self._enable_code_execution = enable_code_execution
 
@@ -153,6 +199,59 @@ class YAMLEngine:
             The current memory backend (InMemoryBackend by default, or custom).
         """
         return self._memory_backend
+
+    @property
+    def ltm_backend(self) -> Optional[Any]:
+        """
+        Get the long-term memory backend instance.
+
+        Returns:
+            The current LTM backend (SQLiteBackend by default, or custom).
+            None if LTM is disabled.
+        """
+        return self._ltm_backend
+
+    @property
+    def graph_backend(self) -> Optional[Any]:
+        """
+        Get the graph database backend instance.
+
+        Returns:
+            The current graph backend (CozoBackend if available, or custom).
+            None if graph is disabled or CozoDB is not installed.
+        """
+        return self._graph_backend
+
+    def close(self) -> None:
+        """
+        Close all backends and release resources.
+
+        Should be called when the engine is no longer needed.
+        Safe to call multiple times.
+
+        Example:
+            >>> engine = YAMLEngine(ltm_path="./memory.db")
+            >>> # ... use engine ...
+            >>> engine.close()  # Release database connections
+        """
+        if self._ltm_backend is not None:
+            try:
+                self._ltm_backend.close()
+            except Exception:
+                pass
+
+        if self._graph_backend is not None:
+            try:
+                self._graph_backend.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        """Cleanup on garbage collection."""
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def get_memory_state(self) -> Dict[str, Any]:
         """

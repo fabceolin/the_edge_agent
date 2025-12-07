@@ -32,6 +32,7 @@ setup(
         "llm": ["openai>=1.13.3"],
         "web": ["requests>=2.32.5"],
         "code": ["RestrictedPython>=8.0"],
+        "graph": ["pycozo[embedded]>=0.7.0"],
         "tools-crewai": ["crewai>=1.6.0", "crewai-tools>=0.38.0"],
         "tools-mcp": ["mcp>=1.23.0"],
         "tools-langchain": ["langchain>=1.1.0", "langchain-community>=0.4.0"],
@@ -48,6 +49,7 @@ setup(
             "chromadb>=0.4.0",
             "requests>=2.32.5",
             "RestrictedPython>=8.0",
+            "pycozo[embedded]>=0.7.0",
         ],
     },
 )

@@ -2,14 +2,14 @@
 
 ## Executive Summary
 
-This document provides a comprehensive overview of the 8 user stories for implementing built-in actions in The Edge Agent (tea) YAML engine. These actions enable YAML agent developers to build production-grade LLM agents without writing Python code.
+This document provides a comprehensive overview of the 9 user stories for implementing built-in actions in The Edge Agent (tea) YAML engine. These actions enable YAML agent developers to build production-grade LLM agents without writing Python code.
 
 | Metric | Value |
 |--------|-------|
-| **Total Stories** | 8 |
-| **Total Actions** | 27+ |
-| **Priority Tiers** | P0 (3), P1 (3), P2 (2) |
-| **Estimated Effort** | 8-10 person-weeks |
+| **Total Stories** | 9 |
+| **Total Actions** | 35+ |
+| **Priority Tiers** | P0 (3), P1 (4), P2 (2) |
+| **Estimated Effort** | 10-12 person-weeks |
 | **External Dependencies** | OpenAI (required), 10+ optional |
 
 ---
@@ -28,6 +28,7 @@ This document provides a comprehensive overview of the 8 user stories for implem
 
 | ID | Title | Actions | Risk | Effort |
 |----|-------|---------|------|--------|
+| TEA-BUILTIN-001.4 | Long-Term Memory | `ltm.store`, `ltm.retrieve`, `ltm.delete`, `ltm.search`, `graph.store_entity`, `graph.store_relation`, `graph.query`, `graph.retrieve_context` | Medium | High |
 | TEA-BUILTIN-002.1 | Web Actions | `web.search`, `web.scrape`, `web.browse` | Medium | High |
 | TEA-BUILTIN-002.2 | RAG Actions | `embedding.create`, `vector.store`, `vector.query` | Medium | High |
 | TEA-BUILTIN-002.3 | Tools Bridge Actions | `tools.crewai`, `tools.mcp`, `tools.langchain`, `tools.discover` | High | High |
@@ -234,11 +235,12 @@ gantt
 
 | Story | Blocked By | Blocks | Can Parallelize With |
 |-------|------------|--------|----------------------|
-| **001.1 Memory** | None | 002.2 (optional) | 001.3, 003.2 |
+| **001.1 Memory** | None | 001.4, 002.2 (optional) | 001.3, 003.2 |
 | **001.2 LLM Enhanced** | None | 001.1, 002.2, 002.3 | 001.3, 003.2 |
 | **001.3 Observability** | None | None | 001.1, 001.2, 003.2 |
+| **001.4 Long-Term Memory** | 001.1, 002.2 | None | 002.1, 003.1 |
 | **002.1 Web** | None | 002.2 (optional) | 002.2, 003.1 |
-| **002.2 RAG** | 001.2 | None | 002.1, 003.1 |
+| **002.2 RAG** | 001.2 | 001.4 | 002.1, 003.1 |
 | **002.3 Tools Bridge** | 001.2 | None | - |
 | **003.1 Code Execution** | None | None | 002.1, 002.2 |
 | **003.2 Data Processing** | None | None | 001.1, 001.3, 001.2 |
@@ -262,6 +264,7 @@ gantt
 | **001.1 Memory** | None | `OPENAI_API_KEY`, Redis |
 | **001.2 LLM Enhanced** | `OPENAI_API_KEY`, `openai>=1.0.0` | None |
 | **001.3 Observability** | None | None |
+| **001.4 Long-Term Memory** | `pycozo[embedded]>=0.7.0` | `OPENAI_API_KEY` (for embeddings) |
 | **002.1 Web** | `requests`, `beautifulsoup4`, `lxml` | `SERPER_API_KEY`, Playwright |
 | **002.2 RAG** | `OPENAI_API_KEY` | `numpy`, `chromadb` |
 | **002.3 Tools Bridge** | None | `crewai`, `mcp`, `langchain` |
@@ -285,6 +288,7 @@ gantt
 | **001.1 Memory** | Low | TTL implementation complexity | Use monotonic time |
 | **001.2 LLM Enhanced** | Medium | Streaming integration with StateGraph | Incremental rollout |
 | **001.3 Observability** | Low | Thread safety in parallel execution | Use threading locks |
+| **001.4 Long-Term Memory** | Low | CozoDB Datalog learning curve | SQLite storage (stable), query limits |
 | **002.1 Web** | Medium | Rate limiting, robots.txt compliance | Per-domain rate limiter |
 | **002.2 RAG** | Medium | Embedding dimension mismatches | Validate at store time |
 | **002.3 Tools Bridge** | High | External library API changes | Version pinning |
@@ -423,6 +427,7 @@ yaml_engine.py
 | 001.1 Memory | 8 tests | 4 tests | - |
 | 001.2 LLM Enhanced | 9 tests | 4 tests | - |
 | 001.3 Observability | 12 tests | 4 tests | - |
+| 001.4 Long-Term Memory | 24 tests | 4 tests | - |
 | 002.1 Web | 10 tests | 3 tests | - |
 | 002.2 RAG | 11 tests | 3 tests | - |
 | 002.3 Tools Bridge | 15 tests | 3 tests | - |
@@ -463,6 +468,7 @@ Each story includes a 4-step rollback procedure:
 | TEA-BUILTIN-001.1 | `docs/stories/TEA-BUILTIN-001.1.memory-actions.md` |
 | TEA-BUILTIN-001.2 | `docs/stories/TEA-BUILTIN-001.2.llm-enhanced-actions.md` |
 | TEA-BUILTIN-001.3 | `docs/stories/TEA-BUILTIN-001.3.observability-actions.md` |
+| TEA-BUILTIN-001.4 | `docs/stories/TEA-BUILTIN-001.4.long-term-memory.md` |
 | TEA-BUILTIN-002.1 | `docs/stories/TEA-BUILTIN-002.1.web-actions.md` |
 | TEA-BUILTIN-002.2 | `docs/stories/TEA-BUILTIN-002.2.rag-actions.md` |
 | TEA-BUILTIN-002.3 | `docs/stories/TEA-BUILTIN-002.3.tools-bridge-actions.md` |
@@ -477,3 +483,4 @@ Each story includes a 4-step rollback procedure:
 |------|---------|-------------|--------|
 | 2025-12-06 | 1.0 | Initial epic overview | Sarah (PO Agent) |
 | 2025-12-06 | 1.1 | Added Mermaid diagrams (flowchart, simplified, gantt) | Sarah (PO Agent) |
+| 2025-12-07 | 1.2 | Added TEA-BUILTIN-001.4 Long-Term Memory (SQLite + Kuzu) | Sarah (PO Agent) |

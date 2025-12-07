@@ -17,6 +17,20 @@ from .memory import (
     InMemoryBackend,
 )
 
+# Long-Term Memory (TEA-BUILTIN-001.4)
+from .memory import (
+    LongTermMemoryBackend,
+    SQLiteBackend,
+    GraphBackend,
+    COZO_AVAILABLE,
+)
+
+# Conditionally import CozoBackend
+try:
+    from .memory import CozoBackend
+except ImportError:
+    CozoBackend = None  # type: ignore
+
 __all__ = [
     "StateGraph",
     "START",
@@ -32,5 +46,11 @@ __all__ = [
     # Memory (TEA-BUILTIN-001.1)
     "MemoryBackend",
     "InMemoryBackend",
+    # Long-Term Memory (TEA-BUILTIN-001.4)
+    "LongTermMemoryBackend",
+    "SQLiteBackend",
+    "GraphBackend",
+    "CozoBackend",
+    "COZO_AVAILABLE",
 ]
 __version__ = "0.0.1"

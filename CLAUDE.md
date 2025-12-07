@@ -229,6 +229,162 @@ All code actions are available via dual namespaces: `code.*` and `actions.code_*
 - `memory.retrieve` - Retrieve values by key with optional default fallback
 - `memory.summarize` - Summarize conversation history using LLM to fit token windows
 
+**Long-Term Memory Actions** (TEA-BUILTIN-001.4):
+- `ltm.store` - Store key-value pairs persistently with optional metadata
+- `ltm.retrieve` - Retrieve values by key from persistent storage
+- `ltm.delete` - Delete a key from persistent storage
+- `ltm.search` - Full-text search across stored values using FTS5
+
+Long-term memory provides persistent storage using SQLite with FTS5 full-text search.
+Unlike session memory, data persists across engine restarts when using file-based storage.
+
+LTM Backends:
+- **SQLiteBackend**: File-based or in-memory SQLite with FTS5 search (default)
+
+LTM Actions usage:
+```python
+# Store with metadata
+result = engine.actions_registry['ltm.store'](
+    state={},
+    key="user_profile",
+    value={"name": "Alice", "preferences": ["coding", "music"]},
+    metadata={"type": "profile", "version": 1}
+)
+# Returns: {"success": True, "stored": True, "key": "user_profile", "created": True}
+
+# Retrieve a value
+result = engine.actions_registry['ltm.retrieve'](
+    state={},
+    key="user_profile"
+)
+# Returns: {"success": True, "value": {...}, "found": True, "metadata": {...}}
+
+# Retrieve with default for missing key
+result = engine.actions_registry['ltm.retrieve'](
+    state={},
+    key="nonexistent",
+    default={"empty": True}
+)
+# Returns: {"success": True, "value": {"empty": True}, "found": False, "metadata": None}
+
+# Delete a key
+result = engine.actions_registry['ltm.delete'](
+    state={},
+    key="old_data"
+)
+# Returns: {"success": True, "deleted": True, "key": "old_data"}
+
+# Full-text search
+result = engine.actions_registry['ltm.search'](
+    state={},
+    query="coding music",
+    limit=10
+)
+# Returns: {"success": True, "results": [...], "count": int}
+
+# Search with metadata filter
+result = engine.actions_registry['ltm.search'](
+    state={},
+    metadata_filter={"type": "profile"},
+    limit=5
+)
+# Returns: {"success": True, "results": [...], "count": int}
+```
+
+LTM configuration in YAMLEngine:
+```python
+from the_edge_agent import YAMLEngine, SQLiteBackend
+
+# Default in-memory LTM
+engine = YAMLEngine()
+
+# File-based persistent LTM
+engine = YAMLEngine(ltm_path="./agent_memory.db")
+
+# Custom backend injection
+custom_backend = SQLiteBackend("./custom.db")
+engine = YAMLEngine(ltm_backend=custom_backend)
+
+# Disable LTM
+engine = YAMLEngine(enable_ltm=False)
+```
+
+All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
+
+**Graph Database Actions** (TEA-BUILTIN-001.4):
+- `graph.store_entity` - Store entities with type, properties, and optional embeddings
+- `graph.store_relation` - Create relationships between entities
+- `graph.query` - Execute Datalog queries against the graph
+- `graph.retrieve_context` - Retrieve contextual information for an entity
+
+Graph actions provide entity-relationship storage using CozoDB (optional dependency).
+When CozoDB is not installed, graph actions return informative error messages with
+graceful degradation.
+
+Required dependency (optional):
+- `pip install 'pycozo[embedded]'` - For CozoDB graph backend
+
+Graph Actions usage:
+```python
+# Store an entity
+result = engine.actions_registry['graph.store_entity'](
+    state={},
+    entity_id="user_123",
+    entity_type="User",
+    properties={"name": "Alice", "role": "admin"}
+)
+# Returns: {"success": True, "entity_id": "user_123", "entity_type": "User"}
+
+# Store a relation
+result = engine.actions_registry['graph.store_relation'](
+    state={},
+    source_id="user_123",
+    target_id="project_456",
+    relation_type="owns",
+    properties={"since": "2024-01-01"}
+)
+# Returns: {"success": True, "source_id": "user_123", "target_id": "project_456", "relation_type": "owns"}
+
+# Datalog query
+result = engine.actions_registry['graph.query'](
+    state={},
+    query="?[name] := *entity{entity_id: 'user_123', properties: props}, name = get(props, 'name')"
+)
+# Returns: {"success": True, "results": [{"name": "Alice"}], "count": 1}
+
+# Retrieve entity context
+result = engine.actions_registry['graph.retrieve_context'](
+    state={},
+    entity_id="user_123",
+    max_depth=2
+)
+# Returns: {"success": True, "entity": {...}, "relations": [...], "related_entities": [...]}
+
+# Graceful degradation when CozoDB not installed
+result = engine.actions_registry['graph.store_entity'](
+    state={},
+    entity_id="test",
+    entity_type="Test"
+)
+# Returns: {"success": False, "error": "CozoDB not installed. Install with: pip install 'pycozo[embedded]'", "error_type": "dependency_missing"}
+```
+
+Graph configuration in YAMLEngine:
+```python
+from the_edge_agent import YAMLEngine
+
+# Graph backend auto-enabled if CozoDB installed
+engine = YAMLEngine()
+
+# File-based persistent graph
+engine = YAMLEngine(graph_path="./agent_graph.db")
+
+# Disable graph (even if CozoDB available)
+engine = YAMLEngine(enable_graph=False)
+```
+
+All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
+
 **LLM Enhanced Actions** (TEA-BUILTIN-001.2):
 - `llm.stream` - Stream LLM responses with chunk aggregation
 - `llm.retry` - LLM calls with exponential backoff retry logic

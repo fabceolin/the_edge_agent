@@ -1387,6 +1387,295 @@ engine.clear_memory()  # Clear all namespaces
 engine.clear_memory(namespace="session_123")  # Clear specific namespace
 ```
 
+### Long-Term Memory Actions (TEA-BUILTIN-001.4)
+
+Long-term memory provides persistent storage using SQLite with FTS5 full-text search.
+Unlike session memory, data persists across engine restarts when using file-based storage.
+
+All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
+
+#### ltm.store
+
+Store key-value pairs persistently with optional metadata:
+
+```yaml
+- name: store_knowledge
+  uses: ltm.store
+  with:
+    key: "user_profile"
+    value: "{{ state.profile_data }}"
+    metadata:
+      type: "profile"
+      source: "onboarding"
+```
+
+**ltm.store** returns:
+- `{"success": true, "stored": true, "key": str, "created": true/false}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### ltm.retrieve
+
+Retrieve values by key from persistent storage:
+
+```yaml
+- name: load_knowledge
+  uses: ltm.retrieve
+  with:
+    key: "user_profile"
+    default: {}  # Optional default if not found
+```
+
+**ltm.retrieve** returns:
+- `{"success": true, "value": any, "found": true, "metadata": dict}` if key exists
+- `{"success": true, "value": default, "found": false, "metadata": null}` if not found
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### ltm.delete
+
+Delete a key from persistent storage:
+
+```yaml
+- name: remove_old_data
+  uses: ltm.delete
+  with:
+    key: "deprecated_key"
+```
+
+**ltm.delete** returns:
+- `{"success": true, "deleted": true, "key": str}` if key was deleted
+- `{"success": true, "deleted": false, "key": str}` if key didn't exist
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### ltm.search
+
+Full-text search across stored values using FTS5:
+
+```yaml
+- name: search_knowledge
+  uses: ltm.search
+  with:
+    query: "coding preferences"
+    limit: 10
+    metadata_filter:  # Optional
+      type: "profile"
+```
+
+**ltm.search** returns:
+- `{"success": true, "results": list, "count": int}` with results containing `{key, value, metadata, score}`
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### Example: Persistent Knowledge Agent
+
+```yaml
+name: knowledge-agent
+description: Agent that builds and searches a persistent knowledge base
+
+state_schema:
+  query: str
+  results: list
+  answer: str
+
+nodes:
+  - name: search_knowledge
+    uses: ltm.search
+    with:
+      query: "{{ state.query }}"
+      limit: 5
+
+  - name: generate_answer
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: system
+          content: "Answer based on this knowledge: {{ state.results }}"
+        - role: user
+          content: "{{ state.query }}"
+    output: llm_result
+
+  - name: format_response
+    run: |
+      return {"answer": state["llm_result"]["content"]}
+
+edges:
+  - from: __start__
+    to: search_knowledge
+  - from: search_knowledge
+    to: generate_answer
+  - from: generate_answer
+    to: format_response
+  - from: format_response
+    to: __end__
+```
+
+#### Python Configuration
+
+```python
+from the_edge_agent import YAMLEngine, SQLiteBackend
+
+# Default in-memory LTM (data lost when engine closes)
+engine = YAMLEngine()
+
+# File-based persistent LTM
+engine = YAMLEngine(ltm_path="./agent_memory.db")
+
+# Custom backend injection
+custom_backend = SQLiteBackend("./custom.db")
+engine = YAMLEngine(ltm_backend=custom_backend)
+
+# Disable LTM
+engine = YAMLEngine(enable_ltm=False)
+
+# Close engine to release resources
+engine.close()
+```
+
+### Graph Database Actions (TEA-BUILTIN-001.4)
+
+Graph actions provide entity-relationship storage using CozoDB (optional dependency).
+When CozoDB is not installed, graph actions return informative error messages.
+
+Required dependency (optional):
+- `pip install 'pycozo[embedded]'` - For CozoDB graph backend
+
+All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
+
+#### graph.store_entity
+
+Store entities with type, properties, and optional embeddings:
+
+```yaml
+- name: store_user
+  uses: graph.store_entity
+  with:
+    entity_id: "{{ state.user_id }}"
+    entity_type: "User"
+    properties:
+      name: "{{ state.user_name }}"
+      role: "{{ state.user_role }}"
+```
+
+**graph.store_entity** returns:
+- `{"success": true, "entity_id": str, "entity_type": str}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### graph.store_relation
+
+Create relationships between entities:
+
+```yaml
+- name: create_ownership
+  uses: graph.store_relation
+  with:
+    source_id: "{{ state.user_id }}"
+    target_id: "{{ state.project_id }}"
+    relation_type: "owns"
+    properties:
+      since: "{{ state.created_date }}"
+```
+
+**graph.store_relation** returns:
+- `{"success": true, "source_id": str, "target_id": str, "relation_type": str}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### graph.query
+
+Execute Datalog queries against the graph:
+
+```yaml
+- name: find_owned_projects
+  uses: graph.query
+  with:
+    query: |
+      ?[project_id, project_name] :=
+        *relation{source_id: '{{ state.user_id }}', relation_type: 'owns', target_id: project_id},
+        *entity{entity_id: project_id, properties: props},
+        project_name = get(props, 'name')
+```
+
+**graph.query** returns:
+- `{"success": true, "results": list, "count": int}` with query results
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### graph.retrieve_context
+
+Retrieve contextual information for an entity:
+
+```yaml
+- name: get_user_context
+  uses: graph.retrieve_context
+  with:
+    entity_id: "{{ state.user_id }}"
+    max_depth: 2
+```
+
+**graph.retrieve_context** returns:
+- `{"success": true, "entity": dict, "relations": list, "related_entities": list}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+#### Example: Knowledge Graph Agent
+
+```yaml
+name: knowledge-graph-agent
+description: Agent that builds and queries a knowledge graph
+
+state_schema:
+  entity_type: str
+  entity_data: dict
+  query_result: list
+
+nodes:
+  - name: store_entity
+    uses: graph.store_entity
+    with:
+      entity_id: "{{ state.entity_data.id }}"
+      entity_type: "{{ state.entity_type }}"
+      properties: "{{ state.entity_data.properties }}"
+
+  - name: find_related
+    uses: graph.retrieve_context
+    with:
+      entity_id: "{{ state.entity_data.id }}"
+      max_depth: 2
+    output: context
+
+  - name: format_result
+    run: |
+      return {"query_result": state["context"]["relations"]}
+
+edges:
+  - from: __start__
+    to: store_entity
+  - from: store_entity
+    to: find_related
+  - from: find_related
+    to: format_result
+  - from: format_result
+    to: __end__
+```
+
+#### Python Configuration
+
+```python
+from the_edge_agent import YAMLEngine
+
+# Graph backend auto-enabled if CozoDB installed
+engine = YAMLEngine()
+
+# File-based persistent graph
+engine = YAMLEngine(graph_path="./agent_graph.db")
+
+# Disable graph (even if CozoDB available)
+engine = YAMLEngine(enable_graph=False)
+
+# Check if CozoDB is available
+from the_edge_agent import COZO_AVAILABLE
+if COZO_AVAILABLE:
+    print("CozoDB is installed")
+else:
+    print("Install with: pip install 'pycozo[embedded]'")
+```
+
 ### Web Actions (TEA-BUILTIN-002.1)
 
 Web actions for scraping, crawling, and searching the web. Designed for Firebase Cloud Functions compatibility using external API delegation.
