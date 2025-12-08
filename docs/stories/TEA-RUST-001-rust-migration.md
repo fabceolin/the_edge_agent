@@ -7,7 +7,7 @@
 | **ID** | TEA-RUST-001 |
 | **Type** | Epic |
 | **Priority** | High |
-| **Estimated Effort** | 18-24 weeks (includes built-in actions + LTM/Graph) |
+| **Estimated Effort** | 20-26 weeks (includes built-in actions + LTM/Graph + Cloud-Native) |
 | **Status** | Draft |
 
 ## Description
@@ -148,6 +148,18 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-41**: GIVEN `graph.retrieve_context` action, WHEN executed with entity_id or embedding, THEN N-hop subgraph context is returned
 
+### Cloud-Native LTM Backends (Rust Native)
+
+- [ ] **AC-42**: GIVEN `ltm_backend="turso"` configuration, WHEN LTM actions execute, THEN data is stored/retrieved via Turso/libSQL with FTS5 support
+
+- [ ] **AC-43**: GIVEN `ltm_backend="d1"` configuration, WHEN LTM actions execute, THEN data is stored/retrieved via Cloudflare D1 REST API
+
+- [ ] **AC-44**: GIVEN `ltm_backend="postgres"` configuration, WHEN LTM actions execute, THEN data is stored/retrieved via PostgreSQL with `tsvector` full-text search
+
+- [ ] **AC-45**: GIVEN `ltm_backend="blob-sqlite"` configuration, WHEN LTM actions execute, THEN SQLite file is downloaded from blob storage, modified locally, and uploaded with distributed locking
+
+- [ ] **AC-46**: GIVEN cloud-native backend configured, WHEN backend dependency is missing, THEN informative error with installation instructions is returned
+
 ### CLI
 
 - [ ] **AC-17**: GIVEN `tea` CLI binary, WHEN run with `tea run workflow.yaml --input '{"key": "value"}'`, THEN workflow executes and outputs final state as JSON
@@ -281,6 +293,7 @@ nodes:
 | TEA-RUST-022 | LLM Enhanced actions (stream, retry, tools) | 5 |
 | TEA-RUST-023 | Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5) | 5 |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
+| TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
 
 ---
 
@@ -332,12 +345,20 @@ The Python implementation includes 27+ built-in actions across 8 categories. Thi
 | | `graph.store_entity/relation` | Same Datalog operations | Low |
 | | `graph.query` | Datalog queries | Same Datalog queries | Low |
 | | `graph.retrieve_context` | HNSW + N-hop traversal | Same (native Rust) | Low |
+| **Cloud-Native LTM** | Multiple Python backends | Native Rust implementations | Medium |
+| | Turso via `libsql-client` | `libsql` crate (native Rust) | Low |
+| | D1 via HTTP (httpx/requests) | `reqwest` HTTP client | Low |
+| | PostgreSQL via `psycopg` | `sqlx` with compile-time checks | Medium |
+| | Blob SQLite (download-lock-upload) | `rusqlite` + `object_store` | Medium |
 
 #### Excluded from Rust Migration
 
 | Action Category | Reason for Exclusion |
 |-----------------|---------------------|
 | **Tools Bridge** (`tools.crewai`, `tools.mcp`, `tools.langchain`) | Deeply tied to Python ecosystem. Users needing these should use Python version. |
+| **Bighorn Graph Backend** | KuzuDB fork with Python bindings only. Use CozoDB (native Rust) for graph in Rust version. |
+| **Litestream Backend** | Requires separate daemon process. Not suitable for single static binary deployment. |
+| **Firestore Backend** | No native Rust SDK. Would require maintaining custom HTTP client. Low priority. |
 
 ### Built-in Actions Rust Crate Structure
 
@@ -346,7 +367,13 @@ src/
 ├── actions/
 │   ├── mod.rs           # Action registry and trait definitions
 │   ├── memory.rs        # memory.store, memory.retrieve, memory.summarize
-│   ├── ltm.rs           # ltm.store, ltm.retrieve, ltm.delete, ltm.search (rusqlite + FTS5)
+│   ├── ltm/
+│   │   ├── mod.rs       # LTM backend trait and factory
+│   │   ├── sqlite.rs    # SQLiteBackend (rusqlite + FTS5)
+│   │   ├── turso.rs     # TursoBackend (libsql crate)
+│   │   ├── d1.rs        # D1Backend (reqwest + Cloudflare API)
+│   │   ├── postgres.rs  # PostgresBackend (sqlx)
+│   │   └── blob.rs      # BlobSQLiteBackend (object_store + distributed lock)
 │   ├── graph.rs         # graph.store_entity, graph.store_relation, graph.query, graph.retrieve_context (cozo crate)
 │   ├── trace.rs         # trace.start, trace.log, trace.end (uses tracing crate)
 │   ├── data.rs          # json.*, csv.*, data.* actions
@@ -565,18 +592,21 @@ impl CozoBackend {
 | `csv` | CSV parsing/writing | csv.* |
 | `jmespath` | JMESPath expressions | json.transform |
 | `jsonschema` | JSON Schema validation | data.validate |
-| `reqwest` (blocking) | HTTP client | web.*, rag.*, llm.* |
+| `reqwest` (blocking) | HTTP client | web.*, rag.*, llm.*, d1 |
 | `tracing` | Structured logging | trace.* |
 | `mlua` | Lua scripting | code.* |
 | `parking_lot` | Fast RwLock/Mutex | memory.*, ltm.* |
-| `rusqlite` | SQLite with FTS5 | ltm.* |
+| `rusqlite` | SQLite with FTS5 | ltm.sqlite, ltm.blob |
 | `cozo` | Graph DB with Datalog + HNSW | graph.* |
+| `libsql` | Turso/libSQL native client | ltm.turso |
+| `sqlx` | PostgreSQL with compile-time checks | ltm.postgres |
+| `object_store` | S3/GCS/Azure blob storage | ltm.blob |
 
 ### Feature Flags for Optional Actions
 
 ```toml
 [features]
-default = ["memory", "trace", "data"]
+default = ["memory", "trace", "data", "ltm-sqlite"]
 memory = []
 trace = ["tracing", "tracing-subscriber"]
 data = ["serde_json", "csv"]
@@ -584,9 +614,14 @@ web = ["reqwest"]
 rag = ["reqwest"]
 llm = ["reqwest"]
 code = ["mlua"]
-ltm = ["rusqlite"]
+ltm-sqlite = ["rusqlite"]
+ltm-turso = ["libsql"]
+ltm-d1 = ["reqwest"]
+ltm-postgres = ["sqlx"]
+ltm-blob = ["rusqlite", "object_store"]
+ltm-all = ["ltm-sqlite", "ltm-turso", "ltm-d1", "ltm-postgres", "ltm-blob"]
 graph = ["cozo"]
-all = ["memory", "trace", "data", "web", "rag", "llm", "code", "ltm", "graph"]
+all = ["memory", "trace", "data", "web", "rag", "llm", "code", "ltm-all", "graph"]
 ```
 
 ### Action Compatibility Matrix
@@ -605,8 +640,15 @@ all = ["memory", "trace", "data", "web", "rag", "llm", "code", "ltm", "graph"]
 | `vector.*` | In-memory store | Same | None |
 | `llm.*` | OpenAI Python SDK | `reqwest` | None |
 | `code.execute` | **RestrictedPython** | **Lua sandbox** | **Different language** |
-| `ltm.*` | SQLite + FTS5 | `rusqlite` + FTS5 | None |
-| `graph.*` | CozoDB (pycozo) | CozoDB (native Rust) | None |
+| `ltm.*` (sqlite) | SQLite + FTS5 | `rusqlite` + FTS5 | None |
+| `ltm.*` (turso) | libsql-client | `libsql` crate | None |
+| `ltm.*` (d1) | HTTP API | `reqwest` HTTP | None |
+| `ltm.*` (postgres) | psycopg | `sqlx` | None |
+| `ltm.*` (blob) | download-lock-upload | `object_store` + lock | None |
+| `ltm.*` (firestore) | firebase-admin | **Not migrated** | **Not available** |
+| `ltm.*` (litestream) | Daemon + SQLite | **Not migrated** | **Not available** |
+| `graph.*` (cozo) | CozoDB (pycozo) | CozoDB (native Rust) | None |
+| `graph.*` (bighorn) | Kuzu (Cypher) | **Not migrated** | **Not available** |
 | `tools.*` | CrewAI/MCP/LangChain | **Not migrated** | **Not available** |
 
 ---
@@ -668,16 +710,23 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-001.1 | Memory Actions | ✅ Done | TEA-RUST-016 |
 | TEA-BUILTIN-001.2 | LLM Enhanced Actions | ✅ Done | TEA-RUST-022 |
 | TEA-BUILTIN-001.3 | Observability Actions | ✅ Done | TEA-RUST-017 |
-| TEA-BUILTIN-001.4 | Long-Term Memory & Graph Actions | ✅ Done | TEA-RUST-023, TEA-RUST-024 |
+| TEA-BUILTIN-001.4 | LTM & Graph Actions + Bighorn Extension | 🔄 In Progress | TEA-RUST-023, TEA-RUST-024 |
+| TEA-BUILTIN-001.5 | Cloud-Native LTM Backends | 📝 Draft | TEA-RUST-025 |
 | TEA-BUILTIN-002.1 | Web Actions | ✅ Done | TEA-RUST-019 |
 | TEA-BUILTIN-002.2 | RAG Actions | ✅ Done | TEA-RUST-020 |
 | TEA-BUILTIN-002.3 | Tools Bridge Actions | ✅ Done | **Not migrated** |
 | TEA-BUILTIN-003.1 | Code Execution Actions | ✅ Done | TEA-RUST-021 (Lua) |
 | TEA-BUILTIN-003.2 | Data Processing Actions | ✅ Done | TEA-RUST-018 |
 
-**Note**: Tools Bridge Actions (TEA-BUILTIN-002.3) are **not** being migrated to Rust as they depend on Python-specific libraries (CrewAI, LangChain, MCP). Users requiring these capabilities should use the Python version of TEA.
+**Not Migrated to Rust**:
+- **Tools Bridge Actions** (TEA-BUILTIN-002.3) - Python-specific libraries (CrewAI, LangChain, MCP)
+- **Bighorn Graph Backend** (TEA-BUILTIN-001.4 extension) - KuzuDB fork with Python bindings only
+- **Litestream Backend** (TEA-BUILTIN-001.5) - Requires daemon process, not suitable for static binary
 
-**Key Advantage of TEA-BUILTIN-001.4 Migration**: CozoDB is natively written in Rust - the Python `pycozo` package is just Python bindings. The Rust migration uses CozoDB directly via the `cozo` crate, providing identical Datalog query semantics with better performance and no FFI overhead.
+**Key Advantages**:
+- **CozoDB**: Native Rust crate (`cozo`) - identical Datalog semantics, better performance
+- **Turso/libSQL**: Native Rust crate (`libsql`) - SQLite-compatible, edge-native
+- **PostgreSQL**: Excellent Rust support via `sqlx` with compile-time query verification
 
 ---
 
@@ -688,3 +737,4 @@ The following Python built-in action stories have been implemented and inform th
 | 2025-12-06 | 1.0 | Initial draft - core graph execution, Lua integration, checkpointing | Sarah (PO Agent) |
 | 2025-12-07 | 2.0 | Major update: Added built-in actions migration plan (27+ actions across 8 categories). Added 7 new sub-stories (TEA-RUST-016 to TEA-RUST-022). Updated effort estimate to 16-20 weeks. Added Python TEA-BUILTIN reference table. Documented breaking changes (code.execute: Python→Lua, tools.* not migrated). | Sarah (PO Agent) |
 | 2025-12-07 | 3.0 | Added TEA-BUILTIN-001.4 Long-Term Memory & Graph actions. Added TEA-RUST-023 (LTM with rusqlite/FTS5) and TEA-RUST-024 (Graph with native CozoDB Rust crate). Updated effort to 18-24 weeks. Added AC-35 to AC-41 for ltm.* and graph.* actions. CozoDB uses native Rust - same Datalog semantics as Python version. | Sarah (PO Agent) |
+| 2025-12-07 | 4.0 | Added TEA-BUILTIN-001.4 Bighorn extension (excluded from Rust - Python-only) and TEA-BUILTIN-001.5 Cloud-Native LTM Backends. Added TEA-RUST-025 (Turso, D1, PostgreSQL, Blob-SQLite). Updated effort to 20-26 weeks. Added AC-42 to AC-46 for cloud-native backends. Excluded: Bighorn, Litestream, Firestore (no native Rust SDK). Added libsql, sqlx, object_store crates. | Sarah (PO Agent) |

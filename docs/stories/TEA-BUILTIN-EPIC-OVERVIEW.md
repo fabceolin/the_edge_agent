@@ -2,15 +2,15 @@
 
 ## Executive Summary
 
-This document provides a comprehensive overview of the 9 user stories for implementing built-in actions in The Edge Agent (tea) YAML engine. These actions enable YAML agent developers to build production-grade LLM agents without writing Python code.
+This document provides a comprehensive overview of the 11 user stories for implementing built-in actions in The Edge Agent (tea) YAML engine. These actions enable YAML agent developers to build production-grade LLM agents without writing Python code.
 
 | Metric | Value |
 |--------|-------|
-| **Total Stories** | 9 |
-| **Total Actions** | 35+ |
-| **Priority Tiers** | P0 (3), P1 (4), P2 (2) |
-| **Estimated Effort** | 10-12 person-weeks |
-| **External Dependencies** | OpenAI (required), 10+ optional |
+| **Total Stories** | 11 |
+| **Total Actions** | 40+ |
+| **Priority Tiers** | P0 (3), P1 (6), P2 (2) |
+| **Estimated Effort** | 13-16 person-weeks |
+| **External Dependencies** | OpenAI (required), 15+ optional |
 
 ---
 
@@ -28,10 +28,12 @@ This document provides a comprehensive overview of the 9 user stories for implem
 
 | ID | Title | Actions | Risk | Effort |
 |----|-------|---------|------|--------|
-| TEA-BUILTIN-001.4 | Long-Term Memory | `ltm.store`, `ltm.retrieve`, `ltm.delete`, `ltm.search`, `graph.store_entity`, `graph.store_relation`, `graph.query`, `graph.retrieve_context` | Medium | High |
+| TEA-BUILTIN-001.4 | Long-Term Memory + Graph | `ltm.*`, `graph.*` with CozoDB (local/Datalog) + **Bighorn** (cloud-native/Cypher, S3/GCS direct I/O) | Medium | High |
+| TEA-BUILTIN-001.5 | Cloud-Native LTM Backends | Turso, Firestore, PostgreSQL, Litestream backends for LTM | Medium | High |
 | TEA-BUILTIN-002.1 | Web Actions | `web.search`, `web.scrape`, `web.browse` | Medium | High |
 | TEA-BUILTIN-002.2 | RAG Actions | `embedding.create`, `vector.store`, `vector.query` | Medium | High |
 | TEA-BUILTIN-002.3 | Tools Bridge Actions | `tools.crewai`, `tools.mcp`, `tools.langchain`, `tools.discover` | High | High |
+| TEA-BUILTIN-004.1 | Remote Storage Actions (fsspec) | `file.read` (20+ backends), `file.write`, `storage.list`, `storage.exists`, `storage.delete`, `storage.copy`, `storage.info`, `storage.mkdir`, `storage.native` | Low | Medium |
 
 ### P2 - Extended Actions
 
@@ -238,12 +240,14 @@ gantt
 | **001.1 Memory** | None | 001.4, 002.2 (optional) | 001.3, 003.2 |
 | **001.2 LLM Enhanced** | None | 001.1, 002.2, 002.3 | 001.3, 003.2 |
 | **001.3 Observability** | None | None | 001.1, 001.2, 003.2 |
-| **001.4 Long-Term Memory** | 001.1, 002.2 | None | 002.1, 003.1 |
-| **002.1 Web** | None | 002.2 (optional) | 002.2, 003.1 |
-| **002.2 RAG** | 001.2 | 001.4 | 002.1, 003.1 |
-| **002.3 Tools Bridge** | 001.2 | None | - |
-| **003.1 Code Execution** | None | None | 002.1, 002.2 |
-| **003.2 Data Processing** | None | None | 001.1, 001.3, 001.2 |
+| **001.4 Long-Term Memory** | 001.1, 002.2 | 001.5 | 002.1, 003.1, 004.1 |
+| **001.5 Cloud-Native LTM** | 001.4 | None | 002.1, 003.1, 004.1 |
+| **002.1 Web** | None | 002.2 (optional) | 002.2, 003.1, 004.1 |
+| **002.2 RAG** | 001.2 | 001.4 | 002.1, 003.1, 004.1 |
+| **002.3 Tools Bridge** | 001.2 | None | 004.1 |
+| **003.1 Code Execution** | None | None | 002.1, 002.2, 004.1 |
+| **003.2 Data Processing** | None | None | 001.1, 001.3, 001.2, 004.1 |
+| **004.1 Remote Storage** | None | None | All others (no blocking deps) |
 
 ---
 
@@ -264,12 +268,14 @@ gantt
 | **001.1 Memory** | None | `OPENAI_API_KEY`, Redis |
 | **001.2 LLM Enhanced** | `OPENAI_API_KEY`, `openai>=1.0.0` | None |
 | **001.3 Observability** | None | None |
-| **001.4 Long-Term Memory** | `pycozo[embedded]>=0.7.0` | `OPENAI_API_KEY` (for embeddings) |
+| **001.4 Long-Term Memory** | `pycozo[embedded]>=0.7.0` (CozoDB), `kuzu` (Bighorn) | `OPENAI_API_KEY` (for embeddings), AWS/GCS credentials (for Bighorn cloud I/O) |
 | **002.1 Web** | `requests`, `beautifulsoup4`, `lxml` | `SERPER_API_KEY`, Playwright |
 | **002.2 RAG** | `OPENAI_API_KEY` | `numpy`, `chromadb` |
 | **002.3 Tools Bridge** | None | `crewai`, `mcp`, `langchain` |
 | **003.1 Code Execution** | `RestrictedPython` | `py_mini_racer`, `E2B_API_KEY` |
 | **003.2 Data Processing** | None | `jmespath`, `jsonschema` |
+| **001.5 Cloud-Native LTM** | None | `libsql-client` (Turso), `firebase-admin` (Firestore), `psycopg[pool]` (PostgreSQL) |
+| **004.1 Remote Storage** | `fsspec` | `s3fs` (S3), `gcsfs` (GCS/Firebase), `adlfs` (Azure) |
 
 ### API Keys Required
 
@@ -294,6 +300,8 @@ gantt
 | **002.3 Tools Bridge** | High | External library API changes | Version pinning |
 | **003.1 Code Execution** | **Critical** | Sandbox escape, security vulnerabilities | Security tests, default OFF |
 | **003.2 Data Processing** | Low | Large file memory issues | Streaming generators |
+| **001.5 Cloud-Native LTM** | Medium | Search parity across backends, connection pooling | Backend abstraction layer, feature detection |
+| **004.1 Remote Storage** | Low | fsspec API changes | Battle-tested library, version pinning |
 
 ---
 
@@ -469,11 +477,13 @@ Each story includes a 4-step rollback procedure:
 | TEA-BUILTIN-001.2 | `docs/stories/TEA-BUILTIN-001.2.llm-enhanced-actions.md` |
 | TEA-BUILTIN-001.3 | `docs/stories/TEA-BUILTIN-001.3.observability-actions.md` |
 | TEA-BUILTIN-001.4 | `docs/stories/TEA-BUILTIN-001.4.long-term-memory.md` |
+| TEA-BUILTIN-001.5 | `docs/stories/TEA-BUILTIN-001.5.cloud-native-ltm.md` |
 | TEA-BUILTIN-002.1 | `docs/stories/TEA-BUILTIN-002.1.web-actions.md` |
 | TEA-BUILTIN-002.2 | `docs/stories/TEA-BUILTIN-002.2.rag-actions.md` |
 | TEA-BUILTIN-002.3 | `docs/stories/TEA-BUILTIN-002.3.tools-bridge-actions.md` |
 | TEA-BUILTIN-003.1 | `docs/stories/TEA-BUILTIN-003.1.code-execution-actions.md` |
 | TEA-BUILTIN-003.2 | `docs/stories/TEA-BUILTIN-003.2.data-processing-actions.md` |
+| TEA-BUILTIN-004.1 | `docs/stories/TEA-BUILTIN-004.1.remote-storage-actions.md` |
 
 ---
 
@@ -484,3 +494,6 @@ Each story includes a 4-step rollback procedure:
 | 2025-12-06 | 1.0 | Initial epic overview | Sarah (PO Agent) |
 | 2025-12-06 | 1.1 | Added Mermaid diagrams (flowchart, simplified, gantt) | Sarah (PO Agent) |
 | 2025-12-07 | 1.2 | Added TEA-BUILTIN-001.4 Long-Term Memory (SQLite + Kuzu) | Sarah (PO Agent) |
+| 2025-12-07 | 1.3 | Added TEA-BUILTIN-004.1 Remote Storage Actions (S3, GCS, Firebase, Azure) | Sarah (PO Agent) |
+| 2025-12-07 | 1.4 | Added TEA-BUILTIN-001.5 Cloud-Native LTM Backends (Turso, Firestore, PostgreSQL) | Sarah (PO Agent) |
+| 2025-12-07 | 1.5 | Refactored TEA-BUILTIN-004.1 to use fsspec (reduced complexity, risk Low, effort Medium) | Sarah (PO Agent) |

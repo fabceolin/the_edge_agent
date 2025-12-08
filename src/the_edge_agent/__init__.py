@@ -23,6 +23,7 @@ from .memory import (
     SQLiteBackend,
     GraphBackend,
     COZO_AVAILABLE,
+    KUZU_AVAILABLE,
 )
 
 # Conditionally import CozoBackend
@@ -30,6 +31,13 @@ try:
     from .memory import CozoBackend
 except ImportError:
     CozoBackend = None  # type: ignore
+
+# Conditionally import KuzuBackend (Bighorn)
+try:
+    from .memory import KuzuBackend, BighornBackend
+except ImportError:
+    KuzuBackend = None  # type: ignore
+    BighornBackend = None  # type: ignore
 
 __all__ = [
     "StateGraph",
@@ -52,5 +60,9 @@ __all__ = [
     "GraphBackend",
     "CozoBackend",
     "COZO_AVAILABLE",
+    # Graph Database - Kuzu/Bighorn (TEA-BUILTIN-001.4 Bighorn Extension)
+    "KuzuBackend",
+    "BighornBackend",
+    "KUZU_AVAILABLE",
 ]
 __version__ = "0.0.1"

@@ -24,6 +24,7 @@ setup(
         "pyyaml>=6.0",
         "jmespath>=1.0.0",
         "jsonschema>=4.20.0",
+        "fsspec>=2023.1.0",
     ],
     extras_require={
         "dev": ["pytest", "coverage", "hypothesis", "parameterized==0.9.0"],
@@ -33,6 +34,11 @@ setup(
         "web": ["requests>=2.32.5"],
         "code": ["RestrictedPython>=8.0"],
         "graph": ["pycozo[embedded]>=0.7.0"],
+        "graph-kuzu": ["kuzu>=0.11.0"],
+        # Note: graph-bighorn should be installed manually from GitHub:
+        # pip install git+https://github.com/Kineviz/bighorn.git
+        # Using kuzu as fallback since bighorn is a kuzu fork
+        "graph-bighorn": ["kuzu>=0.11.0"],
         "tools-crewai": ["crewai>=1.6.0", "crewai-tools>=0.38.0"],
         "tools-mcp": ["mcp>=1.23.0"],
         "tools-langchain": ["langchain>=1.1.0", "langchain-community>=0.4.0"],
@@ -43,6 +49,10 @@ setup(
             "langchain>=1.1.0",
             "langchain-community>=0.4.0",
         ],
+        "storage-s3": ["s3fs"],
+        "storage-gcs": ["gcsfs"],
+        "storage-azure": ["adlfs"],
+        "storage-all": ["s3fs", "gcsfs", "adlfs"],
         "all": [
             "openai>=1.13.3",
             "numpy>=2.1.0",
@@ -50,6 +60,9 @@ setup(
             "requests>=2.32.5",
             "RestrictedPython>=8.0",
             "pycozo[embedded]>=0.7.0",
+            "s3fs",
+            "gcsfs",
+            "adlfs",
         ],
     },
 )

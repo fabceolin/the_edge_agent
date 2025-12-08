@@ -584,21 +584,139 @@ All LLM enhanced actions are available via dual namespaces: `llm.*` and `actions
 
 ### File Actions
 
+File actions support both local paths and remote URIs via fsspec (S3, GCS, Azure, etc.).
+
 ```yaml
-# Write file
-- name: save
+# Write to local file
+- name: save_local
   uses: file.write
   with:
     path: ./output.txt
     content: "{{ state.data }}"
 
-# Read file
-- name: load
+# Write to S3
+- name: save_s3
+  uses: file.write
+  with:
+    path: s3://my-bucket/output/data.json
+    content: "{{ state.data | json }}"
+
+# Read from local file
+- name: load_local
   uses: file.read
   with:
     path: ./input.txt
   output: file_content
+
+# Read from GCS with caching
+- name: load_cached
+  uses: file.read
+  with:
+    path: gs://my-bucket/large-file.csv
+    cache: simple  # Options: simple, file, block
+  output: file_content
 ```
+
+**file.read** returns:
+- `{"content": str, "success": true}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+**file.write** returns:
+- `{"path": str, "success": true}` on success
+- `{"success": false, "error": str, "error_type": str}` on failure
+
+Supported URI schemes:
+- Local: `./path`, `/abs/path`, `file:///path`
+- AWS S3: `s3://bucket/path` (requires `pip install s3fs`)
+- GCS: `gs://bucket/path` (requires `pip install gcsfs`)
+- Azure: `az://container/path` (requires `pip install adlfs`)
+- Memory: `memory://path` (for testing)
+
+### Storage Actions (TEA-BUILTIN-004.1)
+
+Advanced storage operations for cloud and local filesystems.
+
+```yaml
+# List files in S3 bucket
+- name: list_files
+  uses: storage.list
+  with:
+    path: s3://my-bucket/data/
+    detail: true       # Include file metadata
+    max_results: 100   # Limit results
+  output: files_list
+
+# Check if file exists
+- name: check_file
+  uses: storage.exists
+  with:
+    path: s3://my-bucket/data/file.json
+  output: exists_result
+
+# Get file metadata
+- name: get_info
+  uses: storage.info
+  with:
+    path: s3://my-bucket/data/file.json
+  output: file_info
+
+# Copy file (works across providers)
+- name: copy_to_gcs
+  uses: storage.copy
+  with:
+    source: s3://source-bucket/file.json
+    destination: gs://dest-bucket/file.json
+  output: copy_result
+
+# Delete file
+- name: cleanup
+  uses: storage.delete
+  with:
+    path: s3://my-bucket/temp/file.json
+    recursive: false   # Set true for directories
+  output: delete_result
+
+# Create directory
+- name: make_dir
+  uses: storage.mkdir
+  with:
+    path: s3://my-bucket/new-folder/
+    exist_ok: true
+  output: mkdir_result
+
+# Access native filesystem operations
+- name: set_acl
+  uses: storage.native
+  with:
+    path: s3://my-bucket/file.json
+    operation: put_object_acl
+    ACL: public-read
+  output: native_result
+```
+
+**storage.list** returns:
+- `{"files": list, "count": int, "success": true}` on success
+
+**storage.exists** returns:
+- `{"exists": bool, "path": str, "success": true}` on success
+
+**storage.info** returns:
+- `{"info": {"name": str, "size": int, "type": str, ...}, "success": true}` on success
+
+**storage.copy** returns:
+- `{"copied": true, "source": str, "destination": str, "success": true}` on success
+
+**storage.delete** returns:
+- `{"deleted": true, "path": str, "success": true}` on success
+
+**storage.mkdir** returns:
+- `{"created": true, "path": str, "success": true}` on success
+
+**storage.native** returns:
+- `{"result": any, "operation": str, "success": true}` on success
+- `{"error": str, "error_type": "operation_not_found", "available_operations": list}` if operation not found
+
+All storage actions are available via dual namespaces: `storage.*` and `actions.storage_*`.
 
 ### Notification Actions
 

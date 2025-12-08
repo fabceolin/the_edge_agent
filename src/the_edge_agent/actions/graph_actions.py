@@ -49,14 +49,15 @@ Example:
 
 from typing import Any, Callable, Dict
 
-from ..memory import COZO_AVAILABLE
+from ..memory import COZO_AVAILABLE, KUZU_AVAILABLE
 
 
-def _cozo_not_available_error() -> Dict[str, Any]:
-    """Return standard error for missing CozoDB."""
+def _graph_not_available_error() -> Dict[str, Any]:
+    """Return standard error for missing graph database."""
     return {
         "success": False,
-        "error": "CozoDB not installed. Install with: pip install 'pycozo[embedded]'",
+        "error": "No graph database installed. Install with: "
+                 "pip install 'pycozo[embedded]' (CozoDB) or pip install kuzu (Kuzu/Bighorn)",
         "error_type": "dependency_missing"
     }
 
@@ -68,6 +69,11 @@ def _graph_not_configured_error() -> Dict[str, Any]:
         "error": "Graph backend not configured. Enable with: YAMLEngine(enable_graph=True)",
         "error_type": "configuration_error"
     }
+
+
+def _is_graph_available() -> bool:
+    """Check if any graph backend is available."""
+    return COZO_AVAILABLE or KUZU_AVAILABLE
 
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
@@ -103,8 +109,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             {"success": True, "entity_id": str, "type": str, "created": bool, "has_embedding": bool}
             {"success": False, "error": str, "error_type": str} on failure
         """
-        if not COZO_AVAILABLE:
-            return _cozo_not_available_error()
+        if not _is_graph_available():
+            return _graph_not_available_error()
 
         if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
             return _graph_not_configured_error()
@@ -161,8 +167,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             {"success": True, "from": str, "to": str, "type": str, "created": bool}
             {"success": False, "error": str, "error_type": str} on failure
         """
-        if not COZO_AVAILABLE:
-            return _cozo_not_available_error()
+        if not _is_graph_available():
+            return _graph_not_available_error()
 
         if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
             return _graph_not_configured_error()
@@ -186,6 +192,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     def graph_query(
         state,
+        cypher=None,
         datalog=None,
         pattern=None,
         params=None,
@@ -194,12 +201,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         **kwargs
     ):
         """
-        Execute a Datalog query or pattern match.
+        Execute a Cypher/Datalog query or pattern match.
 
         Args:
             state: Current state dictionary
-            datalog: Raw Datalog query string
-            pattern: Simplified pattern dict (alternative to raw Datalog)
+            cypher: Cypher query string (for KuzuBackend/Bighorn)
+            datalog: Datalog query string (for CozoBackend)
+            pattern: Simplified pattern dict (alternative to raw queries)
             params: Query parameters (substituted into query)
             limit: Maximum results to return (default: 100)
             timeout: Query timeout in seconds (not currently implemented)
@@ -207,21 +215,26 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         Returns:
             {"success": True, "results": list, "count": int, "query": str}
             {"success": False, "error": str, "error_type": str} on failure
+
+        Note:
+            Use 'cypher' for KuzuBackend and 'datalog' for CozoBackend.
+            The pattern parameter works with both backends.
         """
-        if not COZO_AVAILABLE:
-            return _cozo_not_available_error()
+        if not _is_graph_available():
+            return _graph_not_available_error()
 
         if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
             return _graph_not_configured_error()
 
-        if not datalog and not pattern:
+        if not cypher and not datalog and not pattern:
             return {
                 "success": False,
-                "error": "Either datalog or pattern is required",
+                "error": "One of cypher, datalog, or pattern is required",
                 "error_type": "validation_error"
             }
 
         return engine._graph_backend.query(
+            cypher=cypher,
             datalog=datalog,
             pattern=pattern,
             params=params,
@@ -261,8 +274,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             {"success": True, "entities": list, "relations": list, "context_summary": str}
             {"success": False, "error": str, "error_type": str} on failure
         """
-        if not COZO_AVAILABLE:
-            return _cozo_not_available_error()
+        if not _is_graph_available():
+            return _graph_not_available_error()
 
         if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
             return _graph_not_configured_error()

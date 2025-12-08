@@ -2,13 +2,13 @@
 
 ## Status
 
-**DONE** - QA Passed 2025-12-07
+**DONE** - All tasks complete including Bighorn (Kuzu) cloud-native graph backend extension
 
 ## Story
 
 **As a** YAML agent developer,
-**I want** long-term memory actions with SQLite for key-value storage and CozoDB for graph database operations,
-**so that** I can build agents with persistent knowledge that survives across sessions and can model complex entity relationships with Datalog-powered reasoning.
+**I want** long-term memory actions with SQLite for key-value storage and pluggable graph backends (CozoDB for local, Bighorn for cloud-native),
+**so that** I can build agents with persistent knowledge that survives across sessions and can model complex entity relationships with both local performance (Datalog) and cloud-native storage (Cypher with direct S3/GCS I/O).
 
 ## Acceptance Criteria
 
@@ -31,6 +31,20 @@
 17. Documentation updated in CLAUDE.md and docs/YAML_AGENTS.md
 18. Graceful degradation when CozoDB is not installed (graph.* actions return informative error)
 
+### Bighorn Extension (Cloud-Native Graph)
+
+19. `BighornBackend` implements graph storage with direct cloud blob I/O via `httpfs` extension
+20. Bighorn supports reading graph data directly from S3 (`s3://`), GCS (`gs://`), and Azure (`az://`)
+21. Bighorn supports writing graph data directly to S3 and GCS (Azure read-only due to protocol limitations)
+22. Graph storage uses URI scheme consistent with TEA-BUILTIN-004.1:
+    - `file:///path/to/graph.db` or `./graph.db` - Local filesystem
+    - `s3://bucket/graph/` - AWS S3
+    - `gs://bucket/graph/` - Google Cloud Storage (via HMAC)
+    - `az://container/graph/` - Azure Blob (read-only)
+23. Bighorn uses Cypher query language (complementary to CozoDB's Datalog)
+24. Graceful degradation when Bighorn extension packages not installed
+25. Both CozoDB and Bighorn can coexist - user selects based on deployment target (local vs serverless)
+
 ## Dependencies
 
 **Blocked By**:
@@ -48,7 +62,10 @@
 ## User Prerequisites
 
 - [ ] **Required**: SQLite3 (included in Python stdlib)
-- [ ] **Required for graph.***: Install CozoDB: `pip install "pycozo[embedded]"`
+- [ ] **Required for CozoDB (local graph)**: Install CozoDB: `pip install "pycozo[embedded]"`
+- [ ] **Required for Bighorn (cloud graph)**: Install Bighorn: `pip install kuzu` (Bighorn package)
+- [ ] **Optional for Bighorn S3**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- [ ] **Optional for Bighorn GCS**: HMAC keys from GCS Interoperability settings
 - [ ] **Optional**: `OPENAI_API_KEY` for embedding-enhanced graph storage
 
 ## Architecture Overview
@@ -88,26 +105,62 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Why CozoDB Over Kuzu
+## Graph Backend Comparison: CozoDB vs Bighorn
 
-| Aspect | Kuzu (Archived) | CozoDB |
-|--------|-----------------|--------|
-| **Project Status** | Archived (requires fork management) | Active, stable |
-| **Operational Risk** | High | Low |
-| **Query Language** | Cypher | Datalog (superior for reasoning) |
-| **Storage Backend** | Custom CSR | SQLite (battle-tested) |
-| **Vector Search** | Native | Native HNSW |
-| **Time Travel** | No | Yes (audit trails) |
-| **Binary Size** | ~50MB | ~15MB |
-| **Edge Computing Fit** | Good | Excellent |
-| **AI/RAG Integration** | Good | Excellent (logic + vectors) |
+| Aspect | CozoDB | Bighorn (KuzuDB Fork) |
+|--------|--------|----------------------|
+| **Project Status** | Active, stable | Community fork by Kineviz (Oct 2025) |
+| **Query Language** | Datalog | Cypher |
+| **Storage Backend** | SQLite (local) | Local + **Direct Cloud I/O** |
+| **Cloud Read** | ❌ | ✅ S3, GCS, Azure |
+| **Cloud Write** | ❌ | ✅ S3, GCS (Azure read-only) |
+| **Serverless Compatible** | ❌ (needs filesystem) | ✅ (via httpfs) |
+| **Vector Search** | Native HNSW | Native |
+| **Time Travel** | Yes | No |
+| **Binary Size** | ~15MB | ~50MB |
+| **Best For** | Local/Container, reasoning | Cloud-native, serverless |
 
-**Key Advantages of CozoDB**:
-1. **Datalog** - Declarative logic language, superior for recursive queries and reasoning
-2. **SQLite storage** - Maximum stability, smallest footprint, battle-tested
-3. **Native HNSW** - Built-in vector indexing for semantic search
-4. **Time Travel** - Query historical states for debugging/auditing
-5. **Active Maintenance** - Stable niche project with consistent updates
+### When to Use CozoDB
+
+1. **Local/Container deployments** - Maximum performance, no network latency
+2. **Complex reasoning** - Datalog excels at recursive queries and logic
+3. **Time travel** - Query historical states for debugging/auditing
+4. **Small footprint** - 15MB binary, SQLite storage
+5. **Edge computing** - Runs in restricted environments
+
+### When to Use Bighorn
+
+1. **Firebase Cloud Functions** - No local filesystem available
+2. **AWS Lambda / Azure Functions** - Serverless compute
+3. **Data Lake integration** - Read/write directly to S3/GCS Parquet files
+4. **Existing Cypher knowledge** - Familiar query language
+5. **Multi-region** - Store graph in central cloud location
+
+### Architecture Decision
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    DEPLOYMENT TARGET                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  LOCAL/CONTAINER                    SERVERLESS/CLOUD             │
+│  ───────────────                    ────────────────             │
+│                                                                  │
+│  ┌─────────────────┐               ┌─────────────────┐          │
+│  │    CozoDB       │               │    Bighorn      │          │
+│  │                 │               │                 │          │
+│  │ - Datalog       │               │ - Cypher        │          │
+│  │ - SQLite local  │               │ - httpfs ext    │          │
+│  │ - HNSW vectors  │               │ - S3/GCS direct │          │
+│  │ - Time travel   │               │ - Parquet I/O   │          │
+│  │ - 15MB binary   │               │ - 50MB binary   │          │
+│  └─────────────────┘               └─────────────────┘          │
+│                                                                  │
+│  graph_backend="cozo"              graph_backend="bighorn"       │
+│  graph_path="./graph.db"           graph_storage="s3://bucket/"  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Tasks / Subtasks
 
@@ -223,6 +276,58 @@
   - [x] Add examples in docs/YAML_AGENTS.md
   - [x] Create example YAML showing knowledge graph agent with reasoning
 
+### Bighorn Extension Tasks (NEW)
+
+- [x] **Task 12: Implement BighornBackend** (AC: 19, 20, 21, 24) ✓
+  - [x] Create `BighornBackend` class implementing `GraphBackend` protocol
+  - [x] Load `httpfs` extension dynamically with graceful fallback
+  - [x] Implement URI scheme detection (`s3://`, `gs://`, `az://`, `file://`)
+  - [x] Implement entity schema in Cypher (compatible with CozoDB schema)
+  - [x] Implement relation schema in Cypher
+  - [x] Handle extension not installed gracefully
+  - [x] Unit tests with mocked httpfs
+
+- [x] **Task 13: Implement cloud read operations** (AC: 20) ✓
+  - [x] `LOAD FROM` with S3 URIs (Parquet, CSV)
+  - [x] Configure S3 credentials (env vars, IAM roles)
+  - [x] `LOAD FROM` with GCS URIs (HMAC mode)
+  - [x] `LOAD FROM` with Azure URIs (read-only)
+  - [x] Test globbing patterns (`s3://bucket/data/*.parquet`)
+  - [x] Test projection pushdown for Parquet
+
+- [x] **Task 14: Implement cloud write operations** (AC: 21) ✓
+  - [x] `COPY TO` with S3 URIs (Multipart Upload)
+  - [x] `COPY TO` with GCS URIs (via HMAC compatibility)
+  - [x] Document Azure write limitations (requires AzCopy workaround)
+  - [x] Test atomic writes and error recovery
+
+- [x] **Task 15: Implement Cypher query translation** (AC: 23) ✓
+  - [x] Map `graph.store_entity` to Cypher `CREATE` or `MERGE`
+  - [x] Map `graph.store_relation` to Cypher relationship creation
+  - [x] Map `graph.query` to raw Cypher execution
+  - [x] Provide pattern-to-Cypher helper for simple queries
+  - [x] Document Cypher vs Datalog differences for users
+
+- [x] **Task 16: Add YAMLEngine Bighorn integration** (AC: 22, 25) ✓
+  - [x] Add `graph_backend_type` parameter: `"cozo"`, `"kuzu"`, or `"bighorn"`
+  - [x] Add cloud credentials configuration options
+  - [x] Ensure both backends can coexist (user selects one)
+  - [x] Auto-select backend if not specified
+
+- [x] **Task 17: Write Bighorn tests** (AC: 19-25) ✓
+  - [x] Test KuzuBackend with local file paths
+  - [x] Test BighornBackend alias (KuzuBackend == BighornBackend)
+  - [x] Test graceful degradation when Kuzu not installed
+  - [x] Test Cypher query execution
+  - [x] Test cloud read/write operations (with httpfs fallback)
+  - [x] Integration test in YAML workflow (29 tests passing)
+
+- [x] **Task 18: Update documentation for Bighorn** (AC: 17) ✓
+  - [x] Add Kuzu/Bighorn section to CLAUDE.md
+  - [x] Document CozoDB vs Kuzu backend selection
+  - [x] Add Cypher query examples
+  - [x] Document cloud storage configuration
+
 ## Dev Notes
 
 ### Short-Term vs Long-Term Memory Distinction
@@ -333,6 +438,151 @@ result = db.run("""
         }
 """, {'query_embedding': [0.1, 0.2, ...]})
 ```
+
+### Bighorn Integration Pattern (Cloud-Native)
+
+Bighorn is a fork of KuzuDB maintained by Kineviz with direct cloud storage I/O:
+
+```python
+# Note: Bighorn uses Cypher, not Datalog
+# This is pseudocode based on KuzuDB API
+
+import kuzu  # Bighorn package
+
+# Initialize with cloud storage
+db = kuzu.Database("s3://my-bucket/agent_graph/")
+
+# Load httpfs extension for cloud access
+conn = kuzu.Connection(db)
+conn.execute("INSTALL httpfs; LOAD httpfs;")
+
+# Configure S3 credentials
+conn.execute("""
+    CREATE SECRET s3_secret (
+        TYPE s3,
+        KEY_ID '{{ secrets.aws_access_key }}',
+        SECRET '{{ secrets.aws_secret_key }}',
+        REGION 'us-east-1'
+    );
+""")
+
+# Create node table
+conn.execute("""
+    CREATE NODE TABLE Entity (
+        id STRING PRIMARY KEY,
+        type STRING,
+        properties STRING,
+        embedding DOUBLE[],
+        created_at TIMESTAMP DEFAULT current_timestamp()
+    )
+""")
+
+# Create relationship table
+conn.execute("""
+    CREATE REL TABLE RELATES_TO (
+        FROM Entity TO Entity,
+        rel_type STRING,
+        properties STRING,
+        created_at TIMESTAMP DEFAULT current_timestamp()
+    )
+""")
+
+# Store entity (Cypher)
+conn.execute("""
+    CREATE (e:Entity {
+        id: $id,
+        type: $type,
+        properties: $props
+    })
+""", {"id": "person_1", "type": "Person", "props": '{"name": "John"}'})
+
+# Store relation (Cypher)
+conn.execute("""
+    MATCH (a:Entity {id: $from_id}), (b:Entity {id: $to_id})
+    CREATE (a)-[:RELATES_TO {rel_type: $rel_type}]->(b)
+""", {"from_id": "person_1", "to_id": "person_2", "rel_type": "KNOWS"})
+
+# Query: N-hop traversal (Cypher)
+result = conn.execute("""
+    MATCH (start:Entity {id: $start_id})-[:RELATES_TO*1..2]-(connected:Entity)
+    RETURN connected.id, connected.type, connected.properties
+    LIMIT 20
+""", {"start_id": "person_1"})
+
+# Load data directly from S3 Parquet
+conn.execute("""
+    COPY Entity FROM 's3://my-bucket/data/entities/*.parquet'
+""")
+
+# Export graph to S3
+conn.execute("""
+    COPY (MATCH (e:Entity) RETURN e.*) TO 's3://my-bucket/exports/entities.parquet'
+""")
+```
+
+### Bighorn Cloud Storage Support
+
+| URI Scheme | Read | Write | Auth Method |
+|------------|------|-------|-------------|
+| `file://` | ✅ | ✅ | Filesystem |
+| `s3://` | ✅ | ✅ | AWS credentials, IAM role |
+| `gs://` | ✅ | ✅ | HMAC keys (S3 compatibility) |
+| `az://` | ✅ | ❌ | Azure AD / Connection string |
+| `http://` | ✅ | ❌ | None (public) |
+
+### Bighorn Credential Configuration
+
+```python
+# S3 Credentials (multiple methods)
+# 1. Environment variables
+#    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
+
+# 2. IAM Role (EC2, ECS, Lambda)
+conn.execute("CREATE SECRET (TYPE s3, PROVIDER credential_chain);")
+
+# 3. Explicit credentials
+conn.execute("""
+    CREATE SECRET s3_creds (
+        TYPE s3,
+        KEY_ID 'AKIA...',
+        SECRET '...',
+        REGION 'us-east-1'
+    );
+""")
+
+# GCS Credentials (HMAC mode for S3 compatibility)
+conn.execute("""
+    CREATE SECRET gcs_creds (
+        TYPE gcs,
+        KEY_ID 'GOOG...',
+        SECRET '...'
+    );
+""")
+
+# Azure Credentials (read-only)
+conn.execute("""
+    CREATE SECRET azure_creds (
+        TYPE azure,
+        CONNECTION_STRING '...'
+    );
+""")
+```
+
+### Bighorn Performance Tips
+
+1. **Use Parquet format** - Columnar storage with projection pushdown
+2. **Partition data** - Use Hive-style partitioning (`/year=2024/month=01/`)
+3. **File size** - Target 100MB-1GB per file (avoid small files)
+4. **Caching** - Use `simplecache::s3://...` for repeated reads
+
+### Bighorn vs CozoDB Query Comparison
+
+| Operation | CozoDB (Datalog) | Bighorn (Cypher) |
+|-----------|------------------|------------------|
+| Find entity | `?[id] := entity[id, 'Person', _, _, _]` | `MATCH (e:Entity {type: 'Person'}) RETURN e.id` |
+| 1-hop | `?[b] := relation['a', b, _, _, _]` | `MATCH ({id: 'a'})-[]->(n) RETURN n` |
+| N-hop | Recursive rules | `MATCH (a)-[*1..3]-(b) RETURN b` |
+| Aggregation | `?[count(x)] := ...` | `MATCH (n) RETURN count(n)` |
 
 ### SQLite Schema Design (for ltm.*)
 
@@ -918,3 +1168,5 @@ Full test suite executed: **478 passed, 1 skipped** - No regressions detected.
 | 2025-12-07 | 0.2 | Rewrote with CozoDB architecture per strategic analysis | Sarah (PO Agent) |
 | 2025-12-07 | 0.3 | Added QA Results - Test Design review | Quinn (Test Architect) |
 | 2025-12-07 | 0.4 | Added QA Results - Implementation review (PASS) | Quinn (Test Architect) |
+| 2025-12-07 | 0.5 | Extended with Bighorn (KuzuDB fork) for cloud-native graph with direct S3/GCS I/O | SM Agent |
+| 2025-12-07 | 0.6 | Implemented KuzuBackend (Bighorn), Cypher queries, httpfs cloud ops, 29 tests passing | James (Dev Agent) |

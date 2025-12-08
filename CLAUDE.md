@@ -142,9 +142,95 @@ for event in graph.stream({"input": "hello"}):
 ### Built-in Actions
 - `llm.call` - Call OpenAI-compatible LLM
 - `http.get` / `http.post` - HTTP requests
-- `file.read` / `file.write` - File operations
+- `file.read` / `file.write` - File operations (local and remote via fsspec)
 - `actions.notify` - Notifications
 - `checkpoint.save` / `checkpoint.load` - Checkpoint persistence
+
+**Remote Storage Actions** (TEA-BUILTIN-004.1):
+- `file.read` / `file.write` - Now support remote URIs (S3, GCS, Azure, etc.) via fsspec
+- `storage.list` - List files/objects at path with optional detail
+- `storage.exists` - Check if file/object exists
+- `storage.delete` - Delete file/object
+- `storage.copy` - Copy between locations (same or cross-provider)
+- `storage.info` - Get file/object metadata
+- `storage.mkdir` - Create directory/prefix
+- `storage.native` - Access provider-specific operations
+
+Supported URI schemes (via fsspec):
+- `file:///path` - Local filesystem
+- `s3://bucket/path` - AWS S3 (requires `s3fs`)
+- `gs://bucket/path` - Google Cloud Storage / Firebase (requires `gcsfs`)
+- `az://container/path` - Azure Blob Storage (requires `adlfs`)
+- `memory://path` - In-memory filesystem (for testing)
+- `http://` / `https://` - HTTP/HTTPS (read-only)
+
+Required dependencies:
+- `fsspec>=2023.1.0` - Core (included by default)
+- `pip install s3fs` - For AWS S3
+- `pip install gcsfs` - For GCS/Firebase
+- `pip install adlfs` - For Azure
+
+Remote Storage usage:
+```python
+# Read from S3
+result = engine.actions_registry['file.read'](
+    state={},
+    path="s3://my-bucket/data/file.json"
+)
+# Returns: {"content": str, "success": True}
+
+# Write to GCS
+result = engine.actions_registry['file.write'](
+    state={},
+    path="gs://my-bucket/output/result.json",
+    content='{"key": "value"}'
+)
+# Returns: {"path": str, "success": True}
+
+# List S3 bucket contents
+result = engine.actions_registry['storage.list'](
+    state={},
+    path="s3://my-bucket/data/",
+    detail=True,  # Include file metadata
+    max_results=100
+)
+# Returns: {"files": list, "count": int, "success": True}
+
+# Check if file exists
+result = engine.actions_registry['storage.exists'](
+    state={},
+    path="s3://my-bucket/data/file.json"
+)
+# Returns: {"exists": bool, "success": True}
+
+# Copy across providers (S3 to GCS)
+result = engine.actions_registry['storage.copy'](
+    state={},
+    source="s3://source-bucket/file.json",
+    destination="gs://dest-bucket/file.json"
+)
+# Returns: {"copied": True, "success": True}
+
+# Use caching for repeated reads
+result = engine.actions_registry['file.read'](
+    state={},
+    path="s3://my-bucket/large-file.csv",
+    cache="simple"  # Options: 'simple', 'file', 'block'
+)
+
+# Or use fsspec cache prefix directly
+result = engine.actions_registry['file.read'](
+    state={},
+    path="simplecache::s3://my-bucket/large-file.csv"
+)
+```
+
+Credential resolution (via SDK defaults):
+- **AWS S3**: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, IAM role, or `~/.aws/credentials`
+- **GCS/Firebase**: `GOOGLE_APPLICATION_CREDENTIALS` or Application Default Credentials
+- **Azure**: `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_ACCOUNT`/`AZURE_STORAGE_KEY`
+
+All storage actions are available via dual namespaces: `storage.*` and `actions.storage_*`.
 
 **Data Processing Actions** (TEA-BUILTIN-003.2):
 - `json.parse` - Parse JSON strings to Python objects (supports non-strict mode)
@@ -240,6 +326,16 @@ Unlike session memory, data persists across engine restarts when using file-base
 
 LTM Backends:
 - **SQLiteBackend**: File-based or in-memory SQLite with FTS5 search (default)
+- **LitestreamBackend**: SQLite with continuous cloud replication (zero-downtime backup)
+- **BlobSQLiteBackend**: SQLite on blob storage with distributed locking (serverless-friendly)
+
+Cloud-Native Backend Decision Matrix:
+| Use Case | Backend | Why |
+|----------|---------|-----|
+| Local development | SQLiteBackend | Simple, no deps |
+| Single-region serverless | LitestreamBackend | Continuous backup, fast recovery |
+| Multi-region low-concurrency | BlobSQLiteBackend | Download-lock-use-upload pattern |
+| High-concurrency serverless | Turso (planned) | HTTP-based libSQL |
 
 LTM Actions usage:
 ```python
@@ -309,20 +405,97 @@ engine = YAMLEngine(ltm_backend=custom_backend)
 engine = YAMLEngine(enable_ltm=False)
 ```
 
+Cloud-Native LTM Backends:
+```python
+from the_edge_agent.memory import (
+    LitestreamBackend,
+    BlobSQLiteBackend,
+    create_ltm_backend,
+)
+
+# Litestream: SQLite with cloud replication
+# Requires: Litestream CLI installed (https://litestream.io)
+litestream = LitestreamBackend(
+    db_path="./agent_memory.db",
+    replica_url="s3://my-bucket/replicas/agent"
+)
+# Auto-restores from replica on init if local file missing
+result = litestream.store("key", {"data": "value"})
+config_yaml = litestream.generate_config()  # For litestream daemon
+
+# Blob SQLite: Download-Lock-Use-Upload pattern
+# Requires: fsspec + lock backend (firestore or redis)
+# pip install fsspec gcsfs firebase-admin  # for GCS + Firestore lock
+blob_backend = BlobSQLiteBackend(
+    blob_uri="gs://my-bucket/agent_memory.db",
+    lock_backend="firestore",  # or "redis"
+    lock_ttl=300  # 5 minutes
+)
+result = blob_backend.store("key", "value")
+blob_backend.sync()  # Manual sync (auto on close)
+blob_backend.refresh_lock()  # Extend lock TTL during long ops
+blob_backend.close()  # Uploads changes and releases lock
+
+# Factory pattern for backend selection
+backend = create_ltm_backend("sqlite", db_path="./memory.db")
+backend = create_ltm_backend("litestream", db_path="./memory.db", replica_url="s3://...")
+backend = create_ltm_backend("blob-sqlite", blob_uri="gs://...", lock_backend="redis")
+```
+
+Distributed Locks (for BlobSQLiteBackend):
+```python
+from the_edge_agent.memory.locks import FirestoreLock, RedisLock, create_lock
+
+# Firestore lock (serverless-friendly, no infrastructure)
+# Requires: pip install firebase-admin
+lock = FirestoreLock(
+    resource_id="agent_memory.db",
+    ttl=300,  # 5 minutes
+    collection="distributed_locks",
+    project_id="my-project"  # Optional, uses ADC default
+)
+
+# Redis lock (self-hosted, lower latency)
+# Requires: pip install redis
+lock = RedisLock(
+    resource_id="agent_memory.db",
+    ttl=300,
+    redis_url="redis://localhost:6379"
+)
+
+# Context manager usage
+with lock:
+    # Exclusive access to resource
+    do_work()
+
+# Manual acquire/release
+result = lock.acquire(timeout=30.0)
+if result['success']:
+    try:
+        do_work()
+        lock.refresh()  # Extend TTL during long operations
+    finally:
+        lock.release()
+```
+
 All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
 
 **Graph Database Actions** (TEA-BUILTIN-001.4):
 - `graph.store_entity` - Store entities with type, properties, and optional embeddings
 - `graph.store_relation` - Create relationships between entities
-- `graph.query` - Execute Datalog queries against the graph
-- `graph.retrieve_context` - Retrieve contextual information for an entity
+- `graph.query` - Execute Cypher (Kuzu) or Datalog (CozoDB) queries against the graph
+- `graph.retrieve_context` - Retrieve contextual information for an entity via N-hop traversal
 
-Graph actions provide entity-relationship storage using CozoDB (optional dependency).
-When CozoDB is not installed, graph actions return informative error messages with
-graceful degradation.
+Graph actions provide entity-relationship storage using pluggable backends:
+- **CozoBackend**: Datalog queries, HNSW vector search (optional: pip install 'pycozo[embedded]')
+- **KuzuBackend (Bighorn)**: Cypher queries, cloud httpfs support (optional: pip install kuzu)
 
-Required dependency (optional):
-- `pip install 'pycozo[embedded]'` - For CozoDB graph backend
+When no graph database is installed, actions return informative error messages with graceful degradation.
+
+Required dependencies (both optional, auto-selected):
+- `pip install 'pycozo[embedded]'` - For CozoDB graph backend (Datalog, HNSW)
+- `pip install kuzu` - For Kuzu graph backend (Cypher, cloud httpfs)
+- Bighorn (Kuzu fork by Kineviz): `pip install git+https://github.com/Kineviz/bighorn.git`
 
 Graph Actions usage:
 ```python
@@ -333,55 +506,100 @@ result = engine.actions_registry['graph.store_entity'](
     entity_type="User",
     properties={"name": "Alice", "role": "admin"}
 )
-# Returns: {"success": True, "entity_id": "user_123", "entity_type": "User"}
+# Returns: {"success": True, "entity_id": "user_123", "type": "User", "created": True}
 
 # Store a relation
 result = engine.actions_registry['graph.store_relation'](
     state={},
-    source_id="user_123",
-    target_id="project_456",
+    from_entity="user_123",
+    to_entity="project_456",
     relation_type="owns",
     properties={"since": "2024-01-01"}
 )
-# Returns: {"success": True, "source_id": "user_123", "target_id": "project_456", "relation_type": "owns"}
+# Returns: {"success": True, "from": "user_123", "to": "project_456", "type": "owns"}
 
-# Datalog query
+# Cypher query (KuzuBackend)
 result = engine.actions_registry['graph.query'](
     state={},
-    query="?[name] := *entity{entity_id: 'user_123', properties: props}, name = get(props, 'name')"
+    cypher="MATCH (e:Entity {id: 'user_123'}) RETURN e.id, e.type, e.properties"
+)
+# Returns: {"success": True, "results": [...], "count": 1, "query": str}
+
+# Datalog query (CozoBackend)
+result = engine.actions_registry['graph.query'](
+    state={},
+    datalog="?[name] := *entity{entity_id: 'user_123', properties: props}, name = get(props, 'name')"
 )
 # Returns: {"success": True, "results": [{"name": "Alice"}], "count": 1}
 
-# Retrieve entity context
+# Pattern query (works with both backends)
+result = engine.actions_registry['graph.query'](
+    state={},
+    pattern={"entity_type": "User"}
+)
+# Returns: {"success": True, "results": [...], "count": int}
+
+# Retrieve entity context with N-hop traversal
 result = engine.actions_registry['graph.retrieve_context'](
     state={},
     entity_id="user_123",
-    max_depth=2
+    hops=2,
+    limit=20
 )
-# Returns: {"success": True, "entity": {...}, "relations": [...], "related_entities": [...]}
-
-# Graceful degradation when CozoDB not installed
-result = engine.actions_registry['graph.store_entity'](
-    state={},
-    entity_id="test",
-    entity_type="Test"
-)
-# Returns: {"success": False, "error": "CozoDB not installed. Install with: pip install 'pycozo[embedded]'", "error_type": "dependency_missing"}
+# Returns: {"success": True, "entities": [...], "relations": [...], "context_summary": str}
 ```
 
 Graph configuration in YAMLEngine:
 ```python
 from the_edge_agent import YAMLEngine
 
-# Graph backend auto-enabled if CozoDB installed
+# Auto-select backend (CozoDB if available, else Kuzu)
 engine = YAMLEngine()
+
+# Explicitly use Kuzu/Bighorn backend
+engine = YAMLEngine(graph_backend_type='kuzu')
+# Or:
+engine = YAMLEngine(graph_backend_type='bighorn')
+
+# Explicitly use CozoDB backend
+engine = YAMLEngine(graph_backend_type='cozo')
 
 # File-based persistent graph
 engine = YAMLEngine(graph_path="./agent_graph.db")
 
-# Disable graph (even if CozoDB available)
+# Disable graph
 engine = YAMLEngine(enable_graph=False)
 ```
+
+**KuzuBackend Cloud Storage** (Bighorn extension):
+
+KuzuBackend supports direct cloud I/O via the httpfs extension for serverless deployments:
+```python
+from the_edge_agent import KuzuBackend, BighornBackend
+
+# BighornBackend is an alias for KuzuBackend
+backend = KuzuBackend("./graph.kuzu")
+
+# Load data from cloud storage
+result = backend.load_from_cloud("s3://bucket/data.parquet")
+# Returns: {"success": True, "loaded": True, "uri": str} or {"success": False, "error": str}
+
+# Export to cloud storage
+result = backend.save_to_cloud("s3://bucket/output.parquet", query="MATCH (e:Entity) RETURN e.*")
+# Returns: {"success": True, "saved": True, "uri": str}
+
+# Note: Azure (az://) is read-only
+```
+
+Supported cloud URIs (requires httpfs extension):
+- `s3://bucket/path` - AWS S3
+- `gs://bucket/path` - Google Cloud Storage (via HMAC)
+- `az://container/path` - Azure Blob (read-only)
+- `http://`, `https://` - HTTP/HTTPS
+
+Cloud credentials via environment:
+- **AWS S3**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`
+- **GCS**: `GCS_ACCESS_KEY_ID`, `GCS_SECRET_ACCESS_KEY` (HMAC mode)
 
 All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
 

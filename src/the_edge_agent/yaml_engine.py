@@ -26,7 +26,7 @@ from .stategraph import StateGraph, START, END
 from .memory import (
     MemoryBackend, InMemoryBackend,
     LongTermMemoryBackend, SQLiteBackend,
-    GraphBackend, COZO_AVAILABLE
+    GraphBackend, COZO_AVAILABLE, KUZU_AVAILABLE
 )
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 from .actions import build_actions_registry
@@ -87,7 +87,8 @@ class YAMLEngine:
         ltm_path: Optional[str] = None,
         graph_backend: Optional[Any] = None,
         enable_graph: bool = True,
-        graph_path: Optional[str] = None
+        graph_path: Optional[str] = None,
+        graph_backend_type: Optional[str] = None
     ):
         """
         Initialize the YAML engine.
@@ -114,11 +115,14 @@ class YAMLEngine:
             ltm_path: Path to SQLite database for ltm.* actions.
                      If None, uses in-memory SQLite.
             graph_backend: Optional custom GraphBackend implementation.
-                          If None and enable_graph=True, uses CozoBackend if available.
+                          If None and enable_graph=True, uses backend based on graph_backend_type.
             enable_graph: Enable graph database actions (default: True).
-                         Requires pycozo to be installed for CozoBackend.
-            graph_path: Path to CozoDB database for graph.* actions.
+            graph_path: Path to graph database for graph.* actions.
                        If None, uses in-memory storage.
+            graph_backend_type: Type of graph backend to use. Options:
+                              - None: Auto-select (CozoDB if available, else Kuzu)
+                              - "cozo": Use CozoDB (Datalog, HNSW vectors)
+                              - "kuzu" or "bighorn": Use Kuzu/Bighorn (Cypher, cloud httpfs)
         """
         # Initialize tracing
         self._enable_tracing = enable_tracing
@@ -162,17 +166,40 @@ class YAMLEngine:
         # Initialize graph backend (TEA-BUILTIN-001.4)
         self._graph_backend: Optional[Any] = None
         self._enable_graph = enable_graph
+        self._graph_backend_type = graph_backend_type
         if enable_graph:
             if graph_backend is not None:
                 self._graph_backend = graph_backend
-            elif COZO_AVAILABLE:
-                # Use CozoBackend with specified path or in-memory
-                from .memory import CozoBackend
-                try:
-                    self._graph_backend = CozoBackend(graph_path or ":memory:")
-                except ImportError:
-                    # CozoDB not installed, graph actions will return informative errors
-                    pass
+            elif graph_backend_type in ("kuzu", "bighorn"):
+                # Explicitly requested Kuzu/Bighorn backend
+                if KUZU_AVAILABLE:
+                    from .memory import KuzuBackend
+                    try:
+                        self._graph_backend = KuzuBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+            elif graph_backend_type == "cozo":
+                # Explicitly requested CozoDB backend
+                if COZO_AVAILABLE:
+                    from .memory import CozoBackend
+                    try:
+                        self._graph_backend = CozoBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+            else:
+                # Auto-select: prefer CozoDB, fallback to Kuzu
+                if COZO_AVAILABLE:
+                    from .memory import CozoBackend
+                    try:
+                        self._graph_backend = CozoBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+                elif KUZU_AVAILABLE:
+                    from .memory import KuzuBackend
+                    try:
+                        self._graph_backend = KuzuBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
 
         # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
         self._enable_code_execution = enable_code_execution
