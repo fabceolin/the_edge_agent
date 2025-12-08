@@ -17,16 +17,19 @@ Example:
 """
 
 import yaml
-import importlib
-import inspect
-import os
-import re
-from typing import Any, Callable, Dict, Generator, List, Optional, Union
-from pathlib import Path
 import json
-import ast
+import re
+import time
+from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 from .stategraph import StateGraph, START, END
+from .memory import (
+    MemoryBackend, InMemoryBackend,
+    LongTermMemoryBackend, SQLiteBackend,
+    GraphBackend, COZO_AVAILABLE, KUZU_AVAILABLE
+)
+from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
+from .actions import build_actions_registry
 
 
 class DotDict(dict):
@@ -69,14 +72,139 @@ class YAMLEngine:
         ...     print(event)
     """
 
-    def __init__(self, actions_registry: Optional[Dict[str, Callable]] = None):
+    def __init__(
+        self,
+        actions_registry: Optional[Dict[str, Callable]] = None,
+        enable_tracing: bool = True,
+        trace_exporter: Optional[Union[str, List[Any]]] = None,
+        trace_file: Optional[str] = None,
+        trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        trace_verbose: bool = False,
+        memory_backend: Optional[Any] = None,
+        enable_code_execution: bool = False,
+        ltm_backend: Optional[Any] = None,
+        enable_ltm: bool = True,
+        ltm_path: Optional[str] = None,
+        graph_backend: Optional[Any] = None,
+        enable_graph: bool = True,
+        graph_path: Optional[str] = None,
+        graph_backend_type: Optional[str] = None
+    ):
         """
         Initialize the YAML engine.
 
         Args:
             actions_registry: Custom actions to register beyond built-ins
+            enable_tracing: Enable trace actions (default: True)
+            trace_exporter: Exporter configuration. Can be:
+                - "console": Print to stdout
+                - "file": Write to trace_file (requires trace_file)
+                - "callback": Call trace_callback (requires trace_callback)
+                - List of exporter instances
+            trace_file: File path for file exporter (JSON lines format)
+            trace_callback: Callback function for callback exporter
+            trace_verbose: Enable verbose console output (default: False)
+            memory_backend: Optional custom MemoryBackend implementation.
+                           If None, uses InMemoryBackend by default.
+            enable_code_execution: Enable code.execute and code.sandbox actions.
+                                  Default: False (SECURITY: disabled by default).
+                                  Only enable for trusted code patterns.
+            ltm_backend: Optional custom LongTermMemoryBackend implementation.
+                        If None and enable_ltm=True, uses SQLiteBackend.
+            enable_ltm: Enable long-term memory actions (default: True).
+            ltm_path: Path to SQLite database for ltm.* actions.
+                     If None, uses in-memory SQLite.
+            graph_backend: Optional custom GraphBackend implementation.
+                          If None and enable_graph=True, uses backend based on graph_backend_type.
+            enable_graph: Enable graph database actions (default: True).
+            graph_path: Path to graph database for graph.* actions.
+                       If None, uses in-memory storage.
+            graph_backend_type: Type of graph backend to use. Options:
+                              - None: Auto-select (CozoDB if available, else Kuzu)
+                              - "cozo": Use CozoDB (Datalog, HNSW vectors)
+                              - "kuzu" or "bighorn": Use Kuzu/Bighorn (Cypher, cloud httpfs)
         """
-        self.actions_registry = self._setup_builtin_actions()
+        # Initialize tracing
+        self._enable_tracing = enable_tracing
+        self._trace_context: Optional[TraceContext] = None
+
+        if enable_tracing:
+            exporters = []
+
+            if isinstance(trace_exporter, list):
+                # User provided exporter instances
+                exporters = trace_exporter
+            elif trace_exporter == "console":
+                exporters.append(ConsoleExporter(verbose=trace_verbose))
+            elif trace_exporter == "file" and trace_file:
+                exporters.append(FileExporter(trace_file))
+            elif trace_exporter == "callback" and trace_callback:
+                exporters.append(CallbackExporter(trace_callback))
+            elif trace_exporter is None:
+                # No exporter configured, but tracing is enabled
+                # Spans will be collected but not exported
+                pass
+
+            self._trace_context = TraceContext(exporters=exporters)
+
+        # Auto-trace flag (can be enabled via YAML settings)
+        self._auto_trace = False
+
+        # Initialize memory backend (TEA-BUILTIN-001.1)
+        self._memory_backend: Any = memory_backend if memory_backend is not None else InMemoryBackend()
+
+        # Initialize long-term memory backend (TEA-BUILTIN-001.4)
+        self._ltm_backend: Optional[Any] = None
+        self._enable_ltm = enable_ltm
+        if enable_ltm:
+            if ltm_backend is not None:
+                self._ltm_backend = ltm_backend
+            else:
+                # Use SQLiteBackend with specified path or in-memory
+                self._ltm_backend = SQLiteBackend(ltm_path or ":memory:")
+
+        # Initialize graph backend (TEA-BUILTIN-001.4)
+        self._graph_backend: Optional[Any] = None
+        self._enable_graph = enable_graph
+        self._graph_backend_type = graph_backend_type
+        if enable_graph:
+            if graph_backend is not None:
+                self._graph_backend = graph_backend
+            elif graph_backend_type in ("kuzu", "bighorn"):
+                # Explicitly requested Kuzu/Bighorn backend
+                if KUZU_AVAILABLE:
+                    from .memory import KuzuBackend
+                    try:
+                        self._graph_backend = KuzuBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+            elif graph_backend_type == "cozo":
+                # Explicitly requested CozoDB backend
+                if COZO_AVAILABLE:
+                    from .memory import CozoBackend
+                    try:
+                        self._graph_backend = CozoBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+            else:
+                # Auto-select: prefer CozoDB, fallback to Kuzu
+                if COZO_AVAILABLE:
+                    from .memory import CozoBackend
+                    try:
+                        self._graph_backend = CozoBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+                elif KUZU_AVAILABLE:
+                    from .memory import KuzuBackend
+                    try:
+                        self._graph_backend = KuzuBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+
+        # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
+        self._enable_code_execution = enable_code_execution
+
+        self.actions_registry = build_actions_registry(self)
         if actions_registry:
             self.actions_registry.update(actions_registry)
 
@@ -88,6 +216,111 @@ class YAMLEngine:
         self._current_graph: Optional[StateGraph] = None
         self._checkpoint_dir: Optional[str] = None
         self._checkpointer: Optional[Any] = None
+
+    @property
+    def memory_backend(self) -> Any:
+        """
+        Get the memory backend instance.
+
+        Returns:
+            The current memory backend (InMemoryBackend by default, or custom).
+        """
+        return self._memory_backend
+
+    @property
+    def ltm_backend(self) -> Optional[Any]:
+        """
+        Get the long-term memory backend instance.
+
+        Returns:
+            The current LTM backend (SQLiteBackend by default, or custom).
+            None if LTM is disabled.
+        """
+        return self._ltm_backend
+
+    @property
+    def graph_backend(self) -> Optional[Any]:
+        """
+        Get the graph database backend instance.
+
+        Returns:
+            The current graph backend (CozoBackend if available, or custom).
+            None if graph is disabled or CozoDB is not installed.
+        """
+        return self._graph_backend
+
+    def close(self) -> None:
+        """
+        Close all backends and release resources.
+
+        Should be called when the engine is no longer needed.
+        Safe to call multiple times.
+
+        Example:
+            >>> engine = YAMLEngine(ltm_path="./memory.db")
+            >>> # ... use engine ...
+            >>> engine.close()  # Release database connections
+        """
+        if self._ltm_backend is not None:
+            try:
+                self._ltm_backend.close()
+            except Exception:
+                pass
+
+        if self._graph_backend is not None:
+            try:
+                self._graph_backend.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        """Cleanup on garbage collection."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def get_memory_state(self) -> Dict[str, Any]:
+        """
+        Get serializable memory state for checkpoint persistence.
+
+        Returns:
+            Dictionary containing all memory data needed for restoration.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> # ... store some values ...
+            >>> memory_state = engine.get_memory_state()
+            >>> # Save memory_state to checkpoint
+        """
+        return self._memory_backend.get_state()
+
+    def restore_memory_state(self, state: Dict[str, Any]) -> None:
+        """
+        Restore memory state from checkpoint.
+
+        Args:
+            state: Memory state dictionary from get_memory_state()
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> # Load memory_state from checkpoint
+            >>> engine.restore_memory_state(memory_state)
+        """
+        self._memory_backend.restore_state(state)
+
+    def clear_memory(self, namespace: Optional[str] = None) -> int:
+        """
+        Clear memory, optionally within a specific namespace.
+
+        Args:
+            namespace: If provided, only clear this namespace.
+                      If None, clear all namespaces.
+
+        Returns:
+            Number of keys cleared.
+        """
+        return self._memory_backend.clear(namespace)
 
     def load_from_file(
         self,
@@ -165,6 +398,23 @@ class YAMLEngine:
         """
         # Extract global variables
         self.variables = config.get('variables', {})
+
+        # Extract settings (YAML-level configuration)
+        settings = config.get('settings', {})
+
+        # Handle auto-trace from YAML settings
+        if settings.get('auto_trace', False) and self._enable_tracing:
+            self._auto_trace = True
+            # Configure trace exporter from settings if not already set
+            if self._trace_context is not None and not self._trace_context.exporters:
+                trace_exporter = settings.get('trace_exporter', 'console')
+                trace_file = settings.get('trace_file')
+                if trace_exporter == 'console':
+                    self._trace_context.exporters.append(ConsoleExporter(verbose=False))
+                elif trace_exporter == 'file' and trace_file:
+                    self._trace_context.exporters.append(FileExporter(trace_file))
+        else:
+            self._auto_trace = False
 
         # Create graph
         compile_config = config.get('config', {})
@@ -258,11 +508,88 @@ class YAMLEngine:
         # Create the run function based on configuration
         run_func = self._create_run_function(node_config)
 
+        # Wrap with auto-trace if enabled
+        if run_func is not None and self._auto_trace and self._trace_context is not None:
+            run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+
         # Add node to graph
         if is_fan_in:
             graph.add_fanin_node(node_name, run=run_func)
         else:
             graph.add_node(node_name, run=run_func)
+
+    def _wrap_with_auto_trace(
+        self,
+        func: Callable,
+        node_name: str,
+        node_config: Dict[str, Any]
+    ) -> Callable:
+        """
+        Wrap a node function with automatic tracing.
+
+        Captures:
+        - Node execution timing
+        - LLM token usage (if present in result)
+        - HTTP latency (if http.* action)
+        - Errors
+
+        Args:
+            func: The original run function
+            node_name: Name of the node
+            node_config: Node configuration dictionary
+
+        Returns:
+            Wrapped function with auto-tracing
+        """
+        trace_context = self._trace_context
+
+        def traced_func(state, **kwargs):
+            # Determine action type for metadata
+            action_type = node_config.get('uses', 'inline')
+            metadata = {
+                "node": node_name,
+                "action_type": action_type
+            }
+
+            # Start span
+            trace_context.start_span(name=node_name, metadata=metadata)
+
+            try:
+                # Execute the original function
+                start_time = time.time()
+                result = func(state, **kwargs)
+                duration_ms = (time.time() - start_time) * 1000
+
+                # Auto-capture metrics from result
+                metrics = {"duration_ms": duration_ms}
+
+                # Capture LLM token usage
+                if isinstance(result, dict):
+                    if 'usage' in result:
+                        usage = result['usage']
+                        if isinstance(usage, dict):
+                            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                                if key in usage:
+                                    metrics[key] = usage[key]
+
+                    # Capture HTTP latency if present
+                    if action_type in ('http.get', 'http.post'):
+                        metrics['http_latency_ms'] = duration_ms
+
+                # Log metrics
+                trace_context.log_event(metrics=metrics)
+
+                # End span successfully
+                trace_context.end_span(status="ok")
+
+                return result
+
+            except Exception as e:
+                # End span with error
+                trace_context.end_span(status="error", error=str(e))
+                raise
+
+        return traced_func
 
     def _create_run_function(self, node_config: Dict[str, Any]) -> Optional[Callable]:
         """
@@ -512,7 +839,7 @@ class YAMLEngine:
         # Normal unconditional edge
         graph.add_edge(from_node, to_node)
 
-    def _process_template(self, text: str, state: Dict[str, Any]) -> str:
+    def _process_template(self, text: str, state: Dict[str, Any]) -> Any:
         """
         Process template variables in text.
 
@@ -523,11 +850,58 @@ class YAMLEngine:
         - {{ checkpoint.dir }} - configured checkpoint directory
         - {{ checkpoint.last }} - most recent auto-saved checkpoint path
         - {{ state.key | json }} - apply filters
+
+        When the entire value is a single template expression (e.g., "{{ state.data }}"),
+        returns the actual object instead of converting to string. This allows passing
+        complex objects between actions.
         """
         if not isinstance(text, str):
             return text
 
-        # Replace {{ state.key }} style templates
+        # Build evaluation context with checkpoint support
+        eval_context = {
+            'state': DotDict(state),
+            'variables': DotDict(self.variables),
+            'secrets': DotDict(self.secrets),
+            'checkpoint': DotDict({
+                'dir': self._checkpoint_dir or '',
+                'last': self._last_checkpoint_path or ''
+            })
+        }
+
+        # Check if the entire string is a single template expression
+        # This allows returning actual objects instead of string representation
+        single_expr_pattern = r'^\s*\{\{\s*([^}]+)\s*\}\}\s*$'
+        single_match = re.match(single_expr_pattern, text)
+        if single_match:
+            expr = single_match.group(1).strip()
+
+            # Handle filters (e.g., "state.key | json")
+            if '|' in expr:
+                parts = expr.split('|')
+                expr = parts[0].strip()
+                filters = [f.strip() for f in parts[1:]]
+            else:
+                filters = []
+
+            try:
+                value = eval(expr, eval_context)
+
+                # Apply filters
+                for filter_name in filters:
+                    if filter_name == 'json':
+                        value = json.dumps(value)
+                    elif filter_name == 'upper':
+                        value = str(value).upper()
+                    elif filter_name == 'lower':
+                        value = str(value).lower()
+
+                # Return actual value (preserves dicts, lists, etc.)
+                return value
+            except Exception:
+                return text  # Return original if evaluation fails
+
+        # Replace {{ state.key }} style templates (multiple or embedded)
         pattern = r'\{\{\s*([^}]+)\s*\}\}'
 
         def replace_var(match):
@@ -540,17 +914,6 @@ class YAMLEngine:
                 filters = [f.strip() for f in parts[1:]]
             else:
                 filters = []
-
-            # Build evaluation context with checkpoint support
-            eval_context = {
-                'state': DotDict(state),
-                'variables': DotDict(self.variables),
-                'secrets': DotDict(self.secrets),
-                'checkpoint': DotDict({
-                    'dir': self._checkpoint_dir or '',
-                    'last': self._last_checkpoint_path or ''
-                })
-            }
 
             # Evaluate expression
             try:
@@ -566,7 +929,7 @@ class YAMLEngine:
                         value = str(value).lower()
 
                 return str(value)
-            except Exception as e:
+            except Exception:
                 return match.group(0)  # Return original if evaluation fails
 
         result = re.sub(pattern, replace_var, text)
@@ -619,168 +982,3 @@ class YAMLEngine:
 
         # Otherwise return as-is
         return expr
-
-    def _setup_builtin_actions(self) -> Dict[str, Callable]:
-        """Setup built-in actions registry."""
-        actions = {}
-
-        # LLM action
-        def llm_call(state, model, messages, temperature=0.7, **kwargs):
-            """Call a language model."""
-            try:
-                from openai import OpenAI
-                client = OpenAI()
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature
-                )
-
-                return {
-                    'content': response.choices[0].message.content,
-                    'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-                }
-            except ImportError:
-                raise ImportError("OpenAI library not installed. Install with: pip install openai")
-
-        actions['llm.call'] = llm_call
-        actions['actions.llm_call'] = llm_call
-
-        # HTTP actions
-        def http_get(state, url, headers=None, **kwargs):
-            """Make HTTP GET request."""
-            import requests
-            response = requests.get(url, headers=headers or {})
-            response.raise_for_status()
-            return response.json()
-
-        def http_post(state, url, json=None, headers=None, **kwargs):
-            """Make HTTP POST request."""
-            import requests
-            response = requests.post(url, json=json, headers=headers or {})
-            response.raise_for_status()
-            return response.json()
-
-        actions['http.get'] = http_get
-        actions['actions.http_get'] = http_get
-        actions['http.post'] = http_post
-        actions['actions.http_post'] = http_post
-
-        # File actions
-        def file_write(state, path, content, **kwargs):
-            """Write content to a file."""
-            path_obj = Path(path)
-            path_obj.parent.mkdir(parents=True, exist_ok=True)
-            path_obj.write_text(content)
-            return {'path': str(path_obj)}
-
-        def file_read(state, path, **kwargs):
-            """Read content from a file."""
-            return {'content': Path(path).read_text()}
-
-        actions['file.write'] = file_write
-        actions['actions.file_write'] = file_write
-        actions['file.read'] = file_read
-        actions['actions.file_read'] = file_read
-
-        # Notify action (placeholder)
-        def notify(state, channel, message, **kwargs):
-            """Send a notification."""
-            print(f"[{channel.upper()}] {message}")
-            return {'sent': True}
-
-        actions['actions.notify'] = notify
-        actions['notify'] = notify
-
-        # Checkpoint actions
-        def checkpoint_save(state, path, graph=None, node=None, config=None, **kwargs):
-            """
-            Save checkpoint to specified path.
-
-            Args:
-                state: Current state dictionary
-                path: File path where checkpoint will be saved
-                graph: StateGraph instance (injected via context)
-                node: Current node name (injected via context)
-                config: Current config dict (injected via context)
-
-            Returns:
-                {"checkpoint_path": str, "saved": True} on success
-                {"checkpoint_path": str, "saved": False, "error": str} on failure
-            """
-            # Use injected graph or fall back to engine's current graph
-            target_graph = graph or self._current_graph
-
-            if target_graph is None:
-                return {
-                    "checkpoint_path": path,
-                    "saved": False,
-                    "error": "No graph available for checkpoint"
-                }
-
-            try:
-                # Ensure parent directory exists
-                path_obj = Path(path)
-                path_obj.parent.mkdir(parents=True, exist_ok=True)
-
-                # Save checkpoint
-                target_graph.save_checkpoint(
-                    str(path_obj),
-                    state,
-                    node or "unknown",
-                    config or {}
-                )
-
-                # Track as last checkpoint
-                self._last_checkpoint_path = str(path_obj)
-
-                return {
-                    "checkpoint_path": str(path_obj),
-                    "saved": True
-                }
-            except Exception as e:
-                return {
-                    "checkpoint_path": path,
-                    "saved": False,
-                    "error": str(e)
-                }
-
-        def checkpoint_load(state, path, **kwargs):
-            """
-            Load checkpoint from specified path.
-
-            Args:
-                state: Current state (for template processing, not used)
-                path: File path to checkpoint
-
-            Returns:
-                {
-                    "checkpoint_state": dict,
-                    "checkpoint_node": str,
-                    "checkpoint_config": dict,
-                    "checkpoint_timestamp": float,
-                    "checkpoint_version": str
-                }
-                Or {"error": str} on failure
-            """
-            try:
-                checkpoint = StateGraph.load_checkpoint(path)
-                return {
-                    "checkpoint_state": checkpoint["state"],
-                    "checkpoint_node": checkpoint["node"],
-                    "checkpoint_config": checkpoint.get("config", {}),
-                    "checkpoint_timestamp": checkpoint.get("timestamp"),
-                    "checkpoint_version": checkpoint.get("version")
-                }
-            except FileNotFoundError:
-                return {"error": f"Checkpoint file not found: {path}"}
-            except ValueError as e:
-                return {"error": f"Invalid checkpoint file: {e}"}
-            except Exception as e:
-                return {"error": f"Failed to load checkpoint: {e}"}
-
-        actions['checkpoint.save'] = checkpoint_save
-        actions['checkpoint.load'] = checkpoint_load
-
-        return actions

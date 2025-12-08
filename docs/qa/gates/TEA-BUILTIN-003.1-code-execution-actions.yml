@@ -1,0 +1,100 @@
+# Quality Gate: TEA-BUILTIN-003.1
+# Code Execution Actions (RestrictedPython Phase 1)
+
+schema: 1
+story: "TEA-BUILTIN-003.1"
+story_title: "Code Execution Actions"
+gate: PASS
+status_reason: "All 41 tests pass (20 P0 security tests included). Feature disabled by default. Documentation complete. All ACs met except AC4 (formally deferred to Phase 2)."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-07T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "SEC-001"
+    severity: medium
+    finding: "RestrictedPython is bytecode transformation, not true isolation - runs in same process"
+    suggested_action: "Document limitation clearly; recommend E2B for untrusted code in Phase 2"
+    status: documented
+
+  - id: "SEC-002"
+    severity: medium
+    finding: "No memory limits enforceable cross-platform"
+    suggested_action: "Document as known limitation; monitor memory usage in production"
+    status: documented
+
+  - id: "SEC-003"
+    severity: low
+    finding: "Test coverage expanded from 24 to 40+ scenarios - additional escape vector tests added"
+    suggested_action: "RESOLVED: SEC-016 through SEC-020 formally added and implemented"
+    status: resolved
+
+  - id: "DOC-001"
+    severity: low
+    finding: "Security warnings documented in CLAUDE.md and YAML_AGENTS.md"
+    suggested_action: "RESOLVED: Security model and limitations documented"
+    status: resolved
+
+quality_score: 90  # 100 - (10 × 2 medium issues) - (0 × low resolved)
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 2
+    low: 0
+  highest: "medium"
+  recommendations:
+    must_fix: []  # All previously required items completed
+    monitor:
+      - "Memory usage during code execution"
+      - "Execution time patterns for potential DoS"
+      - "Error logs for escape attempt patterns"
+
+evidence:
+  tests_reviewed: 41
+  tests_passing: 41
+  risks_identified: 4
+  risks_resolved: 2
+  risks_documented: 2
+  trace:
+    ac_covered: [1, 2, 3, 5, 6, 7, 8, 9, 10]
+    ac_gaps: [4]  # AC4 deferred (Python only for Phase 1)
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Whitelist approach implemented. All 20 P0 security tests pass. Feature disabled by default."
+  performance:
+    status: PASS
+    notes: "Timeout enforcement prevents CPU exhaustion. Output truncation prevents memory issues."
+  reliability:
+    status: PASS
+    notes: "Graceful error handling. Sandbox sessions isolated. Threading-based timeout is cross-platform."
+  maintainability:
+    status: PASS
+    notes: "Follows existing action pattern. Clear separation in code_actions.py module."
+
+recommendations:
+  immediate: []  # All previously required items completed
+  future:
+    - action: "Phase 2: Add E2B integration for untrusted code execution"
+      refs: ["docs/stories/TEA-BUILTIN-003.1.2 (future)"]
+    - action: "Consider hypothesis fuzzing for unknown escape vectors"
+      refs: []
+    - action: "Add Windows-specific threading timeout tests"
+      refs: ["tests/test_yaml_engine_code.py"]
+
+test_design_reference: "docs/qa/assessments/TEA-BUILTIN-003.1-test-design-20251206.md"
+
+history:
+  - at: "2025-12-07T12:00:00Z"
+    gate: PASS
+    note: "Implementation review complete. All 41 tests pass. All ACs verified. Upgraded from CONCERNS to PASS."
+  - at: "2025-12-07T00:00:00Z"
+    gate: CONCERNS
+    note: "Test design update - SEC-016 to SEC-020 formally added. Total scenarios: 40, P0: 23."
+  - at: "2025-12-06T12:00:00Z"
+    gate: CONCERNS
+    note: "Initial gate - pre-implementation review. Story well-designed, security limitations documented."
