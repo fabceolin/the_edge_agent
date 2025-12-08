@@ -27,7 +27,16 @@ setup(
         "fsspec>=2023.1.0",
     ],
     extras_require={
-        "dev": ["pytest", "coverage", "hypothesis", "parameterized==0.9.0"],
+        "dev": [
+            "pytest",
+            "coverage",
+            "hypothesis",
+            "parameterized==0.9.0",
+            # Test dependencies for optional features
+            "openai>=1.13.3",       # For LLM/RAG tests (mocked but module must be importable)
+            "requests>=2.32.5",     # For web actions tests
+            "RestrictedPython>=8.0",  # For code execution tests
+        ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
         "llm": ["openai>=1.13.3"],
