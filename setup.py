@@ -3,7 +3,7 @@ import sys
 
 setup(
     name="the_edge_agent",
-    version="0.6.2",
+    version="0.6.3",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
