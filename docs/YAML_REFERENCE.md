@@ -1,26 +1,52 @@
-# YAML Agent Specification
+# YAML Agent Reference
 
 Version: 1.0.0
 
-This document defines the formal specification for YAML-based agent configuration in The Edge Agent.
+Complete reference for declarative agent configuration in The Edge Agent using YAML files.
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Security Notice](#security-notice)
+- [Basic Structure](#basic-structure)
 - [State and Variable Passing](#state-and-variable-passing)
 - [Document Structure](#document-structure)
 - [Top-Level Keys](#top-level-keys)
+  - [imports](#imports)
 - [Node Specification](#node-specification)
 - [Edge Specification](#edge-specification)
 - [Template Syntax](#template-syntax)
 - [Built-in Actions](#built-in-actions)
+  - [LLM Actions](#llm-actions)
+  - [HTTP Actions](#http-actions)
+  - [File Actions](#file-actions)
+  - [Storage Actions](#storage-actions)
+  - [Data Processing Actions](#data-processing-actions)
+  - [Code Execution Actions](#code-execution-actions)
+  - [Observability Actions](#observability-actions)
+  - [Memory Actions](#memory-actions)
+  - [Long-Term Memory Actions](#long-term-memory-actions)
+  - [Graph Database Actions](#graph-database-actions)
+  - [Web Actions](#web-actions)
+  - [RAG Actions](#rag-actions)
+  - [Tools Bridge Actions](#tools-bridge-actions)
+  - [Notification Actions](#notification-actions)
+  - [Checkpoint Actions](#checkpoint-actions)
+  - [Custom Actions](#custom-actions)
+- [Checkpoint Persistence](#checkpoint-persistence)
 - [Complete Examples](#complete-examples)
+- [Python API](#python-api)
+- [Best Practices](#best-practices)
+- [Troubleshooting](#troubleshooting)
+- [Comparison with GitHub Actions](#comparison-with-github-actions)
 
 ---
 
 ## Overview
 
-YAML agents define declarative workflows that compile to `StateGraph` instances. The YAML structure maps directly to the Python API:
+The Edge Agent supports declarative agent configuration using YAML files, inspired by GitHub Actions and GitLab CI/CD pipelines. Instead of writing Python code to construct your StateGraph, you can define the entire workflow in a YAML file.
+
+YAML agents compile to `StateGraph` instances with this mapping:
 
 | YAML Concept | Python Equivalent |
 |--------------|-------------------|
@@ -28,6 +54,76 @@ YAML agents define declarative workflows that compile to `StateGraph` instances.
 | `edges:` | `graph.add_edge()`, `add_conditional_edges()`, `add_parallel_edge()` |
 | `state_schema:` | `StateGraph(state_schema={...})` |
 | `config:` | `graph.compile(...)` |
+
+Benefits:
+- **Declarative**: Define what you want, not how to build it
+- **Portable**: Configuration can be version-controlled and shared
+- **Accessible**: Non-programmers can create and modify agents
+- **Inspectable**: Easy to understand workflow at a glance
+
+---
+
+## Security Notice
+
+**YAML files execute arbitrary Python code.** Only load YAML configurations from trusted sources.
+
+This is similar to running any Python script—the YAML author has full access to:
+- The Python runtime and all importable modules
+- The file system (read/write)
+- Network access
+- Environment variables and secrets passed to the engine
+
+Unlike GitHub Actions (which runs in isolated VMs with a limited expression language), YAML agents execute directly in your Python process using `exec()` and `eval()`.
+
+**Safe usage:**
+- Only load YAML files you wrote or reviewed
+- Treat YAML agent files like executable code in code reviews
+- Do not load YAML from untrusted user input
+- Consider running untrusted agents in a container/sandbox
+
+---
+
+## Basic Structure
+
+```yaml
+name: my-agent
+description: What this agent does
+
+# Global variables accessible throughout the workflow
+variables:
+  max_retries: 3
+  api_endpoint: https://api.example.com
+
+# External action modules (optional)
+imports:
+  - path: ./actions/custom.py
+    namespace: custom
+
+# Define the state schema
+state_schema:
+  input: str
+  result: str
+  count: int
+
+# Define nodes (workflow steps)
+nodes:
+  - name: step1
+    run: |
+      return {"result": "processed"}
+
+# Define edges (transitions between nodes)
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: __end__
+
+# Configuration
+config:
+  raise_exceptions: true
+  interrupt_before: []
+  interrupt_after: []
+```
 
 ---
 
@@ -80,62 +176,6 @@ Initial State          Node 1 Output         Node 2 Output         Final State
 | Variables | `variables["key"]` or `{{ variables.key }}` | Global constants defined in YAML |
 | Secrets | `secrets["key"]` or `{{ secrets.key }}` | Sensitive values (API keys, etc.) |
 
-### Example: Complete Data Flow
-
-```yaml
-name: data-flow-example
-description: Demonstrates variable passing between nodes
-
-variables:
-  max_items: 10
-  api_version: "v2"
-
-state_schema:
-  input: str
-  items: list
-  filtered: list
-  output: str
-
-nodes:
-  - name: fetch
-    run: |
-      # Access global variable
-      version = "{{ variables.api_version }}"
-      # Return data for next node
-      return {
-        "items": [{"id": i, "value": f"item-{i}"} for i in range(20)]
-      }
-
-  - name: filter
-    run: |
-      # Access data from fetch node via state
-      items = state["items"]
-      # Access global variable
-      max_items = {{ variables.max_items }}
-      # Return filtered data
-      return {"filtered": items[:max_items]}
-
-  - name: format
-    run: |
-      # Access data from filter node
-      filtered = state["filtered"]
-      # Access original input
-      original_input = state["input"]
-      # Combine everything
-      output = f"Query: {original_input}\nResults: {len(filtered)} items"
-      return {"output": output}
-
-edges:
-  - from: __start__
-    to: fetch
-  - from: fetch
-    to: filter
-  - from: filter
-    to: format
-  - from: format
-    to: __end__
-```
-
 ---
 
 ## Document Structure
@@ -144,6 +184,13 @@ edges:
 # Metadata (optional)
 name: string                    # Agent identifier
 description: string             # Human-readable description
+
+# External Imports (optional)
+imports:
+  - path: string                # Local file path
+    namespace: string           # Action namespace prefix
+  - package: string             # Installed Python package
+    namespace: string
 
 # Global Variables (optional)
 variables:
@@ -169,6 +216,7 @@ config:
   raise_exceptions: boolean
   interrupt_before: [string]
   interrupt_after: [string]
+  checkpoint_dir: string
 ```
 
 ---
@@ -196,6 +244,70 @@ variables:
 ```
 Global constants accessible throughout the workflow via `{{ variables.key }}` or `variables["key"]`.
 
+### `imports`
+
+External action modules to load. Enables modular action organization and code reuse.
+
+```yaml
+imports:
+  # Local file (relative to YAML file)
+  - path: ./actions/my_custom.py
+    namespace: custom
+
+  # Installed Python package
+  - package: tea_actions_slack
+    namespace: slack
+```
+
+Each import requires:
+- `path` OR `package`: Source of the action module
+- `namespace`: Prefix for all actions from this module
+
+**Local File Import** (`path:`):
+- Relative paths resolve from YAML file location
+- Absolute paths used as-is
+- Module must define `register_actions(registry, engine)` function
+
+**Package Import** (`package:`):
+- Uses `importlib.import_module()` to load installed packages
+- Supports dotted package names (e.g., `tea_actions.slack`)
+- Package must define `register_actions(registry, engine)` function
+
+**Action Registration Contract**:
+
+```python
+# my_actions.py
+from typing import Any, Callable, Dict
+
+def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
+    """Register actions into the provided registry."""
+    def my_action(state, param1, param2=None, **kwargs):
+        return {"result": "value", "success": True}
+
+    registry['my_action'] = my_action
+
+# Optional metadata for discovery
+__tea_actions__ = {
+    "version": "1.0.0",
+    "description": "My custom actions",
+    "actions": ["my_action"],
+}
+```
+
+**Usage in Nodes**:
+```yaml
+nodes:
+  - name: process
+    uses: custom.my_action  # namespace.action_name
+    with:
+      param1: "{{ state.input }}"
+```
+
+**Features**:
+- Namespace prefixing prevents action name collisions
+- Circular import detection (same module loaded once, skipped on duplicates)
+- Clear error messages include file path or package name
+
 ### `state_schema` (optional)
 ```yaml
 state_schema:
@@ -218,6 +330,7 @@ config:
   raise_exceptions: true        # Raise errors vs yield error events (default: false)
   interrupt_before: [node_name] # Pause before these nodes
   interrupt_after: [node_name]  # Pause after these nodes
+  checkpoint_dir: ./checkpoints # Directory for auto-save checkpoints
 ```
 
 ---
@@ -327,7 +440,6 @@ GitHub Actions-style sequential steps within a node:
 
     - name: step3
       run: |
-        # Can access results from step1 and step2
         return {"final": f"Submitted: {state['intermediate']}"}
 ```
 
@@ -411,10 +523,10 @@ Route based on expression evaluation:
   to: proceed
   when: "state['count'] > 0"
 
-# Method 3: Variable reference
+# Method 3: Variable reference with negation
 - from: check
   to: skip
-  when: "!should_process"    # Negation with !
+  when: "!should_process"
 ```
 
 #### Parallel Edge
@@ -526,11 +638,92 @@ Call OpenAI-compatible LLM API:
 
 **Returns:**
 ```python
-{
-  "content": "LLM response text",
-  "usage": {"prompt_tokens": N, "completion_tokens": N, ...}
-}
+{"content": "LLM response text", "usage": {"prompt_tokens": N, "completion_tokens": N}}
 ```
+
+#### `llm.stream`
+
+Stream LLM responses with chunk aggregation:
+
+```yaml
+- name: stream_response
+  uses: llm.stream
+  with:
+    model: gpt-4
+    messages:
+      - role: user
+        content: "{{ state.query }}"
+    temperature: 0.7
+  output: stream_result
+```
+
+**Returns:**
+```python
+{"content": str, "usage": dict, "streamed": true, "chunk_count": int}
+```
+
+#### `llm.retry`
+
+LLM calls with exponential backoff retry logic:
+
+```yaml
+- name: resilient_call
+  uses: llm.retry
+  with:
+    model: gpt-4
+    messages:
+      - role: user
+        content: "{{ state.query }}"
+    max_retries: 3          # Optional (default: 3)
+    base_delay: 1.0         # Optional (default: 1.0)
+    max_delay: 60.0         # Optional (default: 60.0)
+  output: retry_result
+```
+
+**Returns:**
+- Success: `{"content": str, "usage": dict, "attempts": int, "total_delay": float}`
+- Failure: `{"error": str, "success": false, "attempts": int, "total_delay": float}`
+
+**Retry behavior:**
+- Retryable: HTTP 429 (rate limit), HTTP 5xx, timeouts, connection errors
+- Non-retryable: HTTP 4xx (except 429)
+- Respects `Retry-After` header when present
+
+#### `llm.tools`
+
+Function/tool calling with automatic action dispatch:
+
+```yaml
+- name: agent_with_tools
+  uses: llm.tools
+  with:
+    model: gpt-4
+    messages:
+      - role: system
+        content: You are a helpful assistant with access to tools.
+      - role: user
+        content: "{{ state.query }}"
+    tools:
+      - name: search_web
+        description: Search the web for information
+        parameters:
+          query:
+            type: string
+            description: Search query
+            required: true
+        action: http.get            # Maps to registered action
+    tool_choice: auto               # Optional: "auto", "none", or tool name
+    max_tool_rounds: 10             # Optional (default: 10)
+  output: tools_result
+```
+
+**Returns:**
+- Success: `{"content": str, "tool_calls": list, "tool_results": list, "rounds": int}`
+- Failure: `{"error": str, "success": false, "tool_calls": list, "tool_results": list}`
+
+All LLM actions are available via dual namespaces: `llm.*` and `actions.llm_*`.
+
+---
 
 ### HTTP Actions
 
@@ -559,6 +752,8 @@ Call OpenAI-compatible LLM API:
       Content-Type: application/json
   output: response_data
 ```
+
+---
 
 ### File Actions
 
@@ -616,148 +811,108 @@ File actions support both local paths and remote URIs via fsspec (S3, GCS, Azure
 - Azure: `az://container/path` (requires `pip install adlfs`)
 - Memory: `memory://path` (for testing)
 
-### Notification Actions
+---
 
-#### `actions.notify`
+### Storage Actions
 
-```yaml
-- name: alert
-  uses: actions.notify
-  with:
-    channel: slack                       # Required
-    message: "Task completed!"           # Required
-```
+Advanced storage operations for cloud and local filesystems.
 
-**Returns:** `{"sent": true}`
-
-### Checkpoint Actions
-
-#### `checkpoint.save`
-
-Save workflow checkpoint for persistence and recovery:
+#### `storage.list`
 
 ```yaml
-- name: save_progress
-  uses: checkpoint.save
+- name: list_files
+  uses: storage.list
   with:
-    path: ./checkpoints/{{ state.step_name }}.pkl  # Required
-  output: save_result
+    path: s3://my-bucket/data/            # Required
+    detail: true                          # Optional (include metadata)
+    max_results: 100                      # Optional
+  output: files_list
 ```
 
-**Returns:**
-- Success: `{"checkpoint_path": str, "saved": true}`
-- Failure: `{"checkpoint_path": str, "saved": false, "error": str}`
+**Returns:** `{"files": list, "count": int, "success": true}`
 
-#### `checkpoint.load`
-
-Load checkpoint from file:
+#### `storage.exists`
 
 ```yaml
-- name: load_previous
-  uses: checkpoint.load
+- name: check_file
+  uses: storage.exists
   with:
-    path: ./checkpoints/previous.pkl               # Required
-  output: loaded_checkpoint
+    path: s3://my-bucket/data/file.json   # Required
+  output: exists_result
 ```
 
-**Returns:**
-```python
-{
-  "checkpoint_state": dict,      # Saved state
-  "checkpoint_node": str,        # Node where checkpoint was saved
-  "checkpoint_config": dict,     # Saved config
-  "checkpoint_timestamp": float, # Unix timestamp
-  "checkpoint_version": str      # Checkpoint format version
-}
-```
+**Returns:** `{"exists": bool, "path": str, "success": true}`
 
-### LLM Enhanced Actions
-
-#### `llm.stream`
-
-Stream LLM responses with chunk aggregation:
+#### `storage.info`
 
 ```yaml
-- name: stream_response
-  uses: llm.stream
+- name: get_info
+  uses: storage.info
   with:
-    model: gpt-4                    # Required
-    messages:                       # Required
-      - role: user
-        content: "{{ state.query }}"
-    temperature: 0.7                # Optional
-  output: stream_result
+    path: s3://my-bucket/data/file.json   # Required
+  output: file_info
 ```
 
-**Returns:**
-```python
-{
-  "content": "Full aggregated response",
-  "usage": {"prompt_tokens": N, "completion_tokens": N},
-  "streamed": true,
-  "chunk_count": N
-}
-```
+**Returns:** `{"info": {"name": str, "size": int, "type": str, ...}, "success": true}`
 
-#### `llm.retry`
-
-LLM calls with exponential backoff retry logic:
+#### `storage.copy`
 
 ```yaml
-- name: resilient_call
-  uses: llm.retry
+- name: copy_to_gcs
+  uses: storage.copy
   with:
-    model: gpt-4                    # Required
-    messages:                       # Required
-      - role: user
-        content: "{{ state.query }}"
-    max_retries: 3                  # Optional (default: 3)
-    base_delay: 1.0                 # Optional (default: 1.0)
-    max_delay: 60.0                 # Optional (default: 60.0)
-    temperature: 0.7                # Optional
-  output: retry_result
+    source: s3://source-bucket/file.json       # Required
+    destination: gs://dest-bucket/file.json    # Required
+  output: copy_result
 ```
 
-**Returns:**
-- Success: `{"content": str, "usage": dict, "attempts": int, "total_delay": float}`
-- Failure: `{"error": str, "success": false, "attempts": int, "total_delay": float}`
+**Returns:** `{"copied": true, "source": str, "destination": str, "success": true}`
 
-**Retry behavior:**
-- Retryable: HTTP 429 (rate limit), HTTP 5xx, timeouts, connection errors
-- Non-retryable: HTTP 4xx (except 429)
-- Respects `Retry-After` header when present
-
-#### `llm.tools`
-
-Function/tool calling with automatic action dispatch:
+#### `storage.delete`
 
 ```yaml
-- name: agent_with_tools
-  uses: llm.tools
+- name: cleanup
+  uses: storage.delete
   with:
-    model: gpt-4                    # Required
-    messages:                       # Required
-      - role: system
-        content: You are a helpful assistant with access to tools.
-      - role: user
-        content: "{{ state.query }}"
-    tools:                          # Required
-      - name: search_web
-        description: Search the web for information
-        parameters:
-          query:
-            type: string
-            description: Search query
-            required: true
-        action: http.get            # Maps to registered action
-    tool_choice: auto               # Optional: "auto", "none", or tool name
-    max_tool_rounds: 10             # Optional (default: 10)
-  output: tools_result
+    path: s3://my-bucket/temp/file.json   # Required
+    recursive: false                       # Optional (for directories)
+  output: delete_result
 ```
 
-**Returns:**
-- Success: `{"content": str, "tool_calls": list, "tool_results": list, "rounds": int}`
-- Failure: `{"error": str, "success": false, "tool_calls": list, "tool_results": list}`
+**Returns:** `{"deleted": true, "path": str, "success": true}`
+
+#### `storage.mkdir`
+
+```yaml
+- name: make_dir
+  uses: storage.mkdir
+  with:
+    path: s3://my-bucket/new-folder/      # Required
+    exist_ok: true                         # Optional
+  output: mkdir_result
+```
+
+**Returns:** `{"created": true, "path": str, "success": true}`
+
+#### `storage.native`
+
+Access provider-specific operations:
+
+```yaml
+- name: set_acl
+  uses: storage.native
+  with:
+    path: s3://my-bucket/file.json        # Required
+    operation: put_object_acl             # Required
+    ACL: public-read                      # Operation-specific params
+  output: native_result
+```
+
+**Returns:** `{"result": any, "operation": str, "success": true}`
+
+All storage actions are available via dual namespaces: `storage.*` and `actions.storage_*`.
+
+---
 
 ### Data Processing Actions
 
@@ -793,7 +948,7 @@ Transform data with JMESPath or JSONPath expressions:
   output: transformed_data
 ```
 
-**Common expressions:**
+**Common JMESPath expressions:**
 - `user.profile.name` - Extract nested value
 - `users[?status=='active']` - Filter array
 - `users[*].name` - Extract all names
@@ -934,10 +1089,14 @@ Filter list items with predicates:
 
 **Returns:** `{"result": list, "original_count": int, "filtered_count": int, "success": true}`
 
+---
+
 ### Code Execution Actions
 
 > **Security Warning:** Code execution is DISABLED by default. Enable with `YAMLEngine(enable_code_execution=True)`.
 > Uses RestrictedPython sandbox - not suitable for arbitrary untrusted code.
+
+**Required:** `pip install RestrictedPython`
 
 #### `code.execute`
 
@@ -994,6 +1153,10 @@ Manage persistent sandbox sessions:
 ```
 
 **Actions:** `create`, `execute`, `list`, `destroy`
+
+All code actions are available via dual namespaces: `code.*` and `actions.code_*`.
+
+---
 
 ### Observability Actions
 
@@ -1059,7 +1222,24 @@ End current trace span:
 
 **Returns:** `{"span_id": str, "duration_ms": float, "status": str, "success": true}`
 
+#### Auto-Instrumentation
+
+Enable automatic tracing via YAML settings:
+
+```yaml
+settings:
+  auto_trace: true         # Auto-wrap all nodes with tracing
+  trace_exporter: console  # "console", "file"
+  trace_file: ./traces.jsonl
+```
+
+All trace actions are available via dual namespaces: `trace.*` and `actions.trace_*`.
+
+---
+
 ### Memory Actions
+
+Session memory for storing data across graph invocations within the same engine instance.
 
 #### `memory.store`
 
@@ -1110,9 +1290,13 @@ Summarize conversation history using LLM:
 
 **Returns:** `{"summary": str, "original_count": int, "token_estimate": int, "success": true}`
 
+All memory actions are available via dual namespaces: `memory.*` and `actions.memory_*`.
+
+---
+
 ### Long-Term Memory Actions
 
-Persistent storage using SQLite with FTS5 full-text search.
+Persistent storage using SQLite with FTS5 full-text search. Unlike session memory, data persists across engine restarts.
 
 #### `ltm.store`
 
@@ -1178,125 +1362,17 @@ Full-text search across stored values:
 
 **Returns:** `{"success": true, "results": [{"key": str, "value": any, "metadata": dict, "score": float}], "count": int}`
 
-### Storage Actions
+All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
 
-Remote storage operations via fsspec (S3, GCS, Azure, etc.).
-
-#### `storage.list`
-
-List files/objects at path:
-
-```yaml
-- name: list_files
-  uses: storage.list
-  with:
-    path: s3://my-bucket/data/            # Required
-    detail: true                          # Optional (include metadata)
-    max_results: 100                      # Optional
-  output: files_list
-```
-
-**Returns:** `{"files": list, "count": int, "success": true}`
-
-#### `storage.exists`
-
-Check if file/object exists:
-
-```yaml
-- name: check_file
-  uses: storage.exists
-  with:
-    path: s3://my-bucket/data/file.json   # Required
-  output: exists_result
-```
-
-**Returns:** `{"exists": bool, "path": str, "success": true}`
-
-#### `storage.info`
-
-Get file/object metadata:
-
-```yaml
-- name: get_info
-  uses: storage.info
-  with:
-    path: s3://my-bucket/data/file.json   # Required
-  output: file_info
-```
-
-**Returns:** `{"info": {"name": str, "size": int, "type": str, ...}, "success": true}`
-
-#### `storage.copy`
-
-Copy file between locations:
-
-```yaml
-- name: copy_to_gcs
-  uses: storage.copy
-  with:
-    source: s3://source-bucket/file.json       # Required
-    destination: gs://dest-bucket/file.json    # Required
-  output: copy_result
-```
-
-**Returns:** `{"copied": true, "source": str, "destination": str, "success": true}`
-
-#### `storage.delete`
-
-Delete file/object:
-
-```yaml
-- name: cleanup
-  uses: storage.delete
-  with:
-    path: s3://my-bucket/temp/file.json   # Required
-    recursive: false                       # Optional (for directories)
-  output: delete_result
-```
-
-**Returns:** `{"deleted": true, "path": str, "success": true}`
-
-#### `storage.mkdir`
-
-Create directory/prefix:
-
-```yaml
-- name: make_dir
-  uses: storage.mkdir
-  with:
-    path: s3://my-bucket/new-folder/      # Required
-    exist_ok: true                         # Optional
-  output: mkdir_result
-```
-
-**Returns:** `{"created": true, "path": str, "success": true}`
-
-#### `storage.native`
-
-Access provider-specific operations:
-
-```yaml
-- name: set_acl
-  uses: storage.native
-  with:
-    path: s3://my-bucket/file.json        # Required
-    operation: put_object_acl             # Required
-    ACL: public-read                      # Operation-specific params
-  output: native_result
-```
-
-**Returns:** `{"result": any, "operation": str, "success": true}`
-
-**Supported URI schemes:**
-- Local: `./path`, `/abs/path`, `file:///path`
-- AWS S3: `s3://bucket/path` (requires `s3fs`)
-- GCS: `gs://bucket/path` (requires `gcsfs`)
-- Azure: `az://container/path` (requires `adlfs`)
-- Memory: `memory://path` (for testing)
+---
 
 ### Graph Database Actions
 
-Entity-relationship storage using CozoDB or Kuzu.
+Entity-relationship storage using CozoDB or Kuzu backends.
+
+**Required (optional):**
+- `pip install 'pycozo[embedded]'` - For CozoDB backend
+- `pip install kuzu` - For Kuzu backend
 
 #### `graph.store_entity`
 
@@ -1376,13 +1452,21 @@ Retrieve contextual information for entity:
 
 **Returns:** `{"success": true, "entities": list, "relations": list, "context_summary": str}`
 
+All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
+
+---
+
 ### Web Actions
 
-Web scraping and search via external APIs (Firecrawl, Perplexity).
+Web scraping and search via external APIs.
+
+**Required environment variables:**
+- `FIRECRAWL_API_KEY` - For web.scrape and web.crawl
+- `PERPLEXITY_API_KEY` - For web.search
 
 #### `web.scrape`
 
-Scrape web content:
+Scrape web content via Firecrawl API:
 
 ```yaml
 - name: fetch_article
@@ -1396,8 +1480,6 @@ Scrape web content:
 ```
 
 **Returns:** `{"success": true, "url": str, "markdown": str, "links": list, "metadata": dict}`
-
-**Requires:** `FIRECRAWL_API_KEY` environment variable
 
 #### `web.crawl`
 
@@ -1419,7 +1501,7 @@ Crawl multiple pages:
 
 #### `web.search`
 
-Web search via Perplexity:
+Web search via Perplexity API:
 
 ```yaml
 - name: search_topic
@@ -1432,11 +1514,17 @@ Web search via Perplexity:
 
 **Returns:** `{"success": true, "results": list, "query": str, "total_results": int, "answer": str}`
 
-**Requires:** `PERPLEXITY_API_KEY` environment variable
+All web actions are available via dual namespaces: `web.*` and `actions.web_*`.
+
+---
 
 ### RAG Actions
 
 Retrieval-Augmented Generation with embeddings and vector search.
+
+**Providers:**
+- OpenAI: `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`
+- Ollama: `nomic-embed-text`, `mxbai-embed-large`, `all-minilm`, `bge-m3`
 
 #### `embedding.create`
 
@@ -1463,10 +1551,6 @@ Generate embeddings from text:
 **Returns:**
 - Single: `{"embedding": list[float], "model": str, "dimensions": int}`
 - Batch: `{"embeddings": list[list[float]], "model": str, "count": int, "dimensions": int}`
-
-**Providers:**
-- OpenAI: `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`
-- Ollama: `nomic-embed-text`, `mxbai-embed-large`, `all-minilm`, `bge-m3`
 
 #### `vector.store`
 
@@ -1508,9 +1592,20 @@ Semantic similarity search:
 
 **Filter operators:** `field` (exact), `field_gte`, `field_lte`, `field_gt`, `field_lt`, `field_ne`, `field_in`
 
+All RAG actions are available via dual namespaces: `embedding.*`, `vector.*` and `actions.embedding_*`, `actions.vector_*`.
+
+---
+
 ### Tools Bridge Actions
 
 Access external tool ecosystems (CrewAI, MCP, LangChain).
+
+**Dependencies (all optional):**
+```bash
+pip install crewai crewai-tools     # For CrewAI
+pip install mcp                      # For MCP
+pip install langchain langchain-community  # For LangChain
+```
 
 #### `tools.crewai`
 
@@ -1527,8 +1622,6 @@ Execute CrewAI tools:
 ```
 
 **Returns:** `{"result": any, "tool": str, "success": true}`
-
-**Requires:** `pip install crewai crewai-tools`
 
 #### `tools.mcp`
 
@@ -1548,8 +1641,6 @@ Execute MCP server tools:
 
 **Returns:** `{"result": any, "tool": str, "server": str, "success": true}`
 
-**Requires:** `pip install mcp`
-
 #### `tools.langchain`
 
 Execute LangChain tools:
@@ -1565,8 +1656,6 @@ Execute LangChain tools:
 
 **Returns:** `{"result": any, "tool": str, "success": true}`
 
-**Requires:** `pip install langchain langchain-community`
-
 #### `tools.discover`
 
 Discover available tools:
@@ -1577,25 +1666,73 @@ Discover available tools:
   with:
     source: all                           # "crewai", "mcp", "langchain", or "all"
     filter: search                        # Optional
-    use_cache: true                       # Optional (default: true)
   output: available_tools
 ```
 
 **Returns:** `{"tools": list, "sources": list, "count": int, "success": true}`
 
-#### `tools.clear_cache`
+All tools bridge actions are available via dual namespaces: `tools.*` and `actions.tools_*`.
 
-Clear discovery cache:
+---
+
+### Notification Actions
+
+#### `actions.notify`
 
 ```yaml
-- name: clear_cache
-  uses: tools.clear_cache
+- name: alert
+  uses: actions.notify
   with:
-    source: crewai                        # Optional (null = clear all)
-  output: clear_result
+    channel: slack                       # Required
+    message: "Task completed!"           # Required
 ```
 
-**Returns:** `{"cleared": true, "source": str | null}`
+**Returns:** `{"sent": true}`
+
+---
+
+### Checkpoint Actions
+
+#### `checkpoint.save`
+
+Save workflow checkpoint:
+
+```yaml
+- name: save_progress
+  uses: checkpoint.save
+  with:
+    path: ./checkpoints/{{ state.step_name }}.pkl  # Required
+  output: save_result
+```
+
+**Returns:**
+- Success: `{"checkpoint_path": str, "saved": true}`
+- Failure: `{"checkpoint_path": str, "saved": false, "error": str}`
+
+#### `checkpoint.load`
+
+Load checkpoint from file:
+
+```yaml
+- name: load_previous
+  uses: checkpoint.load
+  with:
+    path: ./checkpoints/previous.pkl               # Required
+  output: loaded_checkpoint
+```
+
+**Returns:**
+```python
+{
+  "checkpoint_state": dict,
+  "checkpoint_node": str,
+  "checkpoint_config": dict,
+  "checkpoint_timestamp": float,
+  "checkpoint_version": str
+}
+```
+
+---
 
 ### Custom Actions
 
@@ -1603,7 +1740,6 @@ Register custom actions in Python:
 
 ```python
 def my_custom_action(state, param1, param2, **kwargs):
-    # Your logic here
     result = do_something(param1, param2)
     return {"result": result}
 
@@ -1625,6 +1761,49 @@ Use in YAML:
 
 ---
 
+## Checkpoint Persistence
+
+YAML agents support checkpoint persistence for saving and resuming workflow execution.
+
+### Configuration
+
+```yaml
+config:
+  # Directory for auto-save checkpoints at interrupt points
+  checkpoint_dir: ./checkpoints
+
+  # Resume from a specific checkpoint on load
+  checkpoint: ./checkpoints/resume_point.pkl
+
+  # Interrupt at specific nodes (triggers auto-save)
+  interrupt_before: [critical_node]
+  interrupt_after: [validation_node]
+```
+
+### Auto-Save at Interrupts
+
+When `checkpoint_dir` is configured, checkpoints are automatically saved before yielding interrupt events. Files are saved as `{checkpoint_dir}/{node}_{timestamp_ms}.pkl`.
+
+### Resume from Checkpoint
+
+```yaml
+config:
+  checkpoint: ./checkpoints/review_node_1733500000.pkl
+```
+
+Or in Python:
+
+```python
+graph = engine.load_from_file("agent.yaml", checkpoint="./checkpoints/state.pkl")
+```
+
+### Template Variables for Checkpoints
+
+- `{{ checkpoint.dir }}` - The configured `checkpoint_dir` value
+- `{{ checkpoint.last }}` - Path to the most recent checkpoint saved
+
+---
+
 ## Complete Examples
 
 ### Example 1: Research Agent with Conditional Routing
@@ -1642,13 +1821,11 @@ state_schema:
   results: list
   has_enough: bool
   summary: str
-  report_path: str
 
 nodes:
   - name: search
     run: |
       query = state["query"]
-      # Simulate search
       results = [
         {"title": f"Result {i}", "snippet": f"Info about {query}"}
         for i in range(5)
@@ -1674,42 +1851,26 @@ nodes:
     with:
       path: "{{ variables.output_dir }}/{{ state.query }}.md"
       content: "# Research Report\n\n{{ state.summary }}"
-    output: report_path
 
   - name: insufficient_results
     run: |
-      return {
-        "summary": f"Insufficient results for query: {state['query']}",
-        "report_path": None
-      }
+      return {"summary": f"Insufficient results for query: {state['query']}"}
 
 edges:
   - from: __start__
     to: search
-
   - from: search
     to: validate
-
   - from: validate
     to: summarize
-    condition:
-      type: expression
-      value: state["has_enough"]
-    when: true
-
+    when: "state['has_enough']"
   - from: validate
     to: insufficient_results
-    condition:
-      type: expression
-      value: state["has_enough"]
-    when: false
-
+    when: "!state['has_enough']"
   - from: summarize
     to: save_report
-
   - from: save_report
     to: __end__
-
   - from: insufficient_results
     to: __end__
 
@@ -1725,9 +1886,6 @@ description: Analyze data from multiple sources in parallel
 
 state_schema:
   input: str
-  analysis_a: dict
-  analysis_b: dict
-  analysis_c: dict
   combined: dict
 
 nodes:
@@ -1737,92 +1895,53 @@ nodes:
 
   - name: analyze_sentiment
     run: |
-      text = state["prepared_input"]
-      # Simulate sentiment analysis
-      return {
-        "analysis_a": {
-          "type": "sentiment",
-          "score": 0.75,
-          "label": "positive"
-        }
-      }
+      return {"analysis_a": {"type": "sentiment", "score": 0.75}}
 
   - name: analyze_entities
     run: |
-      text = state["prepared_input"]
-      # Simulate entity extraction
-      return {
-        "analysis_b": {
-          "type": "entities",
-          "entities": ["AI", "machine learning", "Python"]
-        }
-      }
+      return {"analysis_b": {"type": "entities", "entities": ["AI", "Python"]}}
 
   - name: analyze_topics
     run: |
-      text = state["prepared_input"]
-      # Simulate topic modeling
-      return {
-        "analysis_c": {
-          "type": "topics",
-          "topics": ["technology", "programming"]
-        }
-      }
+      return {"analysis_c": {"type": "topics", "topics": ["technology"]}}
 
   - name: combine_results
     fan_in: true
     run: |
-      # Collect all analysis results from parallel flows
       combined = {}
       for result in parallel_results:
         for key in ["analysis_a", "analysis_b", "analysis_c"]:
           if key in result:
             combined[key] = result[key]
-
       return {"combined": combined}
 
   - name: generate_report
     run: |
       combined = state["combined"]
-      report = {
-        "input": state["prepared_input"],
-        "analyses": combined,
-        "summary": f"Completed {len(combined)} analyses"
-      }
-      return {"final_report": report}
+      return {"final_report": {"analyses": combined, "count": len(combined)}}
 
 edges:
   - from: __start__
     to: prepare
-
-  # Parallel fan-out
   - from: prepare
     to: analyze_sentiment
     type: parallel
     fan_in: combine_results
-
   - from: prepare
     to: analyze_entities
     type: parallel
     fan_in: combine_results
-
   - from: prepare
     to: analyze_topics
     type: parallel
     fan_in: combine_results
-
-  # Continue after fan-in
   - from: combine_results
     to: generate_report
-
   - from: generate_report
     to: __end__
-
-config:
-  raise_exceptions: true
 ```
 
-### Example 3: Multi-Step Customer Support Agent
+### Example 3: Customer Support Agent
 
 ```yaml
 name: customer-support-agent
@@ -1842,105 +1961,82 @@ nodes:
   - name: classify_intent
     run: |
       message = state["message"].lower()
-
-      if "bill" in message or "charge" in message or "payment" in message:
+      if "bill" in message or "payment" in message:
         intent = "billing"
       elif "cancel" in message or "refund" in message:
         intent = "cancellation"
-      elif "bug" in message or "error" in message or "broken" in message:
+      elif "bug" in message or "error" in message:
         intent = "technical"
       else:
         intent = "general"
-
       return {"intent": intent}
 
   - name: handle_billing
     steps:
       - name: lookup_account
         run: |
-          # Simulate account lookup
-          return {
-            "account_status": "active",
-            "last_payment": "2025-01-01"
-          }
-
+          return {"account_status": "active", "last_payment": "2025-01-01"}
       - name: generate_response
         run: |
           return {
-            "response": f"Hello! I see your account is {state['account_status']}. "
-                       f"Your last payment was on {state['last_payment']}. "
-                       "How can I help with your billing question?",
+            "response": f"Your account is {state['account_status']}.",
             "ticket_id": f"BILL-{state['customer_id']}"
           }
 
   - name: handle_cancellation
     run: |
       return {
-        "response": "I understand you'd like to cancel. "
-                   "Let me connect you with our retention team who can help.",
+        "response": "Let me connect you with our retention team.",
         "ticket_id": f"CANCEL-{state['customer_id']}"
       }
 
   - name: handle_technical
     run: |
       return {
-        "response": "I'm sorry you're experiencing technical issues. "
-                   "I've created a support ticket for our technical team.",
+        "response": "I've created a support ticket for our technical team.",
         "ticket_id": f"TECH-{state['customer_id']}"
       }
 
   - name: handle_general
     run: |
       return {
-        "response": f"Thank you for contacting us! "
-                   f"For assistance, please email {{ variables.support_email }}",
+        "response": f"Please email {{ variables.support_email }}",
         "ticket_id": f"GEN-{state['customer_id']}"
       }
 
 edges:
   - from: __start__
     to: classify_intent
-
-  # Conditional routing based on intent
   - from: classify_intent
     to: handle_billing
     when: "state['intent'] == 'billing'"
-
   - from: classify_intent
     to: handle_cancellation
     when: "state['intent'] == 'cancellation'"
-
   - from: classify_intent
     to: handle_technical
     when: "state['intent'] == 'technical'"
-
   - from: classify_intent
     to: handle_general
     when: "state['intent'] == 'general'"
-
-  # All handlers lead to end
   - from: handle_billing
     to: __end__
-
   - from: handle_cancellation
     to: __end__
-
   - from: handle_technical
     to: __end__
-
   - from: handle_general
     to: __end__
 
 config:
   raise_exceptions: true
-  interrupt_after: [classify_intent]  # Debug: pause after classification
 ```
 
 ---
 
-## Execution
+## Python API
 
-### Python API
+### Basic Usage
 
 ```python
 from the_edge_agent import YAMLEngine
@@ -1955,8 +2051,7 @@ initial_state = {"query": "machine learning"}
 # Stream execution (recommended)
 for event in graph.stream(initial_state):
     if event["type"] == "state":
-        print(f"Node: {event['node']}")
-        print(f"State: {event['state']}")
+        print(f"Node: {event['node']}, State: {event['state']}")
     elif event["type"] == "final":
         print(f"Final result: {event['state']}")
 
@@ -1969,7 +2064,6 @@ final_state = result[-1]["state"]
 
 ```python
 def custom_search(state, query, max_results=10, **kwargs):
-    # Your search implementation
     return {"results": [...]}
 
 engine = YAMLEngine(actions_registry={
@@ -1977,14 +2071,87 @@ engine = YAMLEngine(actions_registry={
 })
 ```
 
+### Engine Configuration
+
+```python
+# Enable code execution (disabled by default)
+engine = YAMLEngine(enable_code_execution=True)
+
+# Configure tracing
+engine = YAMLEngine(
+    trace_exporter="console",
+    trace_verbose=True
+)
+
+# File-based LTM
+engine = YAMLEngine(ltm_path="./agent_memory.db")
+
+# Custom memory backend
+from the_edge_agent import InMemoryBackend
+engine = YAMLEngine(memory_backend=InMemoryBackend())
+```
+
+### Resume from Checkpoint
+
+```python
+# Load with checkpoint
+graph = engine.load_from_file("agent.yaml", checkpoint="./chk/state.pkl")
+
+# Or use convenience method
+for event in engine.resume_from_checkpoint(
+    "agent.yaml",
+    "./checkpoints/review_node_1733500000.pkl",
+    config={"approved": True}
+):
+    print(event)
+```
+
 ---
 
-## Security Considerations
+## Best Practices
 
-YAML agents execute arbitrary Python code via `exec()` and `eval()`. This means:
+1. **Keep nodes focused**: Each node should do one thing well
+2. **Use meaningful names**: Node and edge names should be descriptive
+3. **Leverage built-in actions**: Don't reinvent common operations
+4. **Document with comments**: YAML supports `# comments`
+5. **Version control**: Keep YAML configs in git
+6. **Test incrementally**: Use interrupts to debug complex flows
+7. **Validate state schema**: Define expected state structure upfront
+8. **Use namespaces for imports**: Prevent action name collisions
 
-- **Trust model:** Only load YAML files from trusted sources
-- **Attack surface:** YAML can access the file system, network, and all Python modules
-- **Not sandboxed:** Unlike GitHub Actions, there is no VM isolation
+---
 
-See `docs/YAML_AGENTS.md` for detailed security guidance.
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: Template variables not replaced
+- **Solution**: Ensure you're using correct syntax: `{{ state.key }}` not `${{ state.key }}`
+
+**Issue**: Node function not found
+- **Solution**: Check that custom actions are registered in the engine
+
+**Issue**: Parallel flows not working
+- **Solution**: Ensure fan-in node is defined and all parallel edges reference it
+
+**Issue**: Conditional edges not routing correctly
+- **Solution**: Debug by adding `interrupt_after` at the decision node
+
+**Issue**: Import module not found
+- **Solution**: Check path is relative to YAML file location, not working directory
+
+---
+
+## Comparison with GitHub Actions
+
+| Feature | GitHub Actions | YAML Agents |
+|---------|---------------|-------------|
+| Workflow definition | YAML | YAML |
+| Steps/Jobs | `steps:` | `nodes:` |
+| Triggers | `on:` | `edges:` with conditions |
+| Variables | `${{ }}` | `{{ }}` |
+| Actions | `uses:` | `uses:` |
+| Inline code | `run:` | `run:` or `script:` |
+| Parallel | `matrix:` | `type: parallel` |
+| Conditionals | `if:` | `condition:` or `when:` |
+| Imports | N/A | `imports:` |
