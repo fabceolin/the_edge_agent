@@ -121,13 +121,72 @@ graph.add_edge("fan_in", "end")
 
 ## YAML Engine
 
-The Edge Agent supports declarative agent configuration via YAML files (see `docs/YAML_AGENTS.md` for full documentation).
+The Edge Agent supports declarative agent configuration via YAML files (see `docs/YAML_REFERENCE.md` for full documentation).
 
 **YAMLEngine** (`src/the_edge_agent/yaml_engine.py`):
 - Creates StateGraph instances from YAML configurations
 - Supports inline Python code, built-in actions, multi-step nodes
+- External action module imports via `imports:` section
 - Template variables: `{{ state.key }}`, `{{ variables.key }}`, `{{ secrets.key }}`
 - Filters: `| json`, `| upper`, `| lower`
+
+### External Action Imports
+
+Import custom Python action modules directly from YAML configuration:
+
+```yaml
+imports:
+  # Local file (relative to YAML file)
+  - path: ./actions/my_custom.py
+    namespace: custom
+
+  # Installed Python package
+  - package: tea_actions_slack
+    namespace: slack
+
+nodes:
+  - name: process
+    uses: custom.transform      # From local file import
+    with:
+      data: "{{ state.input }}"
+
+  - name: notify
+    uses: slack.send_message    # From package import
+    with:
+      channel: "#alerts"
+```
+
+**Module Contract**: External modules MUST expose `register_actions(registry, engine)`:
+
+```python
+# my_actions.py
+from typing import Any, Callable, Dict
+
+def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
+    """Register actions into the provided registry."""
+
+    def my_action(state, param1, param2=None, **kwargs):
+        return {"result": "value", "success": True}
+
+    registry['my_action'] = my_action
+
+# Optional metadata for discovery
+__tea_actions__ = {
+    "version": "1.0.0",
+    "description": "My custom actions",
+    "actions": ["my_action"],
+}
+```
+
+**Import Types**:
+- `path:` - Local Python file, relative to YAML file location
+- `package:` - Installed Python package via `importlib`
+
+**Features**:
+- Namespace prefixing prevents action name collisions
+- Circular import detection (same module loaded once)
+- Clear error messages with file/package name context
+- Optional `__tea_actions__` metadata for version/description logging
 
 ### Basic Usage
 ```python

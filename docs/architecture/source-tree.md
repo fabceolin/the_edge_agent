@@ -149,8 +149,7 @@ docs/
 │   └── source-tree.md      # This file
 ├── stories/                # User stories and tasks
 ├── qa/                     # QA assessments
-├── YAML_AGENTS.md          # YAML engine documentation
-└── YAML_SPEC.md            # YAML specification
+└── YAML_REFERENCE.md       # YAML engine reference (unified documentation)
 ```
 
 ## Examples (`examples/`)
