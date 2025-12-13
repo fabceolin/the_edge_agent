@@ -62,11 +62,18 @@ python setup.py sdist bdist_wheel
 - Non-dict returns are wrapped as `{"result": value}`
 
 **Parallel Execution**:
-- Parallel edges defined via `add_parallel_edge(in_node, out_node, fan_in_node)`
+- Parallel edges defined via `add_parallel_edge(in_node, out_node, fan_in_node, config=ParallelConfig)`
 - Fan-in nodes created with `add_fanin_node(node, run)`
 - Each parallel flow executes in separate thread via `ThreadPoolExecutor`
 - Flows execute until reaching the designated fan-in node
-- Results collected in `state['parallel_results']` for fan-in node processing
+- Results collected in `state['parallel_results']` as `ParallelFlowResult` objects
+
+**Parallel Execution Reliability** (TD.13):
+- `ParallelConfig`: Per-edge configuration for timeout, retry, circuit breaker
+- `ParallelFlowResult`: Rich result wrapper with timing, retry count, circuit state
+- `RetryPolicy`: Exponential backoff with configurable delays and exception filtering
+- `CircuitBreaker`: Prevents cascade failures with half-open recovery
+- `ParallelFlowCallback`: Protocol for lifecycle event callbacks (start, complete, error, retry)
 
 **Conditional Routing**:
 - `add_conditional_edges(in_node, func, cond)` routes based on function output
@@ -117,6 +124,78 @@ graph.add_parallel_edge("start", "flow1", "fan_in")
 graph.add_parallel_edge("start", "flow2", "fan_in")
 graph.add_parallel_edge("start", "flow3", "fan_in")
 graph.add_edge("fan_in", "end")
+```
+
+### Parallel Execution with Reliability (TD.13)
+```python
+from the_edge_agent import (
+    StateGraph, ParallelConfig, RetryPolicy,
+    CircuitBreakerConfig, ParallelFlowResult
+)
+
+# Configure parallel flow with timeout and retry
+graph.add_parallel_edge(
+    "start", "api_call", "fan_in",
+    config=ParallelConfig(
+        timeout_seconds=30.0,      # Per-attempt timeout
+        fail_fast=False,           # Continue with partial results
+        retry_policy=RetryPolicy(
+            max_retries=3,
+            base_delay=1.0,        # Exponential backoff: 1s, 2s, 4s
+            backoff_multiplier=2.0,
+        ),
+        circuit_breaker=CircuitBreakerConfig(
+            failure_threshold=5,    # Open after 5 failures
+            reset_timeout=30.0,     # Try recovery after 30s
+        ),
+    )
+)
+
+# Graph-level default config (compile time)
+graph.compile(
+    parallel_config=ParallelConfig(timeout_seconds=60.0),
+    circuit_breaker_scope="global",  # Persist across invocations
+)
+
+# Access results with ParallelFlowResult
+def aggregate(state, parallel_results):
+    for result in parallel_results:
+        if result.success:
+            process(result.state)
+        else:
+            log_error(result.error, result.timing_ms, result.retry_count)
+    return {"done": True}
+
+# Circuit breaker management
+graph.reset_circuit("api_call")  # Reset specific circuit
+graph.reset_all_circuits()       # Reset all circuits
+states = graph.get_circuit_states()  # Get circuit states for monitoring
+```
+
+### Parallel Flow Callbacks
+```python
+from the_edge_agent import (
+    ParallelFlowCallback, ParallelFlowContext,
+    ParallelFlowResult, CallbackManager
+)
+
+class MetricsCallback:
+    def on_flow_start(self, context: ParallelFlowContext):
+        metrics.increment("parallel_flow_started", tags={"branch": context.branch})
+
+    def on_flow_complete(self, context: ParallelFlowContext, result: ParallelFlowResult):
+        metrics.timing("parallel_flow_duration_ms", result.timing_ms)
+        if not result.success:
+            metrics.increment("parallel_flow_failed", tags={"branch": context.branch})
+
+    def on_flow_retry(self, context, attempt, delay, error):
+        metrics.increment("parallel_flow_retry", tags={"attempt": attempt})
+
+    def on_circuit_state_change(self, context, old_state, new_state):
+        metrics.gauge("circuit_state", new_state.value)
+
+# Register callbacks at compile time
+graph.compile(parallel_callbacks=[MetricsCallback()])
 ```
 
 ## YAML Engine

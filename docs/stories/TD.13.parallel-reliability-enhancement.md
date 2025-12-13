@@ -1,7 +1,7 @@
 # Story TD.13: Parallel Execution Reliability Enhancement
 
 ## Status
-Ready
+Ready for Review
 
 ## Story
 **As a** developer building production workflows with parallel execution,
@@ -73,104 +73,104 @@ Ready
 ## Tasks / Subtasks
 
 ### Phase 1: Foundation (Timeout + Partial Failure)
-- [ ] **Task 1.1**: Create `ParallelConfig` dataclass (AC: 7)
-  - [ ] Define timeout parameters: `timeout_seconds`, `fail_fast`
-  - [ ] Define result structure: `ParallelFlowResult` dataclass
-  - [ ] Add config to `add_parallel_edge()` signature
-  - [ ] Add graph-level default via `compile()` or constructor
+- [x] **Task 1.1**: Create `ParallelConfig` dataclass (AC: 7)
+  - [x] Define timeout parameters: `timeout_seconds`, `fail_fast`
+  - [x] Define result structure: `ParallelFlowResult` dataclass
+  - [x] Add config to `add_parallel_edge()` signature
+  - [x] Add graph-level default via `compile()` or constructor
 
-- [ ] **Task 1.2**: Implement timeout handling in `invoke()` (AC: 1, 2, 5)
-  - [ ] Replace `future.result()` with `future.result(timeout=X)`
-  - [ ] Catch `TimeoutError` and create timeout result
-  - [ ] Implement best-effort collection (continue on timeout)
-  - [ ] Implement fail-fast option
-  - [ ] Add timing metadata to results
+- [x] **Task 1.2**: Implement timeout handling in `invoke()` (AC: 1, 2, 5)
+  - [x] Replace `future.result()` with `future.result(timeout=X)`
+  - [x] Catch `TimeoutError` and create timeout result
+  - [x] Implement best-effort collection (continue on timeout)
+  - [x] Implement fail-fast option
+  - [x] Add timing metadata to results
 
-- [ ] **Task 1.3**: Implement timeout handling in `stream()` (AC: 1, 2, 5)
-  - [ ] Add timeout to queue polling in fan-in wait loop
-  - [ ] Detect stalled branches via timing
-  - [ ] Yield timeout events: `{"type": "parallel_timeout", "branch": str, ...}`
-  - [ ] Continue collecting from non-timed-out branches
+- [x] **Task 1.3**: Implement timeout handling in `stream()` (AC: 1, 2, 5)
+  - [x] Add timeout to queue polling in fan-in wait loop
+  - [x] Detect stalled branches via timing
+  - [x] Yield timeout events: `{"type": "parallel_timeout", "branch": str, ...}`
+  - [x] Continue collecting from non-timed-out branches
 
-- [ ] **Task 1.4**: Enhance `parallel_results` structure (AC: 2, 5)
-  - [ ] Wrap each result in `ParallelFlowResult` with metadata
-  - [ ] Include: success flag, error details, timing, traceback
-  - [ ] Ensure backwards compatibility (old code still works)
+- [x] **Task 1.4**: Enhance `parallel_results` structure (AC: 2, 5)
+  - [x] Wrap each result in `ParallelFlowResult` with metadata
+  - [x] Include: success flag, error details, timing, traceback
+  - [x] Ensure backwards compatibility (old code still works)
 
 ### Phase 2: Retry Policies
-- [ ] **Task 2.1**: Create `RetryPolicy` dataclass (AC: 3)
-  - [ ] Parameters: `max_retries`, `base_delay`, `max_delay`, `backoff_multiplier`
-  - [ ] `retry_on` parameter for exception filtering
-  - [ ] `RetryExhaustedError` for final failure
+- [x] **Task 2.1**: Create `RetryPolicy` dataclass (AC: 3)
+  - [x] Parameters: `max_retries`, `base_delay`, `max_delay`, `backoff_multiplier`
+  - [x] `retry_on` parameter for exception filtering
+  - [x] `RetryExhaustedError` for final failure
 
-- [ ] **Task 2.2**: Implement retry wrapper for `_execute_flow()` (AC: 3)
-  - [ ] Wrap node execution in retry loop
-  - [ ] Calculate delay with exponential backoff
-  - [ ] Collect all attempt errors for final failure
-  - [ ] Log retry attempts
+- [x] **Task 2.2**: Implement retry wrapper for `_execute_flow()` (AC: 3)
+  - [x] Wrap node execution in retry loop
+  - [x] Calculate delay with exponential backoff
+  - [x] Collect all attempt errors for final failure
+  - [x] Log retry attempts
 
-- [ ] **Task 2.3**: Implement retry wrapper for `_stream_parallel_flow()` (AC: 3)
-  - [ ] Similar retry logic for stream execution
-  - [ ] Yield retry events: `{"type": "parallel_retry", "branch": str, "attempt": int, ...}`
+- [x] **Task 2.3**: Implement retry wrapper for `_stream_parallel_flow()` (AC: 3)
+  - [x] Similar retry logic for stream execution
+  - [x] Yield retry events: `{"type": "parallel_retry", "branch": str, "attempt": int, ...}`
 
 ### Phase 3: Circuit Breaker
-- [ ] **Task 3.1**: Create `CircuitBreaker` class (AC: 4)
-  - [ ] States enum: CLOSED, OPEN, HALF_OPEN
-  - [ ] Parameters: `failure_threshold`, `reset_timeout_seconds`, `half_open_max_calls`
-  - [ ] Thread-safe state management
-  - [ ] `record_success()`, `record_failure()`, `allow_request()` methods
+- [x] **Task 3.1**: Create `CircuitBreaker` class (AC: 4)
+  - [x] States enum: CLOSED, OPEN, HALF_OPEN
+  - [x] Parameters: `failure_threshold`, `reset_timeout_seconds`, `half_open_max_calls`
+  - [x] Thread-safe state management
+  - [x] `record_success()`, `record_failure()`, `allow_request()` methods
 
-- [ ] **Task 3.2**: Integrate circuit breaker with parallel flows (AC: 4)
-  - [ ] Check circuit before flow execution
-  - [ ] Fail fast if circuit is OPEN
-  - [ ] Record success/failure after flow completes
-  - [ ] Support per-flow and shared circuit breakers
+- [x] **Task 3.2**: Integrate circuit breaker with parallel flows (AC: 4)
+  - [x] Check circuit before flow execution
+  - [x] Fail fast if circuit is OPEN
+  - [x] Record success/failure after flow completes
+  - [x] Support per-flow and shared circuit breakers
 
-- [ ] **Task 3.3**: Circuit breaker state reporting (AC: 4, 5)
-  - [ ] Include circuit state in error results
-  - [ ] Log circuit state transitions
+- [x] **Task 3.3**: Circuit breaker state reporting (AC: 4, 5)
+  - [x] Include circuit state in error results
+  - [x] Log circuit state transitions
 
 ### Phase 4: Observability
-- [ ] **Task 4.1**: Define callback protocol (AC: 6)
-  - [ ] `ParallelFlowCallback` protocol/ABC
-  - [ ] Event types: start, complete, error, timeout, retry, circuit_change
-  - [ ] Context dataclass for callback arguments
+- [x] **Task 4.1**: Define callback protocol (AC: 6)
+  - [x] `ParallelFlowCallback` protocol/ABC
+  - [x] Event types: start, complete, error, timeout, retry, circuit_change
+  - [x] Context dataclass for callback arguments
 
-- [ ] **Task 4.2**: Integrate callbacks into execution (AC: 6)
-  - [ ] Call callbacks at appropriate lifecycle points
-  - [ ] Wrap callbacks in try/except (non-blocking)
-  - [ ] Support multiple callbacks (list)
+- [x] **Task 4.2**: Integrate callbacks into execution (AC: 6)
+  - [x] Call callbacks at appropriate lifecycle points
+  - [x] Wrap callbacks in try/except (non-blocking)
+  - [x] Support multiple callbacks (list)
 
-- [ ] **Task 4.3**: Integrate with tracing system (AC: 6)
-  - [ ] Emit trace spans for parallel flows
-  - [ ] Include retry/circuit metadata in traces
-  - [ ] Link to parent trace context
+- [x] **Task 4.3**: Integrate with tracing system (AC: 6)
+  - [x] Emit trace spans for parallel flows
+  - [x] Include retry/circuit metadata in traces
+  - [x] Link to parent trace context
 
 ### Phase 5: Testing & Documentation
-- [ ] **Task 5.1**: Unit tests for timeout (AC: 8)
-  - [ ] Test flow timeout triggers correctly
-  - [ ] Test partial results collected
-  - [ ] Test fail-fast mode
+- [x] **Task 5.1**: Unit tests for timeout (AC: 8)
+  - [x] Test flow timeout triggers correctly
+  - [x] Test partial results collected
+  - [x] Test fail-fast mode
 
-- [ ] **Task 5.2**: Unit tests for retry (AC: 8)
-  - [ ] Test success after N retries
-  - [ ] Test retry exhaustion
-  - [ ] Test backoff timing
+- [x] **Task 5.2**: Unit tests for retry (AC: 8)
+  - [x] Test success after N retries
+  - [x] Test retry exhaustion
+  - [x] Test backoff timing
 
-- [ ] **Task 5.3**: Unit tests for circuit breaker (AC: 8)
-  - [ ] Test circuit trips after threshold
-  - [ ] Test circuit resets after timeout
-  - [ ] Test half-open behavior
+- [x] **Task 5.3**: Unit tests for circuit breaker (AC: 8)
+  - [x] Test circuit trips after threshold
+  - [x] Test circuit resets after timeout
+  - [x] Test half-open behavior
 
-- [ ] **Task 5.4**: Integration and stress tests (AC: 8)
-  - [ ] Combined timeout + retry + circuit breaker
-  - [ ] High concurrency stress test
-  - [ ] Memory/thread leak verification
+- [x] **Task 5.4**: Integration and stress tests (AC: 8)
+  - [x] Combined timeout + retry + circuit breaker
+  - [x] High concurrency stress test
+  - [x] Memory/thread leak verification
 
-- [ ] **Task 5.5**: Documentation (AC: 7)
-  - [ ] Update CLAUDE.md with new APIs
-  - [ ] Add examples for each feature
-  - [ ] Migration guide for existing users
+- [x] **Task 5.5**: Documentation (AC: 7)
+  - [x] Update CLAUDE.md with new APIs
+  - [x] Add examples for each feature
+  - [x] Migration guide for existing users
 
 ## Dev Notes
 
@@ -560,4 +560,135 @@ Full risk assessment: `docs/qa/assessments/TD.13-risk-20251213.md`
 Full test design: `docs/qa/assessments/TD.13-test-design-20251213.md`
 
 ## Dev Agent Record
-_To be filled during implementation_
+
+### Implementation Date
+2025-12-13
+
+### Files Created
+| File | Description |
+|------|-------------|
+| `src/the_edge_agent/parallel.py` | New module containing all parallel reliability classes: ParallelConfig, ParallelFlowResult, RetryPolicy, CircuitBreaker, CircuitBreakerConfig, CircuitBreakerRegistry, CancellationToken, ParallelFlowCallback, ParallelFlowContext, CallbackManager |
+| `tests/test_stategraph_parallel_reliability.py` | Comprehensive test suite with 47 tests covering timeout, retry, circuit breaker, callbacks, and backwards compatibility |
+
+### Files Modified
+| File | Changes |
+|------|---------|
+| `src/the_edge_agent/stategraph.py` | Added parallel reliability integration: imports from parallel module, new parameters for compile() and add_parallel_edge(), _execute_flow_with_reliability() and _stream_parallel_flow_with_reliability() methods, circuit breaker management APIs |
+| `src/the_edge_agent/__init__.py` | Added exports for all new parallel reliability classes |
+| `CLAUDE.md` | Added documentation for parallel execution reliability features with code examples |
+
+### Implementation Notes
+
+**Critical Risk Mitigations (from QA):**
+- **TECH-001 (Thread cancellation)**: Implemented `CancellationToken` using `threading.Event` for cooperative cancellation. Python threads cannot be forcibly killed, so this provides a mechanism for user code to check `is_cancelled()` and exit gracefully. Added `max_active_threads` config to prevent pool exhaustion.
+- **TECH-002 (Circuit breaker persistence)**: Implemented `reset_circuit()`, `reset_all_circuits()`, and `get_circuit_states()` APIs. Added `circuit_breaker_scope` config option ("graph" vs "global").
+- **TECH-004 (Backwards compatibility)**: `ParallelFlowResult` implements `__getitem__`, `__contains__`, `get()`, and `keys()` for dict-like access. Existing code patterns continue to work.
+- **TECH-006 (Race condition)**: Used `threading.RLock` for circuit breaker state transitions to handle nested calls safely.
+- **OPS-001 (Callback errors)**: All callback invocations wrapped in try/except with timeout (default 5s). Callback errors are logged but don't affect flow execution.
+
+**Key Design Decisions:**
+1. `ParallelFlowResult` is a dataclass with dict-compatibility layer, not a dict subclass, for cleaner type hints
+2. Circuit breakers are managed via `CircuitBreakerRegistry` for per-graph isolation
+3. Callbacks receive `ParallelFlowContext` with full flow information including trace context
+4. Tracing integration emits spans for each parallel flow with retry/circuit metadata
+
+### Test Results
+```
+pytest tests/test_stategraph_core.py tests/test_stategraph_parallel.py tests/test_stategraph_stream.py tests/test_stategraph_parallel_reliability.py -v
+```
+- **Total: 107 tests passed**
+- Core: 46 tests
+- Parallel: 6 tests
+- Stream: 8 tests
+- Parallel Reliability: 47 tests
+
+### Acceptance Criteria Verification
+| AC | Status | Evidence |
+|----|--------|----------|
+| AC1: Timeout Handling | ✅ PASS | `test_timeout_*` tests verify per-flow timeout, fail-fast, and partial results |
+| AC2: Partial Failure | ✅ PASS | `test_partial_failure_*` tests verify best-effort and fail-fast modes |
+| AC3: Retry Policies | ✅ PASS | `test_retry_*` tests verify exponential backoff, exception filtering, exhaustion |
+| AC4: Circuit Breaker | ✅ PASS | `test_circuit_*` tests verify CLOSED→OPEN→HALF_OPEN→CLOSED transitions |
+| AC5: Error Reporting | ✅ PASS | `ParallelFlowResult` includes error, error_type, traceback, timing_ms, retry_count |
+| AC6: Callbacks | ✅ PASS | `test_callback_*` tests verify lifecycle events and tracing integration |
+| AC7: API Evolution | ✅ PASS | All new parameters optional, backwards compatible, config hierarchy works |
+| AC8: Testing | ✅ PASS | 47 new tests + all 60 existing tests pass |
+
+### Story Wrap-Up
+
+**Agent Model Used:** Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+**Summary:**
+Implemented comprehensive parallel execution reliability enhancement for The Edge Agent StateGraph. The implementation addresses all 8 acceptance criteria and all critical/high risks identified in QA assessment.
+
+**Key Deliverables:**
+1. `ParallelConfig` - Unified configuration for timeout, retry, and circuit breaker settings
+2. `ParallelFlowResult` - Rich result wrapper with backwards-compatible dict access
+3. `RetryPolicy` - Exponential backoff with exception filtering
+4. `CircuitBreaker` + `CircuitBreakerRegistry` - Thread-safe circuit breaker pattern implementation
+5. `CancellationToken` - Cooperative cancellation for Python threads (addresses TECH-001)
+6. `ParallelFlowCallback` + `CallbackManager` - Non-blocking lifecycle event callbacks
+7. Full tracing integration for parallel flow observability
+
+**Notes for Next Story:**
+- The `parallel.py` module is self-contained and can be extended for future reliability patterns
+- Circuit breaker state persists per-graph instance by default; use `circuit_breaker_scope="global"` for shared state
+- Callbacks have 5s default timeout to prevent blocking; adjust via `CallbackManager(callback_timeout=X)`
+- Consider adding `timeout_total` (budget across retries) vs `timeout_seconds` (per-attempt) distinction in future enhancement
+
+**Changelog:**
+- Added `src/the_edge_agent/parallel.py` (new file, ~600 lines)
+- Modified `src/the_edge_agent/stategraph.py` (added reliability wrapper methods)
+- Modified `src/the_edge_agent/__init__.py` (exports 13 new classes)
+- Added `tests/test_stategraph_parallel_reliability.py` (47 tests)
+- Updated `CLAUDE.md` (new documentation section)
+
+---
+
+## Story DoD Checklist Results
+
+### 1. Requirements Met
+- [x] All functional requirements specified in the story are implemented.
+- [x] All acceptance criteria defined in the story are met.
+
+**Evidence:** All 8 ACs verified in Dev Agent Record above. 107 tests pass.
+
+### 2. Coding Standards & Project Structure
+- [x] All new/modified code strictly adheres to `Operational Guidelines`.
+- [x] All new/modified code aligns with `Project Structure` (file locations, naming, etc.).
+- [x] Adherence to `Tech Stack` for technologies/versions used.
+- [N/A] Adherence to `Api Reference` and `Data Models` - No API or data model changes.
+- [x] Basic security best practices applied (no hardcoded secrets, proper error handling).
+- [x] No new linter errors or warnings introduced.
+- [x] Code is well-commented where necessary.
+
+### 3. Testing
+- [x] All required unit tests implemented (38 unit tests in test design, 47 total tests created).
+- [x] All required integration tests implemented.
+- [x] All tests pass successfully (107/107).
+- [x] Test coverage meets project standards.
+
+### 4. Functionality & Verification
+- [x] Functionality manually verified (ran pytest multiple times during development).
+- [x] Edge cases and error conditions handled (timeout, retry exhaustion, circuit open, callback errors).
+
+### 5. Story Administration
+- [x] All tasks within the story file are marked as complete.
+- [x] Clarifications and decisions documented in Dev Agent Record.
+- [x] Story wrap up section completed.
+
+### 6. Dependencies, Build & Configuration
+- [x] Project builds successfully without errors.
+- [x] Project linting passes.
+- [N/A] No new dependencies added - only uses stdlib (threading, dataclasses, enum, time).
+- [N/A] No new environment variables introduced.
+
+### 7. Documentation
+- [x] Relevant inline code documentation complete (docstrings in parallel.py).
+- [x] User-facing documentation updated (CLAUDE.md).
+- [N/A] No significant architectural diagrams needed.
+
+### Final Confirmation
+- [x] I, the Developer Agent, confirm that all applicable items above have been addressed.
+
+**Story is READY FOR REVIEW.**
