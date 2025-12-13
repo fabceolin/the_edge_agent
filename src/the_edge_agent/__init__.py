@@ -2,6 +2,23 @@ from .stategraph import StateGraph, START, END
 from .yaml_engine import YAMLEngine
 from .checkpointers import MemoryCheckpointer
 
+# Parallel Execution Reliability (TD.13)
+from .parallel import (
+    ParallelConfig,
+    ParallelFlowResult,
+    RetryPolicy,
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitBreakerRegistry,
+    CircuitState,
+    CircuitOpenError,
+    RetryExhaustedError,
+    CancellationToken,
+    ParallelFlowCallback,
+    ParallelFlowContext,
+    CallbackManager,
+)
+
 # Tracing (TEA-BUILTIN-001.3)
 from .tracing import (
     TraceContext,
@@ -45,6 +62,20 @@ __all__ = [
     "END",
     "YAMLEngine",
     "MemoryCheckpointer",
+    # Parallel Execution Reliability (TD.13)
+    "ParallelConfig",
+    "ParallelFlowResult",
+    "RetryPolicy",
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
+    "CircuitBreakerRegistry",
+    "CircuitState",
+    "CircuitOpenError",
+    "RetryExhaustedError",
+    "CancellationToken",
+    "ParallelFlowCallback",
+    "ParallelFlowContext",
+    "CallbackManager",
     # Tracing (TEA-BUILTIN-001.3)
     "TraceContext",
     "TraceExporter",
