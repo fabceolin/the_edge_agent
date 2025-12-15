@@ -7,7 +7,7 @@
 | **ID** | TEA-RUST-001 |
 | **Type** | Epic |
 | **Priority** | High |
-| **Estimated Effort** | 20-26 weeks (includes built-in actions + LTM/Graph + Cloud-Native) |
+| **Estimated Effort** | 22-28 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports) |
 | **Status** | Draft |
 
 ## Description
@@ -75,6 +75,20 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 - [ ] **AC-4**: GIVEN parallel edges defined in YAML, WHEN execution reaches fan-out node, THEN branches execute concurrently via rayon and merge at fan-in
 
 - [ ] **AC-5**: GIVEN a parallel branch fails, WHEN retry policy is configured, THEN branch retries up to max_retries before failing
+
+### Parallel Execution Reliability (TD.13)
+
+- [ ] **AC-47**: GIVEN `ParallelConfig` with `timeout_seconds` configured, WHEN parallel flow exceeds timeout, THEN flow is marked with `timeout: true` in `ParallelFlowResult`
+
+- [ ] **AC-48**: GIVEN `RetryPolicy` with `max_retries`, `base_delay`, `backoff_multiplier` configured, WHEN transient failure occurs, THEN retry with exponential backoff up to max_retries
+
+- [ ] **AC-49**: GIVEN `CircuitBreakerConfig` with `failure_threshold` and `reset_timeout`, WHEN failures exceed threshold, THEN circuit opens and subsequent requests fail fast
+
+- [ ] **AC-50**: GIVEN `ParallelFlowResult` structure, WHEN accessing result fields, THEN dict-like access (`.get()`, `["key"]`) works for backwards compatibility
+
+- [ ] **AC-51**: GIVEN `ParallelFlowCallback` protocol implemented, WHEN parallel flow lifecycle events occur, THEN callbacks invoked with `ParallelFlowContext`
+
+- [ ] **AC-52**: GIVEN circuit breaker is OPEN, WHEN `reset_timeout` elapses, THEN circuit transitions to HALF_OPEN and allows test request
 
 ### Checkpointing
 
@@ -159,6 +173,16 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 - [ ] **AC-45**: GIVEN `ltm_backend="blob-sqlite"` configuration, WHEN LTM actions execute, THEN SQLite file is downloaded from blob storage, modified locally, and uploaded with distributed locking
 
 - [ ] **AC-46**: GIVEN cloud-native backend configured, WHEN backend dependency is missing, THEN informative error with installation instructions is returned
+
+### External Action Imports (YE.6)
+
+- [ ] **AC-53**: GIVEN `imports:` section in YAML with `path:` entries, WHEN loading YAML, THEN Lua modules loaded from relative file paths
+
+- [ ] **AC-54**: GIVEN `imports:` section with `namespace:` prefix, WHEN actions registered, THEN actions accessible via `namespace.action_name`
+
+- [ ] **AC-55**: GIVEN external module loaded, WHEN module has `register_actions(registry, engine)` function, THEN actions registered in engine's action registry
+
+- [ ] **AC-56**: GIVEN circular import attempted (same module twice), WHEN `_load_imports()` runs, THEN module loaded once and duplicate skipped
 
 ### CLI
 
@@ -294,6 +318,8 @@ nodes:
 | TEA-RUST-023 | Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5) | 5 |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
 | TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
+| TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 |
+| TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 |
 
 ---
 
@@ -653,6 +679,271 @@ all = ["memory", "trace", "data", "web", "rag", "llm", "code", "ltm-all", "graph
 
 ---
 
+## Parallel Execution Reliability (TEA-RUST-026)
+
+### Python Implementation (TD.13)
+
+The Python implementation includes comprehensive parallel reliability features:
+
+- **ParallelConfig**: Timeout, fail-fast, retry policy, circuit breaker configuration
+- **ParallelFlowResult**: Rich result wrapper with success/error/timing/retry metadata
+- **RetryPolicy**: Exponential backoff with configurable delays and exception filtering
+- **CircuitBreaker**: CLOSED → OPEN → HALF_OPEN state machine with failure threshold
+- **CancellationToken**: Cooperative cancellation via `threading.Event`
+- **ParallelFlowCallback**: Protocol for lifecycle event callbacks
+
+### Rust Implementation
+
+```rust
+use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+pub struct ParallelConfig {
+    pub timeout: Option<Duration>,
+    pub fail_fast: bool,
+    pub retry_policy: Option<RetryPolicy>,
+    pub circuit_breaker: Option<CircuitBreakerConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RetryPolicy {
+    pub max_retries: u32,
+    pub base_delay: Duration,
+    pub max_delay: Duration,
+    pub backoff_multiplier: f64,
+    pub retry_on: Option<Vec<String>>,  // Exception type names
+}
+
+#[derive(Clone, Debug)]
+pub struct CircuitBreakerConfig {
+    pub failure_threshold: u32,
+    pub reset_timeout: Duration,
+    pub half_open_max_calls: u32,
+}
+
+#[derive(Clone, Debug)]
+pub enum CircuitState {
+    Closed,
+    Open { opened_at: Instant },
+    HalfOpen { test_calls: u32 },
+}
+
+pub struct CircuitBreaker {
+    config: CircuitBreakerConfig,
+    state: RwLock<CircuitState>,
+    failure_count: RwLock<u32>,
+}
+
+impl CircuitBreaker {
+    pub fn allow_request(&self) -> bool {
+        let mut state = self.state.write().unwrap();
+        match &*state {
+            CircuitState::Closed => true,
+            CircuitState::Open { opened_at } => {
+                if opened_at.elapsed() >= self.config.reset_timeout {
+                    *state = CircuitState::HalfOpen { test_calls: 0 };
+                    true
+                } else {
+                    false
+                }
+            }
+            CircuitState::HalfOpen { test_calls } => {
+                *test_calls < self.config.half_open_max_calls
+            }
+        }
+    }
+
+    pub fn record_success(&self) {
+        let mut state = self.state.write().unwrap();
+        if matches!(&*state, CircuitState::HalfOpen { .. }) {
+            *state = CircuitState::Closed;
+        }
+        *self.failure_count.write().unwrap() = 0;
+    }
+
+    pub fn record_failure(&self) {
+        let mut failure_count = self.failure_count.write().unwrap();
+        *failure_count += 1;
+
+        let mut state = self.state.write().unwrap();
+        if matches!(&*state, CircuitState::HalfOpen { .. }) {
+            *state = CircuitState::Open { opened_at: Instant::now() };
+        } else if *failure_count >= self.config.failure_threshold {
+            *state = CircuitState::Open { opened_at: Instant::now() };
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParallelFlowResult {
+    pub branch: String,
+    pub success: bool,
+    pub state: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub error_type: Option<String>,
+    pub timeout: bool,
+    pub timing_ms: f64,
+    pub retry_count: u32,
+    pub circuit_state: Option<String>,
+}
+
+// Dict-like access for backwards compatibility
+impl ParallelFlowResult {
+    pub fn get(&self, key: &str) -> Option<serde_json::Value> {
+        match key {
+            "success" => Some(serde_json::json!(self.success)),
+            "state" => self.state.clone(),
+            "error" => self.error.as_ref().map(|e| serde_json::json!(e)),
+            "timeout" => Some(serde_json::json!(self.timeout)),
+            "timing_ms" => Some(serde_json::json!(self.timing_ms)),
+            _ => None,
+        }
+    }
+}
+```
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| `RwLock` for circuit breaker state | Reader-writer lock allows concurrent reads, exclusive writes |
+| `rayon` timeout via `thread::spawn` + channel | rayon doesn't have built-in timeout; use channel with `recv_timeout` |
+| Retry delay via `std::thread::sleep` | Simple blocking approach; async would use `tokio::time::sleep` |
+| `ParallelFlowResult.get()` for BC | Mimics Python dict-like access pattern |
+
+---
+
+## External Action Module Imports (TEA-RUST-027)
+
+### Python Implementation (YE.6)
+
+The Python implementation supports external action imports via YAML:
+
+```yaml
+imports:
+  - path: ./actions/custom.py
+    namespace: custom
+  - package: tea_actions_slack
+    namespace: slack
+```
+
+### Rust Implementation
+
+For Rust, external actions will be loaded as **Lua modules** instead of Python modules:
+
+```rust
+use mlua::{Lua, Result, Table};
+use std::path::Path;
+use std::collections::HashMap;
+
+pub struct ActionRegistry {
+    actions: HashMap<String, ActionFn>,
+    lua: Lua,
+    loaded_modules: HashSet<String>,
+}
+
+impl ActionRegistry {
+    /// Load actions from a Lua file with namespace prefix
+    pub fn load_from_path(&mut self, path: &Path, namespace: &str) -> Result<()> {
+        let abs_path = path.canonicalize()?;
+        let module_key = abs_path.to_string_lossy().to_string();
+
+        // Circular import detection
+        if self.loaded_modules.contains(&module_key) {
+            return Ok(());  // Already loaded, skip
+        }
+
+        let code = std::fs::read_to_string(path)?;
+        let module: Table = self.lua.load(&code).eval()?;
+
+        // Module must return table with register_actions function
+        let register_fn: mlua::Function = module.get("register_actions")?;
+        let local_registry: Table = self.lua.create_table()?;
+
+        register_fn.call::<_, ()>(local_registry.clone())?;
+
+        // Apply namespace prefix
+        for pair in local_registry.pairs::<String, mlua::Function>() {
+            let (name, func) = pair?;
+            let full_name = if namespace.is_empty() {
+                name
+            } else {
+                format!("{}.{}", namespace, name)
+            };
+            self.register_lua_action(&full_name, func)?;
+        }
+
+        self.loaded_modules.insert(module_key);
+        Ok(())
+    }
+}
+```
+
+### Lua Module Contract
+
+External Lua modules must follow this pattern:
+
+```lua
+-- my_actions.lua
+local M = {}
+
+function M.register_actions(registry)
+    -- Register action functions
+    registry.my_action = function(state, params)
+        -- Implementation
+        return { result = "value", success = true }
+    end
+
+    registry.another_action = function(state, params)
+        return { result = params.input, success = true }
+    end
+end
+
+-- Optional metadata
+M.__tea_actions__ = {
+    version = "1.0.0",
+    description = "My custom Lua actions",
+    actions = { "my_action", "another_action" }
+}
+
+return M
+```
+
+### YAML Syntax (Rust Version)
+
+```yaml
+name: my-agent
+
+imports:
+  # Local Lua file (relative to YAML file)
+  - path: ./actions/custom.lua
+    namespace: custom
+
+  # Built-in action set (bundled with tea binary)
+  - builtin: web
+    namespace: web
+
+nodes:
+  - name: process
+    uses: custom.transform
+    with:
+      data: "{{ state.input }}"
+```
+
+### Key Differences from Python
+
+| Aspect | Python | Rust |
+|--------|--------|------|
+| Module language | Python | Lua |
+| Import syntax | `path:` (Python file) | `path:` (Lua file) |
+| Package imports | `package:` (pip packages) | `builtin:` (bundled sets) |
+| Contract function | `register_actions(registry, engine)` | `M.register_actions(registry)` |
+| Access to engine | Full engine reference | Limited via Lua globals |
+
+---
+
 ## Risks
 
 ### High
@@ -717,6 +1008,8 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-002.3 | Tools Bridge Actions | ✅ Done | **Not migrated** |
 | TEA-BUILTIN-003.1 | Code Execution Actions | ✅ Done | TEA-RUST-021 (Lua) |
 | TEA-BUILTIN-003.2 | Data Processing Actions | ✅ Done | TEA-RUST-018 |
+| TD.13 | Parallel Execution Reliability | ✅ Done | TEA-RUST-026 |
+| YE.6 | External Action Module Imports | ✅ Done | TEA-RUST-027 (Lua modules) |
 
 **Not Migrated to Rust**:
 - **Tools Bridge Actions** (TEA-BUILTIN-002.3) - Python-specific libraries (CrewAI, LangChain, MCP)
@@ -738,3 +1031,4 @@ The following Python built-in action stories have been implemented and inform th
 | 2025-12-07 | 2.0 | Major update: Added built-in actions migration plan (27+ actions across 8 categories). Added 7 new sub-stories (TEA-RUST-016 to TEA-RUST-022). Updated effort estimate to 16-20 weeks. Added Python TEA-BUILTIN reference table. Documented breaking changes (code.execute: Python→Lua, tools.* not migrated). | Sarah (PO Agent) |
 | 2025-12-07 | 3.0 | Added TEA-BUILTIN-001.4 Long-Term Memory & Graph actions. Added TEA-RUST-023 (LTM with rusqlite/FTS5) and TEA-RUST-024 (Graph with native CozoDB Rust crate). Updated effort to 18-24 weeks. Added AC-35 to AC-41 for ltm.* and graph.* actions. CozoDB uses native Rust - same Datalog semantics as Python version. | Sarah (PO Agent) |
 | 2025-12-07 | 4.0 | Added TEA-BUILTIN-001.4 Bighorn extension (excluded from Rust - Python-only) and TEA-BUILTIN-001.5 Cloud-Native LTM Backends. Added TEA-RUST-025 (Turso, D1, PostgreSQL, Blob-SQLite). Updated effort to 20-26 weeks. Added AC-42 to AC-46 for cloud-native backends. Excluded: Bighorn, Litestream, Firestore (no native Rust SDK). Added libsql, sqlx, object_store crates. | Sarah (PO Agent) |
+| 2025-12-13 | 5.0 | Added TD.13 Parallel Execution Reliability features (TEA-RUST-026). Added AC-47 to AC-52 for ParallelConfig, RetryPolicy, CircuitBreaker, ParallelFlowResult, ParallelFlowCallback. Added YE.6 External Action Module Imports (TEA-RUST-027). Added AC-53 to AC-56 for Lua module imports with namespacing. Added detailed Rust implementation sections for both features. Updated effort to 22-28 weeks. | Sarah (PO Agent) |
