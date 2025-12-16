@@ -54,15 +54,60 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     """
 
     def llm_call(state, model, messages, temperature=0.7, **kwargs):
-        """Call a language model."""
+        """
+        Call a language model (supports OpenAI and Azure OpenAI).
+
+        Automatically detects Azure OpenAI configuration via environment variables:
+        - AZURE_OPENAI_API_KEY: Azure OpenAI API key
+        - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
+        - AZURE_OPENAI_DEPLOYMENT: Deployment name (defaults to model param)
+        - OPENAI_API_VERSION: API version (defaults to 2024-02-15-preview)
+        """
         try:
-            from openai import OpenAI
-            client = OpenAI()
+            import os
+            import sys
+            from openai import OpenAI, AzureOpenAI
+
+            # Check for Azure OpenAI configuration
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+            # DEBUG: Print Azure OpenAI detection
+            print(f"[llm_call DEBUG] azure_api_key present: {bool(azure_api_key)}", file=sys.stderr)
+            print(f"[llm_call DEBUG] azure_endpoint: {azure_endpoint}", file=sys.stderr)
+
+            if azure_api_key and azure_endpoint:
+                # Use Azure OpenAI
+                print("[llm_call DEBUG] Using Azure OpenAI", file=sys.stderr)
+                client = AzureOpenAI(
+                    api_key=azure_api_key,
+                    azure_endpoint=azure_endpoint,
+                    api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+                )
+                # Azure uses deployment name, not model name
+                deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+                print(f"[llm_call DEBUG] Azure deployment: {deployment}", file=sys.stderr)
+            else:
+                # Use standard OpenAI
+                print("[llm_call DEBUG] Using standard OpenAI", file=sys.stderr)
+                client = OpenAI()
+                deployment = model
+
+            # Debug: Log all incoming kwargs
+            print(f"[llm_call DEBUG] All kwargs: {list(kwargs.keys())}", file=sys.stderr)
+
+            # Filter out The Edge Agent internal parameters
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ('state', 'config', 'node', 'graph', 'parallel_results')
+            }
+            print(f"[llm_call DEBUG] Filtered kwargs: {list(filtered_kwargs.keys())}", file=sys.stderr)
 
             response = client.chat.completions.create(
-                model=model,
+                model=deployment,
                 messages=messages,
-                temperature=temperature
+                temperature=temperature,
+                **filtered_kwargs
             )
 
             return {
