@@ -18,7 +18,14 @@ Example:
 from typing import Any, List, TYPE_CHECKING
 
 import networkx as nx
-from networkx.drawing.nx_agraph import to_agraph
+
+# Make pygraphviz optional
+try:
+    from networkx.drawing.nx_agraph import to_agraph
+    HAS_PYGRAPHVIZ = True
+except ImportError:
+    HAS_PYGRAPHVIZ = False
+    to_agraph = None
 
 if TYPE_CHECKING:
     pass  # For future type hints if needed
@@ -45,7 +52,16 @@ class VisualizationMixin:
 
         Returns:
             pygraphviz.AGraph: A PyGraphviz graph object representing the StateGraph.
+
+        Raises:
+            ImportError: If pygraphviz is not installed.
         """
+        if not HAS_PYGRAPHVIZ:
+            raise ImportError(
+                "pygraphviz is required for graph visualization. "
+                "Install it with: sudo apt-get install libgraphviz-dev graphviz && pip install pygraphviz"
+            )
+
         # Create a new directed graph
         G = nx.DiGraph()
 
@@ -83,6 +99,9 @@ class VisualizationMixin:
 
         Args:
             filename (str): The name of the file to save the graph image to.
+
+        Raises:
+            ImportError: If pygraphviz is not installed.
         """
         A = self.render_graphviz()
         A.layout(prog='dot')
