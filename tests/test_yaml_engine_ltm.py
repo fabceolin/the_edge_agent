@@ -20,7 +20,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from unittest.mock import patch, MagicMock
 
-from the_edge_agent import YAMLEngine, SQLiteBackend, COZO_AVAILABLE
+from the_edge_agent import YAMLEngine, SQLiteBackend, COZO_AVAILABLE, KUZU_AVAILABLE
 
 
 class TestSQLiteBackend(unittest.TestCase):
@@ -376,9 +376,9 @@ class TestGraphActions(unittest.TestCase):
         self.assertIn('actions.graph_retrieve_context', self.engine.actions_registry)
 
     def test_graph_graceful_degradation(self):
-        """P0: Graph actions return informative error when CozoDB not installed."""
-        if COZO_AVAILABLE:
-            self.skipTest("CozoDB is installed, skipping graceful degradation test")
+        """P0: Graph actions return informative error when no graph backend is installed."""
+        if COZO_AVAILABLE or KUZU_AVAILABLE:
+            self.skipTest("Graph backend is installed (CozoDB or Kuzu), skipping graceful degradation test")
 
         result = self.engine.actions_registry['graph.store_entity'](
             {}, entity_id="e1", entity_type="Test"

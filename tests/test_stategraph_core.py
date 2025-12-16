@@ -1,7 +1,14 @@
 import unittest
 import logging
-import pygraphviz as pgv
+import pytest
 
+# Make pygraphviz optional
+try:
+    import pygraphviz as pgv
+    HAS_PYGRAPHVIZ = True
+except ImportError:
+    HAS_PYGRAPHVIZ = False
+    pgv = None
 
 from unittest.mock import patch
 from parameterized import parameterized
@@ -757,6 +764,7 @@ class TestStateGraph(unittest.TestCase):
         self.assertIn("Parallel flow error test", error_event["error"])
         self.assertIsInstance(error_event["state"], dict)
 
+    @pytest.mark.skipif(not HAS_PYGRAPHVIZ, reason="pygraphviz not installed")
     def test_render_graphviz(self):
         """
         Test the render_graphviz method to ensure it correctly creates a PyGraphviz AGraph
@@ -814,6 +822,7 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(result.node_attr['fillcolor'], "white")
         self.assertEqual(result.edge_attr['color'], "black")
 
+    @pytest.mark.skipif(not HAS_PYGRAPHVIZ, reason="pygraphviz not installed")
     def test_save_graph_image(self):
         """
         Test the save_graph_image method to ensure it correctly saves the graph as an image file.
