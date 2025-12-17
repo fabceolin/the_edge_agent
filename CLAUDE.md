@@ -742,8 +742,9 @@ Cloud credentials via environment:
 All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
 
 **LLM Enhanced Actions** (TEA-BUILTIN-001.2):
+- `llm.call` - LLM completion call with optional retry logic (max_retries parameter)
 - `llm.stream` - Stream LLM responses with chunk aggregation
-- `llm.retry` - LLM calls with exponential backoff retry logic
+- `llm.retry` - **DEPRECATED** - Use llm.call with max_retries parameter (will be removed in v0.9.0)
 - `llm.tools` - Function/tool calling with automatic action dispatch
 
 **Web Actions** (TEA-BUILTIN-002.1):
@@ -948,6 +949,34 @@ All tools bridge actions are available via dual namespaces: `tools.*` and `actio
 
 LLM Enhanced Actions usage:
 ```python
+# Basic LLM call (no retry)
+result = engine.actions_registry['llm.call'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+# Returns: {"content": str, "usage": dict}
+
+# LLM call with retry logic (for standalone/sequential use)
+result = engine.actions_registry['llm.call'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_retries=3,  # Full exponential backoff with Retry-After support
+    base_delay=1.0,
+    max_delay=60.0
+)
+# Returns: {"content": str, "usage": dict, "attempts": int, "total_delay": float}
+
+# LLM call in parallel flows (max_retries=0 by default)
+# Respects Retry-After header once, then relies on flow-level retry
+result = engine.actions_registry['llm.call'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_retries=0  # Default - single Retry-After attempt, no nested retry
+)
+
 # Streaming (aggregates chunks, returns final result)
 result = engine.actions_registry['llm.stream'](
     state={},
@@ -955,17 +984,6 @@ result = engine.actions_registry['llm.stream'](
     messages=[{"role": "user", "content": "Hello"}]
 )
 # Returns: {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
-
-# Retry with exponential backoff
-result = engine.actions_registry['llm.retry'](
-    state={},
-    model="gpt-4",
-    messages=[{"role": "user", "content": "Hello"}],
-    max_retries=3,
-    base_delay=1.0,
-    max_delay=60.0
-)
-# Returns: {"content": str, "usage": dict, "attempts": int, "total_delay": float}
 
 # Tool/function calling with action dispatch
 result = engine.actions_registry['llm.tools'](
@@ -980,7 +998,19 @@ result = engine.actions_registry['llm.tools'](
     }]
 )
 # Returns: {"content": str, "tool_calls": list, "tool_results": list, "rounds": int}
+
+# DEPRECATED: llm.retry (use llm.call with max_retries instead)
+result = engine.actions_registry['llm.retry'](  # Shows deprecation warning
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}],
+    max_retries=3
+)
 ```
+
+**Migration from llm.retry to llm.call:**
+- Standalone retry: Use `llm.call` with `max_retries>0`
+- Parallel flows: Use `llm.call` with `max_retries=0` (default) + ParallelConfig.retry_policy
 
 All LLM enhanced actions are available via dual namespaces: `llm.*` and `actions.llm_*`.
 
