@@ -19,11 +19,255 @@ The Edge Agent (tea) ☕ is a lightweight, single-app state graph library inspir
 
 You can install the_edge_agent using pip:
 
-```
+```bash
 pip install git+https://github.com/fabceolin/the_edge_agent.git
 ```
 
+After installation, the `tea-agent` command will be available globally.
+
 # Quick Start
+
+## CLI Usage
+
+The Edge Agent includes a command-line interface for running YAML-defined agent workflows without writing Python code:
+
+```bash
+# Run an agent from a YAML file
+tea-agent examples/yaml_agent_example.yaml
+
+# Run with initial state as JSON
+tea-agent examples/yaml_agent_example.yaml --state '{"query": "artificial intelligence"}'
+
+# Run with initial state from a JSON file
+tea-agent examples/yaml_agent_example.yaml --state-file initial_state.json
+
+# Load custom actions from a Python module
+tea-agent examples/yaml_agent_example.yaml --actions-module my_company.tea_actions
+
+# Load custom actions from a local Python file
+tea-agent examples/yaml_agent_example.yaml --actions-file ./my_custom_actions.py
+
+# Load multiple actions sources (later sources override earlier ones)
+tea-agent agent.yaml --actions-module pkg1.actions --actions-module pkg2.actions --actions-file ./overrides.py
+
+# Resume from a checkpoint (human-in-the-loop workflows)
+tea-agent agent.yaml --resume ./checkpoints/node_1234567890.pkl
+
+# Auto-continue at interrupts (CI/CD mode)
+tea-agent agent.yaml --auto-continue
+
+# Show version
+tea-agent --version
+
+# Show help
+tea-agent --help
+```
+
+### Custom Actions Modules
+
+You can create reusable action modules that can be loaded via the CLI or YAML configuration:
+
+```python
+# my_custom_actions.py
+from typing import Any, Callable, Dict
+
+def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
+    """Register custom actions into the provided registry."""
+
+    def custom_search(state, query, **kwargs):
+        # Your custom search logic
+        return {"results": [...], "success": True}
+
+    def custom_transform(state, data, **kwargs):
+        # Your custom transformation logic
+        return {"transformed": data, "success": True}
+
+    registry['custom_search'] = custom_search
+    registry['custom_transform'] = custom_transform
+
+# Optional metadata for module discovery
+__tea_actions__ = {
+    "version": "1.0.0",
+    "description": "My company's custom actions",
+    "actions": ["custom_search", "custom_transform"],
+}
+```
+
+Then use these actions in your YAML agent:
+
+```yaml
+name: my_agent
+nodes:
+  - name: search
+    uses: custom_search
+    with:
+      query: "{{ state.query }}"
+```
+
+Load the actions module when running the agent:
+
+```bash
+tea-agent agent.yaml --actions-module my_custom_actions
+# or from a file:
+tea-agent agent.yaml --actions-file ./my_custom_actions.py
+```
+
+**Security Warning:** The `--actions-module` and `--actions-file` flags execute Python code from the specified modules. Only load actions from trusted sources. For production use, prefer installed packages over local files.
+
+**Actions Loading Priority:**
+1. Built-in actions (lowest priority)
+2. CLI `--actions-module` flags (in order specified)
+3. CLI `--actions-file` flags (in order specified)
+4. YAML `imports:` section (highest priority - overrides CLI actions)
+```
+
+### Interactive Interrupt Workflow (Human-in-the-Loop)
+
+The Edge Agent supports human-in-the-loop workflows via interactive interrupts. When a YAML agent defines `interrupt_before` or `interrupt_after`, execution pauses at those points, allowing you to review state and make decisions before continuing.
+
+#### Basic Usage
+
+```bash
+# Run agent with interrupts (interactive mode)
+tea-agent examples/customer_support.yaml --state '{"message": "My bill is wrong"}'
+
+# Resume from a saved checkpoint
+tea-agent examples/customer_support.yaml --resume ./checkpoints/classify_intent_1734567890.pkl
+
+# Auto-continue mode (skip interactive prompts for CI/CD)
+tea-agent examples/customer_support.yaml --auto-continue
+```
+
+#### Interactive Prompt Example
+
+When execution reaches an interrupt point:
+
+```
+✓ classify_intent
+
+⏸  Interrupt at: classify_intent
+   State: {
+     "customer_message": "My bill is wrong",
+     "intent": "billing",
+     "confidence": 0.95
+   }
+
+Checkpoint saved: ./checkpoints/classify_intent_1734567890123.pkl
+
+Review the state above. Options:
+  [c] Continue with current state
+  [u] Update state before continuing
+  [a] Abort execution
+
+Choice: u
+
+Enter state updates as JSON (or press Enter to skip):
+{"escalate": true, "priority": "high"}
+
+State updated. Resuming execution...
+
+✓ handle_billing
+✓ escalate_to_human
+
+================================================================================
+✓ Completed
+================================================================================
+```
+
+#### Configuring Interrupts in YAML
+
+Define interrupts in your YAML agent configuration:
+
+```yaml
+name: customer_support_agent
+
+nodes:
+  - name: classify_intent
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "Classify this customer message: {{ state.message }}"
+
+  - name: handle_billing
+    run: |
+      return {"handled": True, "response": "Billing issue processed"}
+
+edges:
+  - from: __start__
+    to: classify_intent
+  - from: classify_intent
+    to: handle_billing
+  - from: handle_billing
+    to: __end__
+
+config:
+  checkpoint_dir: ./checkpoints
+  interrupt_after: [classify_intent]  # Pause after intent classification
+  raise_exceptions: true
+```
+
+#### Resume with State Updates
+
+You can resume from a checkpoint and merge in new state:
+
+```bash
+# Resume with additional state via --state flag
+tea-agent agent.yaml \
+  --resume ./checkpoints/classify_intent_123.pkl \
+  --state '{"approved": true, "notes": "Verified with supervisor"}'
+```
+
+**State Merge Precedence** (highest to lowest):
+1. User input from interactive prompt
+2. `--state` flag value
+3. Checkpoint state
+4. YAML initial state defaults
+
+#### Non-Interactive Mode (CI/CD)
+
+For automated environments where interactive prompts would block execution:
+
+```bash
+# Auto-continue mode: execution continues at interrupts without pausing
+tea-agent agent.yaml --auto-continue
+
+# This also works in Docker, systemd services, and CI pipelines
+# where stdin is not a TTY
+```
+
+The CLI automatically detects non-TTY environments (Docker, CI/CD) and auto-continues to prevent hanging.
+
+#### Security Warning
+
+⚠️ **Checkpoint files use Python pickle format and should only be loaded from trusted sources.** Do not load checkpoints from untrusted origins as they can execute arbitrary code during unpickling.
+
+### Example Output
+
+```
+================================================================================
+Running agent from: examples/yaml_agent_example.yaml
+================================================================================
+
+Initial state: {
+  "query": "artificial intelligence"
+}
+
+✓ search
+✓ validate_results
+✓ summarize
+✓ format_output
+✓ save_report
+
+================================================================================
+✓ Completed
+================================================================================
+Final state: {...}
+```
+
+## Python API Usage
+
 Here's a simple example to get you started:
 
 ```

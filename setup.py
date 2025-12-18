@@ -26,6 +26,11 @@ setup(
         "jsonschema>=4.20.0",
         "fsspec>=2023.1.0",
     ],
+    entry_points={
+        "console_scripts": [
+            "tea-agent=the_edge_agent.cli:main",
+        ],
+    },
     extras_require={
         "dev": [
             "pytest",

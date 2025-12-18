@@ -95,5 +95,7 @@ __all__ = [
     "KuzuBackend",
     "BighornBackend",
     "KUZU_AVAILABLE",
+    # Version
+    "__version__",
 ]
 __version__ = "0.0.1"

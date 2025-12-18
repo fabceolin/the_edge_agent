@@ -1,0 +1,30 @@
+# Test YAML for interrupt workflow testing
+name: test-interrupt-workflow
+state_schema:
+  value: int
+  approved: bool
+  message: str
+
+nodes:
+  - name: step1
+    run: |
+      return {"value": state.get("value", 0) + 1, "message": "Step 1 completed"}
+
+  - name: step2
+    run: |
+      if not state.get("approved", False):
+        return {"message": "Not approved"}
+      return {"value": state["value"] * 2, "message": "Step 2 completed"}
+
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: step2
+  - from: step2
+    to: __end__
+
+config:
+  checkpoint_dir: ./test_checkpoints
+  interrupt_after: [step1]
+  raise_exceptions: true
