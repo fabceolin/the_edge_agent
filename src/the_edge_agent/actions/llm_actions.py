@@ -6,9 +6,9 @@ Actions support OpenAI-compatible APIs with features like streaming, retry logic
 and function/tool calling.
 
 Actions:
-    - llm.call: Basic LLM completion call
+    - llm.call: LLM completion call with optional retry logic
     - llm.stream: Streaming LLM response with chunk aggregation
-    - llm.retry: LLM call with exponential backoff retry
+    - llm.retry: DEPRECATED - Use llm.call with max_retries parameter
     - llm.tools: Function/tool calling with automatic action dispatch
 
 Example:
@@ -28,8 +28,8 @@ Example:
     ... )
     >>> print(f"Received {result['chunk_count']} chunks")
 
-    >>> # With retry logic
-    >>> result = registry['llm.retry'](
+    >>> # With retry logic (recommended)
+    >>> result = registry['llm.call'](
     ...     state={},
     ...     model="gpt-4",
     ...     messages=[{"role": "user", "content": "Hello"}],
@@ -53,24 +53,218 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         engine: YAMLEngine instance for accessing shared resources
     """
 
-    def llm_call(state, model, messages, temperature=0.7, **kwargs):
-        """Call a language model."""
+    def llm_call(state, model, messages, temperature=0.7, max_retries=0,
+                 base_delay=1.0, max_delay=60.0, **kwargs):
+        """
+        Call a language model (supports OpenAI and Azure OpenAI) with optional retry logic.
+
+        Automatically detects Azure OpenAI configuration via environment variables:
+        - AZURE_OPENAI_API_KEY: Azure OpenAI API key
+        - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
+        - AZURE_OPENAI_DEPLOYMENT: Deployment name (defaults to model param)
+        - OPENAI_API_VERSION: API version (defaults to 2024-02-15-preview)
+
+        Args:
+            state: Current state dictionary
+            model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature (default: 0.7)
+            max_retries: Maximum retry attempts (default: 0, no retry)
+            base_delay: Initial delay in seconds for exponential backoff (default: 1.0)
+            max_delay: Maximum delay between retries (default: 60.0)
+            **kwargs: Additional parameters passed to OpenAI
+
+        Returns:
+            When max_retries=0:
+                {"content": str, "usage": dict}
+            When max_retries>0:
+                {"content": str, "usage": dict, "attempts": int, "total_delay": float}
+            Or {"error": str, "success": False, "attempts": int} on failure
+
+        Retry behavior:
+            - max_retries=0: Respects Retry-After header once, then fails
+            - max_retries>0: Full exponential backoff with Retry-After support
+            - Retries: HTTP 429, 5xx errors, timeouts, connection errors
+            - Fails fast: HTTP 4xx (except 429)
+        """
         try:
-            from openai import OpenAI
-            client = OpenAI()
-
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature
-            )
-
-            return {
-                'content': response.choices[0].message.content,
-                'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-            }
+            import os
+            import sys
+            from openai import OpenAI, AzureOpenAI, APIError, APIConnectionError, RateLimitError, APITimeoutError
         except ImportError:
             raise ImportError("OpenAI library not installed. Install with: pip install openai")
+
+        # Check for Azure OpenAI configuration
+        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+        # DEBUG: Print Azure OpenAI detection
+        print(f"[llm_call DEBUG] azure_api_key present: {bool(azure_api_key)}", file=sys.stderr)
+        print(f"[llm_call DEBUG] azure_endpoint: {azure_endpoint}", file=sys.stderr)
+
+        if azure_api_key and azure_endpoint:
+            # Use Azure OpenAI
+            print("[llm_call DEBUG] Using Azure OpenAI", file=sys.stderr)
+            client = AzureOpenAI(
+                api_key=azure_api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+            )
+            # Azure uses deployment name, not model name
+            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+            print(f"[llm_call DEBUG] Azure deployment: {deployment}", file=sys.stderr)
+        else:
+            # Use standard OpenAI
+            print("[llm_call DEBUG] Using standard OpenAI", file=sys.stderr)
+            client = OpenAI()
+            deployment = model
+
+        # Debug: Log all incoming kwargs
+        print(f"[llm_call DEBUG] All kwargs: {list(kwargs.keys())}", file=sys.stderr)
+
+        # Filter out The Edge Agent internal parameters and retry parameters
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items()
+            if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
+                         'max_retries', 'base_delay', 'max_delay')
+        }
+        print(f"[llm_call DEBUG] Filtered kwargs: {list(filtered_kwargs.keys())}", file=sys.stderr)
+
+        # Helper function to extract Retry-After header
+        def extract_retry_after(error):
+            """Extract Retry-After value from error response headers."""
+            retry_after = None
+            if hasattr(error, 'response') and error.response is not None:
+                retry_after = error.response.headers.get('Retry-After')
+                if retry_after:
+                    try:
+                        retry_after = float(retry_after)
+                    except (ValueError, TypeError):
+                        retry_after = None
+            return retry_after
+
+        # Helper function to make API call
+        def make_api_call():
+            """Make the actual OpenAI API call."""
+            return client.chat.completions.create(
+                model=deployment,
+                messages=messages,
+                temperature=temperature,
+                **filtered_kwargs
+            )
+
+        # No retry logic (max_retries=0) - respect Retry-After once
+        if max_retries == 0:
+            try:
+                response = make_api_call()
+                return {
+                    'content': response.choices[0].message.content,
+                    'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
+                }
+            except RateLimitError as e:
+                # Respect Retry-After header once
+                retry_after = extract_retry_after(e)
+                if retry_after:
+                    time.sleep(retry_after)
+                    try:
+                        response = make_api_call()
+                        return {
+                            'content': response.choices[0].message.content,
+                            'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
+                        }
+                    except Exception:
+                        # Let the exception propagate for flow-level retry
+                        raise
+                else:
+                    # No Retry-After header - let flow-level retry handle it
+                    raise
+
+        # Full retry logic (max_retries>0)
+        attempts = 0
+        total_delay = 0.0
+        last_error = None
+
+        while attempts <= max_retries:
+            try:
+                response = make_api_call()
+                return {
+                    "content": response.choices[0].message.content,
+                    "usage": response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {},
+                    "attempts": attempts + 1,
+                    "total_delay": total_delay
+                }
+
+            except RateLimitError as e:
+                # Rate limit - check for Retry-After header
+                last_error = e
+                attempts += 1
+
+                if attempts > max_retries:
+                    break
+
+                # Try to parse Retry-After from response headers
+                retry_after = extract_retry_after(e)
+
+                # Use Retry-After if available, otherwise exponential backoff
+                if retry_after is not None:
+                    delay = min(retry_after, max_delay)
+                else:
+                    delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
+
+                total_delay += delay
+                time.sleep(delay)
+
+            except (APIConnectionError, APITimeoutError) as e:
+                # Connection/timeout errors - retry
+                last_error = e
+                attempts += 1
+
+                if attempts > max_retries:
+                    break
+
+                delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
+                total_delay += delay
+                time.sleep(delay)
+
+            except APIError as e:
+                # Check if it's a 5xx error (retryable)
+                status_code = getattr(e, 'status_code', None)
+
+                if status_code is not None and 500 <= status_code < 600:
+                    # Server error - retry
+                    last_error = e
+                    attempts += 1
+
+                    if attempts > max_retries:
+                        break
+
+                    delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
+                    total_delay += delay
+                    time.sleep(delay)
+                else:
+                    # 4xx error (except 429) - fail fast
+                    return {
+                        "error": f"LLM API error (non-retryable): {str(e)}",
+                        "success": False,
+                        "attempts": attempts + 1,
+                        "status_code": status_code
+                    }
+
+            except Exception as e:
+                # Unexpected error - fail fast
+                return {
+                    "error": f"Unexpected error: {str(e)}",
+                    "success": False,
+                    "attempts": attempts + 1
+                }
+
+        # Max retries exceeded
+        return {
+            "error": f"Max retries ({max_retries}) exceeded. Last error: {str(last_error)}",
+            "success": False,
+            "attempts": attempts,
+            "total_delay": total_delay
+        }
 
     registry['llm.call'] = llm_call
     registry['actions.llm_call'] = llm_call
@@ -150,10 +344,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     def llm_retry(state, model, messages, max_retries=3, base_delay=1.0,
                   max_delay=60.0, temperature=0.7, **kwargs):
         """
-        LLM call with exponential backoff retry logic.
+        DEPRECATED: Use llm.call with max_retries parameter instead.
 
-        Wraps LLM calls with resilient retry handling for transient errors.
-        Implements exponential backoff: delay = min(base_delay * 2^attempt, max_delay)
+        This action is deprecated and will be removed in v0.9.0.
+        It now delegates to llm.call with the same parameters.
+
+        Migration:
+            # Before:
+            uses: llm.retry
+            with:
+              max_retries: 3
+
+            # After:
+            uses: llm.call
+            with:
+              max_retries: 3
 
         Args:
             state: Current state dictionary
@@ -168,123 +373,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         Returns:
             {"content": str, "usage": dict, "attempts": int, "total_delay": float}
             Or {"error": str, "success": False, "attempts": int} on failure
-
-        Retryable errors:
-            - HTTP 429 (Rate limit) - respects Retry-After header
-            - HTTP 5xx (Server errors)
-            - Timeout errors
-            - Connection errors
-
-        Non-retryable errors:
-            - HTTP 4xx (except 429) - immediate failure
         """
-        try:
-            from openai import OpenAI, APIError, APIConnectionError, RateLimitError, APITimeoutError
-        except ImportError:
-            return {
-                "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
-                "success": False
-            }
-
-        client = OpenAI()
-        attempts = 0
-        total_delay = 0.0
-        last_error = None
-
-        while attempts <= max_retries:
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    **{k: v for k, v in kwargs.items() if k not in ('state', 'max_retries', 'base_delay', 'max_delay')}
-                )
-
-                return {
-                    "content": response.choices[0].message.content,
-                    "usage": response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {},
-                    "attempts": attempts + 1,
-                    "total_delay": total_delay
-                }
-
-            except RateLimitError as e:
-                # Rate limit - check for Retry-After header
-                last_error = e
-                attempts += 1
-
-                if attempts > max_retries:
-                    break
-
-                # Try to parse Retry-After from response headers
-                retry_after = None
-                if hasattr(e, 'response') and e.response is not None:
-                    retry_after = e.response.headers.get('Retry-After')
-                    if retry_after:
-                        try:
-                            retry_after = float(retry_after)
-                        except (ValueError, TypeError):
-                            retry_after = None
-
-                # Use Retry-After if available, otherwise exponential backoff
-                if retry_after is not None:
-                    delay = min(retry_after, max_delay)
-                else:
-                    delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
-
-                total_delay += delay
-                time.sleep(delay)
-
-            except (APIConnectionError, APITimeoutError) as e:
-                # Connection/timeout errors - retry
-                last_error = e
-                attempts += 1
-
-                if attempts > max_retries:
-                    break
-
-                delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
-                total_delay += delay
-                time.sleep(delay)
-
-            except APIError as e:
-                # Check if it's a 5xx error (retryable)
-                status_code = getattr(e, 'status_code', None)
-
-                if status_code is not None and 500 <= status_code < 600:
-                    # Server error - retry
-                    last_error = e
-                    attempts += 1
-
-                    if attempts > max_retries:
-                        break
-
-                    delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
-                    total_delay += delay
-                    time.sleep(delay)
-                else:
-                    # 4xx error (except 429) - fail fast
-                    return {
-                        "error": f"LLM API error (non-retryable): {str(e)}",
-                        "success": False,
-                        "attempts": attempts + 1,
-                        "status_code": status_code
-                    }
-
-            except Exception as e:
-                # Unexpected error - fail fast
-                return {
-                    "error": f"Unexpected error: {str(e)}",
-                    "success": False,
-                    "attempts": attempts + 1
-                }
-
-        # Max retries exceeded
-        return {
-            "error": f"Max retries ({max_retries}) exceeded. Last error: {str(last_error)}",
-            "success": False,
-            "attempts": attempts,
-            "total_delay": total_delay
-        }
+        import warnings
+        warnings.warn(
+            "llm.retry is deprecated. Use llm.call with max_retries parameter instead. "
+            "This action will be removed in v0.9.0.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        return llm_call(
+            state, model, messages,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            max_delay=max_delay,
+            temperature=temperature,
+            **kwargs
+        )
 
     registry['llm.retry'] = llm_retry
     registry['actions.llm_retry'] = llm_retry
