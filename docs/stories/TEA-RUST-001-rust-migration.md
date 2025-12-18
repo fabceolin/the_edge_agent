@@ -314,7 +314,7 @@ nodes:
 | TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 |
 | TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 |
 | TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 |
-| TEA-RUST-022 | LLM Enhanced actions (stream, retry, tools) | 5 |
+| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 |
 | TEA-RUST-023 | Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5) | 5 |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
 | TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
@@ -352,8 +352,8 @@ The Python implementation includes 27+ built-in actions across 8 categories. Thi
 | Action Category | Python Implementation | Rust Implementation | Complexity |
 |-----------------|----------------------|---------------------|------------|
 | **LLM Enhanced** | OpenAI Python SDK | `reqwest` HTTP calls | Medium |
+| | `llm.call` | Completion + retry logic | `reqwest` + `backoff` crate | Medium |
 | | `llm.stream` | Streaming response | `reqwest` + `futures-util` | Medium |
-| | `llm.retry` | Exponential backoff | `backoff` crate | Low |
 | | `llm.tools` | Function calling dispatch | Action registry dispatch | Medium |
 | **Web Actions** | Firecrawl/Perplexity APIs | `reqwest` HTTP calls | Low |
 | | `web.scrape/crawl/search` | External API delegation | Same pattern in Rust | Low |
@@ -405,7 +405,7 @@ src/
 │   ├── data.rs          # json.*, csv.*, data.* actions
 │   ├── web.rs           # web.scrape, web.crawl, web.search
 │   ├── rag.rs           # embedding.create, vector.store, vector.query
-│   ├── llm.rs           # llm.call, llm.stream, llm.retry, llm.tools
+│   ├── llm.rs           # llm.call (with retry), llm.stream, llm.tools
 │   └── code.rs          # code.execute (Lua sandbox)
 ```
 
@@ -1010,6 +1010,19 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-003.2 | Data Processing Actions | ✅ Done | TEA-RUST-018 |
 | TD.13 | Parallel Execution Reliability | ✅ Done | TEA-RUST-026 |
 | YE.6 | External Action Module Imports | ✅ Done | TEA-RUST-027 (Lua modules) |
+| TEA-BUILTIN-001.2.1 | LLM Retry Consolidation | ✅ Done | TEA-RUST-022 (llm.call with max_retries) |
+
+### Python TEA-CLI Stories Reference
+
+The following Python CLI stories have been implemented (not migrated to Rust - Rust has native CLI):
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-CLI-001 | tea-agent CLI Executable | ✅ Done | TEA-RUST-013 (native Rust CLI) |
+| TEA-CLI-002 | CLI Actions Module Loading | ✅ Done | TEA-RUST-027 (Lua modules) |
+| TEA-CLI-003 | Interactive Interrupt Support | ✅ Done | TEA-RUST-007/013 (native implementation) |
+
+**Note**: Python CLI features inform Rust CLI design but are not directly migrated. Rust CLI uses `clap` and native checkpointing.
 
 **Not Migrated to Rust**:
 - **Tools Bridge Actions** (TEA-BUILTIN-002.3) - Python-specific libraries (CrewAI, LangChain, MCP)
@@ -1032,3 +1045,4 @@ The following Python built-in action stories have been implemented and inform th
 | 2025-12-07 | 3.0 | Added TEA-BUILTIN-001.4 Long-Term Memory & Graph actions. Added TEA-RUST-023 (LTM with rusqlite/FTS5) and TEA-RUST-024 (Graph with native CozoDB Rust crate). Updated effort to 18-24 weeks. Added AC-35 to AC-41 for ltm.* and graph.* actions. CozoDB uses native Rust - same Datalog semantics as Python version. | Sarah (PO Agent) |
 | 2025-12-07 | 4.0 | Added TEA-BUILTIN-001.4 Bighorn extension (excluded from Rust - Python-only) and TEA-BUILTIN-001.5 Cloud-Native LTM Backends. Added TEA-RUST-025 (Turso, D1, PostgreSQL, Blob-SQLite). Updated effort to 20-26 weeks. Added AC-42 to AC-46 for cloud-native backends. Excluded: Bighorn, Litestream, Firestore (no native Rust SDK). Added libsql, sqlx, object_store crates. | Sarah (PO Agent) |
 | 2025-12-13 | 5.0 | Added TD.13 Parallel Execution Reliability features (TEA-RUST-026). Added AC-47 to AC-52 for ParallelConfig, RetryPolicy, CircuitBreaker, ParallelFlowResult, ParallelFlowCallback. Added YE.6 External Action Module Imports (TEA-RUST-027). Added AC-53 to AC-56 for Lua module imports with namespacing. Added detailed Rust implementation sections for both features. Updated effort to 22-28 weeks. | Sarah (PO Agent) |
+| 2025-12-17 | 6.0 | Updated for TEA-BUILTIN-001.2.1 (llm.retry deprecated, consolidated into llm.call with max_retries). Added TEA-CLI stories reference section (TEA-CLI-001/002/003). Minor documentation alignment. | Sarah (PO Agent) |

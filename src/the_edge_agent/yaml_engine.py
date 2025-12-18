@@ -778,14 +778,20 @@ class YAMLEngine:
 
     def _add_edge_from_config(self, graph: StateGraph, edge_config: Dict[str, Any]) -> None:
         """Add an edge to the graph from configuration."""
-        from_node = edge_config['from']
-        to_node = edge_config['to']
         edge_type = edge_config.get('type', 'normal')
+        # For entry edges, default from_node to START if not specified
+        from_node = edge_config.get('from', START if edge_type == 'entry' else None)
+        if from_node is None:
+            from_node = edge_config['from']  # Raise KeyError if missing for non-entry edges
+        to_node = edge_config['to']
 
         # Handle special edge types
         if from_node == START or edge_type == 'entry':
-            graph.set_entry_point(to_node)
-            return
+            # Check if this is a conditional entry edge
+            if 'when' not in edge_config and 'condition' not in edge_config:
+                graph.set_entry_point(to_node)
+                return
+            # Fall through to conditional edge handling below
 
         if to_node == END or edge_type == 'finish':
             graph.set_finish_point(from_node)
