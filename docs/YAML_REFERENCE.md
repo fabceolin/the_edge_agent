@@ -24,6 +24,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
   - [Data Processing Actions](#data-processing-actions)
   - [Code Execution Actions](#code-execution-actions)
   - [Observability Actions](#observability-actions)
+    - [Opik Integration](#opik-integration)
   - [Memory Actions](#memory-actions)
   - [Long-Term Memory Actions](#long-term-memory-actions)
   - [Graph Database Actions](#graph-database-actions)
@@ -1234,6 +1235,182 @@ settings:
 ```
 
 All trace actions are available via dual namespaces: `trace.*` and `actions.trace_*`.
+
+#### Opik Integration
+
+Export traces to [Comet Opik](https://www.comet.com/site/products/opik/) for visualization, analysis, and LLM observability.
+
+**Required:** `pip install opik` or `pip install the-edge-agent[opik]`
+
+##### Basic Configuration
+
+```yaml
+settings:
+  # Enable Opik trace export
+  trace_exporter: opik
+
+  # Full Opik configuration
+  opik:
+    enabled: true
+    api_key: "${OPIK_API_KEY}"          # Supports env var interpolation
+    workspace: my-team                   # Optional: Opik workspace/organization
+    project_name: my-agent-production    # Project for grouping traces
+    url: https://opik.mycompany.com/api  # Optional: Self-hosted Opik URL
+    llm_tracing: true                    # Wrap OpenAI clients with track_openai()
+    trace_export: true                   # Export TEA trace spans to Opik
+```
+
+##### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPIK_API_KEY` | API key for Opik Cloud | None (required for Cloud) |
+| `OPIK_WORKSPACE` | Workspace/organization name | User's default workspace |
+| `OPIK_PROJECT_NAME` | Project for grouping traces | `"the-edge-agent"` |
+| `OPIK_URL_OVERRIDE` | Self-hosted Opik endpoint URL | Opik Cloud URL |
+
+##### Native LLM Tracing
+
+Enable automatic instrumentation of LLM calls with rich telemetry (tokens, latency, cost):
+
+```yaml
+settings:
+  opik:
+    llm_tracing: true    # Wraps OpenAI clients with track_openai()
+
+nodes:
+  - name: generate
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "{{ state.prompt }}"
+      opik_trace: true   # Per-call override (optional)
+    output: response
+```
+
+When `llm_tracing: true` is set:
+- OpenAI client is wrapped with `track_openai()` for rich telemetry
+- Captures: model, tokens (prompt/completion), latency, model parameters
+- Automatically calculates `cost_usd` based on token usage and model pricing
+- Works with both `llm.call` and `llm.stream` actions
+
+##### `opik.healthcheck`
+
+Validate Opik connectivity before running workflows:
+
+```yaml
+nodes:
+  - name: validate_opik
+    uses: opik.healthcheck
+    output: opik_status
+
+  - name: process
+    run: |
+      if not state.get('opik_status', {}).get('success'):
+          return {"error": "Opik not available", "skip_tracing": True}
+      # Continue with tracing-enabled processing
+      return {"ready": True}
+
+edges:
+  - from: __start__
+    to: validate_opik
+  - from: validate_opik
+    to: process
+  - from: process
+    to: __end__
+```
+
+**Returns:**
+- Success: `{"success": true, "latency_ms": float, "project": str, "workspace": str}`
+- Failure: `{"success": false, "message": str, "error_type": str}`
+
+**Common error messages:**
+- `"Opik SDK not installed. Install with: pip install opik"`
+- `"OPIK_API_KEY not set. Get your API key at https://www.comet.com/opik"`
+- `"Invalid API key. Please verify your key at https://www.comet.com/opik/account"`
+- `"Cannot connect to Opik at {url}. Check network connectivity."`
+
+##### Configuration Examples
+
+**Cloud Setup (Recommended):**
+```yaml
+settings:
+  opik:
+    enabled: true
+    api_key: "${OPIK_API_KEY}"
+    project_name: my-production-agent
+    llm_tracing: true
+```
+
+**Self-Hosted Setup:**
+```yaml
+settings:
+  opik:
+    enabled: true
+    url: https://opik.mycompany.com/api
+    project_name: internal-agent
+    # API key may not be required for self-hosted
+```
+
+**Minimal Local Development:**
+```yaml
+settings:
+  trace_exporter: opik
+  # Uses defaults - traces stored locally
+```
+
+**Combined with File Tracing:**
+```yaml
+settings:
+  auto_trace: true
+  trace_exporter:
+    - opik                    # Export to Opik Cloud
+    - file                    # Also save locally
+  trace_file: ./traces.jsonl
+  opik:
+    project_name: my-agent
+    llm_tracing: true
+```
+
+##### Python API Configuration
+
+```python
+from the_edge_agent import YAMLEngine
+
+# Simple usage - uses environment variables
+engine = YAMLEngine(trace_exporter="opik")
+
+# Full configuration
+engine = YAMLEngine(
+    trace_exporter="opik",
+    opik_project_name="my-agent",
+    opik_workspace="my-team",
+    opik_api_key="your-api-key",
+    opik_url="https://opik.mycompany.com",  # Self-hosted
+    opik_llm_tracing=True,    # Native LLM instrumentation
+    opik_trace_export=True    # Export TEA spans to Opik
+)
+
+# Access resolved configuration
+print(engine.opik_config)
+# {'enabled': True, 'api_key': '...', 'workspace': 'my-team',
+#  'project_name': 'my-agent', 'url': '...', 'llm_tracing': True, 'trace_export': True}
+```
+
+##### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `ImportError: Opik SDK not installed` | `pip install opik` or `pip install the-edge-agent[opik]` |
+| `OPIK_API_KEY not set` | Set env var or use `api_key` in settings |
+| `Invalid API key` | Verify key at https://www.comet.com/opik/account |
+| `Cannot connect to Opik` | Check network/firewall, verify URL for self-hosted |
+| Project not visible in Opik | Project is auto-created on first trace export |
+| LLM costs not showing | Ensure `llm_tracing: true` is set |
+
+All Opik actions are available via dual namespaces: `opik.*` and `actions.opik_*`.
 
 ---
 

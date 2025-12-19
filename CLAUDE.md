@@ -742,10 +742,22 @@ Cloud credentials via environment:
 All graph actions are available via dual namespaces: `graph.*` and `actions.graph_*`.
 
 **LLM Enhanced Actions** (TEA-BUILTIN-001.2):
-- `llm.call` - LLM completion call with optional retry logic (max_retries parameter)
-- `llm.stream` - Stream LLM responses with chunk aggregation
+- `llm.call` - LLM completion call with optional retry logic (max_retries parameter) and Opik tracing (opik_trace parameter)
+- `llm.stream` - Stream LLM responses with chunk aggregation and Opik tracing support
 - `llm.retry` - **DEPRECATED** - Use llm.call with max_retries parameter (will be removed in v0.9.0)
 - `llm.tools` - Function/tool calling with automatic action dispatch
+
+**Native Opik LLM Tracing** (TEA-BUILTIN-005.2):
+Both `llm.call` and `llm.stream` support native Opik instrumentation via the `opik_trace` parameter:
+- When `opik_trace=True`, the OpenAI client is wrapped with `track_openai()` for rich telemetry
+- Captures: model, tokens (prompt/completion), latency, model parameters
+- Automatically calculates `cost_usd` based on token usage and model pricing
+- Coexists with OpikExporter (TEA-BUILTIN-005.1) - use both for full observability
+- Graceful degradation: logs warning if Opik SDK not installed
+
+Enable via:
+- Python: `YAMLEngine(opik_llm_tracing=True)` or pass `opik_trace=True` to individual calls
+- YAML: `settings.opik.llm_tracing: true` or `settings.opik_llm_tracing: true`
 
 **Web Actions** (TEA-BUILTIN-002.1):
 - `web.scrape` - Scrape web content via Firecrawl API (returns LLM-ready markdown)
@@ -957,6 +969,15 @@ result = engine.actions_registry['llm.call'](
 )
 # Returns: {"content": str, "usage": dict}
 
+# LLM call with native Opik tracing (TEA-BUILTIN-005.2)
+result = engine.actions_registry['llm.call'](
+    state={},
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello"}],
+    opik_trace=True  # Wraps client with track_openai() for rich telemetry
+)
+# Returns: {"content": str, "usage": dict, "cost_usd": float}
+
 # LLM call with retry logic (for standalone/sequential use)
 result = engine.actions_registry['llm.call'](
     state={},
@@ -964,9 +985,10 @@ result = engine.actions_registry['llm.call'](
     messages=[{"role": "user", "content": "Hello"}],
     max_retries=3,  # Full exponential backoff with Retry-After support
     base_delay=1.0,
-    max_delay=60.0
+    max_delay=60.0,
+    opik_trace=True  # Can combine with retry logic
 )
-# Returns: {"content": str, "usage": dict, "attempts": int, "total_delay": float}
+# Returns: {"content": str, "usage": dict, "attempts": int, "total_delay": float, "cost_usd": float}
 
 # LLM call in parallel flows (max_retries=0 by default)
 # Respects Retry-After header once, then relies on flow-level retry
@@ -981,9 +1003,10 @@ result = engine.actions_registry['llm.call'](
 result = engine.actions_registry['llm.stream'](
     state={},
     model="gpt-4",
-    messages=[{"role": "user", "content": "Hello"}]
+    messages=[{"role": "user", "content": "Hello"}],
+    opik_trace=True  # Also supports Opik tracing
 )
-# Returns: {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
+# Returns: {"content": str, "usage": dict, "streamed": True, "chunk_count": int, "cost_usd": float}
 
 # Tool/function calling with action dispatch
 result = engine.actions_registry['llm.tools'](
@@ -1049,6 +1072,154 @@ engine = YAMLEngine(
 # Disable tracing
 engine = YAMLEngine(enable_tracing=False)
 ```
+
+**Opik Exporter** (TEA-BUILTIN-005.1):
+
+Export traces to [Comet Opik](https://www.comet.com/site/products/opik/) for visualization and analysis.
+
+Required dependency:
+- `pip install opik` - Or install with: `pip install the-edge-agent[opik]`
+
+Features:
+- Automatic span hierarchy preservation (parent-child relationships)
+- Token usage metrics forwarding (`prompt_tokens`, `completion_tokens`, `total_tokens`)
+- Lazy configuration (connects to Opik only on first span export)
+- Graceful degradation (export failures don't crash graph execution)
+- Project auto-creation on first trace export
+- Clear ImportError with install instructions if SDK not installed
+
+**Opik Configuration** (TEA-BUILTIN-005.3):
+
+Comprehensive configuration system with precedence hierarchy (highest to lowest):
+1. Constructor parameters
+2. Environment variables
+3. YAML settings (`settings.opik`)
+4. Defaults
+
+Environment variables:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPIK_API_KEY` | API key for Opik Cloud | None (required for Cloud) |
+| `OPIK_WORKSPACE` | Workspace/organization name | User's default workspace |
+| `OPIK_PROJECT_NAME` | Project for grouping traces | `"the-edge-agent"` |
+| `OPIK_URL_OVERRIDE` | Self-hosted Opik endpoint URL | Opik Cloud URL |
+
+Python configuration:
+```python
+from the_edge_agent import YAMLEngine, OpikExporter
+
+# Simple usage - uses environment variables
+engine = YAMLEngine(trace_exporter="opik")
+
+# Constructor parameters (highest priority)
+engine = YAMLEngine(
+    trace_exporter="opik",
+    opik_project_name="my-agent",
+    opik_workspace="my-team",
+    opik_api_key="your-api-key",
+    opik_url="https://opik.mycompany.com",  # Self-hosted
+    opik_llm_tracing=True,    # Native LLM instrumentation
+    opik_trace_export=True    # Export TEA spans to Opik
+)
+
+# Access resolved configuration
+print(engine.opik_config)
+# {'enabled': False, 'api_key': '...', 'workspace': 'my-team',
+#  'project_name': 'my-agent', 'url': '...', 'llm_tracing': True, 'trace_export': True}
+
+# Custom exporter instance
+exporter = OpikExporter(
+    api_key="your-api-key",
+    project_name="my-agent",
+    workspace="my-team",
+    url_override="https://opik.mycompany.com"  # For self-hosted
+)
+engine = YAMLEngine(trace_exporter=[exporter])
+```
+
+YAML configuration:
+```yaml
+settings:
+  # Full Opik configuration
+  opik:
+    enabled: true
+    api_key: "${OPIK_API_KEY}"  # Supports env var interpolation
+    workspace: my-team
+    project_name: my-agent-production
+    url: https://opik.mycompany.com/api  # Self-hosted URL
+    llm_tracing: true   # Wrap OpenAI clients with track_openai()
+    trace_export: true  # Export TEA trace spans to Opik
+
+  # Alternative: enable trace export via auto_trace
+  auto_trace: true
+  trace_exporter: opik
+```
+
+**opik.healthcheck Action** (TEA-BUILTIN-005.3):
+
+Validate Opik connectivity and authentication before running workflows:
+```python
+from the_edge_agent import YAMLEngine
+
+engine = YAMLEngine(opik_project_name="my-project")
+
+# Check connectivity
+result = engine.actions_registry['opik.healthcheck'](state={})
+if result['success']:
+    print(f"Connected to Opik in {result['latency_ms']:.1f}ms")
+    print(f"Project: {result['project']}, Workspace: {result['workspace']}")
+else:
+    print(f"Connection failed: {result['message']}")
+    # Helpful error messages for common issues:
+    # - "Opik SDK not installed. Install with: pip install opik"
+    # - "OPIK_API_KEY not set. Get your API key at https://www.comet.com/opik"
+    # - "Invalid API key. Please verify your key at https://www.comet.com/opik/account"
+    # - "Cannot connect to Opik at {url}. Check network connectivity."
+```
+
+YAML usage:
+```yaml
+nodes:
+  - name: validate_opik
+    uses: opik.healthcheck
+    output: opik_status
+
+  - name: process
+    run: |
+      if not state.get('opik_status', {}).get('success'):
+          return {"error": "Opik not available"}
+      # Continue with tracing-enabled processing
+```
+
+**Configuration Examples**:
+
+Cloud setup (recommended):
+```bash
+export OPIK_API_KEY=your-api-key
+export OPIK_PROJECT_NAME=my-agent
+```
+
+Self-hosted setup:
+```bash
+export OPIK_URL_OVERRIDE=https://opik.mycompany.com/api
+# API key may not be required for self-hosted
+```
+
+Local development (minimal):
+```python
+# Just use defaults - traces will be stored locally
+engine = YAMLEngine(trace_exporter="opik")
+```
+
+**Troubleshooting**:
+
+| Issue | Solution |
+|-------|----------|
+| `ImportError: Opik SDK not installed` | `pip install opik` or `pip install the-edge-agent[opik]` |
+| `OPIK_API_KEY not set` | Set env var or use constructor: `opik_api_key="..."` |
+| `Invalid API key` | Verify key at https://www.comet.com/opik/account |
+| `Cannot connect to Opik` | Check network/firewall, verify URL for self-hosted |
+| Project not visible in Opik | Project is auto-created on first trace export |
 
 ### Custom Actions
 ```python

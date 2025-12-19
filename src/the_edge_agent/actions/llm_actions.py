@@ -53,8 +53,76 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         engine: YAMLEngine instance for accessing shared resources
     """
 
+    # Track wrapped clients to prevent double-wrapping
+    _opik_wrapped_clients = set()
+
+    # Model pricing (per 1K tokens) - as of Dec 2024
+    # Used for cost estimation when opik_trace=True
+    MODEL_PRICING = {
+        # GPT-4 Turbo and GPT-4o
+        "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+        "gpt-4-turbo-preview": {"input": 0.01, "output": 0.03},
+        "gpt-4-turbo-2024-04-09": {"input": 0.01, "output": 0.03},
+        "gpt-4o": {"input": 0.005, "output": 0.015},
+        "gpt-4o-2024-05-13": {"input": 0.005, "output": 0.015},
+        "gpt-4o-2024-08-06": {"input": 0.0025, "output": 0.01},
+        "gpt-4o-2024-11-20": {"input": 0.0025, "output": 0.01},
+        "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+        "gpt-4o-mini-2024-07-18": {"input": 0.00015, "output": 0.0006},
+        # GPT-4
+        "gpt-4": {"input": 0.03, "output": 0.06},
+        "gpt-4-0613": {"input": 0.03, "output": 0.06},
+        "gpt-4-32k": {"input": 0.06, "output": 0.12},
+        "gpt-4-32k-0613": {"input": 0.06, "output": 0.12},
+        # GPT-3.5 Turbo
+        "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
+        "gpt-3.5-turbo-0125": {"input": 0.0005, "output": 0.0015},
+        "gpt-3.5-turbo-1106": {"input": 0.001, "output": 0.002},
+        "gpt-3.5-turbo-16k": {"input": 0.003, "output": 0.004},
+        # o1 series (reasoning models)
+        "o1": {"input": 0.015, "output": 0.06},
+        "o1-preview": {"input": 0.015, "output": 0.06},
+        "o1-mini": {"input": 0.003, "output": 0.012},
+    }
+
+    def calculate_cost(model: str, usage: dict) -> float:
+        """
+        Calculate estimated cost in USD based on model pricing.
+
+        Args:
+            model: Model name (e.g., "gpt-4", "gpt-4o-mini")
+            usage: Usage dict with prompt_tokens and completion_tokens
+
+        Returns:
+            Estimated cost in USD (float)
+        """
+        # Normalize model name (handle deployment names, versions)
+        model_lower = model.lower()
+
+        # Try exact match first
+        pricing = MODEL_PRICING.get(model_lower)
+
+        # Fallback: try matching base model name
+        if pricing is None:
+            for key in MODEL_PRICING:
+                if model_lower.startswith(key) or key.startswith(model_lower):
+                    pricing = MODEL_PRICING[key]
+                    break
+
+        # Default to zero if model not found
+        if pricing is None:
+            pricing = {"input": 0, "output": 0}
+
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+
+        prompt_cost = (prompt_tokens / 1000) * pricing["input"]
+        completion_cost = (completion_tokens / 1000) * pricing["output"]
+
+        return round(prompt_cost + completion_cost, 6)
+
     def llm_call(state, model, messages, temperature=0.7, max_retries=0,
-                 base_delay=1.0, max_delay=60.0, **kwargs):
+                 base_delay=1.0, max_delay=60.0, opik_trace=False, **kwargs):
         """
         Call a language model (supports OpenAI and Azure OpenAI) with optional retry logic.
 
@@ -72,6 +140,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             max_retries: Maximum retry attempts (default: 0, no retry)
             base_delay: Initial delay in seconds for exponential backoff (default: 1.0)
             max_delay: Maximum delay between retries (default: 60.0)
+            opik_trace: If True, wrap client with Opik's track_openai for rich LLM
+                       telemetry (model, tokens, latency). Requires opik SDK installed.
+                       Default: False (opt-in feature).
             **kwargs: Additional parameters passed to OpenAI
 
         Returns:
@@ -79,6 +150,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 {"content": str, "usage": dict}
             When max_retries>0:
                 {"content": str, "usage": dict, "attempts": int, "total_delay": float}
+            When opik_trace=True:
+                Result dict also includes "cost_usd": float (estimated cost)
             Or {"error": str, "success": False, "attempts": int} on failure
 
         Retry behavior:
@@ -89,7 +162,6 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         """
         try:
             import os
-            import sys
             from openai import OpenAI, AzureOpenAI, APIError, APIConnectionError, RateLimitError, APITimeoutError
         except ImportError:
             raise ImportError("OpenAI library not installed. Install with: pip install openai")
@@ -98,13 +170,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
         azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 
-        # DEBUG: Print Azure OpenAI detection
-        print(f"[llm_call DEBUG] azure_api_key present: {bool(azure_api_key)}", file=sys.stderr)
-        print(f"[llm_call DEBUG] azure_endpoint: {azure_endpoint}", file=sys.stderr)
-
         if azure_api_key and azure_endpoint:
             # Use Azure OpenAI
-            print("[llm_call DEBUG] Using Azure OpenAI", file=sys.stderr)
             client = AzureOpenAI(
                 api_key=azure_api_key,
                 azure_endpoint=azure_endpoint,
@@ -112,23 +179,36 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             )
             # Azure uses deployment name, not model name
             deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
-            print(f"[llm_call DEBUG] Azure deployment: {deployment}", file=sys.stderr)
+            is_azure = True
         else:
             # Use standard OpenAI
-            print("[llm_call DEBUG] Using standard OpenAI", file=sys.stderr)
             client = OpenAI()
             deployment = model
+            is_azure = False
 
-        # Debug: Log all incoming kwargs
-        print(f"[llm_call DEBUG] All kwargs: {list(kwargs.keys())}", file=sys.stderr)
+        # Apply Opik tracing wrapper if requested
+        if opik_trace:
+            try:
+                from opik.integrations.openai import track_openai
+                # Check if client is already wrapped (prevent double-wrapping)
+                client_id = id(client)
+                if client_id not in _opik_wrapped_clients:
+                    client = track_openai(client)
+                    _opik_wrapped_clients.add(id(client))
+            except ImportError:
+                import warnings
+                warnings.warn(
+                    "opik_trace=True but opik SDK not installed. "
+                    "Install with: pip install opik",
+                    RuntimeWarning
+                )
 
         # Filter out The Edge Agent internal parameters and retry parameters
         filtered_kwargs = {
             k: v for k, v in kwargs.items()
             if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
-                         'max_retries', 'base_delay', 'max_delay')
+                         'max_retries', 'base_delay', 'max_delay', 'opik_trace')
         }
-        print(f"[llm_call DEBUG] Filtered kwargs: {list(filtered_kwargs.keys())}", file=sys.stderr)
 
         # Helper function to extract Retry-After header
         def extract_retry_after(error):
@@ -153,14 +233,26 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 **filtered_kwargs
             )
 
+        # Helper function to build result with optional cost
+        def build_result(response, extra_fields=None):
+            """Build result dict with optional cost calculation."""
+            usage = response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
+            result = {
+                'content': response.choices[0].message.content,
+                'usage': usage
+            }
+            # Add cost estimation when opik_trace is enabled
+            if opik_trace and usage:
+                result['cost_usd'] = calculate_cost(model, usage)
+            if extra_fields:
+                result.update(extra_fields)
+            return result
+
         # No retry logic (max_retries=0) - respect Retry-After once
         if max_retries == 0:
             try:
                 response = make_api_call()
-                return {
-                    'content': response.choices[0].message.content,
-                    'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-                }
+                return build_result(response)
             except RateLimitError as e:
                 # Respect Retry-After header once
                 retry_after = extract_retry_after(e)
@@ -168,10 +260,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     time.sleep(retry_after)
                     try:
                         response = make_api_call()
-                        return {
-                            'content': response.choices[0].message.content,
-                            'usage': response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-                        }
+                        return build_result(response)
                     except Exception:
                         # Let the exception propagate for flow-level retry
                         raise
@@ -187,12 +276,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         while attempts <= max_retries:
             try:
                 response = make_api_call()
-                return {
-                    "content": response.choices[0].message.content,
-                    "usage": response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {},
+                return build_result(response, {
                     "attempts": attempts + 1,
                     "total_delay": total_delay
-                }
+                })
 
             except RateLimitError as e:
                 # Rate limit - check for Retry-After header
@@ -269,22 +356,29 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     registry['llm.call'] = llm_call
     registry['actions.llm_call'] = llm_call
 
-    def llm_stream(state, model, messages, temperature=0.7, **kwargs):
+    def llm_stream(state, model, messages, temperature=0.7, opik_trace=False, **kwargs):
         """
         Stream LLM responses token-by-token.
 
         Uses OpenAI streaming API to yield partial content chunks as they arrive.
         This action aggregates all chunks and returns the final result.
 
+        Automatically detects Azure OpenAI configuration (same as llm_call).
+
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
+            opik_trace: If True, wrap client with Opik's track_openai for rich LLM
+                       telemetry. Opik's wrapper handles streaming chunk aggregation.
+                       Default: False (opt-in feature).
             **kwargs: Additional parameters passed to OpenAI
 
         Returns:
             {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
+            When opik_trace=True:
+                Result dict also includes "cost_usd": float (estimated cost)
             Or {"error": str, "success": False} on failure
 
         Example:
@@ -292,7 +386,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             print(result["content"])
         """
         try:
-            from openai import OpenAI
+            import os
+            from openai import OpenAI, AzureOpenAI
         except ImportError:
             return {
                 "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
@@ -300,14 +395,52 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             }
 
         try:
-            client = OpenAI()
+            # Check for Azure OpenAI configuration
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+
+            if azure_api_key and azure_endpoint:
+                # Use Azure OpenAI
+                client = AzureOpenAI(
+                    api_key=azure_api_key,
+                    azure_endpoint=azure_endpoint,
+                    api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+                )
+                deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+            else:
+                # Use standard OpenAI
+                client = OpenAI()
+                deployment = model
+
+            # Apply Opik tracing wrapper if requested
+            if opik_trace:
+                try:
+                    from opik.integrations.openai import track_openai
+                    client_id = id(client)
+                    if client_id not in _opik_wrapped_clients:
+                        client = track_openai(client)
+                        _opik_wrapped_clients.add(id(client))
+                except ImportError:
+                    import warnings
+                    warnings.warn(
+                        "opik_trace=True but opik SDK not installed. "
+                        "Install with: pip install opik",
+                        RuntimeWarning
+                    )
+
+            # Filter out internal parameters
+            filtered_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ('state', 'config', 'node', 'graph', 'parallel_results', 'opik_trace')
+            }
+
             stream = client.chat.completions.create(
-                model=model,
+                model=deployment,
                 messages=messages,
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
-                **{k: v for k, v in kwargs.items() if k not in ('state',)}
+                **filtered_kwargs
             )
 
             # Collect full content for final result
@@ -325,12 +458,18 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 if hasattr(chunk, 'usage') and chunk.usage is not None:
                     usage_data = chunk.usage.model_dump() if hasattr(chunk.usage, 'model_dump') else {}
 
-            return {
+            result = {
                 "content": "".join(full_content),
                 "usage": usage_data,
                 "streamed": True,
                 "chunk_count": chunk_index
             }
+
+            # Add cost estimation when opik_trace is enabled
+            if opik_trace and usage_data:
+                result['cost_usd'] = calculate_cost(model, usage_data)
+
+            return result
 
         except Exception as e:
             return {
