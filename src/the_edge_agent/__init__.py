@@ -56,6 +56,13 @@ except ImportError:
     KuzuBackend = None  # type: ignore
     BighornBackend = None  # type: ignore
 
+# Opik Exporter (TEA-BUILTIN-005.1)
+# Conditionally import - requires 'pip install opik'
+try:
+    from .exporters import OpikExporter
+except ImportError:
+    OpikExporter = None  # type: ignore
+
 __all__ = [
     "StateGraph",
     "START",
@@ -95,6 +102,8 @@ __all__ = [
     "KuzuBackend",
     "BighornBackend",
     "KUZU_AVAILABLE",
+    # Opik Exporter (TEA-BUILTIN-005.1)
+    "OpikExporter",
     # Version
     "__version__",
 ]

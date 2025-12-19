@@ -163,4 +163,24 @@ cython_debug/
 CHANGES_SUMMARY.md
 anonymized_graph.png
 output/
-
+.bmad-core/
+.claude/
+.envrc
+=0.4.0
+bin/
+checkpoints/
+customer_support_workflow.png
+document_writer_graph.png
+examples/.envrc
+examples/checkpoints/
+examples/company_search_graph.dot
+examples/company_search_graph.png
+examples/customer_support_workflow.png
+examples/example_graph.png
+log
+node_modules/
+package-lock.json
+package.json
+setup.py.orig
+web-bundles/
+{{ variables.output_dir }}/

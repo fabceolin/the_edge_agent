@@ -95,7 +95,15 @@ class YAMLEngine:
         graph_backend: Optional[Any] = None,
         enable_graph: bool = True,
         graph_path: Optional[str] = None,
-        graph_backend_type: Optional[str] = None
+        graph_backend_type: Optional[str] = None,
+        opik_llm_tracing: bool = False,
+        # TEA-BUILTIN-005.3: Opik configuration parameters
+        opik_api_key: Optional[str] = None,
+        opik_workspace: Optional[str] = None,
+        opik_project_name: Optional[str] = None,
+        opik_url: Optional[str] = None,
+        opik_enabled: Optional[bool] = None,
+        opik_trace_export: bool = False
     ):
         """
         Initialize the YAML engine.
@@ -107,6 +115,7 @@ class YAMLEngine:
                 - "console": Print to stdout
                 - "file": Write to trace_file (requires trace_file)
                 - "callback": Call trace_callback (requires trace_callback)
+                - "opik": Export to Comet Opik (requires pip install opik)
                 - List of exporter instances
             trace_file: File path for file exporter (JSON lines format)
             trace_callback: Callback function for callback exporter
@@ -130,7 +139,32 @@ class YAMLEngine:
                               - None: Auto-select (CozoDB if available, else Kuzu)
                               - "cozo": Use CozoDB (Datalog, HNSW vectors)
                               - "kuzu" or "bighorn": Use Kuzu/Bighorn (Cypher, cloud httpfs)
+            opik_llm_tracing: Enable native Opik tracing for llm.call and llm.stream.
+                             When True, wraps OpenAI clients with track_openai() for
+                             rich LLM telemetry (tokens, latency, model params).
+                             Default: False (opt-in feature).
+            opik_api_key: API key for Opik Cloud (TEA-BUILTIN-005.3).
+                         Constructor param has highest priority, then env var.
+            opik_workspace: Workspace name for Opik.
+            opik_project_name: Project name for grouping traces.
+            opik_url: Custom URL for self-hosted Opik instances.
+            opik_enabled: Explicitly enable/disable all Opik features.
+                         When None, Opik is enabled if trace_exporter="opik".
+            opik_trace_export: Export TEA trace spans to Opik (default: False).
         """
+        # TEA-BUILTIN-005.3: Store Opik constructor params first (needed for exporter creation)
+        self._opik_constructor_params = {
+            "api_key": opik_api_key,
+            "workspace": opik_workspace,
+            "project_name": opik_project_name,
+            "url": opik_url,
+            "enabled": opik_enabled,
+            "llm_tracing": opik_llm_tracing if opik_llm_tracing else None,
+            "trace_export": opik_trace_export if opik_trace_export else None,
+        }
+        # Initial config resolution (without YAML settings yet)
+        self._opik_config: Dict[str, Any] = self._resolve_opik_config()
+
         # Initialize tracing
         self._enable_tracing = enable_tracing
         self._trace_context: Optional[TraceContext] = None
@@ -147,6 +181,15 @@ class YAMLEngine:
                 exporters.append(FileExporter(trace_file))
             elif trace_exporter == "callback" and trace_callback:
                 exporters.append(CallbackExporter(trace_callback))
+            elif trace_exporter == "opik":
+                # Lazy-load OpikExporter with resolved config
+                from .exporters import OpikExporter
+                exporters.append(OpikExporter(
+                    api_key=self._opik_config.get("api_key"),
+                    project_name=self._opik_config.get("project_name"),
+                    workspace=self._opik_config.get("workspace"),
+                    url_override=self._opik_config.get("url")
+                ))
             elif trace_exporter is None:
                 # No exporter configured, but tracing is enabled
                 # Spans will be collected but not exported
@@ -211,6 +254,9 @@ class YAMLEngine:
         # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
         self._enable_code_execution = enable_code_execution
 
+        # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
+        self._opik_llm_tracing = opik_llm_tracing
+
         self.actions_registry = build_actions_registry(self)
         if actions_registry:
             self.actions_registry.update(actions_registry)
@@ -258,6 +304,141 @@ class YAMLEngine:
             None if graph is disabled or CozoDB is not installed.
         """
         return self._graph_backend
+
+    @property
+    def opik_llm_tracing(self) -> bool:
+        """
+        Check if native Opik LLM tracing is enabled.
+
+        When True, llm.call and llm.stream will wrap OpenAI clients with
+        track_openai() for rich LLM telemetry.
+
+        Returns:
+            True if Opik LLM tracing is enabled, False otherwise.
+        """
+        return self._opik_llm_tracing
+
+    @property
+    def opik_config(self) -> Dict[str, Any]:
+        """
+        Get the resolved Opik configuration (TEA-BUILTIN-005.3).
+
+        Returns a dictionary with all Opik settings after applying
+        the precedence hierarchy:
+        1. Constructor parameters (highest priority)
+        2. Environment variables
+        3. YAML settings
+        4. Defaults (lowest priority)
+
+        Returns:
+            Dictionary with keys: enabled, api_key, workspace, project_name,
+            url, llm_tracing, trace_export.
+
+        Example:
+            >>> engine = YAMLEngine(opik_project_name="my-project")
+            >>> print(engine.opik_config)
+            {'enabled': False, 'api_key': None, 'workspace': None,
+             'project_name': 'my-project', 'url': None,
+             'llm_tracing': False, 'trace_export': False}
+        """
+        return self._opik_config.copy()
+
+    def _resolve_opik_config(
+        self,
+        yaml_settings: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Resolve Opik configuration with proper precedence hierarchy.
+
+        Precedence (highest to lowest):
+        1. Constructor parameters
+        2. Environment variables
+        3. YAML settings
+        4. Defaults
+
+        Args:
+            yaml_settings: Optional YAML settings.opik section.
+                          If None, only constructor and env vars are used.
+
+        Returns:
+            Resolved configuration dictionary.
+        """
+        # Start with defaults
+        config = {
+            "enabled": False,
+            "api_key": None,
+            "workspace": None,
+            "project_name": "the-edge-agent",
+            "url": None,
+            "llm_tracing": False,
+            "trace_export": False,
+        }
+
+        # Apply YAML settings (lowest priority after defaults)
+        if yaml_settings and isinstance(yaml_settings, dict):
+            for key in config:
+                if key in yaml_settings and yaml_settings[key] is not None:
+                    config[key] = yaml_settings[key]
+
+        # Apply environment variables (higher priority)
+        env_mapping = {
+            "OPIK_API_KEY": "api_key",
+            "OPIK_WORKSPACE": "workspace",
+            "OPIK_PROJECT_NAME": "project_name",
+            "OPIK_URL_OVERRIDE": "url",
+        }
+        for env_var, config_key in env_mapping.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                config[config_key] = env_value
+
+        # Apply constructor parameters (highest priority)
+        constructor_params = getattr(self, "_opik_constructor_params", {})
+        for key, value in constructor_params.items():
+            if value is not None:
+                config[key] = value
+
+        # Log effective configuration at debug level
+        logger.debug(
+            f"Opik configuration resolved: enabled={config['enabled']}, "
+            f"project_name={config['project_name']}, "
+            f"workspace={config['workspace'] or 'default'}, "
+            f"llm_tracing={config['llm_tracing']}, "
+            f"trace_export={config['trace_export']}"
+        )
+
+        return config
+
+    def _add_opik_exporter_from_config(self) -> None:
+        """
+        Add an OpikExporter to the trace context using resolved config.
+
+        Uses the current _opik_config to create and add an OpikExporter.
+        Checks if an OpikExporter is already present to avoid duplicates.
+
+        This method is called:
+        - When trace_exporter="opik" in YAML settings
+        - When settings.opik.trace_export=true
+        """
+        if self._trace_context is None:
+            return
+
+        # Check if OpikExporter already added (avoid duplicates)
+        from .exporters import OpikExporter
+        for exporter in self._trace_context.exporters:
+            if isinstance(exporter, OpikExporter):
+                return
+
+        # Create exporter with resolved config
+        config = self._opik_config
+        exporter = OpikExporter(
+            api_key=config.get("api_key"),
+            project_name=config.get("project_name"),
+            workspace=config.get("workspace"),
+            url_override=config.get("url")
+        )
+        self._trace_context.exporters.append(exporter)
+        logger.debug("OpikExporter added from resolved configuration")
 
     def close(self) -> None:
         """
@@ -425,6 +606,22 @@ class YAMLEngine:
         # Extract settings (YAML-level configuration)
         settings = config.get('settings', {})
 
+        # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
+        # Settings can be nested under 'opik' key or flat under 'settings'
+        opik_yaml_settings = settings.get('opik', {})
+        if not isinstance(opik_yaml_settings, dict):
+            opik_yaml_settings = {}
+
+        # Re-resolve Opik config with YAML settings applied
+        self._opik_config = self._resolve_opik_config(opik_yaml_settings)
+
+        # Update llm_tracing flag from resolved config
+        if self._opik_config.get('llm_tracing', False):
+            self._opik_llm_tracing = True
+        # Also check flat setting for backwards compatibility
+        if settings.get('opik_llm_tracing', False):
+            self._opik_llm_tracing = True
+
         # Handle auto-trace from YAML settings
         if settings.get('auto_trace', False) and self._enable_tracing:
             self._auto_trace = True
@@ -436,8 +633,16 @@ class YAMLEngine:
                     self._trace_context.exporters.append(ConsoleExporter(verbose=False))
                 elif trace_exporter == 'file' and trace_file:
                     self._trace_context.exporters.append(FileExporter(trace_file))
+                elif trace_exporter == 'opik':
+                    self._add_opik_exporter_from_config()
         else:
             self._auto_trace = False
+
+        # TEA-BUILTIN-005.3: Add Opik exporter if trace_export is enabled in config
+        if (self._opik_config.get('trace_export', False) and
+            self._enable_tracing and
+            self._trace_context is not None):
+            self._add_opik_exporter_from_config()
 
         # Create graph
         compile_config = config.get('config', {})
@@ -709,6 +914,9 @@ class YAMLEngine:
         output_key: Optional[str] = None
     ) -> Callable:
         """Create a function that calls a built-in action."""
+        # Capture engine reference for closure
+        engine_opik_llm_tracing = self._opik_llm_tracing
+
         def run_action(state, **kwargs):
             # Get action from registry
             if action_name not in self.actions_registry:
@@ -718,6 +926,12 @@ class YAMLEngine:
 
             # Process parameters (template replacement)
             processed_params = self._process_params(params, state)
+
+            # Inject opik_trace for LLM actions if engine has it enabled (TEA-BUILTIN-005.2)
+            # Only inject if not explicitly set in params
+            if action_name in ('llm.call', 'llm.stream', 'actions.llm_call', 'actions.llm_stream'):
+                if 'opik_trace' not in processed_params and engine_opik_llm_tracing:
+                    processed_params['opik_trace'] = True
 
             # Call action
             result = action_func(state=state, **processed_params, **kwargs)
