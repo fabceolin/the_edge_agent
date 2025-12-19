@@ -453,6 +453,297 @@ All code actions are available via dual namespaces: `code.*` and `actions.code_*
 - `memory.retrieve` - Retrieve values by key with optional default fallback
 - `memory.summarize` - Summarize conversation history using LLM to fit token windows
 
+**Firebase Agent Memory Actions** (TEA-BUILTIN-006):
+
+Cloud-native agent memory layer with DuckDB search, vector similarity, and session management.
+Uses abstract backend interfaces (MetadataStore, BlobStorage, QueryEngine, VectorIndex) for portability.
+
+Required dependencies:
+- `pip install firebase-admin` - For Firestore/GCS backends
+- `pip install duckdb` - For query engine and vector search
+- `pip install sqlglot` - For SQL validation
+- `pip install tiktoken` - For token counting
+
+Or install with extras:
+- `pip install the-edge-agent[firebase]`
+
+**Cloud Memory Actions**:
+- `memory.cloud_store` - Store content to cloud storage with metadata
+- `memory.cloud_retrieve` - Retrieve content from cloud storage
+- `memory.cloud_list` - List files with filtering
+
+```python
+# Store content with metadata
+result = engine.actions_registry['memory.cloud_store'](
+    state={},
+    path="firms/acme/profile.yaml",
+    content="name: ACME Corp\nstatus: active",
+    metadata={"status": "active", "summary": "Company profile"}
+)
+# Returns: {"success": True, "storage_uri": str, "content_hash": "sha256:...", "doc_id": str}
+
+# Retrieve content
+result = engine.actions_registry['memory.cloud_retrieve'](
+    state={},
+    path="firms/acme/profile.yaml"
+)
+# Returns: {"success": True, "content": str, "metadata": dict}
+
+# List files with optional prefix filter
+result = engine.actions_registry['memory.cloud_list'](
+    state={},
+    prefix="firms/",
+    limit=100
+)
+# Returns: {"success": True, "files": list, "count": int}
+```
+
+**Search Actions**:
+- `memory.grep` - LIKE/regex search across memory files
+- `memory.sql_query` - Full SQL query with safety controls (SELECT only)
+
+```python
+# Grep search (deterministic, exact match)
+result = engine.actions_registry['memory.grep'](
+    state={},
+    pattern="TODO",
+    path_filter="*.yaml",
+    case_sensitive=False
+)
+# Returns: {"success": True, "results": list, "count": int}
+
+# SQL query (sandboxed - SELECT only, no dangerous functions)
+result = engine.actions_registry['memory.sql_query'](
+    state={},
+    query="SELECT file_path, summary FROM agent_memory WHERE status = 'active' LIMIT 10",
+    path_filter="firms/*"
+)
+# Returns: {"success": True, "results": list, "count": int, "columns": list}
+```
+
+**Vector/Embedding Actions**:
+- `memory.embed` - Generate embedding for content
+- `memory.embed_batch` - Generate embeddings for multiple contents
+- `memory.vector_search` - Semantic search using query text
+- `memory.vector_search_by_embedding` - Search using pre-computed embedding
+- `memory.backfill_embeddings` - Backfill embeddings for existing docs
+- `memory.vector_load_data` - Load Parquet data into vector index
+- `memory.vector_build_index` - Build HNSW vector index
+- `memory.vector_stats` - Get vector index statistics
+
+```python
+# Generate embedding
+result = engine.actions_registry['memory.embed'](
+    state={},
+    content="Legal analysis of contract terms"
+)
+# Returns: {"success": True, "embedding": List[float], "model": str, "dimensions": 1536}
+
+# Semantic vector search
+result = engine.actions_registry['memory.vector_search'](
+    state={},
+    query="legal contract analysis",
+    top_k=10,
+    threshold=0.7,
+    content_type="yaml"  # Optional filter
+)
+# Returns: {"success": True, "results": [{"id": str, "score": float, "content": str, "metadata": dict}], "count": int}
+
+# Search by pre-computed embedding
+result = engine.actions_registry['memory.vector_search_by_embedding'](
+    state={},
+    embedding=[0.1, 0.2, ...],  # 1536 dimensions
+    top_k=5
+)
+# Returns: {"success": True, "results": list, "count": int}
+
+# Get index statistics
+result = engine.actions_registry['memory.vector_stats'](state={})
+# Returns: {"success": True, "stats": {"count": int, "dimensions": int, "index_built": bool}}
+```
+
+**Session Actions**:
+- `session.create` - Create new session with TTL
+- `session.end` - End session and archive its memory
+- `session.archive` - Archive session with custom reason
+- `session.restore` - Restore archived session
+- `session.get` - Get session metadata
+- `session.list` - List sessions with filtering
+
+```python
+# Create session
+result = engine.actions_registry['session.create'](
+    state={},
+    session_id="interview-123",
+    user_id="user-456",
+    ttl_hours=24,
+    metadata={"type": "interview", "firm": "acme"}
+)
+# Returns: {"success": True, "session_id": str, "expires_at": datetime}
+
+# Get session
+result = engine.actions_registry['session.get'](
+    state={},
+    session_id="interview-123"
+)
+# Returns: {"success": True, "session": {"id": str, "status": str, "metadata": dict, ...}}
+
+# End session (archives to archived-sessions/)
+result = engine.actions_registry['session.end'](
+    state={},
+    session_id="interview-123"
+)
+# Returns: {"success": True, "archived": True, "archive_path": str}
+
+# Restore archived session
+result = engine.actions_registry['session.restore'](
+    state={},
+    session_id="interview-123"
+)
+# Returns: {"success": True, "restored": True, "session_id": str}
+```
+
+**Catalog Actions** (DuckLake catalog for Parquet files):
+- `catalog.register_table` - Register new table in catalog
+- `catalog.get_table` / `catalog.list_tables` - Query tables
+- `catalog.track_file` - Track Parquet/delta file
+- `catalog.get_file` / `catalog.list_files` - Query files
+- `catalog.create_snapshot` - Create point-in-time snapshot
+- `catalog.get_latest_snapshot` / `catalog.list_snapshots` - Query snapshots
+- `catalog.get_changed_files` - Get files changed since snapshot
+
+```python
+# Register a table
+result = engine.actions_registry['catalog.register_table'](
+    state={},
+    name="agent_memory",
+    table_type="memory",
+    source_prefix="agent-memory/",
+    schema={"file_path": "VARCHAR", "content": "VARCHAR", "embedding": "FLOAT[1536]"}
+)
+# Returns: {"success": True, "table_id": str, "name": str}
+
+# Track a Parquet file
+result = engine.actions_registry['catalog.track_file'](
+    state={},
+    table="agent_memory",
+    path="gs://bucket/parquet/agent_memory.parquet",
+    row_count=500
+)
+# Returns: {"success": True, "file_id": str, "path": str}
+
+# Create snapshot
+result = engine.actions_registry['catalog.create_snapshot'](
+    state={},
+    table="agent_memory"
+)
+# Returns: {"success": True, "snapshot_id": str, "created_at": datetime}
+```
+
+**Tabular Data Actions** (DuckLake hybrid storage for structured data):
+- `data.create_table` - Create table with schema and primary key
+- `data.insert` - Insert rows (auto-selects inline vs Parquet storage)
+- `data.update` - Update rows by primary key (append-only versioning)
+- `data.delete` - Delete rows by primary key (tombstone pattern)
+- `data.query` - SQL query with Last-Write-Wins merge
+- `data.consolidate` - Compact inlined rows into Parquet files
+
+Storage strategy:
+- **Inline** (<1KB): Small batches stored in metadata store for low-latency access
+- **Parquet** (≥1KB): Large batches stored as Parquet files in blob storage
+- **LWW Merge**: Queries merge both sources, keeping highest `_version` per primary key
+- **Tombstones**: Deletes create `_op='D'` records, filtered at query time
+
+```python
+# Create a table
+result = engine.actions_registry['data.create_table'](
+    state={},
+    name="firm_scores",
+    schema={"firm_id": "string", "score": "float", "category": "string"},
+    primary_key=["firm_id"]
+)
+# Returns: {"success": True, "table": str, "schema": dict}
+
+# Insert rows (auto-selects inline or Parquet based on size)
+result = engine.actions_registry['data.insert'](
+    state={},
+    table="firm_scores",
+    rows=[
+        {"firm_id": "f1", "score": 85.5, "category": "A"},
+        {"firm_id": "f2", "score": 92.0, "category": "A+"}
+    ]
+)
+# Returns: {"success": True, "table": str, "row_count": int, "storage": "inlined"|"parquet"}
+
+# Update rows (append-only versioning)
+result = engine.actions_registry['data.update'](
+    state={},
+    table="firm_scores",
+    where={"firm_id": "f1"},
+    updates={"score": 90.0, "category": "A+"}
+)
+# Returns: {"success": True, "table": str, "status": "updated", "row_count": 1}
+
+# Delete rows (creates tombstone)
+result = engine.actions_registry['data.delete'](
+    state={},
+    table="firm_scores",
+    where={"firm_id": "f2"}
+)
+# Returns: {"success": True, "table": str, "status": "deleted", "row_count": 1}
+
+# Query with SQL (merges Parquet + inlined data)
+result = engine.actions_registry['data.query'](
+    state={},
+    table="firm_scores",
+    sql="SELECT * FROM data WHERE score > 80 ORDER BY score DESC"
+)
+# Returns: {"success": True, "table": str, "rows": list, "row_count": int}
+
+# Consolidate (compact inlined rows into Parquet)
+result = engine.actions_registry['data.consolidate'](
+    state={},
+    table="firm_scores"
+)
+# Returns: {"success": True, "table": str, "status": "consolidated", "parquet_path": str}
+```
+
+Schema types: `string`, `integer`, `float`, `boolean`, `timestamp`, `json`
+
+All tabular data actions use dual namespaces: `data.*` and `actions.data_*`.
+
+**Backend Configuration**:
+
+YAMLEngine accepts backend injection for all memory operations:
+
+```python
+from the_edge_agent import YAMLEngine
+from the_edge_agent.memory import (
+    FirestoreMetadataStore,
+    GCSBlobStorage,
+    DuckDBQueryEngine,
+    DuckDBVSSIndex,
+)
+
+# Inject Firebase backends
+engine = YAMLEngine(
+    metadata_backend=FirestoreMetadataStore(project_id="my-project"),
+    blob_backend=GCSBlobStorage(bucket="my-bucket"),
+    query_backend=DuckDBQueryEngine(parquet_path="gs://bucket/agent_memory.parquet"),
+    vector_backend=DuckDBVSSIndex(dimensions=1536),
+)
+```
+
+Environment variables for Firebase backends:
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Firebase Admin SDK credentials |
+| `GCS_ACCESS_KEY_ID` | GCS HMAC access key for DuckDB httpfs |
+| `GCS_SECRET_ACCESS_KEY` | GCS HMAC secret key |
+| `OPENAI_API_KEY` | OpenAI API key for text-embedding-3-small |
+
+All Firebase memory actions use dual namespaces: `memory.*`, `session.*`, `catalog.*` and `actions.memory_*`, etc.
+
 **Long-Term Memory Actions** (TEA-BUILTIN-001.4):
 - `ltm.store` - Store key-value pairs persistently with optional metadata
 - `ltm.retrieve` - Retrieve values by key from persistent storage

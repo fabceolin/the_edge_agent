@@ -33,7 +33,12 @@ logger = logging.getLogger(__name__)
 from .memory import (
     MemoryBackend, InMemoryBackend,
     LongTermMemoryBackend, SQLiteBackend,
-    GraphBackend, COZO_AVAILABLE, KUZU_AVAILABLE
+    GraphBackend, COZO_AVAILABLE, KUZU_AVAILABLE,
+    # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
+    MetadataStore, create_metadata_store, FIRESTORE_AVAILABLE,
+    BlobStorage, create_blob_storage, GCS_AVAILABLE,
+    QueryEngine, create_query_engine, DUCKDB_AVAILABLE,
+    VectorIndex, create_vector_index, DUCKDB_VSS_AVAILABLE,
 )
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 from .actions import build_actions_registry
@@ -103,7 +108,17 @@ class YAMLEngine:
         opik_project_name: Optional[str] = None,
         opik_url: Optional[str] = None,
         opik_enabled: Optional[bool] = None,
-        opik_trace_export: bool = False
+        opik_trace_export: bool = False,
+        # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
+        metadata_store: Optional[Any] = None,
+        enable_metadata_store: bool = True,
+        blob_storage: Optional[Any] = None,
+        enable_blob_storage: bool = True,
+        query_engine: Optional[Any] = None,
+        enable_query_engine: bool = True,
+        vector_index: Optional[Any] = None,
+        enable_vector_index: bool = True,
+        embedding_fn: Optional[Callable[[str], List[float]]] = None,
     ):
         """
         Initialize the YAML engine.
@@ -151,6 +166,29 @@ class YAMLEngine:
             opik_enabled: Explicitly enable/disable all Opik features.
                          When None, Opik is enabled if trace_exporter="opik".
             opik_trace_export: Export TEA trace spans to Opik (default: False).
+            metadata_store: Optional custom MetadataStore implementation for
+                           document database operations (e.g., Firestore).
+                           If None and enable_metadata_store=True, auto-creates
+                           based on available providers.
+            enable_metadata_store: Enable metadata store (default: True).
+            blob_storage: Optional custom BlobStorage implementation for
+                         cloud object storage (e.g., GCS, S3).
+                         If None and enable_blob_storage=True, auto-creates
+                         based on available providers.
+            enable_blob_storage: Enable blob storage (default: True).
+            query_engine: Optional custom QueryEngine implementation for
+                         SQL queries with resilience patterns.
+                         If None and enable_query_engine=True, auto-creates
+                         DuckDB-based engine if available.
+            enable_query_engine: Enable query engine (default: True).
+            vector_index: Optional custom VectorIndex implementation for
+                         vector similarity search.
+                         If None and enable_vector_index=True, auto-creates
+                         DuckDB VSS-based index if available.
+            enable_vector_index: Enable vector index (default: True).
+            embedding_fn: Optional function to generate embeddings from text.
+                         Signature: (text: str) -> List[float].
+                         Used by vector_actions for memory.vector_search.
         """
         # TEA-BUILTIN-005.3: Store Opik constructor params first (needed for exporter creation)
         self._opik_constructor_params = {
@@ -254,6 +292,58 @@ class YAMLEngine:
         # Code execution flag (TEA-BUILTIN-003.1) - DISABLED by default for security
         self._enable_code_execution = enable_code_execution
 
+        # TEA-BUILTIN-006: Initialize Firebase Agent Memory Infrastructure
+        # Metadata Store (document database)
+        self._metadata_store: Optional[Any] = None
+        self._enable_metadata_store = enable_metadata_store
+        if enable_metadata_store:
+            if metadata_store is not None:
+                self._metadata_store = metadata_store
+            elif FIRESTORE_AVAILABLE:
+                try:
+                    self._metadata_store = create_metadata_store("firestore")
+                except Exception as e:
+                    logger.warning(f"Failed to create Firestore metadata store: {e}")
+
+        # Blob Storage (object storage)
+        self._blob_storage: Optional[Any] = None
+        self._enable_blob_storage = enable_blob_storage
+        if enable_blob_storage:
+            if blob_storage is not None:
+                self._blob_storage = blob_storage
+            elif GCS_AVAILABLE:
+                try:
+                    self._blob_storage = create_blob_storage("gcs")
+                except Exception as e:
+                    logger.warning(f"Failed to create GCS blob storage: {e}")
+
+        # Query Engine (SQL with resilience)
+        self._query_engine: Optional[Any] = None
+        self._enable_query_engine = enable_query_engine
+        if enable_query_engine:
+            if query_engine is not None:
+                self._query_engine = query_engine
+            elif DUCKDB_AVAILABLE:
+                try:
+                    self._query_engine = create_query_engine("duckdb")
+                except Exception as e:
+                    logger.warning(f"Failed to create DuckDB query engine: {e}")
+
+        # Vector Index (vector similarity search)
+        self._vector_index: Optional[Any] = None
+        self._enable_vector_index = enable_vector_index
+        if enable_vector_index:
+            if vector_index is not None:
+                self._vector_index = vector_index
+            elif DUCKDB_VSS_AVAILABLE:
+                try:
+                    self._vector_index = create_vector_index("duckdb")
+                except Exception as e:
+                    logger.warning(f"Failed to create DuckDB VSS vector index: {e}")
+
+        # Embedding function for vector search
+        self._embedding_fn = embedding_fn
+
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
 
@@ -304,6 +394,63 @@ class YAMLEngine:
             None if graph is disabled or CozoDB is not installed.
         """
         return self._graph_backend
+
+    # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure properties
+
+    @property
+    def metadata_store(self) -> Optional[Any]:
+        """
+        Get the metadata store instance.
+
+        Returns:
+            The current MetadataStore (FirestoreMetadataStore if available, or custom).
+            None if metadata store is disabled or no provider is available.
+        """
+        return self._metadata_store
+
+    @property
+    def blob_storage(self) -> Optional[Any]:
+        """
+        Get the blob storage instance.
+
+        Returns:
+            The current BlobStorage (GCSBlobStorage if available, or custom).
+            None if blob storage is disabled or no provider is available.
+        """
+        return self._blob_storage
+
+    @property
+    def query_engine(self) -> Optional[Any]:
+        """
+        Get the query engine instance.
+
+        Returns:
+            The current QueryEngine (DuckDBQueryEngine if available, or custom).
+            None if query engine is disabled or DuckDB is not installed.
+        """
+        return self._query_engine
+
+    @property
+    def vector_index(self) -> Optional[Any]:
+        """
+        Get the vector index instance.
+
+        Returns:
+            The current VectorIndex (DuckDBVSSIndex if available, or custom).
+            None if vector index is disabled or DuckDB VSS is not installed.
+        """
+        return self._vector_index
+
+    @property
+    def embedding_fn(self) -> Optional[Callable[[str], List[float]]]:
+        """
+        Get the embedding function.
+
+        Returns:
+            The current embedding function for generating embeddings from text.
+            None if no embedding function is configured.
+        """
+        return self._embedding_fn
 
     @property
     def opik_llm_tracing(self) -> bool:
@@ -440,6 +587,79 @@ class YAMLEngine:
         self._trace_context.exporters.append(exporter)
         logger.debug("OpikExporter added from resolved configuration")
 
+    def _configure_memory_infrastructure(self, config: Dict[str, Any]) -> None:
+        """
+        Configure Firebase Agent Memory Infrastructure from YAML settings.
+
+        TEA-BUILTIN-006: Allows runtime configuration of memory backends via YAML.
+
+        Args:
+            config: Memory infrastructure configuration dict with keys:
+                - metadata_store: {type: str, ...provider-specific options}
+                - blob_storage: {type: str, bucket?: str, ...}
+                - query_engine: {type: str, ...}
+                - vector_index: {type: str, dimensions?: int, ...}
+
+        Example YAML:
+            settings:
+              memory_infrastructure:
+                metadata_store:
+                  type: firestore
+                blob_storage:
+                  type: gcs
+                  bucket: my-bucket
+                query_engine:
+                  type: duckdb
+                  enable_httpfs: true
+                vector_index:
+                  type: duckdb
+                  dimensions: 1536
+        """
+        # Configure MetadataStore
+        metadata_config = config.get('metadata_store', {})
+        if metadata_config and self._metadata_store is None:
+            store_type = metadata_config.get('type', 'firestore')
+            try:
+                # Remove 'type' from config before passing to factory
+                store_kwargs = {k: v for k, v in metadata_config.items() if k != 'type'}
+                self._metadata_store = create_metadata_store(store_type, **store_kwargs)
+                logger.info(f"Configured metadata store: {store_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure metadata store '{store_type}': {e}")
+
+        # Configure BlobStorage
+        blob_config = config.get('blob_storage', {})
+        if blob_config and self._blob_storage is None:
+            storage_type = blob_config.get('type', 'gcs')
+            try:
+                storage_kwargs = {k: v for k, v in blob_config.items() if k != 'type'}
+                self._blob_storage = create_blob_storage(storage_type, **storage_kwargs)
+                logger.info(f"Configured blob storage: {storage_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure blob storage '{storage_type}': {e}")
+
+        # Configure QueryEngine
+        query_config = config.get('query_engine', {})
+        if query_config and self._query_engine is None:
+            engine_type = query_config.get('type', 'duckdb')
+            try:
+                engine_kwargs = {k: v for k, v in query_config.items() if k != 'type'}
+                self._query_engine = create_query_engine(engine_type, **engine_kwargs)
+                logger.info(f"Configured query engine: {engine_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure query engine '{engine_type}': {e}")
+
+        # Configure VectorIndex
+        vector_config = config.get('vector_index', {})
+        if vector_config and self._vector_index is None:
+            index_type = vector_config.get('type', 'duckdb')
+            try:
+                index_kwargs = {k: v for k, v in vector_config.items() if k != 'type'}
+                self._vector_index = create_vector_index(index_type, **index_kwargs)
+                logger.info(f"Configured vector index: {index_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure vector index '{index_type}': {e}")
+
     def close(self) -> None:
         """
         Close all backends and release resources.
@@ -463,6 +683,26 @@ class YAMLEngine:
                 self._graph_backend.close()
             except Exception:
                 pass
+
+        # TEA-BUILTIN-006: Close Firebase Agent Memory Infrastructure backends
+        if self._query_engine is not None:
+            try:
+                self._query_engine.close()
+            except Exception:
+                pass
+
+        if self._vector_index is not None:
+            try:
+                self._vector_index.close()
+            except Exception:
+                pass
+
+        # MetadataStore and BlobStorage typically don't need explicit closing
+        # but we clear references to allow garbage collection
+        self._metadata_store = None
+        self._blob_storage = None
+        self._query_engine = None
+        self._vector_index = None
 
     def __del__(self):
         """Cleanup on garbage collection."""
@@ -643,6 +883,11 @@ class YAMLEngine:
             self._enable_tracing and
             self._trace_context is not None):
             self._add_opik_exporter_from_config()
+
+        # TEA-BUILTIN-006: Configure Firebase Agent Memory Infrastructure from YAML settings
+        memory_infra = settings.get('memory_infrastructure', {})
+        if memory_infra:
+            self._configure_memory_infrastructure(memory_infra)
 
         # Create graph
         compile_config = config.get('config', {})
