@@ -42,6 +42,7 @@ setup(
             "requests>=2.32.5",     # For web actions tests
             "RestrictedPython>=8.0",  # For code execution tests
             "duckdb>=0.10.0",       # For tabular data tests (data_query, data_consolidate)
+            "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
