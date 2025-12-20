@@ -1,8 +1,8 @@
 """
-Memory Backend Infrastructure for YAMLEngine (TEA-BUILTIN-001.1, 001.4, 001.5).
+Memory Backend Infrastructure for YAMLEngine (TEA-BUILTIN-001.1, 001.4, 001.5, 006).
 
 This package provides pluggable memory backends for short-term, long-term,
-and graph storage:
+graph storage, and Firebase agent memory infrastructure:
 
 SHORT-TERM MEMORY (001.1):
 - InMemoryBackend: Session-scoped key-value storage with TTL support
@@ -17,6 +17,12 @@ LONG-TERM MEMORY (001.4, 001.5):
 - PostgresBackend: PostgreSQL with tsvector search
 - LitestreamBackend: SQLite with cloud replication
 - BlobSQLiteBackend: SQLite on blob storage with distributed locking
+
+FIREBASE AGENT MEMORY (006):
+- MetadataStore: Document database interface (Firestore)
+- BlobStorage: Object storage interface (GCS)
+- QueryEngine: SQL query interface with resilience (DuckDB)
+- VectorIndex: Vector similarity search interface (DuckDB VSS)
 
 GRAPH DATABASE (001.4):
 - CozoBackend: CozoDB with Datalog queries and HNSW vectors
@@ -115,6 +121,69 @@ try:
 except (ImportError, NameError):
     RedisLock = None  # type: ignore
 
+# Firebase Agent Memory Infrastructure (TEA-BUILTIN-006)
+# Metadata Store
+from .metadata import (
+    MetadataStore,
+    MetadataQuery,
+    create_metadata_store,
+    register_metadata_store,
+    get_registered_metadata_stores,
+    FIRESTORE_AVAILABLE,
+)
+
+try:
+    from .metadata import FirestoreMetadataStore
+except ImportError:
+    FirestoreMetadataStore = None  # type: ignore
+
+# Blob Storage
+from .blob import (
+    BlobStorage,
+    BlobInfo,
+    create_blob_storage,
+    register_blob_storage,
+    get_registered_blob_storages,
+    GCS_AVAILABLE,
+)
+
+try:
+    from .blob import GCSBlobStorage
+except ImportError:
+    GCSBlobStorage = None  # type: ignore
+
+# Query Engine
+from .query import (
+    QueryEngine,
+    QueryConfig,
+    CircuitState,
+    create_query_engine,
+    register_query_engine,
+    get_registered_query_engines,
+    DUCKDB_AVAILABLE,
+)
+
+try:
+    from .query import DuckDBQueryEngine
+except ImportError:
+    DuckDBQueryEngine = None  # type: ignore
+
+# Vector Index
+from .vector import (
+    VectorIndex,
+    VectorSearchConfig,
+    SearchResult,
+    create_vector_index,
+    register_vector_index,
+    get_registered_vector_indexes,
+    DUCKDB_VSS_AVAILABLE,
+)
+
+try:
+    from .vector import DuckDBVSSIndex
+except ImportError:
+    DuckDBVSSIndex = None  # type: ignore
+
 __all__ = [
     # Short-term memory (TEA-BUILTIN-001.1)
     "MemoryBackend",
@@ -146,4 +215,39 @@ __all__ = [
     "create_lock",
     "FirestoreLock",
     "RedisLock",
+    # Firebase Agent Memory Infrastructure (TEA-BUILTIN-006)
+    # Metadata Store
+    "MetadataStore",
+    "MetadataQuery",
+    "FirestoreMetadataStore",
+    "create_metadata_store",
+    "register_metadata_store",
+    "get_registered_metadata_stores",
+    "FIRESTORE_AVAILABLE",
+    # Blob Storage
+    "BlobStorage",
+    "BlobInfo",
+    "GCSBlobStorage",
+    "create_blob_storage",
+    "register_blob_storage",
+    "get_registered_blob_storages",
+    "GCS_AVAILABLE",
+    # Query Engine
+    "QueryEngine",
+    "QueryConfig",
+    "CircuitState",
+    "DuckDBQueryEngine",
+    "create_query_engine",
+    "register_query_engine",
+    "get_registered_query_engines",
+    "DUCKDB_AVAILABLE",
+    # Vector Index
+    "VectorIndex",
+    "VectorSearchConfig",
+    "SearchResult",
+    "DuckDBVSSIndex",
+    "create_vector_index",
+    "register_vector_index",
+    "get_registered_vector_indexes",
+    "DUCKDB_VSS_AVAILABLE",
 ]

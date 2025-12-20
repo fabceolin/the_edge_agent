@@ -17,6 +17,14 @@ Actions are organized by domain:
 - tools_actions: Bridges to CrewAI, MCP, and LangChain tool ecosystems (TEA-BUILTIN-002.3)
 - code_actions: Sandboxed Python code execution (TEA-BUILTIN-003.1)
 
+Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
+- catalog_actions: Data catalog for tables, files, and snapshots
+- cloud_memory_actions: Cloud storage with metadata management
+- search_actions: SQL and full-text search via QueryEngine
+- vector_actions: Vector similarity search via VectorIndex
+- session_actions: Session lifecycle with archive-based expiration
+- context_actions: Context assembly with relevance ranking
+
 Usage:
     >>> from the_edge_agent.actions import build_actions_registry
     >>>
@@ -47,6 +55,15 @@ from .web_actions import register_actions as register_web
 from .rag_actions import register_actions as register_rag
 from .tools_actions import register_actions as register_tools
 from .code_actions import register_actions as register_code
+
+# TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
+from .catalog_actions import register_actions as register_catalog
+from .cloud_memory_actions import register_actions as register_cloud_memory
+from .search_actions import register_actions as register_search
+from .vector_actions import register_actions as register_vector
+from .session_actions import register_actions as register_session
+from .context_actions import register_actions as register_context
+from .data_tabular_actions import register_actions as register_data_tabular
 
 
 def build_actions_registry(engine: Any) -> Dict[str, Callable]:
@@ -89,6 +106,15 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     register_rag(registry, engine)
     register_tools(registry, engine)
     register_code(registry, engine)
+
+    # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
+    register_catalog(registry, engine)
+    register_cloud_memory(registry, engine)
+    register_search(registry, engine)
+    register_vector(registry, engine)
+    register_session(registry, engine)
+    register_context(registry, engine)
+    register_data_tabular(registry, engine)
 
     return registry
 

@@ -273,3 +273,251 @@ Each module should have:
 3. Constants
 4. Classes/Functions
 5. Main block (if applicable)
+
+## Implementation Details
+
+### Special Node Constants
+
+Always use the exported constants instead of string literals:
+
+```python
+from the_edge_agent import START, END
+
+# Correct
+if next_node == END:
+    break
+
+# Incorrect - avoid string literals
+if next_node == "__end__":  # Don't do this
+    break
+```
+
+### Thread Safety in Parallel Execution
+
+Parallel flows require careful state management:
+
+```python
+# Deep copy for parallel flows (prevents state corruption)
+future = executor.submit(
+    self._execute_flow,
+    successor,
+    copy.deepcopy(state),  # MUST deep copy
+    ...
+)
+
+# Lock for fan-in synchronization
+with self._fan_in_lock:
+    results.append(flow_result)
+```
+
+**Key Rules:**
+1. Always deep copy state before passing to threads
+2. Use locks when collecting results at fan-in nodes
+3. Never share mutable state between parallel flows
+4. `parallel_results` is only available in fan-in node functions
+
+### State Immutability Pattern
+
+State should never be modified in place:
+
+```python
+def node_function(state):
+    # Correct: Return new dict with updates
+    return {
+        "processed": True,
+        "result": state["value"] * 2
+    }
+
+    # Incorrect: Don't modify state directly
+    # state["processed"] = True  # Don't do this
+```
+
+**Copy Points:**
+- `input_state.copy()` at execution start
+- `copy.deepcopy(state)` for parallel flows
+- `state.copy()` when yielding events
+
+### Interrupt Behavior
+
+Interrupts stop execution completely and require explicit resume:
+
+```python
+# Interrupts require a checkpointer
+graph.compile(
+    interrupt_before=["review"],
+    checkpointer=MemoryCheckpointer()  # Required
+)
+
+# Resume merges new state into checkpoint
+graph.invoke({"approved": True}, checkpoint=checkpoint_path)
+```
+
+**Resume Behavior:**
+- `interrupt_before`: Resume re-executes the interrupted node
+- `interrupt_after`: Resume continues to next node (no re-execution)
+
+### Edge Condition Re-evaluation
+
+Conditional edges are evaluated on each traversal:
+
+```python
+# Condition function is called every time edge is considered
+graph.add_conditional_edges(
+    "check",
+    lambda state: state["count"] < state["max"],
+    {True: "process", False: "done"}
+)
+
+# Allows for loops with changing state
+def process(state):
+    return {"count": state["count"] + 1}
+```
+
+### Graph Compilation
+
+Compilation is required before execution to finalize configuration:
+
+```python
+# Always compile before invoke/stream
+graph.compile(
+    interrupt_before=["review"],
+    interrupt_after=["validate"],
+    checkpointer=checkpointer,
+    parallel_config=default_config
+)
+
+# Compile returns self for chaining
+result = list(graph.compile().invoke(initial_state))
+```
+
+### Exception Handling Modes
+
+Two modes controlled by `raise_exceptions` parameter:
+
+```python
+# Mode 1: Yield error events (default)
+graph.compile(raise_exceptions=False)
+for event in graph.invoke(state):
+    if event["type"] == "error":
+        handle_error(event["error"])
+
+# Mode 2: Raise exceptions
+graph.compile(raise_exceptions=True)
+try:
+    list(graph.invoke(state))
+except RuntimeError as e:
+    handle_error(e)
+```
+
+### Checkpoint File Format
+
+Checkpoints use pickle format (version 1.0):
+
+```python
+checkpoint = {
+    "state": dict,           # Full state at checkpoint
+    "node": str,             # Node name
+    "config": dict,          # Configuration
+    "timestamp": float,      # Unix timestamp
+    "version": "1.0",        # Format version
+    "parallel_results": list # If at fan-in node
+}
+```
+
+**File naming:** `{checkpoint_dir}/{node}_{timestamp_ms}.pkl`
+
+## YAML Engine Internals
+
+### Template Processing
+
+Templates use `{{ }}` syntax with optional filters:
+
+```python
+# Pattern for variable substitution
+pattern = r'\{\{\s*([^}]+)\s*\}\}'
+
+# Available scopes
+# {{ state.key }}      - Runtime state
+# {{ variables.key }}  - YAML variables section
+# {{ secrets.key }}    - Secrets passed to engine
+```
+
+### Action Registration
+
+Built-in actions follow this pattern:
+
+```python
+def action_name(state, param1, param2=None, **kwargs):
+    """
+    Action description.
+
+    Args:
+        state: Current workflow state
+        param1: Required parameter
+        param2: Optional parameter
+
+    Returns:
+        dict: Result with 'success' key
+    """
+    try:
+        result = do_something(param1, param2)
+        return {"result": result, "success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+```
+
+### Dynamic Code Execution
+
+The YAML engine uses `exec()` and `eval()`:
+
+```python
+# Inline code execution
+exec(wrapper_code, exec_globals, exec_locals)
+
+# Expression evaluation
+result = eval(expr_processed, {'state': state, **kwargs})
+```
+
+**Security:** Only load YAML from trusted sources.
+
+### External Module Contract
+
+Modules imported via `imports:` must expose:
+
+```python
+def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
+    """Register actions into the provided registry."""
+    registry['my_action'] = my_action_function
+
+# Optional metadata
+__tea_actions__ = {
+    "version": "1.0.0",
+    "description": "Module description",
+    "actions": ["my_action"],
+}
+```
+
+## Performance Considerations
+
+### Parallel Flow Overhead
+
+- Thread creation has ~1ms overhead
+- Deep copy time depends on state size
+- Fan-in synchronization adds lock contention
+
+**Guidance:**
+- Use parallel flows for I/O-bound operations
+- Avoid parallel flows for sub-millisecond operations
+- Consider state size when designing parallel flows
+
+### Memory Usage
+
+- Each parallel flow gets a deep copy of state
+- Large states multiply memory usage by flow count
+- Consider streaming for large data processing
+
+### Graph Compilation
+
+- Compilation is O(nodes + edges)
+- Compiled state is cached
+- Re-compilation required only for configuration changes

@@ -27,6 +27,8 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
     - [Opik Integration](#opik-integration)
   - [Memory Actions](#memory-actions)
   - [Long-Term Memory Actions](#long-term-memory-actions)
+  - [Firebase Agent Memory Actions](#firebase-agent-memory-actions)
+  - [Tabular Data Actions](#tabular-data-actions)
   - [Graph Database Actions](#graph-database-actions)
   - [Web Actions](#web-actions)
   - [RAG Actions](#rag-actions)
@@ -1540,6 +1542,342 @@ Full-text search across stored values:
 **Returns:** `{"success": true, "results": [{"key": str, "value": any, "metadata": dict, "score": float}], "count": int}`
 
 All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
+
+---
+
+### Firebase Agent Memory Actions
+
+Cloud-native agent memory layer with DuckDB search, vector similarity, and session management.
+Uses abstract backend interfaces for portability across Firebase, PostgreSQL, and S3.
+
+**Required dependencies:**
+- `pip install firebase-admin` - For Firestore/GCS backends
+- `pip install duckdb` - For query engine and vector search
+- `pip install sqlglot` - For SQL validation
+- `pip install tiktoken` - For token counting
+
+Or install with: `pip install the-edge-agent[firebase]`
+
+#### `memory.cloud_store`
+
+Store content to cloud storage with metadata:
+
+```yaml
+- name: store_document
+  uses: memory.cloud_store
+  with:
+    path: "firms/acme/profile.yaml"        # Required
+    content: "{{ state.yaml_content }}"     # Required
+    metadata:                               # Optional
+      status: "active"
+      summary: "Company profile"
+    skip_embedding: false                   # Optional (default: false)
+  output: store_result
+```
+
+**Returns:** `{"success": true, "storage_uri": str, "content_hash": "sha256:...", "doc_id": str}`
+
+#### `memory.cloud_retrieve`
+
+Retrieve content from cloud storage:
+
+```yaml
+- name: load_document
+  uses: memory.cloud_retrieve
+  with:
+    path: "firms/acme/profile.yaml"        # Required
+  output: retrieved_doc
+```
+
+**Returns:** `{"success": true, "content": str, "metadata": dict}`
+
+#### `memory.cloud_list`
+
+List files with filtering:
+
+```yaml
+- name: list_firm_docs
+  uses: memory.cloud_list
+  with:
+    prefix: "firms/"                        # Optional
+    limit: 100                              # Optional (default: 100)
+  output: file_list
+```
+
+**Returns:** `{"success": true, "files": list, "count": int}`
+
+#### `memory.grep`
+
+Deterministic text search across memory files:
+
+```yaml
+- name: search_todos
+  uses: memory.grep
+  with:
+    pattern: "TODO"                         # Required
+    path_filter: "*.yaml"                   # Optional
+    case_sensitive: false                   # Optional (default: true)
+  output: grep_results
+```
+
+**Returns:** `{"success": true, "results": list, "count": int}`
+
+#### `memory.sql_query`
+
+SQL query with safety controls (SELECT only):
+
+```yaml
+- name: query_active_docs
+  uses: memory.sql_query
+  with:
+    query: "SELECT file_path, summary FROM agent_memory WHERE status = 'active' LIMIT 10"
+    path_filter: "firms/*"                  # Optional
+  output: query_results
+```
+
+**Returns:** `{"success": true, "results": list, "count": int, "columns": list}`
+
+**Security:** Only SELECT queries allowed. Dangerous functions (read_csv, etc.) blocked.
+
+#### `memory.embed`
+
+Generate embedding for content:
+
+```yaml
+- name: embed_content
+  uses: memory.embed
+  with:
+    content: "{{ state.document_text }}"    # Required
+    model: "text-embedding-3-small"         # Optional (default)
+  output: embedding_result
+```
+
+**Returns:** `{"success": true, "embedding": list, "model": str, "dimensions": 1536}`
+
+#### `memory.vector_search`
+
+Semantic similarity search:
+
+```yaml
+- name: semantic_search
+  uses: memory.vector_search
+  with:
+    query: "legal contract analysis"        # Required
+    top_k: 10                               # Optional (default: 10)
+    threshold: 0.7                          # Optional (default: 0.0)
+    content_type: "yaml"                    # Optional filter
+  output: search_results
+```
+
+**Returns:** `{"success": true, "results": [{"id": str, "score": float, "content": str, "metadata": dict}], "count": int}`
+
+#### `session.create`
+
+Create session with TTL:
+
+```yaml
+- name: start_session
+  uses: session.create
+  with:
+    session_id: "interview-123"             # Required
+    user_id: "user-456"                     # Required
+    ttl_hours: 24                           # Optional (default: 24)
+    metadata:                               # Optional
+      type: "interview"
+      firm: "acme"
+  output: session_result
+```
+
+**Returns:** `{"success": true, "session_id": str, "expires_at": datetime}`
+
+#### `session.end`
+
+End session and archive its memory:
+
+```yaml
+- name: end_session
+  uses: session.end
+  with:
+    session_id: "interview-123"             # Required
+  output: archive_result
+```
+
+**Returns:** `{"success": true, "archived": true, "archive_path": str}`
+
+#### `session.restore`
+
+Restore archived session:
+
+```yaml
+- name: restore_session
+  uses: session.restore
+  with:
+    session_id: "interview-123"             # Required
+  output: restore_result
+```
+
+**Returns:** `{"success": true, "restored": true, "session_id": str}`
+
+#### `catalog.register_table`
+
+Register table in DuckLake catalog:
+
+```yaml
+- name: register_memory_table
+  uses: catalog.register_table
+  with:
+    name: "agent_memory"                    # Required
+    table_type: "memory"                    # Required (memory | tabular)
+    source_prefix: "agent-memory/"          # Required
+    schema:                                 # Required
+      file_path: "VARCHAR"
+      content: "VARCHAR"
+      embedding: "FLOAT[1536]"
+  output: table_result
+```
+
+**Returns:** `{"success": true, "table_id": str, "name": str}`
+
+#### `catalog.create_snapshot`
+
+Create point-in-time snapshot:
+
+```yaml
+- name: snapshot_catalog
+  uses: catalog.create_snapshot
+  with:
+    table: "agent_memory"                   # Required
+  output: snapshot_result
+```
+
+**Returns:** `{"success": true, "snapshot_id": str, "created_at": datetime}`
+
+All Firebase memory actions use dual namespaces: `memory.*`, `session.*`, `catalog.*` and `actions.memory_*`, etc.
+
+---
+
+### Tabular Data Actions
+
+Hybrid storage for structured tabular data using DuckLake catalog.
+
+**Required:**
+- `pip install duckdb` - For SQL queries and Parquet I/O
+
+**Storage Strategy:**
+- **Inline** (<1KB): Small batches stored in metadata store for low-latency access
+- **Parquet** (≥1KB): Large batches stored as Parquet files in blob storage
+- **LWW Merge**: Queries merge both sources, keeping highest `_version` per primary key
+
+#### `data.create_table`
+
+Create table with schema and primary key:
+
+```yaml
+- name: create_scores_table
+  uses: data.create_table
+  with:
+    name: "firm_scores"                       # Required
+    schema:                                   # Required
+      firm_id: "string"
+      score: "float"
+      category: "string"
+    primary_key:                              # Required
+      - "firm_id"
+  output: table_result
+```
+
+**Schema types:** `string`, `integer`, `float`, `boolean`, `timestamp`, `json`
+
+**Returns:** `{"success": true, "table": str, "schema": dict}`
+
+#### `data.insert`
+
+Insert rows (auto-selects inline vs Parquet based on size):
+
+```yaml
+- name: insert_scores
+  uses: data.insert
+  with:
+    table: "firm_scores"                      # Required
+    rows:                                     # Required
+      - firm_id: "f1"
+        score: 85.5
+        category: "A"
+      - firm_id: "f2"
+        score: 92.0
+        category: "A+"
+  output: insert_result
+```
+
+**Returns:** `{"success": true, "table": str, "row_count": int, "storage": "inlined"|"parquet"}`
+
+#### `data.update`
+
+Update rows by primary key (append-only versioning):
+
+```yaml
+- name: update_score
+  uses: data.update
+  with:
+    table: "firm_scores"                      # Required
+    where:                                    # Required (must include PK)
+      firm_id: "f1"
+    updates:                                  # Required
+      score: 90.0
+      category: "A+"
+  output: update_result
+```
+
+**Returns:** `{"success": true, "table": str, "status": "updated", "row_count": int}`
+
+#### `data.delete`
+
+Delete rows by primary key (creates tombstone):
+
+```yaml
+- name: delete_firm
+  uses: data.delete
+  with:
+    table: "firm_scores"                      # Required
+    where:                                    # Required (must include PK)
+      firm_id: "f2"
+  output: delete_result
+```
+
+**Returns:** `{"success": true, "table": str, "status": "deleted", "row_count": int}`
+
+#### `data.query`
+
+SQL query with Last-Write-Wins merge:
+
+```yaml
+- name: query_top_scores
+  uses: data.query
+  with:
+    table: "firm_scores"                      # Required
+    sql: "SELECT * FROM data WHERE score > 80 ORDER BY score DESC"  # Required
+  output: query_result
+```
+
+**Note:** Table is aliased as `data` in SQL queries.
+
+**Returns:** `{"success": true, "table": str, "rows": list, "row_count": int}`
+
+#### `data.consolidate`
+
+Compact inlined rows into Parquet files:
+
+```yaml
+- name: consolidate_scores
+  uses: data.consolidate
+  with:
+    table: "firm_scores"                      # Required
+  output: consolidate_result
+```
+
+**Returns:** `{"success": true, "table": str, "status": "consolidated", "parquet_path": str}`
+
+All tabular data actions use dual namespaces: `data.*` and `actions.data_*`.
 
 ---
 
