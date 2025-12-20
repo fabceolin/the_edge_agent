@@ -145,11 +145,21 @@ pub struct ErrorPolicyConfig {
     pub on_failure: String,
 }
 
-fn default_max_retries() -> u32 { 3 }
-fn default_backoff_base() -> u64 { 1000 }
-fn default_backoff_max() -> u64 { 30000 }
-fn default_jitter() -> bool { true }
-fn default_on_failure() -> String { "checkpoint_and_exit".to_string() }
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_backoff_base() -> u64 {
+    1000
+}
+fn default_backoff_max() -> u64 {
+    30000
+}
+fn default_jitter() -> bool {
+    true
+}
+fn default_on_failure() -> String {
+    "checkpoint_and_exit".to_string()
+}
 
 impl Default for ErrorPolicyConfig {
     fn default() -> Self {
@@ -179,8 +189,7 @@ impl YamlEngine {
 
     /// Load a workflow from a YAML file
     pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> TeaResult<StateGraph> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| TeaError::Io(e))?;
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| TeaError::Io(e))?;
 
         self.load_from_string(&content)
     }
@@ -262,7 +271,10 @@ impl YamlEngine {
 
         // Handle conditional edges with targets map
         if let Some(targets) = &config.targets {
-            let condition = config.condition.clone().unwrap_or_else(|| "state.result".to_string());
+            let condition = config
+                .condition
+                .clone()
+                .unwrap_or_else(|| "state.result".to_string());
 
             for (result, target) in targets {
                 let edge = Edge::conditional(&condition, result);
@@ -327,7 +339,12 @@ impl YamlEngine {
     }
 
     /// Render a template string with context
-    pub fn render_template(&self, template: &str, state: &JsonValue, variables: &HashMap<String, JsonValue>) -> TeaResult<String> {
+    pub fn render_template(
+        &self,
+        template: &str,
+        state: &JsonValue,
+        variables: &HashMap<String, JsonValue>,
+    ) -> TeaResult<String> {
         let mut context = Context::new();
 
         // Add state to context
@@ -337,8 +354,7 @@ impl YamlEngine {
         context.insert("variables", variables);
 
         // Render using one-off template
-        Tera::one_off(template, &context, false)
-            .map_err(|e| TeaError::Template(e.to_string()))
+        Tera::one_off(template, &context, false).map_err(|e| TeaError::Template(e.to_string()))
     }
 
     /// Process template substitutions in action parameters
@@ -540,15 +556,15 @@ edges:
     fn test_render_template() {
         let engine = YamlEngine::new();
         let state = json!({"name": "World"});
-        let variables = HashMap::from([
-            ("greeting".to_string(), json!("Hello")),
-        ]);
+        let variables = HashMap::from([("greeting".to_string(), json!("Hello"))]);
 
-        let result = engine.render_template(
-            "{{ variables.greeting }}, {{ state.name }}!",
-            &state,
-            &variables
-        ).unwrap();
+        let result = engine
+            .render_template(
+                "{{ variables.greeting }}, {{ state.name }}!",
+                &state,
+                &variables,
+            )
+            .unwrap();
 
         assert_eq!(result, "Hello, World!");
     }
@@ -557,9 +573,7 @@ edges:
     fn test_process_params() {
         let engine = YamlEngine::new();
         let state = json!({"input": "test data"});
-        let variables = HashMap::from([
-            ("model".to_string(), json!("gpt-4")),
-        ]);
+        let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);
 
         let params = HashMap::from([
             ("model".to_string(), json!("{{ variables.model }}")),
@@ -601,7 +615,10 @@ edges:
         let config: YamlConfig = serde_yaml::from_str(yaml).unwrap();
 
         assert_eq!(config.imports.len(), 2);
-        assert_eq!(config.imports[0].path, Some("./actions/custom.lua".to_string()));
+        assert_eq!(
+            config.imports[0].path,
+            Some("./actions/custom.lua".to_string())
+        );
         assert_eq!(config.imports[0].namespace, "custom");
         assert_eq!(config.imports[1].builtin, Some("web".to_string()));
     }

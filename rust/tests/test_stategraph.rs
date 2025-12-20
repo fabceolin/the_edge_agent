@@ -3,9 +3,9 @@
 
 use serde_json::json;
 use std::collections::HashMap;
-use the_edge_agent::engine::checkpoint::{Checkpoint, MemoryCheckpointer, Checkpointer};
-use the_edge_agent::engine::executor::{ActionRegistry, ExecutionEvent, EventType, Executor};
-use the_edge_agent::engine::graph::{Node, Edge, EdgeType, StateGraph, RetryConfig};
+use the_edge_agent::engine::checkpoint::{Checkpoint, Checkpointer, MemoryCheckpointer};
+use the_edge_agent::engine::executor::{ActionRegistry, EventType, ExecutionEvent, Executor};
+use the_edge_agent::engine::graph::{Edge, EdgeType, Node, RetryConfig, StateGraph};
 use the_edge_agent::TeaError;
 use the_edge_agent::{END, START};
 
@@ -33,12 +33,11 @@ fn test_add_node_simple() {
 #[test]
 fn test_add_node_with_run_function() {
     let mut graph = StateGraph::new();
-    let node = Node::new("func_node")
-        .with_run(|state| {
-            let mut new_state = state.clone();
-            new_state["result"] = json!("processed");
-            Ok(new_state)
-        });
+    let node = Node::new("func_node").with_run(|state| {
+        let mut new_state = state.clone();
+        new_state["result"] = json!("processed");
+        Ok(new_state)
+    });
 
     graph.add_node(node);
 
@@ -100,7 +99,9 @@ fn test_add_conditional_edges() {
         ("false".to_string(), "node3".to_string()),
     ]);
 
-    graph.add_conditional_edge("node1", "state.value", targets).unwrap();
+    graph
+        .add_conditional_edge("node1", "state.value", targets)
+        .unwrap();
 
     let edges = graph.outgoing_edges("node1");
     assert_eq!(edges.len(), 2);
@@ -114,9 +115,7 @@ fn test_add_conditional_edges() {
 fn test_add_conditional_edges_nonexistent_node() {
     let mut graph = StateGraph::new();
 
-    let targets = HashMap::from([
-        ("true".to_string(), "node2".to_string()),
-    ]);
+    let targets = HashMap::from([("true".to_string(), "node2".to_string())]);
 
     let result = graph.add_conditional_edge("nonexistent", "condition", targets);
     assert!(result.is_err());
@@ -202,7 +201,9 @@ fn test_compile_with_interrupts() {
     graph.add_simple_edge("node1", "node2").unwrap();
     graph.set_finish_point("node2").unwrap();
 
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_before(vec!["node1".to_string()])
         .with_interrupt_after(vec!["node2".to_string()]);
 
@@ -318,12 +319,16 @@ fn test_stream() {
     assert!(events.len() >= 3);
 
     // Check node1 execution
-    let node1_complete = events.iter().find(|e| e.node == "node1" && e.event_type == EventType::Complete);
+    let node1_complete = events
+        .iter()
+        .find(|e| e.node == "node1" && e.event_type == EventType::Complete);
     assert!(node1_complete.is_some());
     assert_eq!(node1_complete.unwrap().state["value"], 2);
 
     // Check node2 execution
-    let node2_complete = events.iter().find(|e| e.node == "node2" && e.event_type == EventType::Complete);
+    let node2_complete = events
+        .iter()
+        .find(|e| e.node == "node2" && e.event_type == EventType::Complete);
     assert!(node2_complete.is_some());
     assert_eq!(node2_complete.unwrap().state["value"], 4);
 
@@ -353,9 +358,7 @@ fn test_invoke_simple() {
 fn test_conditional_routing() {
     let mut graph = StateGraph::new();
 
-    graph.add_node(Node::new("start").with_run(|state| {
-        Ok(state.clone())
-    }));
+    graph.add_node(Node::new("start").with_run(|state| Ok(state.clone())));
 
     graph.add_node(Node::new("high").with_run(|state| {
         let mut s = state.clone();
@@ -377,7 +380,9 @@ fn test_conditional_routing() {
         ("low".to_string(), "low".to_string()),
     ]);
     // Use Lua ternary expression since eval_condition wraps with return
-    graph.add_conditional_edge("start", r#"state.value > 10 and "high" or "low""#, targets).unwrap();
+    graph
+        .add_conditional_edge("start", r#"state.value > 10 and "high" or "low""#, targets)
+        .unwrap();
 
     graph.set_finish_point("high").unwrap();
     graph.set_finish_point("low").unwrap();
@@ -425,9 +430,12 @@ fn test_complex_conditional_routing() {
     ]);
 
     // Chained ternary: (cond1 and val1) or (cond2 and val2) or val3
-    let condition = r#"(state.value < 0 and "negative") or (state.value == 0 and "zero") or "positive""#;
+    let condition =
+        r#"(state.value < 0 and "negative") or (state.value == 0 and "zero") or "positive""#;
 
-    graph.add_conditional_edge("start", condition, targets).unwrap();
+    graph
+        .add_conditional_edge("start", condition, targets)
+        .unwrap();
 
     graph.set_finish_point("negative").unwrap();
     graph.set_finish_point("zero").unwrap();
@@ -468,7 +476,13 @@ fn test_state_persistence() {
         ("true".to_string(), "check".to_string()),
         ("false".to_string(), "accumulate".to_string()),
     ]);
-    graph.add_conditional_edge("accumulate", "state.sum >= 10 and \"true\" or \"false\"", targets).unwrap();
+    graph
+        .add_conditional_edge(
+            "accumulate",
+            "state.sum >= 10 and \"true\" or \"false\"",
+            targets,
+        )
+        .unwrap();
 
     graph.set_finish_point("check").unwrap();
 
@@ -512,7 +526,13 @@ fn test_cyclic_graph() {
         ("true".to_string(), "doubler".to_string()),
         ("false".to_string(), "counter".to_string()),
     ]);
-    graph.add_conditional_edge("counter", "state.count >= 3 and \"true\" or \"false\"", targets).unwrap();
+    graph
+        .add_conditional_edge(
+            "counter",
+            "state.count >= 3 and \"true\" or \"false\"",
+            targets,
+        )
+        .unwrap();
 
     graph.set_finish_point("doubler").unwrap();
 
@@ -589,9 +609,8 @@ fn test_parallel_execution_simulation() {
 
     graph.add_node(Node::new("parallel").with_run(|state| {
         let value = state.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
-        let results: Vec<serde_json::Value> = (0..3)
-            .map(|i| json!({"result": value + i}))
-            .collect();
+        let results: Vec<serde_json::Value> =
+            (0..3).map(|i| json!({"result": value + i})).collect();
 
         let mut s = state.clone();
         s["parallel_results"] = json!(results);
@@ -599,11 +618,14 @@ fn test_parallel_execution_simulation() {
     }));
 
     graph.add_node(Node::new("aggregate").with_run(|state| {
-        let results = state.get("parallel_results")
+        let results = state
+            .get("parallel_results")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|r| r.get("result").and_then(|v| v.as_i64()))
-                .sum::<i64>())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|r| r.get("result").and_then(|v| v.as_i64()))
+                    .sum::<i64>()
+            })
             .unwrap_or(0);
 
         let mut s = state.clone();
@@ -677,8 +699,7 @@ fn test_node_with_retry_config() {
         jitter: true,
     };
 
-    let node = Node::new("retryable")
-        .with_retry(retry_config.clone());
+    let node = Node::new("retryable").with_retry(retry_config.clone());
 
     assert!(node.retry.is_some());
     assert_eq!(node.retry.as_ref().unwrap().max_retries, 5);
@@ -687,8 +708,7 @@ fn test_node_with_retry_config() {
 
 #[test]
 fn test_node_with_fallback() {
-    let node = Node::new("main")
-        .with_fallback("fallback_node");
+    let node = Node::new("main").with_fallback("fallback_node");
 
     assert_eq!(node.fallback, Some("fallback_node".to_string()));
 }
@@ -776,9 +796,15 @@ fn test_memory_checkpointer() {
 fn test_checkpoint_list() {
     let checkpointer = MemoryCheckpointer::new();
 
-    checkpointer.save(&Checkpoint::new("node1", json!({"step": 1}))).unwrap();
-    checkpointer.save(&Checkpoint::new("node2", json!({"step": 2}))).unwrap();
-    checkpointer.save(&Checkpoint::new("node3", json!({"step": 3}))).unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node1", json!({"step": 1})))
+        .unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node2", json!({"step": 2})))
+        .unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node3", json!({"step": 3})))
+        .unwrap();
 
     let list = checkpointer.list().unwrap();
     assert_eq!(list.len(), 3);
@@ -800,8 +826,8 @@ fn test_execution_event_creation() {
 
 #[test]
 fn test_execution_event_with_duration() {
-    let event = ExecutionEvent::new("test_node", json!({}), EventType::Complete)
-        .with_duration(123.45);
+    let event =
+        ExecutionEvent::new("test_node", json!({}), EventType::Complete).with_duration(123.45);
 
     assert_eq!(event.duration_ms, Some(123.45));
 }
@@ -838,7 +864,9 @@ fn test_compiled_graph_debug() {
     graph.set_entry_point("process").unwrap();
     graph.set_finish_point("process").unwrap();
 
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_before(vec!["process".to_string()]);
 
     let debug_str = format!("{:?}", compiled);
@@ -861,7 +889,10 @@ fn test_edge_simple() {
 fn test_edge_conditional() {
     let edge = Edge::conditional("state.value > 10", "high");
 
-    if let EdgeType::Conditional { condition, target, .. } = &edge.edge_type {
+    if let EdgeType::Conditional {
+        condition, target, ..
+    } = &edge.edge_type
+    {
         assert_eq!(condition.as_ref().unwrap(), "state.value > 10");
         assert_eq!(target, "high");
     } else {
@@ -923,7 +954,13 @@ fn test_complex_workflow() {
         ("true".to_string(), "end".to_string()),
         ("false".to_string(), "process".to_string()),
     ]);
-    graph.add_conditional_edge("start", "state.value > 10 and \"true\" or \"false\"", targets).unwrap();
+    graph
+        .add_conditional_edge(
+            "start",
+            "state.value > 10 and \"true\" or \"false\"",
+            targets,
+        )
+        .unwrap();
 
     // process loops back to start
     graph.add_simple_edge("process", "start").unwrap();
@@ -991,10 +1028,14 @@ fn test_sequential_execution() {
 #[test]
 fn test_node_metadata() {
     let mut node = Node::new("process");
-    node.metadata.insert("description".to_string(), json!("Processes input data"));
+    node.metadata
+        .insert("description".to_string(), json!("Processes input data"));
     node.metadata.insert("timeout".to_string(), json!(30));
 
-    assert_eq!(node.metadata.get("description").unwrap(), &json!("Processes input data"));
+    assert_eq!(
+        node.metadata.get("description").unwrap(),
+        &json!("Processes input data")
+    );
     assert_eq!(node.metadata.get("timeout").unwrap(), &json!(30));
 }
 
@@ -1013,7 +1054,10 @@ fn test_graph_variables() {
 
     graph.set_variables(vars);
 
-    assert_eq!(graph.variables().get("api_key").unwrap(), &json!("secret123"));
+    assert_eq!(
+        graph.variables().get("api_key").unwrap(),
+        &json!("secret123")
+    );
     assert_eq!(graph.variables().get("max_retries").unwrap(), &json!(3));
 }
 
@@ -1024,12 +1068,13 @@ fn test_compiled_graph_variables() {
     graph.set_entry_point("process").unwrap();
     graph.set_finish_point("process").unwrap();
 
-    let vars = HashMap::from([
-        ("setting".to_string(), json!("value")),
-    ]);
+    let vars = HashMap::from([("setting".to_string(), json!("value"))]);
     graph.set_variables(vars);
 
     let compiled = graph.compile().unwrap();
 
-    assert_eq!(compiled.variables().get("setting").unwrap(), &json!("value"));
+    assert_eq!(
+        compiled.variables().get("setting").unwrap(),
+        &json!("value")
+    );
 }

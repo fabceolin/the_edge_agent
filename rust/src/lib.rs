@@ -32,15 +32,15 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub mod engine;
 pub mod actions;
+pub mod engine;
 mod error;
 
 // Re-exports
-pub use engine::graph::{StateGraph, CompiledGraph, Node, Edge, EdgeType};
-pub use engine::executor::{ExecutionEvent, ExecutionOptions};
 pub use engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};
-pub use engine::yaml::{YamlEngine, YamlConfig};
+pub use engine::executor::{ExecutionEvent, ExecutionOptions};
+pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, StateGraph};
+pub use engine::yaml::{YamlConfig, YamlEngine};
 pub use error::{TeaError, TeaResult};
 
 /// Special constant for the END node
@@ -52,11 +52,8 @@ pub const START: &str = "__start__";
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::{
-        StateGraph, CompiledGraph, Node, Edge, EdgeType,
-        ExecutionEvent, ExecutionOptions,
-        Checkpoint, Checkpointer, FileCheckpointer,
-        YamlEngine, YamlConfig,
-        TeaError, TeaResult,
-        END, START,
+        Checkpoint, Checkpointer, CompiledGraph, Edge, EdgeType, ExecutionEvent, ExecutionOptions,
+        FileCheckpointer, Node, StateGraph, TeaError, TeaResult, YamlConfig, YamlEngine, END,
+        START,
     };
 }

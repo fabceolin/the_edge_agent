@@ -13,9 +13,7 @@ use the_edge_agent::TeaError;
 fn test_action_registry_register_and_get() {
     let registry = ActionRegistry::new();
 
-    registry.register("test.echo", |state, _params| {
-        Ok(state.clone())
-    });
+    registry.register("test.echo", |state, _params| Ok(state.clone()));
 
     assert!(registry.has("test.echo"));
     assert!(!registry.has("test.nonexistent"));
@@ -110,8 +108,14 @@ fn test_action_param_based_behavior() {
     let registry = ActionRegistry::new();
 
     registry.register("format.template", |state, params| {
-        let template = params.get("template").and_then(|v| v.as_str()).unwrap_or("");
-        let name = state.get("name").and_then(|v| v.as_str()).unwrap_or("Unknown");
+        let template = params
+            .get("template")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = state
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
 
         let formatted = template.replace("{name}", name);
 
@@ -133,7 +137,10 @@ fn test_action_with_default_params() {
     let registry = ActionRegistry::new();
 
     registry.register("config.get", |state, params| {
-        let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("default_key");
+        let key = params
+            .get("key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default_key");
         let default = params.get("default").cloned().unwrap_or(json!(null));
 
         let value = state.get(key).cloned().unwrap_or(default);
@@ -310,9 +317,10 @@ fn test_action_with_nested_state() {
             "existing": "value"
         }
     });
-    let params = HashMap::from([
-        ("config".to_string(), json!({"new_key": "new_value", "another": 123}))
-    ]);
+    let params = HashMap::from([(
+        "config".to_string(),
+        json!({"new_key": "new_value", "another": 123}),
+    )]);
 
     let result = handler(&state, &params).unwrap();
 
@@ -393,15 +401,17 @@ fn test_action_registry_thread_safe() {
         let r: Arc<ActionRegistry> = Arc::clone(&registry);
         thread::spawn(move || {
             r.register("thread.action", |state, _| Ok(state.clone()));
-        }).join().unwrap();
+        })
+        .join()
+        .unwrap();
     }
 
     // Access from another thread
     {
         let r: Arc<ActionRegistry> = Arc::clone(&registry);
-        let result = thread::spawn(move || {
-            r.has("thread.action")
-        }).join().unwrap();
+        let result = thread::spawn(move || r.has("thread.action"))
+            .join()
+            .unwrap();
 
         assert!(result);
     }

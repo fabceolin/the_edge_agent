@@ -91,50 +91,55 @@ fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
         .to_string();
 
     // Build messages
-    let messages: Vec<Message> = if let Some(msgs) = params.get("messages").and_then(|v| v.as_array()) {
-        msgs.iter()
-            .filter_map(|m| {
-                let role = m.get("role")?.as_str()?.to_string();
-                let content = m.get("content")?.as_str()?.to_string();
-                Some(Message { role, content })
-            })
-            .collect()
-    } else if let Some(prompt) = params.get("prompt").and_then(|v| v.as_str()) {
-        // Simple prompt -> user message
-        let system = params
-            .get("system")
-            .and_then(|v| v.as_str())
-            .map(|s| Message {
-                role: "system".to_string(),
-                content: s.to_string(),
-            });
+    let messages: Vec<Message> =
+        if let Some(msgs) = params.get("messages").and_then(|v| v.as_array()) {
+            msgs.iter()
+                .filter_map(|m| {
+                    let role = m.get("role")?.as_str()?.to_string();
+                    let content = m.get("content")?.as_str()?.to_string();
+                    Some(Message { role, content })
+                })
+                .collect()
+        } else if let Some(prompt) = params.get("prompt").and_then(|v| v.as_str()) {
+            // Simple prompt -> user message
+            let system = params
+                .get("system")
+                .and_then(|v| v.as_str())
+                .map(|s| Message {
+                    role: "system".to_string(),
+                    content: s.to_string(),
+                });
 
-        let mut msgs = vec![];
-        if let Some(sys) = system {
-            msgs.push(sys);
-        }
-        msgs.push(Message {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        });
-        msgs
-    } else {
-        return Err(TeaError::InvalidInput {
-            action: "llm.call".to_string(),
-            message: "Missing required parameter: prompt or messages".to_string(),
-        });
-    };
+            let mut msgs = vec![];
+            if let Some(sys) = system {
+                msgs.push(sys);
+            }
+            msgs.push(Message {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            });
+            msgs
+        } else {
+            return Err(TeaError::InvalidInput {
+                action: "llm.call".to_string(),
+                message: "Missing required parameter: prompt or messages".to_string(),
+            });
+        };
 
     // Build request
     let request = CompletionRequest {
         model: model.clone(),
         messages,
         temperature: params.get("temperature").and_then(|v| v.as_f64()),
-        max_tokens: params.get("max_tokens").and_then(|v| v.as_u64()).map(|n| n as u32),
-        stop: params
-            .get("stop")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
+        max_tokens: params
+            .get("max_tokens")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        stop: params.get("stop").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        }),
     };
 
     // Make HTTP request
@@ -163,7 +168,8 @@ fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
         )));
     }
 
-    let completion: CompletionResponse = response.json().map_err(|e| TeaError::Http(e.to_string()))?;
+    let completion: CompletionResponse =
+        response.json().map_err(|e| TeaError::Http(e.to_string()))?;
 
     // Extract response
     let content = completion
@@ -285,12 +291,10 @@ mod tests {
     fn test_completion_request_serialization() {
         let request = CompletionRequest {
             model: "gpt-3.5-turbo".to_string(),
-            messages: vec![
-                Message {
-                    role: "user".to_string(),
-                    content: "Hello".to_string(),
-                }
-            ],
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
             temperature: Some(0.7),
             max_tokens: Some(100),
             stop: None,
@@ -310,12 +314,10 @@ mod tests {
     fn test_completion_request_with_stop() {
         let request = CompletionRequest {
             model: "gpt-4".to_string(),
-            messages: vec![
-                Message {
-                    role: "user".to_string(),
-                    content: "Test".to_string(),
-                }
-            ],
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: "Test".to_string(),
+            }],
             temperature: None,
             max_tokens: None,
             stop: Some(vec!["END".to_string(), "STOP".to_string()]),
@@ -392,7 +394,10 @@ mod tests {
         assert_eq!(response.id, Some("chatcmpl-123".to_string()));
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.choices[0].message.role, "assistant");
-        assert_eq!(response.choices[0].message.content, "Hello! How can I help you?");
+        assert_eq!(
+            response.choices[0].message.content,
+            "Hello! How can I help you?"
+        );
         assert_eq!(response.choices[0].finish_reason, Some("stop".to_string()));
 
         let usage = response.usage.unwrap();
@@ -437,7 +442,10 @@ mod tests {
         }"#;
 
         let response: CompletionResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.choices[0].finish_reason, Some("length".to_string()));
+        assert_eq!(
+            response.choices[0].finish_reason,
+            Some("length".to_string())
+        );
     }
 
     // =============================================================================

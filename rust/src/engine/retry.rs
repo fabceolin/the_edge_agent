@@ -34,11 +34,7 @@ impl RetryExecutor {
     }
 
     /// Execute a function with retry logic
-    pub fn execute_with_retry<F>(
-        &self,
-        f: F,
-        config: &RetryConfig,
-    ) -> TeaResult<JsonValue>
+    pub fn execute_with_retry<F>(&self, f: F, config: &RetryConfig) -> TeaResult<JsonValue>
     where
         F: Fn() -> TeaResult<JsonValue>,
     {
@@ -203,19 +199,13 @@ impl Default for RetryConfigBuilder {
 pub fn is_retryable(error: &TeaError) -> bool {
     matches!(
         error,
-        TeaError::Http(_)
-            | TeaError::Timeout(_)
-            | TeaError::Io(_)
-            | TeaError::Execution { .. }
+        TeaError::Http(_) | TeaError::Timeout(_) | TeaError::Io(_) | TeaError::Execution { .. }
     )
 }
 
 /// Check if an error is transient (temporary failure)
 pub fn is_transient(error: &TeaError) -> bool {
-    matches!(
-        error,
-        TeaError::Http(_) | TeaError::Timeout(_)
-    )
+    matches!(error, TeaError::Http(_) | TeaError::Timeout(_))
 }
 
 #[cfg(test)]
@@ -229,10 +219,8 @@ mod tests {
         let executor = RetryExecutor::deterministic();
         let config = RetryConfig::default();
 
-        let result = executor.execute_with_retry(
-            || Ok(serde_json::json!({"success": true})),
-            &config,
-        );
+        let result =
+            executor.execute_with_retry(|| Ok(serde_json::json!({"success": true})), &config);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["success"], true);

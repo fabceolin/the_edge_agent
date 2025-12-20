@@ -240,7 +240,9 @@ impl Default for MemoryCheckpointer {
 impl Checkpointer for MemoryCheckpointer {
     fn save(&self, checkpoint: &Checkpoint) -> TeaResult<String> {
         let id = checkpoint.id.clone();
-        self.checkpoints.write().insert(id.clone(), checkpoint.clone());
+        self.checkpoints
+            .write()
+            .insert(id.clone(), checkpoint.clone());
         Ok(id)
     }
 
@@ -426,7 +428,9 @@ mod tests {
         let mut config = InterruptConfig::before(vec!["human_review".to_string()]);
         config.add_after("send_email".to_string());
 
-        assert!(config.interrupt_before.contains(&"human_review".to_string()));
+        assert!(config
+            .interrupt_before
+            .contains(&"human_review".to_string()));
         assert!(config.interrupt_after.contains(&"send_email".to_string()));
     }
 

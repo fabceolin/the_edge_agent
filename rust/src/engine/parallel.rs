@@ -379,7 +379,8 @@ impl ParallelExecutor {
                 // Build result
                 match exec_result {
                     Ok(new_state) => {
-                        let mut result = ParallelFlowResult::success(branch.clone(), new_state, timing_ms);
+                        let mut result =
+                            ParallelFlowResult::success(branch.clone(), new_state, timing_ms);
                         result.retry_count = retry_count;
                         if let Some(ref cb_config) = config.circuit_breaker {
                             let cb = self.get_or_create_circuit_breaker(branch, cb_config.clone());
@@ -418,7 +419,10 @@ impl ParallelExecutor {
             if let Some(failed) = results.iter().find(|r| !r.success) {
                 return Err(TeaError::Execution {
                     node: failed.branch.clone(),
-                    message: failed.error.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                    message: failed
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Unknown error".to_string()),
                 });
             }
         }
@@ -525,11 +529,16 @@ mod tests {
         let branches = vec!["branch_a".to_string(), "branch_b".to_string()];
 
         let results = executor
-            .execute(&branches, &state, &ParallelConfig::default(), |branch, s| {
-                let mut result = s.clone();
-                result[branch] = serde_json::json!(true);
-                Ok(result)
-            })
+            .execute(
+                &branches,
+                &state,
+                &ParallelConfig::default(),
+                |branch, s| {
+                    let mut result = s.clone();
+                    result[branch] = serde_json::json!(true);
+                    Ok(result)
+                },
+            )
             .unwrap();
 
         assert_eq!(results.len(), 2);
@@ -538,11 +547,8 @@ mod tests {
 
     #[test]
     fn test_parallel_flow_result_get() {
-        let result = ParallelFlowResult::success(
-            "test",
-            serde_json::json!({"key": "value"}),
-            100.0,
-        );
+        let result =
+            ParallelFlowResult::success("test", serde_json::json!({"key": "value"}), 100.0);
 
         assert_eq!(result.get("success"), Some(serde_json::json!(true)));
         assert_eq!(result.get("timing_ms"), Some(serde_json::json!(100.0)));
@@ -696,7 +702,10 @@ mod tests {
         assert_eq!(config.timeout, Some(Duration::from_secs(30)));
         assert!(config.fail_fast);
         assert_eq!(config.retry_policy.as_ref().unwrap().max_retries, 5);
-        assert_eq!(config.circuit_breaker.as_ref().unwrap().failure_threshold, 10);
+        assert_eq!(
+            config.circuit_breaker.as_ref().unwrap().failure_threshold,
+            10
+        );
     }
 
     // =============================================================================
@@ -727,20 +736,17 @@ mod tests {
         assert_eq!(delay, Duration::from_millis(100)); // 0th
 
         delay = Duration::from_secs_f64(
-            (delay.as_secs_f64() * policy.backoff_multiplier)
-                .min(policy.max_delay.as_secs_f64()),
+            (delay.as_secs_f64() * policy.backoff_multiplier).min(policy.max_delay.as_secs_f64()),
         );
         assert_eq!(delay, Duration::from_millis(200)); // 1st
 
         delay = Duration::from_secs_f64(
-            (delay.as_secs_f64() * policy.backoff_multiplier)
-                .min(policy.max_delay.as_secs_f64()),
+            (delay.as_secs_f64() * policy.backoff_multiplier).min(policy.max_delay.as_secs_f64()),
         );
         assert_eq!(delay, Duration::from_millis(400)); // 2nd
 
         delay = Duration::from_secs_f64(
-            (delay.as_secs_f64() * policy.backoff_multiplier)
-                .min(policy.max_delay.as_secs_f64()),
+            (delay.as_secs_f64() * policy.backoff_multiplier).min(policy.max_delay.as_secs_f64()),
         );
         assert_eq!(delay, Duration::from_millis(800)); // 3rd
     }
@@ -756,8 +762,7 @@ mod tests {
 
         let mut delay = policy.base_delay; // 5s
         delay = Duration::from_secs_f64(
-            (delay.as_secs_f64() * policy.backoff_multiplier)
-                .min(policy.max_delay.as_secs_f64()),
+            (delay.as_secs_f64() * policy.backoff_multiplier).min(policy.max_delay.as_secs_f64()),
         );
         // 5 * 3 = 15, but capped at 10
         assert_eq!(delay, Duration::from_secs(10));
@@ -909,11 +914,7 @@ mod tests {
 
     #[test]
     fn test_parallel_flow_result_success_creation() {
-        let result = ParallelFlowResult::success(
-            "flow_a",
-            serde_json::json!({"value": 42}),
-            150.5,
-        );
+        let result = ParallelFlowResult::success("flow_a", serde_json::json!({"value": 42}), 150.5);
         assert!(result.success);
         assert_eq!(result.branch, "flow_a");
         assert_eq!(result.state.unwrap()["value"], 42);
@@ -953,7 +954,10 @@ mod tests {
         assert_eq!(result.get("timeout"), Some(serde_json::json!(false)));
         assert_eq!(result.get("timing_ms"), Some(serde_json::json!(100.0)));
         assert_eq!(result.get("retry_count"), Some(serde_json::json!(2)));
-        assert_eq!(result.get("circuit_state"), Some(serde_json::json!("closed")));
+        assert_eq!(
+            result.get("circuit_state"),
+            Some(serde_json::json!("closed"))
+        );
         assert!(result.get("nonexistent").is_none());
     }
 
@@ -1033,18 +1037,23 @@ mod tests {
         ];
 
         let results = executor
-            .execute(&branches, &state, &ParallelConfig::default(), |branch, s| {
-                if branch.starts_with("success") {
-                    let mut result = s.clone();
-                    result[branch] = serde_json::json!(true);
-                    Ok(result)
-                } else {
-                    Err(TeaError::Execution {
-                        node: branch.to_string(),
-                        message: "Intentional failure".to_string(),
-                    })
-                }
-            })
+            .execute(
+                &branches,
+                &state,
+                &ParallelConfig::default(),
+                |branch, s| {
+                    if branch.starts_with("success") {
+                        let mut result = s.clone();
+                        result[branch] = serde_json::json!(true);
+                        Ok(result)
+                    } else {
+                        Err(TeaError::Execution {
+                            node: branch.to_string(),
+                            message: "Intentional failure".to_string(),
+                        })
+                    }
+                },
+            )
             .unwrap();
 
         assert_eq!(results.len(), 3);
@@ -1113,7 +1122,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
-        assert!(results[0].error.as_ref().unwrap().contains("Circuit breaker"));
+        assert!(results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Circuit breaker"));
         assert_eq!(results[0].circuit_state, Some("open".to_string()));
     }
 }

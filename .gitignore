@@ -168,6 +168,7 @@ output/
 .envrc
 =0.4.0
 bin/
+!rust/src/bin/
 checkpoints/
 customer_support_workflow.png
 document_writer_graph.png

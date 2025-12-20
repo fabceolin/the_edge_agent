@@ -17,13 +17,14 @@ pub fn register(registry: &ActionRegistry) {
 
 /// Read file contents
 fn file_read(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    let path = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "file.read".to_string(),
-            message: "Missing required parameter: path".to_string(),
-        })?;
+    let path =
+        params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "file.read".to_string(),
+                message: "Missing required parameter: path".to_string(),
+            })?;
 
     let encoding = params
         .get("encoding")
@@ -55,13 +56,14 @@ fn file_read(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
 
 /// Write file contents
 fn file_write(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    let path = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "file.write".to_string(),
-            message: "Missing required parameter: path".to_string(),
-        })?;
+    let path =
+        params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "file.write".to_string(),
+                message: "Missing required parameter: path".to_string(),
+            })?;
 
     let content = params
         .get("content")
@@ -96,13 +98,14 @@ fn file_write(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
 
 /// Check if file exists
 fn file_exists(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    let path = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "file.exists".to_string(),
-            message: "Missing required parameter: path".to_string(),
-        })?;
+    let path =
+        params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "file.exists".to_string(),
+                message: "Missing required parameter: path".to_string(),
+            })?;
 
     let exists = std::path::Path::new(path).exists();
     let is_file = std::path::Path::new(path).is_file();
@@ -120,13 +123,14 @@ fn file_exists(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRes
 
 /// Delete a file
 fn file_delete(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    let path = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "file.delete".to_string(),
-            message: "Missing required parameter: path".to_string(),
-        })?;
+    let path =
+        params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "file.delete".to_string(),
+                message: "Missing required parameter: path".to_string(),
+            })?;
 
     if std::path::Path::new(path).exists() {
         fs::remove_file(path).map_err(|e| TeaError::Action(e.to_string()))?;
@@ -142,13 +146,14 @@ fn file_delete(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRes
 
 /// List directory contents
 fn file_list(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    let path = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "file.list".to_string(),
-            message: "Missing required parameter: path".to_string(),
-        })?;
+    let path =
+        params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "file.list".to_string(),
+                message: "Missing required parameter: path".to_string(),
+            })?;
 
     let pattern = params.get("pattern").and_then(|v| v.as_str());
 

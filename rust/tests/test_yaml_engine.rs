@@ -31,9 +31,8 @@ fn test_process_simple_template() {
     let variables = HashMap::new();
 
     // Test with a simple parameter map
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("greeting".to_string(), json!("Hello {{ state.name }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("greeting".to_string(), json!("Hello {{ state.name }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -53,13 +52,17 @@ fn test_process_template_with_variables() {
         ("version".to_string(), json!("v1")),
     ]);
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("url".to_string(), json!("{{ variables.api_base }}/{{ variables.version }}/endpoint")),
-    ]);
+    let params: HashMap<String, serde_json::Value> = HashMap::from([(
+        "url".to_string(),
+        json!("{{ variables.api_base }}/{{ variables.version }}/endpoint"),
+    )]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
-    assert_eq!(result.get("url").unwrap(), &json!("https://api.example.com/v1/endpoint"));
+    assert_eq!(
+        result.get("url").unwrap(),
+        &json!("https://api.example.com/v1/endpoint")
+    );
 }
 
 #[test]
@@ -71,18 +74,22 @@ fn test_process_template_with_state_and_variables() {
         "query": "search term"
     });
 
-    let variables = HashMap::from([
-        ("base_url".to_string(), json!("https://api.example.com")),
-    ]);
+    let variables = HashMap::from([("base_url".to_string(), json!("https://api.example.com"))]);
 
     let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("endpoint".to_string(), json!("{{ variables.base_url }}/users/{{ state.user_id }}")),
+        (
+            "endpoint".to_string(),
+            json!("{{ variables.base_url }}/users/{{ state.user_id }}"),
+        ),
         ("q".to_string(), json!("{{ state.query }}")),
     ]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
-    assert_eq!(result.get("endpoint").unwrap(), &json!("https://api.example.com/users/12345"));
+    assert_eq!(
+        result.get("endpoint").unwrap(),
+        &json!("https://api.example.com/users/12345")
+    );
     assert_eq!(result.get("q").unwrap(), &json!("search term"));
 }
 
@@ -106,7 +113,10 @@ fn test_process_non_template_values() {
     assert_eq!(result.get("number").unwrap(), &json!(42));
     assert_eq!(result.get("boolean").unwrap(), &json!(true));
     assert_eq!(result.get("array").unwrap(), &json!([1, 2, 3]));
-    assert_eq!(result.get("plain_string").unwrap(), &json!("no templates here"));
+    assert_eq!(
+        result.get("plain_string").unwrap(),
+        &json!("no templates here")
+    );
 }
 
 #[test]
@@ -122,9 +132,8 @@ fn test_process_nested_objects() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("timeout".to_string(), json!("{{ state.config.timeout }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("timeout".to_string(), json!("{{ state.config.timeout }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -146,9 +155,10 @@ fn test_template_upper_filter() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("uppercase_name".to_string(), json!("{{ state.name | upper }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> = HashMap::from([(
+        "uppercase_name".to_string(),
+        json!("{{ state.name | upper }}"),
+    )]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -165,9 +175,8 @@ fn test_template_lower_filter() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("lowercase".to_string(), json!("{{ state.title | lower }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("lowercase".to_string(), json!("{{ state.title | lower }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -185,8 +194,14 @@ fn test_template_default_filter() {
     let variables = HashMap::new();
 
     let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("with_default".to_string(), json!("{{ state.missing | default(value='fallback') }}")),
-        ("existing_value".to_string(), json!("{{ state.existing | default(value='fallback') }}")),
+        (
+            "with_default".to_string(),
+            json!("{{ state.missing | default(value='fallback') }}"),
+        ),
+        (
+            "existing_value".to_string(),
+            json!("{{ state.existing | default(value='fallback') }}"),
+        ),
     ]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
@@ -219,9 +234,8 @@ fn test_empty_state() {
     let state = json!({});
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("static_value".to_string(), json!("hello")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("static_value".to_string(), json!("hello"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -239,9 +253,8 @@ fn test_null_state_values() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("present_val".to_string(), json!("{{ state.present }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("present_val".to_string(), json!("{{ state.present }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -262,9 +275,8 @@ fn test_array_access_in_template() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("first_item".to_string(), json!("{{ state.items.0 }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("first_item".to_string(), json!("{{ state.items.0 }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -305,9 +317,10 @@ fn test_template_with_loop() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("list".to_string(), json!("{% for name in state.names %}{{ name }},{% endfor %}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> = HashMap::from([(
+        "list".to_string(),
+        json!("{% for name in state.names %}{{ name }},{% endfor %}"),
+    )]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -326,9 +339,10 @@ fn test_invalid_template_syntax() {
     let variables = HashMap::new();
 
     // Use a clearly invalid template that Tera will reject
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("broken".to_string(), json!("{{ undefined_var | nonexistent_filter }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> = HashMap::from([(
+        "broken".to_string(),
+        json!("{{ undefined_var | nonexistent_filter }}"),
+    )]);
 
     let result = engine.process_params(&params, &state, &variables);
 
@@ -354,14 +368,20 @@ fn test_mixed_template_and_static_content() {
     let variables = HashMap::new();
 
     let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("message".to_string(), json!("Hello {{ state.name }}, you have {{ state.count }} items")),
+        (
+            "message".to_string(),
+            json!("Hello {{ state.name }}, you have {{ state.count }} items"),
+        ),
         ("static_key".to_string(), json!("static_value")),
         ("number_key".to_string(), json!(42)),
     ]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
-    assert_eq!(result.get("message").unwrap(), &json!("Hello Test, you have 5 items"));
+    assert_eq!(
+        result.get("message").unwrap(),
+        &json!("Hello Test, you have 5 items")
+    );
     assert_eq!(result.get("static_key").unwrap(), &json!("static_value"));
     assert_eq!(result.get("number_key").unwrap(), &json!(42));
 }
@@ -409,9 +429,8 @@ fn test_boolean_state_values_in_template() {
     let variables = HashMap::new();
 
     // Use simple interpolation since process_params handles {{ }} but not {% %}
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("is_active".to_string(), json!("{{ state.active }}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> =
+        HashMap::from([("is_active".to_string(), json!("{{ state.active }}"))]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 
@@ -459,9 +478,10 @@ fn test_whitespace_control() {
 
     let variables = HashMap::new();
 
-    let params: HashMap<String, serde_json::Value> = HashMap::from([
-        ("compact".to_string(), json!("{%- for item in state.items -%}{{ item }}{%- endfor -%}")),
-    ]);
+    let params: HashMap<String, serde_json::Value> = HashMap::from([(
+        "compact".to_string(),
+        json!("{%- for item in state.items -%}{{ item }}{%- endfor -%}"),
+    )]);
 
     let result = engine.process_params(&params, &state, &variables).unwrap();
 

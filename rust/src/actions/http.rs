@@ -46,9 +46,7 @@ fn http_get(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
     let headers: HashMap<String, String> = response
         .headers()
         .iter()
-        .filter_map(|(k, v)| {
-            v.to_str().ok().map(|v| (k.to_string(), v.to_string()))
-        })
+        .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
         .collect();
 
     let body = response.text().map_err(|e| TeaError::Http(e.to_string()))?;
@@ -157,7 +155,10 @@ fn http_put(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
 
     let mut result = state.clone();
     if let Some(obj) = result.as_object_mut() {
-        obj.insert("response".to_string(), json!({"status": status, "body": json_body}));
+        obj.insert(
+            "response".to_string(),
+            json!({"status": status, "body": json_body}),
+        );
     }
 
     Ok(result)

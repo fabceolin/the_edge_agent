@@ -83,8 +83,8 @@ fn json_transform(state: &JsonValue, params: &HashMap<String, JsonValue>) -> Tea
         })?;
 
     // Use jmespath crate - convert input to string first
-    let input_str = serde_json::to_string(input)
-        .map_err(|e| TeaError::Serialization(e.to_string()))?;
+    let input_str =
+        serde_json::to_string(input).map_err(|e| TeaError::Serialization(e.to_string()))?;
 
     let expr = jmespath::compile(expression).map_err(|e| TeaError::InvalidInput {
         action: "json.transform".to_string(),
@@ -92,18 +92,19 @@ fn json_transform(state: &JsonValue, params: &HashMap<String, JsonValue>) -> Tea
     })?;
 
     // Convert to jmespath Variable
-    let jmes_input = jmespath::Variable::from_json(&input_str).map_err(|e| {
-        TeaError::InvalidInput {
+    let jmes_input =
+        jmespath::Variable::from_json(&input_str).map_err(|e| TeaError::InvalidInput {
             action: "json.transform".to_string(),
             message: format!("Failed to convert input: {}", e),
-        }
-    })?;
+        })?;
 
-    let jmes_result = expr.search(&jmes_input).map_err(|e| TeaError::Action(e.to_string()))?;
+    let jmes_result = expr
+        .search(&jmes_input)
+        .map_err(|e| TeaError::Action(e.to_string()))?;
 
     // Convert back to serde_json Value
-    let output: JsonValue = serde_json::from_str(&jmes_result.to_string())
-        .unwrap_or(JsonValue::Null);
+    let output: JsonValue =
+        serde_json::from_str(&jmes_result.to_string()).unwrap_or(JsonValue::Null);
 
     let mut result = state.clone();
     if let Some(obj) = result.as_object_mut() {
@@ -164,9 +165,7 @@ fn csv_parse(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
         reader
             .records()
             .filter_map(|r| r.ok())
-            .map(|record| {
-                JsonValue::Array(record.iter().map(|f| json!(f)).collect())
-            })
+            .map(|record| JsonValue::Array(record.iter().map(|f| json!(f)).collect()))
             .collect()
     };
 
@@ -200,9 +199,9 @@ fn csv_stringify(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaR
         .from_writer(vec![]);
 
     // Get headers from first record if it's an object
-    let headers: Option<Vec<String>> = input.first().and_then(|first| {
-        first.as_object().map(|obj| obj.keys().cloned().collect())
-    });
+    let headers: Option<Vec<String>> = input
+        .first()
+        .and_then(|first| first.as_object().map(|obj| obj.keys().cloned().collect()));
 
     // Write header row
     if let Some(ref h) = headers {
@@ -284,9 +283,10 @@ fn data_merge(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
         if let Some(obj) = source.as_object() {
             for (key, value) in obj {
                 if deep {
-                    if let (Some(existing), Some(new_obj)) =
-                        (merged.get(key).and_then(|v| v.as_object()), value.as_object())
-                    {
+                    if let (Some(existing), Some(new_obj)) = (
+                        merged.get(key).and_then(|v| v.as_object()),
+                        value.as_object(),
+                    ) {
                         let mut combined = existing.clone();
                         for (k, v) in new_obj {
                             combined.insert(k.clone(), v.clone());
@@ -336,9 +336,10 @@ fn data_filter(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRes
                     "exists" => item_value.is_some(),
                     "not_exists" => item_value.is_none(),
                     "contains" => {
-                        if let (Some(item_str), Some(search)) =
-                            (item_value.and_then(|v| v.as_str()), value.and_then(|v| v.as_str()))
-                        {
+                        if let (Some(item_str), Some(search)) = (
+                            item_value.and_then(|v| v.as_str()),
+                            value.and_then(|v| v.as_str()),
+                        ) {
                             item_str.contains(search)
                         } else {
                             false
@@ -412,9 +413,10 @@ mod tests {
     #[test]
     fn test_json_parse() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("input".to_string(), json!(r#"{"key": "value"}"#))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!(r#"{"key": "value"}"#))]
+                .into_iter()
+                .collect();
 
         let result = json_parse(&state, &params).unwrap();
         assert_eq!(result["parsed"]["key"], "value");
@@ -547,9 +549,10 @@ mod tests {
     #[test]
     fn test_json_parse_array() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("input".to_string(), json!(r#"[1, 2, 3, "four"]"#))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!(r#"[1, 2, 3, "four"]"#))]
+                .into_iter()
+                .collect();
 
         let result = json_parse(&state, &params).unwrap();
         assert_eq!(result["parsed"], json!([1, 2, 3, "four"]));
@@ -558,9 +561,12 @@ mod tests {
     #[test]
     fn test_json_parse_nested() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("input".to_string(), json!(r#"{"nested": {"deep": {"value": 42}}}"#))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> = [(
+            "input".to_string(),
+            json!(r#"{"nested": {"deep": {"value": 42}}}"#),
+        )]
+        .into_iter()
+        .collect();
 
         let result = json_parse(&state, &params).unwrap();
         assert_eq!(result["parsed"]["nested"]["deep"]["value"], 42);
@@ -599,11 +605,9 @@ mod tests {
     #[test]
     fn test_json_stringify_array() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [
-            ("input".to_string(), json!([1, 2, 3])),
-        ]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> = [("input".to_string(), json!([1, 2, 3]))]
+            .into_iter()
+            .collect();
 
         let result = json_stringify(&state, &params).unwrap();
         assert_eq!(result["output"], "[1,2,3]");
@@ -626,7 +630,10 @@ mod tests {
     fn test_json_transform_simple() {
         let state = json!({});
         let params: HashMap<String, JsonValue> = [
-            ("input".to_string(), json!({"user": {"profile": {"name": "Alice"}}})),
+            (
+                "input".to_string(),
+                json!({"user": {"profile": {"name": "Alice"}}}),
+            ),
             ("expression".to_string(), json!("user.profile.name")),
         ]
         .into_iter()
@@ -640,14 +647,20 @@ mod tests {
     fn test_json_transform_array_filter() {
         let state = json!({});
         let params: HashMap<String, JsonValue> = [
-            ("input".to_string(), json!({
-                "users": [
-                    {"name": "Alice", "status": "active"},
-                    {"name": "Bob", "status": "inactive"},
-                    {"name": "Charlie", "status": "active"}
-                ]
-            })),
-            ("expression".to_string(), json!("users[?status=='active'].name")),
+            (
+                "input".to_string(),
+                json!({
+                    "users": [
+                        {"name": "Alice", "status": "active"},
+                        {"name": "Bob", "status": "inactive"},
+                        {"name": "Charlie", "status": "active"}
+                    ]
+                }),
+            ),
+            (
+                "expression".to_string(),
+                json!("users[?status=='active'].name"),
+            ),
         ]
         .into_iter()
         .collect();
@@ -687,11 +700,9 @@ mod tests {
     #[test]
     fn test_json_transform_missing_expression() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [
-            ("input".to_string(), json!({"a": 1})),
-        ]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> = [("input".to_string(), json!({"a": 1}))]
+            .into_iter()
+            .collect();
 
         let result = json_transform(&state, &params);
         assert!(result.is_err());
@@ -739,9 +750,8 @@ mod tests {
     #[test]
     fn test_csv_parse_empty() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("input".to_string(), json!(""))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!(""))].into_iter().collect();
 
         let result = csv_parse(&state, &params).unwrap();
         assert_eq!(result["count"], 0);
@@ -784,15 +794,10 @@ mod tests {
     #[test]
     fn test_csv_stringify_from_arrays() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [(
-            "input".to_string(),
-            json!([
-                ["Alice", "30"],
-                ["Bob", "25"]
-            ]),
-        )]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!([["Alice", "30"], ["Bob", "25"]]))]
+                .into_iter()
+                .collect();
 
         let result = csv_stringify(&state, &params).unwrap();
         let output = result["output"].as_str().unwrap();
@@ -803,10 +808,7 @@ mod tests {
     fn test_csv_stringify_custom_delimiter() {
         let state = json!({});
         let params: HashMap<String, JsonValue> = [
-            (
-                "input".to_string(),
-                json!([["a", "b"], ["c", "d"]]),
-            ),
+            ("input".to_string(), json!([["a", "b"], ["c", "d"]])),
             ("delimiter".to_string(), json!(";")),
         ]
         .into_iter()
@@ -820,9 +822,8 @@ mod tests {
     #[test]
     fn test_csv_stringify_empty() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("input".to_string(), json!([]))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!([]))].into_iter().collect();
 
         let result = csv_stringify(&state, &params).unwrap();
         assert_eq!(result["output"], "");
@@ -889,9 +890,8 @@ mod tests {
     #[test]
     fn test_data_merge_empty_sources() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("sources".to_string(), json!([]))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("sources".to_string(), json!([]))].into_iter().collect();
 
         let result = data_merge(&state, &params).unwrap();
         assert_eq!(result["merged"], json!({}));
@@ -900,12 +900,10 @@ mod tests {
     #[test]
     fn test_data_merge_single_source() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [(
-            "sources".to_string(),
-            json!([{"a": 1, "b": 2}]),
-        )]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> =
+            [("sources".to_string(), json!([{"a": 1, "b": 2}]))]
+                .into_iter()
+                .collect();
 
         let result = data_merge(&state, &params).unwrap();
         assert_eq!(result["merged"]["a"], 1);
@@ -1009,12 +1007,10 @@ mod tests {
     #[test]
     fn test_data_filter_no_key_returns_all() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [(
-            "input".to_string(),
-            json!([{"a": 1}, {"a": 2}, {"a": 3}]),
-        )]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> =
+            [("input".to_string(), json!([{"a": 1}, {"a": 2}, {"a": 3}]))]
+                .into_iter()
+                .collect();
 
         let result = data_filter(&state, &params).unwrap();
         assert_eq!(result["count"], 3);
@@ -1072,7 +1068,9 @@ mod tests {
         let result = data_validate(&state, &params).unwrap();
         assert_eq!(result["valid"], false);
         let errors = result["errors"].as_array().unwrap();
-        assert!(errors.iter().any(|e| e["message"].as_str().unwrap().contains("email")));
+        assert!(errors
+            .iter()
+            .any(|e| e["message"].as_str().unwrap().contains("email")));
     }
 
     #[test]
@@ -1101,14 +1099,17 @@ mod tests {
     fn test_data_validate_nested_object() {
         let state = json!({});
         let params: HashMap<String, JsonValue> = [
-            ("input".to_string(), json!({
-                "user": {
-                    "name": "Alice",
-                    "profile": {
-                        "age": 30
+            (
+                "input".to_string(),
+                json!({
+                    "user": {
+                        "name": "Alice",
+                        "profile": {
+                            "age": 30
+                        }
                     }
-                }
-            })),
+                }),
+            ),
             (
                 "schema".to_string(),
                 json!({
@@ -1140,12 +1141,10 @@ mod tests {
     #[test]
     fn test_data_validate_missing_input() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [(
-            "schema".to_string(),
-            json!({"type": "object"}),
-        )]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> =
+            [("schema".to_string(), json!({"type": "object"}))]
+                .into_iter()
+                .collect();
 
         let result = data_validate(&state, &params);
         assert!(result.is_err());

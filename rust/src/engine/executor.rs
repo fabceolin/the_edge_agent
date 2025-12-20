@@ -155,9 +155,8 @@ pub struct ActionRegistry {
 }
 
 /// Action handler type
-pub type ActionHandler = Arc<
-    dyn Fn(&JsonValue, &HashMap<String, JsonValue>) -> TeaResult<JsonValue> + Send + Sync,
->;
+pub type ActionHandler =
+    Arc<dyn Fn(&JsonValue, &HashMap<String, JsonValue>) -> TeaResult<JsonValue> + Send + Sync>;
 
 impl ActionRegistry {
     /// Create a new empty registry
@@ -410,10 +409,9 @@ impl Executor {
 
         // Execute with retry if configured
         if let Some(ref config) = retry_config {
-            return self.retry_executor.execute_with_retry(
-                || self.execute_node_inner(node_name, state),
-                config,
-            );
+            return self
+                .retry_executor
+                .execute_with_retry(|| self.execute_node_inner(node_name, state), config);
         }
 
         self.execute_node_inner(node_name, state)
@@ -508,7 +506,10 @@ impl Executor {
         }
 
         // If we get here with conditional edges but no match, error
-        if edges.iter().any(|(_, e)| matches!(&e.edge_type, EdgeType::Conditional { .. })) {
+        if edges
+            .iter()
+            .any(|(_, e)| matches!(&e.edge_type, EdgeType::Conditional { .. }))
+        {
             return Err(TeaError::NoMatchingEdge("No condition matched".to_string()));
         }
 
@@ -585,7 +586,9 @@ impl Executor {
 
         common_successors
             .and_then(|s| s.into_iter().next())
-            .ok_or_else(|| TeaError::Graph("No fan-in node found for parallel branches".to_string()))
+            .ok_or_else(|| {
+                TeaError::Graph("No fan-in node found for parallel branches".to_string())
+            })
     }
 }
 

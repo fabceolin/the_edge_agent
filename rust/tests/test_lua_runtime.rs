@@ -31,7 +31,9 @@ fn test_create_runtime_with_timeout() {
 fn test_json_to_lua_null() {
     let runtime = LuaRuntime::new().unwrap();
 
-    let result = runtime.execute("return state == nil", &json!(null)).unwrap();
+    let result = runtime
+        .execute("return state == nil", &json!(null))
+        .unwrap();
     assert_eq!(result, json!(true));
 }
 
@@ -66,7 +68,9 @@ fn test_json_to_lua_float() {
 fn test_json_to_lua_string() {
     let runtime = LuaRuntime::new().unwrap();
 
-    let result = runtime.execute("return state .. '!'", &json!("hello")).unwrap();
+    let result = runtime
+        .execute("return state .. '!'", &json!("hello"))
+        .unwrap();
     assert_eq!(result, json!("hello!"));
 }
 
@@ -98,10 +102,14 @@ fn test_json_to_lua_nested_object() {
         }
     });
 
-    let result = runtime.execute("return state.config.timeout", &state).unwrap();
+    let result = runtime
+        .execute("return state.config.timeout", &state)
+        .unwrap();
     assert_eq!(result, json!(30));
 
-    let result = runtime.execute("return state.config.enabled", &state).unwrap();
+    let result = runtime
+        .execute("return state.config.enabled", &state)
+        .unwrap();
     assert_eq!(result, json!(true));
 }
 
@@ -116,7 +124,9 @@ fn test_json_to_lua_array() {
     let state = json!([1, 2, 3]);
 
     // Lua arrays are 1-indexed
-    let result = runtime.execute("return state[1] + state[2] + state[3]", &state).unwrap();
+    let result = runtime
+        .execute("return state[1] + state[2] + state[3]", &state)
+        .unwrap();
     assert_eq!(result, json!(6));
 }
 
@@ -136,7 +146,9 @@ fn test_json_to_lua_string_array() {
 
     let state = json!(["a", "b", "c"]);
 
-    let result = runtime.execute("return state[1] .. state[2] .. state[3]", &state).unwrap();
+    let result = runtime
+        .execute("return state[1] .. state[2] .. state[3]", &state)
+        .unwrap();
     assert_eq!(result, json!("abc"));
 }
 
@@ -160,7 +172,9 @@ fn test_eval_condition_with_return() {
     let state = json!({"value": 10});
 
     // Expression with explicit return - must return string
-    let result = runtime.eval_condition("return tostring(state.value)", &state).unwrap();
+    let result = runtime
+        .eval_condition("return tostring(state.value)", &state)
+        .unwrap();
     assert_eq!(result, Some("10".to_string()));
 }
 
@@ -171,17 +185,15 @@ fn test_eval_condition_with_logic() {
     let state = json!({"value": 10});
 
     // Use Lua's ternary-style expression since eval_condition wraps with return
-    let result = runtime.eval_condition(
-        r#"state.value > 5 and "high" or "low""#,
-        &state
-    ).unwrap();
+    let result = runtime
+        .eval_condition(r#"state.value > 5 and "high" or "low""#, &state)
+        .unwrap();
     assert_eq!(result, Some("high".to_string()));
 
     let state = json!({"value": 3});
-    let result = runtime.eval_condition(
-        r#"state.value > 5 and "high" or "low""#,
-        &state
-    ).unwrap();
+    let result = runtime
+        .eval_condition(r#"state.value > 5 and "high" or "low""#, &state)
+        .unwrap();
     assert_eq!(result, Some("low".to_string()));
 }
 
@@ -256,7 +268,9 @@ fn test_sandbox_allows_string_library() {
     let runtime = LuaRuntime::new().unwrap();
 
     let state = json!({});
-    let result = runtime.execute("return string.upper('hello')", &state).unwrap();
+    let result = runtime
+        .execute("return string.upper('hello')", &state)
+        .unwrap();
     assert_eq!(result, json!("HELLO"));
 }
 
@@ -274,11 +288,16 @@ fn test_sandbox_allows_table_library() {
     let runtime = LuaRuntime::new().unwrap();
 
     let state = json!([3, 1, 2]);
-    let result = runtime.execute(r#"
+    let result = runtime
+        .execute(
+            r#"
         local t = {state[1], state[2], state[3]}
         table.sort(t)
         return t
-    "#, &state).unwrap();
+    "#,
+            &state,
+        )
+        .unwrap();
     assert_eq!(result, json!([1, 2, 3]));
 }
 
@@ -536,7 +555,9 @@ fn test_tostring_function() {
 
     let state = json!({"value": 42});
 
-    let result = runtime.execute("return tostring(state.value)", &state).unwrap();
+    let result = runtime
+        .execute("return tostring(state.value)", &state)
+        .unwrap();
     assert_eq!(result, json!("42"));
 }
 
@@ -546,6 +567,8 @@ fn test_tonumber_function() {
 
     let state = json!({"value": "42"});
 
-    let result = runtime.execute("return tonumber(state.value) + 1", &state).unwrap();
+    let result = runtime
+        .execute("return tonumber(state.value) + 1", &state)
+        .unwrap();
     assert_eq!(result, json!(43));
 }

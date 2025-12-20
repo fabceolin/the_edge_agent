@@ -4,7 +4,7 @@
 //! Nodes are workflow steps with run functions, and edges define transitions.
 
 use petgraph::graph::{DiGraph, NodeIndex};
-use petgraph::visit::{Topo, Walker, EdgeRef};
+use petgraph::visit::{EdgeRef, Topo, Walker};
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -140,11 +140,21 @@ pub struct RetryConfig {
     pub jitter: bool,
 }
 
-fn default_max_retries() -> u32 { 3 }
-fn default_base_delay() -> u64 { 1000 }
-fn default_max_delay() -> u64 { 30000 }
-fn default_backoff_multiplier() -> f64 { 2.0 }
-fn default_jitter() -> bool { true }
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_base_delay() -> u64 {
+    1000
+}
+fn default_max_delay() -> u64 {
+    30000
+}
+fn default_backoff_multiplier() -> f64 {
+    2.0
+}
+fn default_jitter() -> bool {
+    true
+}
 
 impl Default for RetryConfig {
     fn default() -> Self {
@@ -185,17 +195,17 @@ impl std::fmt::Debug for EdgeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EdgeType::Simple => write!(f, "Simple"),
-            EdgeType::Conditional { condition, target, .. } => {
-                f.debug_struct("Conditional")
-                    .field("condition", condition)
-                    .field("target", target)
-                    .finish()
-            }
-            EdgeType::Parallel { branches } => {
-                f.debug_struct("Parallel")
-                    .field("branches", branches)
-                    .finish()
-            }
+            EdgeType::Conditional {
+                condition, target, ..
+            } => f
+                .debug_struct("Conditional")
+                .field("condition", condition)
+                .field("target", target)
+                .finish(),
+            EdgeType::Parallel { branches } => f
+                .debug_struct("Parallel")
+                .field("branches", branches)
+                .finish(),
         }
     }
 }
@@ -345,14 +355,21 @@ impl StateGraph {
 
     /// Get mutable node by name
     pub fn get_node_mut(&mut self, name: &str) -> Option<&mut Node> {
-        self.node_indices.get(name).cloned().map(|idx| &mut self.graph[idx])
+        self.node_indices
+            .get(name)
+            .cloned()
+            .map(|idx| &mut self.graph[idx])
     }
 
     /// Add an edge between two nodes
     pub fn add_edge(&mut self, from: &str, to: &str, edge: Edge) -> TeaResult<()> {
-        let from_idx = self.node_indices.get(from)
+        let from_idx = self
+            .node_indices
+            .get(from)
             .ok_or_else(|| TeaError::NodeNotFound(from.to_string()))?;
-        let to_idx = self.node_indices.get(to)
+        let to_idx = self
+            .node_indices
+            .get(to)
             .ok_or_else(|| TeaError::NodeNotFound(to.to_string()))?;
 
         self.graph.add_edge(*from_idx, *to_idx, edge);
@@ -371,11 +388,15 @@ impl StateGraph {
         condition: &str,
         targets: HashMap<String, String>,
     ) -> TeaResult<()> {
-        let from_idx = self.node_indices.get(from)
+        let from_idx = self
+            .node_indices
+            .get(from)
             .ok_or_else(|| TeaError::NodeNotFound(from.to_string()))?;
 
         for (result, target) in targets {
-            let to_idx = self.node_indices.get(&target)
+            let to_idx = self
+                .node_indices
+                .get(&target)
                 .ok_or_else(|| TeaError::NodeNotFound(target.clone()))?;
 
             let edge = Edge::conditional(condition, result);
@@ -436,7 +457,8 @@ impl StateGraph {
 
         // If cycles are allowed but topo sort is incomplete, return all nodes
         if self.allow_cycles && order.len() != self.graph.node_count() {
-            let all_nodes: Vec<String> = self.graph
+            let all_nodes: Vec<String> = self
+                .graph
                 .node_indices()
                 .map(|idx| self.graph[idx].name.clone())
                 .collect();
@@ -482,7 +504,9 @@ impl StateGraph {
             for edge_ref in self.graph.edges_directed(node_idx, Direction::Outgoing) {
                 let target_idx = edge_ref.target();
                 if self.graph.node_weight(target_idx).is_none() {
-                    return Err(TeaError::Edge("Edge points to non-existent node".to_string()));
+                    return Err(TeaError::Edge(
+                        "Edge points to non-existent node".to_string(),
+                    ));
                 }
             }
         }
@@ -726,12 +750,11 @@ mod tests {
 
     #[test]
     fn test_node_with_run_function() {
-        let node = Node::new("process")
-            .with_run(|state| {
-                let mut new_state = state.clone();
-                new_state["processed"] = serde_json::json!(true);
-                Ok(new_state)
-            });
+        let node = Node::new("process").with_run(|state| {
+            let mut new_state = state.clone();
+            new_state["processed"] = serde_json::json!(true);
+            Ok(new_state)
+        });
 
         assert!(node.run.is_some());
 
@@ -749,8 +772,7 @@ mod tests {
             ..Default::default()
         };
 
-        let node = Node::new("fetch")
-            .with_retry(retry.clone());
+        let node = Node::new("fetch").with_retry(retry.clone());
 
         assert!(node.retry.is_some());
         assert_eq!(node.retry.as_ref().unwrap().max_retries, 5);

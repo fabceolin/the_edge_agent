@@ -40,14 +40,14 @@
 //! For most pure Lua code (loops, computations, function calls), the timeout
 //! will reliably terminate execution within a reasonable margin of the configured time.
 
-use mlua::{Lua, Result as LuaResult, Table, Value, Function, HookTriggers};
+use mlua::{Function, HookTriggers, Lua, Result as LuaResult, Table, Value};
 use parking_lot::RwLock;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::error::{TeaError, TeaResult};
 
@@ -130,7 +130,8 @@ impl LuaRuntime {
 
             // Keep safe globals: string, table, math, pairs, ipairs, type, tostring, tonumber, etc.
             Ok(())
-        }).map_err(|e: mlua::Error| TeaError::Lua(e.to_string()))
+        })
+        .map_err(|e: mlua::Error| TeaError::Lua(e.to_string()))
     }
 
     /// Set up the debug hook for timeout checking
@@ -244,11 +245,9 @@ impl LuaRuntime {
             Value::Nil => Ok(JsonValue::Null),
             Value::Boolean(b) => Ok(JsonValue::Bool(b)),
             Value::Integer(i) => Ok(JsonValue::Number(i.into())),
-            Value::Number(n) => {
-                serde_json::Number::from_f64(n)
-                    .map(JsonValue::Number)
-                    .ok_or_else(|| TeaError::Lua("Invalid float value".to_string()))
-            }
+            Value::Number(n) => serde_json::Number::from_f64(n)
+                .map(JsonValue::Number)
+                .ok_or_else(|| TeaError::Lua("Invalid float value".to_string())),
             Value::String(s) => Ok(JsonValue::String(s.to_str()?.to_string())),
             Value::Table(table) => {
                 // Check if it's an array (sequential integer keys starting from 1)
@@ -288,7 +287,9 @@ impl LuaRuntime {
                 }
             }
             Value::Function(_) => Err(TeaError::Lua("Cannot convert function to JSON".to_string())),
-            Value::LightUserData(_) => Err(TeaError::Lua("Cannot convert userdata to JSON".to_string())),
+            Value::LightUserData(_) => {
+                Err(TeaError::Lua("Cannot convert userdata to JSON".to_string()))
+            }
             Value::UserData(_) => Err(TeaError::Lua("Cannot convert userdata to JSON".to_string())),
             Value::Thread(_) => Err(TeaError::Lua("Cannot convert thread to JSON".to_string())),
             Value::Error(e) => Err(TeaError::Lua(e.to_string())),
@@ -300,15 +301,17 @@ impl LuaRuntime {
     pub fn execute(&self, code: &str, state: &JsonValue) -> TeaResult<JsonValue> {
         self.execute_with_timeout(|_ctx| {
             // Create state table (read-only copy)
-            let state_table = self.json_to_lua(&self.lua, state)
+            let state_table = self
+                .json_to_lua(&self.lua, state)
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
-            self.lua.globals().set("state", state_table)
+            self.lua
+                .globals()
+                .set("state", state_table)
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
 
             // Execute code
             let chunk = self.lua.load(code);
-            let result: Value = chunk.eval()
-                .map_err(|e| TeaError::Lua(e.to_string()))?;
+            let result: Value = chunk.eval().map_err(|e| TeaError::Lua(e.to_string()))?;
 
             // Convert result back to JSON
             self.lua_to_json(result)
@@ -322,9 +325,12 @@ impl LuaRuntime {
     pub fn eval_condition(&self, expression: &str, state: &JsonValue) -> TeaResult<Option<String>> {
         self.execute_with_timeout(|_ctx| {
             // Create state table (read-only copy)
-            let state_table = self.json_to_lua(&self.lua, state)
+            let state_table = self
+                .json_to_lua(&self.lua, state)
                 .map_err(|e| TeaError::ConditionEvaluation(e.to_string()))?;
-            self.lua.globals().set("state", state_table)
+            self.lua
+                .globals()
+                .set("state", state_table)
                 .map_err(|e| TeaError::ConditionEvaluation(e.to_string()))?;
 
             // Wrap expression in return statement if needed
@@ -336,15 +342,18 @@ impl LuaRuntime {
 
             // Execute expression
             let chunk = self.lua.load(&code);
-            let result: Value = chunk.eval()
+            let result: Value = chunk
+                .eval()
                 .map_err(|e| TeaError::ConditionEvaluation(e.to_string()))?;
 
             // Convert result
             match result {
                 Value::Nil => Ok(None),
-                Value::String(s) => Ok(Some(s.to_str()
-                    .map_err(|e| TeaError::ConditionEvaluation(e.to_string()))?
-                    .to_string())),
+                Value::String(s) => Ok(Some(
+                    s.to_str()
+                        .map_err(|e| TeaError::ConditionEvaluation(e.to_string()))?
+                        .to_string(),
+                )),
                 Value::Boolean(true) => Ok(Some("true".to_string())),
                 Value::Boolean(false) => Ok(Some("false".to_string())),
                 other => Err(TeaError::ConditionEvaluation(format!(
@@ -368,34 +377,36 @@ impl LuaRuntime {
         let code = std::fs::read_to_string(path)
             .map_err(|e| TeaError::Lua(format!("Failed to read module {}: {}", path, e)))?;
 
-        self.lua.scope(|_scope| {
-            // Load the module
-            let chunk = self.lua.load(&code);
-            let module: Table = chunk.eval()?;
+        self.lua
+            .scope(|_scope| {
+                // Load the module
+                let chunk = self.lua.load(&code);
+                let module: Table = chunk.eval()?;
 
-            // Get register_actions function
-            let register_fn: Function = module.get("register_actions")?;
+                // Get register_actions function
+                let register_fn: Function = module.get("register_actions")?;
 
-            // Create a local registry table
-            let registry: Table = self.lua.create_table()?;
+                // Create a local registry table
+                let registry: Table = self.lua.create_table()?;
 
-            // Call register_actions
-            register_fn.call::<_, ()>(registry.clone())?;
+                // Call register_actions
+                register_fn.call::<_, ()>(registry.clone())?;
 
-            // Collect registered action names
-            let mut action_names = Vec::new();
-            for pair in registry.pairs::<String, Function>() {
-                let (name, _func) = pair?;
-                let full_name = if namespace.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}.{}", namespace, name)
-                };
-                action_names.push(full_name);
-            }
+                // Collect registered action names
+                let mut action_names = Vec::new();
+                for pair in registry.pairs::<String, Function>() {
+                    let (name, _func) = pair?;
+                    let full_name = if namespace.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}.{}", namespace, name)
+                    };
+                    action_names.push(full_name);
+                }
 
-            Ok(action_names)
-        }).map_err(|e: mlua::Error| TeaError::Lua(e.to_string()))
+                Ok(action_names)
+            })
+            .map_err(|e: mlua::Error| TeaError::Lua(e.to_string()))
     }
 
     /// Execute inline Lua code for a node
@@ -411,14 +422,17 @@ impl LuaRuntime {
             );
 
             // Create state argument
-            let state_value = self.json_to_lua(&self.lua, state)
+            let state_value = self
+                .json_to_lua(&self.lua, state)
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
 
             // Load and call the function
             let chunk = self.lua.load(&wrapped);
-            let func: Function = chunk.into_function()
+            let func: Function = chunk
+                .into_function()
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
-            let result: Value = func.call(state_value)
+            let result: Value = func
+                .call(state_value)
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
 
             // Convert result
@@ -458,7 +472,9 @@ mod tests {
         let runtime = LuaRuntime::new().unwrap();
 
         // Test null
-        let result = runtime.execute("return state == nil", &json!(null)).unwrap();
+        let result = runtime
+            .execute("return state == nil", &json!(null))
+            .unwrap();
         assert_eq!(result, json!(true));
 
         // Test boolean
@@ -470,7 +486,9 @@ mod tests {
         assert_eq!(result, json!(42));
 
         // Test string
-        let result = runtime.execute("return state .. '!'", &json!("hello")).unwrap();
+        let result = runtime
+            .execute("return state .. '!'", &json!("hello"))
+            .unwrap();
         assert_eq!(result, json!("hello!"));
     }
 
@@ -491,7 +509,9 @@ mod tests {
         let runtime = LuaRuntime::new().unwrap();
 
         let state = json!([1, 2, 3]);
-        let result = runtime.execute("return state[1] + state[2] + state[3]", &state).unwrap();
+        let result = runtime
+            .execute("return state[1] + state[2] + state[3]", &state)
+            .unwrap();
         assert_eq!(result, json!(6));
     }
 
@@ -510,10 +530,9 @@ mod tests {
 
         let state = json!({"value": 10});
         // Use Lua's ternary-style expression: (condition and value_if_true or value_if_false)
-        let result = runtime.eval_condition(
-            r#"state.value > 5 and "high" or "low""#,
-            &state
-        ).unwrap();
+        let result = runtime
+            .eval_condition(r#"state.value > 5 and "high" or "low""#, &state)
+            .unwrap();
         assert_eq!(result, Some("high".to_string()));
     }
 
@@ -585,7 +604,11 @@ mod tests {
         let elapsed = start.elapsed();
 
         // Should complete within reasonable time (not hang)
-        assert!(elapsed < Duration::from_millis(500), "Timeout took too long: {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "Timeout took too long: {:?}",
+            elapsed
+        );
 
         // Should return an error
         assert!(result.is_err());
@@ -594,7 +617,11 @@ mod tests {
 
         // Error should mention timeout
         let err_msg = err.to_string();
-        assert!(err_msg.contains("timeout"), "Error should mention timeout: {}", err_msg);
+        assert!(
+            err_msg.contains("timeout"),
+            "Error should mention timeout: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -607,8 +634,11 @@ mod tests {
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("execution timeout"),
-            "Error should contain 'execution timeout': {}", err_msg);
+        assert!(
+            err_msg.contains("execution timeout"),
+            "Error should contain 'execution timeout': {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -622,7 +652,11 @@ mod tests {
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("timeout"), "Error should mention timeout: {}", err_msg);
+        assert!(
+            err_msg.contains("timeout"),
+            "Error should mention timeout: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -635,7 +669,11 @@ mod tests {
         assert!(result.is_err());
 
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("timeout"), "Error should mention timeout: {}", err_msg);
+        assert!(
+            err_msg.contains("timeout"),
+            "Error should mention timeout: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -662,8 +700,12 @@ mod tests {
             let elapsed = start.elapsed();
 
             assert!(result.is_err(), "Run {} should return error", i);
-            assert!(elapsed < Duration::from_millis(500),
-                "Run {} took too long: {:?}", i, elapsed);
+            assert!(
+                elapsed < Duration::from_millis(500),
+                "Run {} took too long: {:?}",
+                i,
+                elapsed
+            );
         }
     }
 

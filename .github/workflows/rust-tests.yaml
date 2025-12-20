@@ -2,13 +2,12 @@ name: Rust Tests
 
 on:
   push:
-    branches: [ main, rust ]
+    branches: [ main ]
     paths:
       - 'rust/**'
       - 'examples/**'
       - '.github/workflows/rust-tests.yaml'
   pull_request:
-    branches: [ main ]
     paths:
       - 'rust/**'
       - 'examples/**'

@@ -34,7 +34,13 @@ impl MemoryStore {
         }
     }
 
-    fn store(&mut self, key: &str, value: JsonValue, ttl: Option<Duration>, metadata: Option<JsonValue>) {
+    fn store(
+        &mut self,
+        key: &str,
+        value: JsonValue,
+        ttl: Option<Duration>,
+        metadata: Option<JsonValue>,
+    ) {
         let expires_at = ttl.map(|d| Instant::now() + d);
         self.data.insert(
             key.to_string(),
@@ -135,7 +141,10 @@ fn memory_retrieve(state: &JsonValue, params: &HashMap<String, JsonValue>) -> Te
     let mut result = state.clone();
     if let Some(obj) = result.as_object_mut() {
         obj.insert("value".to_string(), value);
-        obj.insert("found".to_string(), json!(metadata.is_some() || !has_default));
+        obj.insert(
+            "found".to_string(),
+            json!(metadata.is_some() || !has_default),
+        );
         if let Some(meta) = metadata {
             obj.insert("metadata".to_string(), meta);
         }
@@ -196,10 +205,9 @@ mod tests {
         assert_eq!(store_result["stored"], true);
 
         // Retrieve
-        let retrieve_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("test_key"))]
-                .into_iter()
-                .collect();
+        let retrieve_params: HashMap<String, JsonValue> = [("key".to_string(), json!("test_key"))]
+            .into_iter()
+            .collect();
 
         let retrieve_result = memory_retrieve(&state, &retrieve_params).unwrap();
         assert_eq!(retrieve_result["value"]["data"], "test_value");
@@ -321,7 +329,10 @@ mod tests {
         let store_params: HashMap<String, JsonValue> = [
             ("key".to_string(), json!("meta_test_key")),
             ("value".to_string(), json!("meta_value")),
-            ("metadata".to_string(), json!({"source": "test", "version": 1})),
+            (
+                "metadata".to_string(),
+                json!({"source": "test", "version": 1}),
+            ),
         ]
         .into_iter()
         .collect();
@@ -401,10 +412,9 @@ mod tests {
 
         memory_store(&state, &store_params).unwrap();
 
-        let retrieve_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("array_key"))]
-                .into_iter()
-                .collect();
+        let retrieve_params: HashMap<String, JsonValue> = [("key".to_string(), json!("array_key"))]
+            .into_iter()
+            .collect();
 
         let result = memory_retrieve(&state, &retrieve_params).unwrap();
         assert_eq!(result["value"], json!([1, 2, 3, "four"]));
@@ -416,13 +426,16 @@ mod tests {
 
         let store_params: HashMap<String, JsonValue> = [
             ("key".to_string(), json!("nested_key")),
-            ("value".to_string(), json!({
-                "level1": {
-                    "level2": {
-                        "value": "deep"
+            (
+                "value".to_string(),
+                json!({
+                    "level1": {
+                        "level2": {
+                            "value": "deep"
+                        }
                     }
-                }
-            })),
+                }),
+            ),
         ]
         .into_iter()
         .collect();
@@ -451,10 +464,9 @@ mod tests {
 
         memory_store(&state, &store_params).unwrap();
 
-        let retrieve_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("bool_key"))]
-                .into_iter()
-                .collect();
+        let retrieve_params: HashMap<String, JsonValue> = [("key".to_string(), json!("bool_key"))]
+            .into_iter()
+            .collect();
 
         let result = memory_retrieve(&state, &retrieve_params).unwrap();
         assert_eq!(result["value"], true);
@@ -473,10 +485,9 @@ mod tests {
 
         memory_store(&state, &store_params).unwrap();
 
-        let retrieve_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("null_key"))]
-                .into_iter()
-                .collect();
+        let retrieve_params: HashMap<String, JsonValue> = [("key".to_string(), json!("null_key"))]
+            .into_iter()
+            .collect();
 
         let result = memory_retrieve(&state, &retrieve_params).unwrap();
         assert!(result["value"].is_null());
@@ -524,9 +535,8 @@ mod tests {
     fn test_memory_store_missing_key() {
         let state = json!({});
 
-        let params: HashMap<String, JsonValue> = [("value".to_string(), json!("test"))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("value".to_string(), json!("test"))].into_iter().collect();
 
         let result = memory_store(&state, &params);
         assert!(result.is_err());
@@ -537,9 +547,8 @@ mod tests {
     fn test_memory_store_missing_value() {
         let state = json!({});
 
-        let params: HashMap<String, JsonValue> = [("key".to_string(), json!("test"))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> =
+            [("key".to_string(), json!("test"))].into_iter().collect();
 
         let result = memory_store(&state, &params);
         assert!(result.is_err());

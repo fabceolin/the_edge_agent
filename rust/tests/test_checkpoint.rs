@@ -3,7 +3,9 @@
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::tempdir;
-use the_edge_agent::engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer, MemoryCheckpointer};
+use the_edge_agent::engine::checkpoint::{
+    Checkpoint, Checkpointer, FileCheckpointer, MemoryCheckpointer,
+};
 
 // ============================================================================
 // Checkpoint Creation
@@ -20,16 +22,15 @@ fn test_checkpoint_creation() {
 
 #[test]
 fn test_checkpoint_with_graph_name() {
-    let checkpoint = Checkpoint::new("node1", json!({}))
-        .with_graph_name("test-graph");
+    let checkpoint = Checkpoint::new("node1", json!({})).with_graph_name("test-graph");
 
     assert_eq!(checkpoint.graph_name, Some("test-graph".to_string()));
 }
 
 #[test]
 fn test_checkpoint_with_metadata() {
-    let checkpoint = Checkpoint::new("node1", json!({}))
-        .with_metadata(json!({"version": 1, "user": "test"}));
+    let checkpoint =
+        Checkpoint::new("node1", json!({})).with_metadata(json!({"version": 1, "user": "test"}));
 
     assert_eq!(checkpoint.metadata["version"], 1);
     assert_eq!(checkpoint.metadata["user"], "test");
@@ -68,9 +69,15 @@ fn test_memory_checkpointer_load_nonexistent() {
 fn test_memory_checkpointer_list() {
     let checkpointer = MemoryCheckpointer::new();
 
-    checkpointer.save(&Checkpoint::new("node1", json!({}))).unwrap();
-    checkpointer.save(&Checkpoint::new("node2", json!({}))).unwrap();
-    checkpointer.save(&Checkpoint::new("node3", json!({}))).unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node1", json!({})))
+        .unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node2", json!({})))
+        .unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node3", json!({})))
+        .unwrap();
 
     let list = checkpointer.list().unwrap();
     assert_eq!(list.len(), 3);
@@ -150,8 +157,12 @@ fn test_file_checkpointer_list() {
     let dir = tempdir().unwrap();
     let checkpointer = FileCheckpointer::json(dir.path()).unwrap();
 
-    checkpointer.save(&Checkpoint::new("node1", json!({}))).unwrap();
-    checkpointer.save(&Checkpoint::new("node2", json!({}))).unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node1", json!({})))
+        .unwrap();
+    checkpointer
+        .save(&Checkpoint::new("node2", json!({})))
+        .unwrap();
 
     let list = checkpointer.list().unwrap();
     assert_eq!(list.len(), 2);
