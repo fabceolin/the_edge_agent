@@ -17,8 +17,7 @@ use std::time::{Duration, Instant};
 use crate::error::{TeaError, TeaResult};
 
 /// Parallel execution configuration
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ParallelConfig {
     /// Timeout for entire parallel flow
     pub timeout: Option<Duration>,
@@ -32,7 +31,6 @@ pub struct ParallelConfig {
     /// Circuit breaker configuration
     pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
-
 
 /// Retry policy for parallel branches
 #[derive(Debug, Clone)]

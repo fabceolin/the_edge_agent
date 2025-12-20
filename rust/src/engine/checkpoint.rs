@@ -261,8 +261,7 @@ impl Checkpointer for MemoryCheckpointer {
 }
 
 /// Interrupt configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InterruptConfig {
     /// Nodes to interrupt before
     pub interrupt_before: Vec<String>,
@@ -270,7 +269,6 @@ pub struct InterruptConfig {
     /// Nodes to interrupt after
     pub interrupt_after: Vec<String>,
 }
-
 
 impl InterruptConfig {
     /// Create config to interrupt before specific nodes

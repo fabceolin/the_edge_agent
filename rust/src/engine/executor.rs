@@ -90,8 +90,7 @@ impl ExecutionEvent {
 }
 
 /// Execution options
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ExecutionOptions {
     /// Enable streaming mode
     pub stream: bool,
@@ -116,7 +115,6 @@ impl std::fmt::Debug for ExecutionOptions {
             .finish()
     }
 }
-
 
 /// Graph executor
 pub struct Executor {
