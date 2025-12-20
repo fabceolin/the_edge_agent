@@ -7,7 +7,7 @@ setup(
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
-    long_description=open("README.md").read(),
+    long_description=open("../README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/fabceolin/the_edge_agent",
     package_dir={"": "src"},

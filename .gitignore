@@ -184,3 +184,4 @@ package.json
 setup.py.orig
 web-bundles/
 {{ variables.output_dir }}/
+.gemini/

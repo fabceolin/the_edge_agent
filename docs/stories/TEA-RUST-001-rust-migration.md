@@ -7,7 +7,7 @@
 | **ID** | TEA-RUST-001 |
 | **Type** | Epic |
 | **Priority** | High |
-| **Estimated Effort** | 22-28 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports) |
+| **Estimated Effort** | 24-30 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports + DuckDB Memory Layer) |
 | **Status** | Draft |
 
 ## Description
@@ -66,13 +66,24 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-1**: GIVEN a valid YAML workflow file, WHEN loaded by the Rust engine, THEN an immutable StateGraph is constructed
 
-- [ ] **AC-2**: GIVEN a compiled StateGraph, WHEN `invoke()` is called with initial state, THEN nodes execute in correct order and final state is returned
+- [ ] **AC-2**: GIVEN a compiled StateGraph, WHEN `invoke()` is called with initial state, THEN:
+  - **(a)** Nodes execute in topological order respecting edge dependencies
+  - **(b)** For sequential edges: source node completes before target node starts
+  - **(c)** For conditional edges: only the branch matching the condition executes
+  - **(d)** For parallel edges: all branches execute concurrently, results merge at fan-in node
+  - **(e)** Final state contains all accumulated state updates from executed nodes
+  - **(f)** Node execution order is deterministic for the same input state
 
 - [ ] **AC-3**: GIVEN a compiled StateGraph, WHEN `stream()` is called with initial state, THEN an iterator yields events for each node execution
 
 ### Parallel Execution
 
-- [ ] **AC-4**: GIVEN parallel edges defined in YAML, WHEN execution reaches fan-out node, THEN branches execute concurrently via rayon and merge at fan-in
+- [ ] **AC-4**: GIVEN parallel edges defined in YAML, WHEN execution reaches fan-out node, THEN:
+  - **(a)** Branches receive deep copies of state at fan-out point
+  - **(b)** Branches execute concurrently via rayon thread pool
+  - **(c)** At fan-in, branch results are available via `parallel_results` parameter
+  - **(d)** Fan-in node is responsible for merge strategy (no implicit merge)
+  - **(e)** If no fan-in node defined, branches merge with last-write-wins per key
 
 - [ ] **AC-5**: GIVEN a parallel branch fails, WHEN retry policy is configured, THEN branch retries up to max_retries before failing
 
@@ -98,7 +109,12 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 ### Lua Integration
 
-- [ ] **AC-8**: GIVEN a Lua condition expression, WHEN evaluated against current state, THEN correct edge is selected based on result
+- [ ] **AC-8**: GIVEN a Lua condition expression, WHEN evaluated against current state, THEN:
+  - **(a)** Lua expression has access to `state` table (read-only copy)
+  - **(b)** Expression MUST return a string matching a defined edge target name
+  - **(c)** If return value matches no edge target, `RoutingError::NoMatchingEdge` is raised
+  - **(d)** If expression returns `nil`, default edge (if defined) is selected
+  - **(e)** If expression errors, `RoutingError::ConditionEvaluation` is raised with Lua error message
 
 - [ ] **AC-9**: GIVEN inline Lua code in a node, WHEN node executes, THEN Lua script runs with state access and returns updated state
 
@@ -128,7 +144,17 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-25**: GIVEN `trace.start`/`trace.log`/`trace.end` actions, WHEN executed, THEN spans are created, events logged, and exported via configured exporter
 
-- [ ] **AC-26**: GIVEN `json.parse`/`json.transform`/`json.stringify` actions, WHEN executed, THEN JSON data is parsed, transformed via JMESPath, and serialized correctly
+- [ ] **AC-26a**: GIVEN valid JSON string input, WHEN `json.parse` executes, THEN output contains parsed `serde_json::Value` equivalent
+
+- [ ] **AC-26b**: GIVEN invalid JSON string input, WHEN `json.parse` executes, THEN `ActionError::InvalidInput` is returned with parse error location
+
+- [ ] **AC-26c**: GIVEN parsed JSON and JMESPath expression, WHEN `json.transform` executes, THEN output matches JMESPath specification (jmespath-rs crate, compatible with jmespath.org/specification.html)
+
+- [ ] **AC-26d**: GIVEN invalid JMESPath expression, WHEN `json.transform` executes, THEN `ActionError::InvalidInput` is returned with expression error
+
+- [ ] **AC-26e**: GIVEN `serde_json::Value` input, WHEN `json.stringify` executes, THEN output is valid JSON string with optional `pretty` parameter for formatted output
+
+- [ ] **AC-26f**: All JSON actions (`json.parse`, `json.transform`, `json.stringify`) MUST handle UTF-8 encoded strings per RFC 8259
 
 - [ ] **AC-27**: GIVEN `csv.parse`/`csv.stringify` actions, WHEN executed, THEN CSV data is parsed/serialized with configurable delimiters and headers
 
@@ -146,13 +172,15 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-34**: GIVEN `code.execute` action is DISABLED by default, WHEN enabled and executed with Lua code, THEN code runs in Lua sandbox (not RestrictedPython)
 
-### Long-Term Memory Actions (Rust Native)
+### Long-Term Memory Actions (Rust Native - DuckDB)
 
-- [ ] **AC-35**: GIVEN `ltm.store` action, WHEN executed with key/value/metadata, THEN data is persisted to SQLite with FTS5 indexing
+*Note: Merged from TEA-RUST-023 into TEA-RUST-028. Uses DuckDB FTS instead of SQLite FTS5.*
+
+- [ ] **AC-35**: GIVEN `ltm.store` action, WHEN executed with key/value/metadata, THEN data is persisted to DuckDB with FTS indexing
 
 - [ ] **AC-36**: GIVEN `ltm.retrieve` action, WHEN executed with key, THEN stored value and metadata are returned (or default if not found)
 
-- [ ] **AC-37**: GIVEN `ltm.search` action, WHEN executed with query text, THEN FTS5 full-text search returns matching entries ranked by relevance
+- [ ] **AC-37**: GIVEN `ltm.search` action, WHEN executed with query text, THEN DuckDB full-text search returns matching entries ranked by relevance
 
 - [ ] **AC-38**: GIVEN `graph.store_entity` action, WHEN executed with entity_id/type/properties, THEN entity is stored in graph database with optional embedding
 
@@ -183,6 +211,56 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 - [ ] **AC-55**: GIVEN external module loaded, WHEN module has `register_actions(registry, engine)` function, THEN actions registered in engine's action registry
 
 - [ ] **AC-56**: GIVEN circular import attempted (same module twice), WHEN `_load_imports()` runs, THEN module loaded once and duplicate skipped
+
+### Unified DuckDB Memory Layer (TEA-RUST-028)
+
+*Consolidates TEA-RUST-023 (LTM) + query engine + vector search + sessions + context + local blob storage.*
+
+#### Query Engine & Resilience
+
+- [ ] **AC-57**: GIVEN `QueryEngine` trait definition, WHEN DuckDB backend configured, THEN SQL queries execute with circuit breaker and connection pooling
+
+- [ ] **AC-58**: GIVEN `catalog.register_table` action, WHEN executed with table schema, THEN table metadata stored in DuckDB catalog
+
+- [ ] **AC-59**: GIVEN `memory.grep` action, WHEN executed with pattern, THEN LIKE-based search returns matching entries from DuckDB
+
+- [ ] **AC-60**: GIVEN `memory.sql_query` action, WHEN executed with SELECT query, THEN query validated via SQL sandbox and executed
+
+- [ ] **AC-61**: GIVEN `VectorIndex` trait definition, WHEN DuckDB VSS backend configured, THEN vector similarity search uses HNSW index
+
+- [ ] **AC-62**: GIVEN `CircuitBreaker` with failure tracking, WHEN DuckDB connection fails, THEN circuit opens after threshold and rejects requests
+
+- [ ] **AC-63**: GIVEN `ConnectionPool` for DuckDB, WHEN concurrent queries execute, THEN connections reused with health checks
+
+#### Session Management (DuckDB-based)
+
+- [ ] **AC-66**: GIVEN `session.create` action, WHEN executed with TTL, THEN session record created in DuckDB with expiration timestamp
+
+- [ ] **AC-67**: GIVEN `session.end` action, WHEN executed, THEN session marked as archived in DuckDB (soft delete for analytics)
+
+- [ ] **AC-68**: GIVEN `session.get` action, WHEN executed with session_id, THEN session metadata returned from DuckDB
+
+- [ ] **AC-69**: GIVEN `session.list` action, WHEN executed with filters, THEN matching sessions returned with pagination
+
+#### Context Assembly (Local backends)
+
+- [ ] **AC-70**: GIVEN `context.assemble` action, WHEN executed with scope config, THEN context assembled from DuckDB (metadata) + local files (blobs)
+
+- [ ] **AC-71**: GIVEN relevance ranking in context assembly, WHEN multiple sources match, THEN results ranked by (VSS similarity * 0.7) + (priority * 0.3)
+
+#### Local Blob Storage
+
+- [ ] **AC-72**: GIVEN `memory.file_store` action, WHEN executed with path/content, THEN file written to local filesystem with metadata in DuckDB
+
+- [ ] **AC-73**: GIVEN `memory.file_retrieve` action, WHEN executed with path, THEN file content read from local filesystem
+
+- [ ] **AC-74**: GIVEN `memory.file_list` action, WHEN executed with pattern, THEN matching files listed from DuckDB metadata
+
+### Conditional Start Edges (YE.7 in TEA-RUST-003)
+
+- [ ] **AC-64**: GIVEN `when` condition on `__start__` edge in YAML, WHEN graph parsed, THEN conditional edge routing applied (not ignored)
+
+- [ ] **AC-65**: GIVEN multiple conditional edges from `__start__`, WHEN graph invoked with state, THEN correct path selected based on condition evaluation
 
 ### CLI
 
@@ -315,11 +393,140 @@ nodes:
 | TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 |
 | TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 |
 | TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 |
-| TEA-RUST-023 | Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5) | 5 |
+| ~~TEA-RUST-023~~ | ~~Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5)~~ | ~~5~~ | *Merged into TEA-RUST-028* |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
 | TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
 | TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 |
 | TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 |
+| TEA-RUST-028 | **Unified DuckDB Memory Layer** (ltm.*, session.*, context.*, memory.*, local blob) | 8 |
+
+### Sub-Story Dependencies
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    subgraph Foundation["Foundation Layer"]
+        R002["TEA-RUST-002<br/>Core StateGraph"]
+        R009["TEA-RUST-009<br/>Lua Integration"]
+    end
+
+    subgraph Core["Core Execution Layer"]
+        R003["TEA-RUST-003<br/>YAML Parser"]
+        R004["TEA-RUST-004<br/>Node Execution"]
+        R005["TEA-RUST-005<br/>Conditional Routing"]
+        R006["TEA-RUST-006<br/>Parallel"]
+        R007["TEA-RUST-007<br/>Checkpointing"]
+        R008["TEA-RUST-008<br/>Error Handling"]
+        R012["TEA-RUST-012<br/>Stream Iterator"]
+    end
+
+    subgraph Actions["Built-in Actions Layer"]
+        R010["TEA-RUST-010<br/>HTTP & File"]
+        R011["TEA-RUST-011<br/>LLM Basic"]
+        R016["TEA-RUST-016<br/>Memory"]
+        R017["TEA-RUST-017<br/>Observability"]
+        R018["TEA-RUST-018<br/>Data Processing"]
+        R019["TEA-RUST-019<br/>Web"]
+        R020["TEA-RUST-020<br/>RAG"]
+        R021["TEA-RUST-021<br/>Code Execution"]
+        R022["TEA-RUST-022<br/>LLM Enhanced"]
+        R024["TEA-RUST-024<br/>Graph DB"]
+        R026["TEA-RUST-026<br/>Parallel Reliability"]
+        R027["TEA-RUST-027<br/>External Imports"]
+        R028["TEA-RUST-028<br/>DuckDB Memory"]
+    end
+
+    subgraph Advanced["Advanced Actions"]
+        R025["TEA-RUST-025<br/>Cloud-Native LTM"]
+    end
+
+    subgraph Integration["Integration Layer"]
+        R013["TEA-RUST-013<br/>CLI Binary"]
+        R014["TEA-RUST-014<br/>Library API"]
+        R015["TEA-RUST-015<br/>Testing & Docs"]
+    end
+
+    R002 --> R003
+    R002 --> R004
+    R003 --> R005
+    R004 --> R005
+    R004 --> R006
+    R004 --> R007
+    R004 --> R008
+    R004 --> R012
+    R009 --> R005
+    R009 --> R021
+    R009 --> R027
+    R004 --> R010
+    R004 --> R016
+    R004 --> R017
+    R004 --> R018
+    R004 --> R024
+    R004 --> R028
+    R010 --> R011
+    R010 --> R019
+    R011 --> R020
+    R010 --> R020
+    R011 --> R022
+    R008 --> R022
+    R006 --> R026
+    R028 --> R025
+    R003 --> R013
+    R007 --> R013
+    R012 --> R013
+    R005 --> R013
+    R014 --> R015
+```
+
+### Dependency Summary
+
+| Story | Depends On | Blocks | Can Parallelize With |
+|-------|------------|--------|---------------------|
+| **TEA-RUST-002** | - | 003, 004 | 009 |
+| **TEA-RUST-009** | - | 005, 021, 027 | 002 |
+| **TEA-RUST-003** | 002 | 005, 013 | 004 |
+| **TEA-RUST-004** | 002 | 005-008, 010, 012, 016-018, 024, 028 | 003 |
+| **TEA-RUST-005** | 003, 004, 009 | 013 | 006, 007, 008 |
+| **TEA-RUST-006** | 004 | 026 | 005, 007, 008 |
+| **TEA-RUST-007** | 004 | 013 | 005, 006, 008 |
+| **TEA-RUST-008** | 004 | 022 | 005, 006, 007 |
+| **TEA-RUST-012** | 004 | 013 | 005-008, 010 |
+| **TEA-RUST-010** | 004 | 011, 019, 020 | 016-018 |
+| **TEA-RUST-011** | 010 | 020, 022 | 016-019 |
+| **TEA-RUST-016** | 004 | - | 010, 017, 018, 024 |
+| **TEA-RUST-017** | 004 | - | 010, 016, 018, 024 |
+| **TEA-RUST-018** | 004 | - | 010, 016, 017, 024 |
+| **TEA-RUST-019** | 010 | - | 011, 016-018 |
+| **TEA-RUST-020** | 010, 011 | - | 019, 022 |
+| **TEA-RUST-021** | 009 | - | 010-020, 022 |
+| **TEA-RUST-022** | 008, 011 | - | 019, 020, 021 |
+| **TEA-RUST-024** | 004 | - | 016-022, 028 |
+| **TEA-RUST-026** | 006 | - | All actions |
+| **TEA-RUST-027** | 009 | - | All actions |
+| **TEA-RUST-028** | 004 | 025 | 016-024, 026, 027 |
+| **TEA-RUST-025** | 028 | - | - |
+| **TEA-RUST-013** | 003, 005, 007, 012 | 014 | - |
+| **TEA-RUST-014** | 013 | 015 | - |
+| **TEA-RUST-015** | 014 | - | - |
+
+### Critical Path
+
+The longest dependency chain determines minimum project duration:
+
+```
+002 → 004 → 010 → 011 → 022 → 013 → 014 → 015
+         ↓
+        028 → 025
+```
+
+### Parallelization Opportunities
+
+| Phase | Weeks | Parallel Tracks |
+|-------|-------|-----------------|
+| **1: Foundation** | 1-3 | Track A: 002 (StateGraph) ∥ Track B: 009 (Lua) |
+| **2: Core** | 4-6 | Track A: 003→005 ∥ Track B: 004→006/007/008 |
+| **3: Actions** | 7-14 | Track A: 010→011→022 ∥ Track B: 016,017,018 ∥ Track C: 021 ∥ Track D: 028→025 |
+| **4: Integration** | 15-18 | Track A: 013→014→015 |
 
 ---
 
@@ -944,6 +1151,224 @@ nodes:
 
 ---
 
+## Unified DuckDB Memory Layer (TEA-RUST-028)
+
+*Consolidates TEA-RUST-023 (LTM with SQLite) into a unified DuckDB-based memory layer. Single embedded database for all agent memory needs.*
+
+### Architecture
+
+```
+Rust Unified Memory Layer
+┌─────────────────────────────────────────────────────────┐
+│                    Actions Layer                         │
+├───────────┬───────────┬───────────┬───────────┬─────────┤
+│  ltm.*    │ memory.*  │ session.* │ context.* │catalog.*│
+└─────┬─────┴─────┬─────┴─────┬─────┴─────┬─────┴────┬────┘
+      │           │           │           │          │
+      └───────────┴───────────┴─────┬─────┴──────────┘
+                                    ▼
+                            ┌─────────────┐
+                            │   DuckDB    │  ← Single embedded DB
+                            │  (unified)  │
+                            ├─────────────┤
+                            │ • LTM store │
+                            │ • FTS search│
+                            │ • VSS/HNSW  │
+                            │ • Sessions  │
+                            │ • Metadata  │
+                            │ • Catalog   │
+                            └──────┬──────┘
+                                   │
+                            ┌──────▼──────┐
+                            │ Local Files │  ← Blob storage
+                            │ (filesystem)│
+                            └─────────────┘
+```
+
+### Why DuckDB Over SQLite?
+
+| Capability | SQLite | DuckDB | Decision |
+|------------|--------|--------|----------|
+| Full-text search | FTS5 | FTS extension | Both work |
+| Vector similarity | ❌ | VSS (HNSW) | **DuckDB** |
+| Analytical queries | Row-based | Columnar | **DuckDB** |
+| JSON functions | Basic | Rich | **DuckDB** |
+| Parquet support | ❌ | Native | **DuckDB** |
+| Single binary | Yes | Yes | Tie |
+
+**Conclusion**: One database (DuckDB) handles everything. No need for SQLite.
+
+### Rust Implementation
+
+```rust
+use duckdb::{Connection, Result};
+use parking_lot::{Mutex, RwLock};
+use std::time::{Duration, Instant};
+use std::path::PathBuf;
+
+/// Unified memory layer using DuckDB for all storage needs
+pub struct UnifiedMemoryLayer {
+    db: Arc<Mutex<Connection>>,
+    blob_root: PathBuf,
+    circuit_breaker: CircuitBreaker,
+    sql_sandbox: SqlSandbox,
+}
+
+impl UnifiedMemoryLayer {
+    pub fn new(db_path: &str, blob_root: PathBuf) -> Result<Self, Error> {
+        let conn = Connection::open(db_path)?;
+
+        // Load extensions
+        conn.execute_batch("
+            INSTALL fts; LOAD fts;
+            INSTALL vss; LOAD vss;
+        ")?;
+
+        // Initialize schema
+        conn.execute_batch("
+            -- LTM storage (replaces SQLite FTS5)
+            CREATE TABLE IF NOT EXISTS ltm_store (
+                key VARCHAR PRIMARY KEY,
+                value JSON NOT NULL,
+                metadata JSON,
+                embedding FLOAT[1536],
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                updated_at TIMESTAMP DEFAULT current_timestamp
+            );
+
+            -- Sessions table
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id VARCHAR PRIMARY KEY,
+                status VARCHAR DEFAULT 'active',
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                expires_at TIMESTAMP,
+                archived_at TIMESTAMP
+            );
+
+            -- File metadata (blobs stored on filesystem)
+            CREATE TABLE IF NOT EXISTS file_metadata (
+                path VARCHAR PRIMARY KEY,
+                content_hash VARCHAR,
+                content_type VARCHAR,
+                byte_size INTEGER,
+                metadata JSON,
+                embedding FLOAT[1536],
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                updated_at TIMESTAMP DEFAULT current_timestamp
+            );
+
+            -- Catalog tables
+            CREATE TABLE IF NOT EXISTS catalog_tables (
+                name VARCHAR PRIMARY KEY,
+                schema JSON,
+                created_at TIMESTAMP DEFAULT current_timestamp
+            );
+        ")?;
+
+        Ok(Self {
+            db: Arc::new(Mutex::new(conn)),
+            blob_root,
+            circuit_breaker: CircuitBreaker::new(Default::default()),
+            sql_sandbox: SqlSandbox::new(),
+        })
+    }
+
+    // LTM actions
+    pub fn ltm_store(&self, key: &str, value: Value, metadata: Option<Value>) -> Result<()> { ... }
+    pub fn ltm_retrieve(&self, key: &str) -> Result<Option<LtmEntry>> { ... }
+    pub fn ltm_search(&self, query: &str, limit: usize) -> Result<Vec<LtmEntry>> { ... }
+
+    // Session actions
+    pub fn session_create(&self, ttl: Duration) -> Result<String> { ... }
+    pub fn session_end(&self, session_id: &str) -> Result<()> { ... }
+    pub fn session_get(&self, session_id: &str) -> Result<Option<Session>> { ... }
+
+    // File actions (metadata in DuckDB, content on filesystem)
+    pub fn file_store(&self, path: &str, content: &[u8], metadata: Option<Value>) -> Result<()> {
+        let full_path = self.blob_root.join(path);
+        std::fs::create_dir_all(full_path.parent().unwrap())?;
+        std::fs::write(&full_path, content)?;
+
+        let hash = sha256(content);
+        let db = self.db.lock();
+        db.execute(
+            "INSERT OR REPLACE INTO file_metadata (path, content_hash, byte_size, metadata)
+             VALUES (?, ?, ?, ?)",
+            params![path, hash, content.len(), metadata]
+        )?;
+        Ok(())
+    }
+
+    pub fn file_retrieve(&self, path: &str) -> Result<Vec<u8>> {
+        let full_path = self.blob_root.join(path);
+        Ok(std::fs::read(full_path)?)
+    }
+
+    // Context assembly
+    pub fn context_assemble(&self, config: ContextConfig) -> Result<AssembledContext> {
+        // 1. Query relevant files from DuckDB metadata
+        // 2. Optionally use VSS for semantic relevance
+        // 3. Read file contents from filesystem
+        // 4. Rank by (similarity * 0.7) + (priority * 0.3)
+        // 5. Return assembled context within token limit
+        ...
+    }
+
+    // Vector search
+    pub fn vector_search(&self, embedding: &[f32], table: &str, k: usize) -> Result<Vec<SearchResult>> {
+        let db = self.db.lock();
+        let results = db.prepare(&format!(
+            "SELECT *, array_cosine_similarity(embedding, ?1) as score
+             FROM {} WHERE embedding IS NOT NULL
+             ORDER BY score DESC LIMIT ?2",
+            table
+        ))?.query_map(params![embedding, k], ...)?;
+        Ok(results)
+    }
+}
+```
+
+### Rust Crate Dependencies
+
+| Crate | Purpose | Used By |
+|-------|---------|---------|
+| `duckdb` | Unified embedded database | All memory operations |
+| `sqlparser` | SQL validation | SqlSandbox |
+| `parking_lot` | Fast RwLock/Mutex | ConnectionPool, CircuitBreaker |
+| `sha2` | Content hashing | File deduplication |
+
+### Actions Summary
+
+| Action | Storage | Description |
+|--------|---------|-------------|
+| `ltm.store` | DuckDB | Store key-value with optional embedding |
+| `ltm.retrieve` | DuckDB | Get value by key |
+| `ltm.search` | DuckDB FTS | Full-text search |
+| `session.create` | DuckDB | Create session with TTL |
+| `session.end` | DuckDB | Archive session (soft delete) |
+| `session.get` | DuckDB | Get session metadata |
+| `session.list` | DuckDB | List sessions with filters |
+| `memory.grep` | DuckDB | LIKE-based search |
+| `memory.sql_query` | DuckDB | Sandboxed SQL query |
+| `memory.vector_search` | DuckDB VSS | Semantic similarity search |
+| `memory.file_store` | Filesystem + DuckDB | Store file, index metadata |
+| `memory.file_retrieve` | Filesystem | Read file content |
+| `memory.file_list` | DuckDB | List files by pattern |
+| `context.assemble` | DuckDB + Filesystem | Assemble context from multiple sources |
+| `catalog.*` | DuckDB | Table/schema management |
+
+### Feature Flags
+
+```toml
+[features]
+default = ["memory"]
+memory = ["duckdb"]
+memory-vss = ["duckdb", "duckdb/bundled"]  # Includes VSS extension for vector search
+```
+
+---
+
 ## Risks
 
 ### High
@@ -1001,7 +1426,7 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-001.1 | Memory Actions | ✅ Done | TEA-RUST-016 |
 | TEA-BUILTIN-001.2 | LLM Enhanced Actions | ✅ Done | TEA-RUST-022 |
 | TEA-BUILTIN-001.3 | Observability Actions | ✅ Done | TEA-RUST-017 |
-| TEA-BUILTIN-001.4 | LTM & Graph Actions + Bighorn Extension | 🔄 In Progress | TEA-RUST-023, TEA-RUST-024 |
+| TEA-BUILTIN-001.4 | LTM & Graph Actions + Bighorn Extension | 🔄 In Progress | TEA-RUST-028 (LTM), TEA-RUST-024 (Graph) |
 | TEA-BUILTIN-001.5 | Cloud-Native LTM Backends | 📝 Draft | TEA-RUST-025 |
 | TEA-BUILTIN-002.1 | Web Actions | ✅ Done | TEA-RUST-019 |
 | TEA-BUILTIN-002.2 | RAG Actions | ✅ Done | TEA-RUST-020 |
@@ -1010,7 +1435,12 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-003.2 | Data Processing Actions | ✅ Done | TEA-RUST-018 |
 | TD.13 | Parallel Execution Reliability | ✅ Done | TEA-RUST-026 |
 | YE.6 | External Action Module Imports | ✅ Done | TEA-RUST-027 (Lua modules) |
+| YE.7 | Conditional Start Edges | ✅ Done | TEA-RUST-003 (YAML parser) |
 | TEA-BUILTIN-001.2.1 | LLM Retry Consolidation | ✅ Done | TEA-RUST-022 (llm.call with max_retries) |
+| TEA-BUILTIN-005 | Comet Opik Integration | 📝 Draft | **Not migrated** (Python SDK only) |
+| TEA-BUILTIN-006 | Firebase Agent Memory Layer | ✅ Approved | **Partial** - TEA-RUST-028 (DuckDB parts) |
+| TEA-BUILTIN-007 | PostgreSQL & S3 Backends | 📝 Draft | TEA-RUST-025 (PostgreSQL, S3) |
+| TEA-YAML-001 | Jinja2 Template Engine | 📝 Draft | TEA-RUST-003 (Tera templates) |
 
 ### Python TEA-CLI Stories Reference
 
@@ -1028,11 +1458,24 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 - **Tools Bridge Actions** (TEA-BUILTIN-002.3) - Python-specific libraries (CrewAI, LangChain, MCP)
 - **Bighorn Graph Backend** (TEA-BUILTIN-001.4 extension) - KuzuDB fork with Python bindings only
 - **Litestream Backend** (TEA-BUILTIN-001.5) - Requires daemon process, not suitable for static binary
+- **Comet Opik Integration** (TEA-BUILTIN-005) - Python SDK only, no Rust SDK available
+- **Firebase Backends** (TEA-BUILTIN-006 partial) - FirestoreMetadataStore, GCSBlobStorage require firebase-admin SDK (Python only)
+- **Session/Context Actions** (TEA-BUILTIN-006 partial) - Depend on Firebase backends for metadata storage
+
+**Partially Migrated** (TEA-BUILTIN-006):
+- ✅ **DuckDB QueryEngine**: `duckdb-rs` crate, SQL sandbox, CircuitBreaker, ConnectionPool
+- ✅ **DuckDB VSS Index**: Vector similarity search with HNSW
+- ✅ **catalog.* actions**: DuckLake catalog operations (portable)
+- ✅ **memory.grep/sql_query**: DuckDB-based search (portable)
+- ❌ **memory.cloud_***: GCS/Firestore backends (not portable)
+- ❌ **session.*/context.***: Firestore metadata dependency (not portable)
 
 **Key Advantages**:
 - **CozoDB**: Native Rust crate (`cozo`) - identical Datalog semantics, better performance
 - **Turso/libSQL**: Native Rust crate (`libsql`) - SQLite-compatible, edge-native
 - **PostgreSQL**: Excellent Rust support via `sqlx` with compile-time query verification
+- **DuckDB**: Native Rust crate (`duckdb-rs`) - same SQL semantics, VSS extension support
+- **S3-Compatible Storage**: `object_store` or `aws-sdk-s3` crate for S3/MinIO/Wasabi
 
 ---
 
@@ -1046,3 +1489,6 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 | 2025-12-07 | 4.0 | Added TEA-BUILTIN-001.4 Bighorn extension (excluded from Rust - Python-only) and TEA-BUILTIN-001.5 Cloud-Native LTM Backends. Added TEA-RUST-025 (Turso, D1, PostgreSQL, Blob-SQLite). Updated effort to 20-26 weeks. Added AC-42 to AC-46 for cloud-native backends. Excluded: Bighorn, Litestream, Firestore (no native Rust SDK). Added libsql, sqlx, object_store crates. | Sarah (PO Agent) |
 | 2025-12-13 | 5.0 | Added TD.13 Parallel Execution Reliability features (TEA-RUST-026). Added AC-47 to AC-52 for ParallelConfig, RetryPolicy, CircuitBreaker, ParallelFlowResult, ParallelFlowCallback. Added YE.6 External Action Module Imports (TEA-RUST-027). Added AC-53 to AC-56 for Lua module imports with namespacing. Added detailed Rust implementation sections for both features. Updated effort to 22-28 weeks. | Sarah (PO Agent) |
 | 2025-12-17 | 6.0 | Updated for TEA-BUILTIN-001.2.1 (llm.retry deprecated, consolidated into llm.call with max_retries). Added TEA-CLI stories reference section (TEA-CLI-001/002/003). Minor documentation alignment. | Sarah (PO Agent) |
+| 2025-12-20 | 7.0 | Major update: Added 5 new Python stories to reference table: TEA-BUILTIN-005 (Opik - not migrated), TEA-BUILTIN-006 (Firebase Memory - partial), TEA-BUILTIN-007 (PostgreSQL/S3), TEA-YAML-001 (Jinja2→Tera), YE.7 (Conditional Start Edges). Added detailed "Partially Migrated" and "Not Migrated" sections clarifying Firebase vs DuckDB portability. | Sarah (PO Agent) |
+| 2025-12-20 | 7.1 | **Architecture consolidation**: Merged TEA-RUST-023 (SQLite LTM) into TEA-RUST-028 (Unified DuckDB Memory Layer). Single embedded database (DuckDB) for all memory: LTM, sessions, context, file metadata, vector search. Added AC-66 to AC-74 for session management, context assembly, and local blob storage. Updated TEA-RUST-028 to 8 story points. Rationale: DuckDB has FTS + VSS + Parquet + columnar analytics - no need for separate SQLite. Local filesystem for blob storage (no S3/GCS). | Sarah (PO Agent) |
+| 2025-12-20 | 7.2 | **SM Review - AC Clarifications & Dependencies**: Expanded AC-2 (execution order) with 6 sub-criteria for topological order, sequential/conditional/parallel edge behavior, and determinism. Expanded AC-4 (parallel execution) with 5 sub-criteria for state copying, fan-in behavior, and merge strategy. Expanded AC-8 (Lua conditions) with 5 sub-criteria for state access, return types, and error handling. Split AC-26 into AC-26a through AC-26f for JSON actions with specific error handling and RFC 8259 compliance. Added Sub-Story Dependencies section with Mermaid graph, dependency summary table, critical path analysis, and parallelization opportunities by phase. | Bob (SM Agent) |

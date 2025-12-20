@@ -1,0 +1,51 @@
+name: Rust Tests
+
+on:
+  push:
+    branches: [ main, rust ]
+    paths:
+      - 'rust/**'
+      - 'examples/**'
+      - '.github/workflows/rust-tests.yaml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'rust/**'
+      - 'examples/**'
+      - '.github/workflows/rust-tests.yaml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          rust/target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+    - name: Check formatting
+      run: cd rust && cargo fmt --check
+
+    - name: Run clippy
+      run: cd rust && cargo clippy -- -D warnings
+
+    - name: Run tests
+      run: cd rust && cargo test
+
+    - name: Build release
+      run: cd rust && cargo build --release

@@ -1,0 +1,137 @@
+# Python Actions Reference
+
+This document lists all built-in actions available in the Python implementation of The Edge Agent.
+
+For complete action documentation including parameters and examples, see the [YAML Reference](../shared/YAML_REFERENCE.md#built-in-actions).
+
+## Action Modules
+
+The Python implementation provides 20+ action modules organized by domain:
+
+### Core Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `llm.call` | `llm_actions.py` | Call OpenAI-compatible LLM |
+| `llm.stream` | `llm_actions.py` | Stream LLM response |
+| `llm.tools` | `llm_actions.py` | LLM with tool calling |
+
+### HTTP Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `http.get` | `http_actions.py` | HTTP GET request |
+| `http.post` | `http_actions.py` | HTTP POST request |
+
+### File Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `file.read` | `file_actions.py` | Read local/remote file |
+| `file.write` | `file_actions.py` | Write local/remote file |
+
+### Storage Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `storage.list` | `storage_actions.py` | List files in directory |
+| `storage.copy` | `storage_actions.py` | Copy files |
+| `storage.delete` | `storage_actions.py` | Delete files |
+
+### Data Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `json.parse` | `data_actions.py` | Parse JSON string |
+| `json.transform` | `data_actions.py` | Transform JSON with JMESPath |
+| `csv.parse` | `data_actions.py` | Parse CSV data |
+| `data.validate` | `data_actions.py` | Validate against JSON Schema |
+
+### Code Execution
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `code.execute` | `code_actions.py` | Execute Python code (sandboxed) |
+| `code.sandbox` | `code_actions.py` | Run in RestrictedPython sandbox |
+
+### Memory Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `memory.store` | `memory_actions.py` | Store in session memory |
+| `memory.retrieve` | `memory_actions.py` | Retrieve from session memory |
+| `ltm.store` | `ltm_actions.py` | Store in long-term memory |
+| `ltm.retrieve` | `ltm_actions.py` | Retrieve from long-term memory |
+
+### Vector/RAG Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `embedding.create` | `vector_actions.py` | Create text embeddings |
+| `vector.store` | `vector_actions.py` | Store in vector database |
+| `vector.query` | `vector_actions.py` | Query vector database |
+
+### Web Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `web.scrape` | `web_actions.py` | Scrape web page |
+| `web.crawl` | `web_actions.py` | Crawl multiple pages |
+| `web.search` | `web_actions.py` | Web search |
+
+### Graph Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `graph.store_entity` | `graph_actions.py` | Store entity in graph DB |
+| `graph.query` | `graph_actions.py` | Query graph database |
+
+### Observability
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `trace.start` | `observability_actions.py` | Start trace span |
+| `trace.log` | `observability_actions.py` | Log trace event |
+| `trace.end` | `observability_actions.py` | End trace span |
+
+## Source Location
+
+All action modules are in:
+
+```
+python/src/the_edge_agent/actions/
+├── __init__.py
+├── llm_actions.py
+├── http_actions.py
+├── file_actions.py
+├── storage_actions.py
+├── data_actions.py
+├── code_actions.py
+├── memory_actions.py
+├── ltm_actions.py
+├── cloud_memory_actions.py
+├── vector_actions.py
+├── graph_actions.py
+├── web_actions.py
+├── tools_actions.py
+├── observability_actions.py
+└── context_actions.py
+```
+
+## Custom Actions
+
+Register custom actions via the `imports:` section in YAML:
+
+```yaml
+imports:
+  - path: ./my_actions.py
+    actions:
+      - my_custom_action
+```
+
+Your module must implement `register_actions()`:
+
+```python
+def register_actions(registry, engine):
+    registry['my_custom_action'] = my_action_function
+```
