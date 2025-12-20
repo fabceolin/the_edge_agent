@@ -472,8 +472,8 @@ def execute_with_retry(query: str) -> dict:
     "created_at": Timestamp,
     "updated_at": Timestamp,
     "synced_at": Timestamp,  # Last Parquet sync
-    "created_by": "agent:firm_research",
-    "project_id": "rankellix"
+    "created_by": "agent:my_agent",
+    "project_id": "my_project"
 }
 ```
 
@@ -633,25 +633,55 @@ final_score = (relevance_score * 0.7) + (priority_weight * 0.3)
 
 # Where:
 # - relevance_score: VSS cosine similarity (0.0 - 1.0)
-# - priority_weight: From scope config (directory=1.0, firm=0.8, app=0.6)
+# - priority_weight: From user-defined scope config (e.g., session=0.9, project=0.8, global=0.5)
 
 # Token counting uses tiktoken cl100k_base encoding
 # Items selected by final_score until max_tokens reached
 ```
 
-### 10. Scope Definitions (Initial Configuration)
+### 10. Scope Configuration (User-Defined)
+
+> **TEA is scope-agnostic.** Scopes are defined by the consuming application via YAML settings,
+> not hardcoded in TEA. The examples below demonstrate the pattern only.
+
+#### Scope Schema
 
 ```python
-INITIAL_SCOPES = [
-    {"id": "app", "priority": 0.6, "path_pattern": "app/*"},
-    {"id": "firm", "priority": 0.8, "path_pattern": "firms/{entity_id}/*"},
-    {"id": "directory", "priority": 1.0, "path_pattern": "directories/{directory}/{year}/{month}/*"},
-    {"id": "session", "priority": 0.9, "path_pattern": "sessions/{entity_id}/*",
-     "archivable": True, "archive_path": "archived-sessions/{entity_id}/*", "ttl_hours": 24},
-    {"id": "matter", "priority": 0.75, "path_pattern": "matters/{entity_id}/*"},
-    {"id": "user", "priority": 0.65, "path_pattern": "users/{entity_id}/*"},
-]
+# Each scope defines a path pattern and relevance priority for context assembly
+SCOPE_SCHEMA = {
+    "id": str,              # Unique identifier (e.g., "project", "session")
+    "priority": float,      # 0.0-1.0, higher = more relevant in context assembly
+    "path_pattern": str,    # Glob pattern with {placeholders} for entity_id substitution
+    "archivable": bool,     # Optional: if True, supports archive lifecycle
+    "archive_path": str,    # Optional: path pattern for archived items
+    "ttl_hours": int,       # Optional: time-to-live for auto-expiration
+}
+```
 
+#### Example: Generic Scopes (for illustration only)
+
+```yaml
+# In YAML agent settings - defined by consuming application, NOT by TEA
+settings:
+  context:
+    scopes:
+      - id: global
+        priority: 0.5
+        path_pattern: "shared/*"
+      - id: project
+        priority: 0.8
+        path_pattern: "projects/{entity_id}/*"
+      - id: session
+        priority: 0.9
+        path_pattern: "sessions/{entity_id}/*"
+        archivable: true
+        archive_path: "archived-sessions/{entity_id}/*"
+        ttl_hours: 24
+```
+
+#### Context Assembly Defaults
+
+```python
 CONTEXT_DEFAULTS = {
     "max_tokens": 8000,
     "embedding_model": "text-embedding-3-small",
@@ -858,7 +888,6 @@ src/the_edge_agent/
 | 2024-12-19 | 0.3 | Clarified as MIGRATION story (copy+refactor, not rewrite). Updated all tasks with migration language. | Bob (SM Agent) |
 | 2024-12-19 | 0.4 | Story approved after passing story-draft-checklist (9/10 clarity score). | Bob (SM Agent) |
 | 2024-12-19 | 0.5 | Added tabular data migration (data_tabular.py - 1105 lines, 6 actions: data.create_table, data.insert, data.update, data.delete, data.query, data.consolidate). Gap identified by PO review - original story omitted RX.10.3 implementation. | Sarah (PO Agent) |
-| 2024-12-19 | 0.6 | **SEC-003 extracted**: Firm-level data isolation moved to separate story `spa-base/docs/stories/SEC-003.firm-level-data-isolation.md`. TEA remains generic framework; business logic (firm isolation) handled in spa-base. | Sarah (PO Agent) |
 
 ## Dev Agent Record
 
