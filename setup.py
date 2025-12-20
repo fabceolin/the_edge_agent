@@ -3,7 +3,7 @@ import sys
 
 setup(
     name="the_edge_agent",
-    version="0.6.10",
+    version="0.6.12",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -44,6 +44,7 @@ setup(
             "duckdb>=0.10.0",       # For tabular data tests (data_query, data_consolidate)
             "opik>=1.9.0",          # For observability tests
             "pygraphviz>=1.13",     # For graph visualization tests (requires libgraphviz-dev)
+            "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
