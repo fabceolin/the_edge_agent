@@ -176,6 +176,7 @@ impl Default for ErrorPolicyConfig {
 /// YAML Engine for loading and parsing workflows
 pub struct YamlEngine {
     /// Tera template engine
+    #[allow(dead_code)]
     tera: Tera,
 }
 
@@ -189,7 +190,7 @@ impl YamlEngine {
 
     /// Load a workflow from a YAML file
     pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> TeaResult<StateGraph> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| TeaError::Io(e))?;
+        let content = std::fs::read_to_string(path.as_ref()).map_err(TeaError::Io)?;
 
         self.load_from_string(&content)
     }

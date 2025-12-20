@@ -75,6 +75,7 @@ impl ExecutionContext {
     }
 
     /// Check if execution should stop (timeout expired)
+    #[allow(dead_code)]
     fn is_expired(&self) -> bool {
         self.should_stop.load(Ordering::Relaxed) || self.start_time.elapsed() >= self.timeout
     }
@@ -208,6 +209,7 @@ impl LuaRuntime {
     }
 
     /// Convert JSON value to Lua value
+    #[allow(clippy::only_used_in_recursion)]
     pub fn json_to_lua<'lua>(&self, lua: &'lua Lua, value: &JsonValue) -> LuaResult<Value<'lua>> {
         match value {
             JsonValue::Null => Ok(Value::Nil),
@@ -240,6 +242,7 @@ impl LuaRuntime {
     }
 
     /// Convert Lua value to JSON value
+    #[allow(clippy::only_used_in_recursion)]
     pub fn lua_to_json(&self, value: Value) -> TeaResult<JsonValue> {
         match value {
             Value::Nil => Ok(JsonValue::Null),
@@ -293,7 +296,6 @@ impl LuaRuntime {
             Value::UserData(_) => Err(TeaError::Lua("Cannot convert userdata to JSON".to_string())),
             Value::Thread(_) => Err(TeaError::Lua("Cannot convert thread to JSON".to_string())),
             Value::Error(e) => Err(TeaError::Lua(e.to_string())),
-            _ => Err(TeaError::Lua("Unknown Lua value type".to_string())),
         }
     }
 

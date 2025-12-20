@@ -69,7 +69,7 @@ fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
                 .unwrap_or("http://localhost:11434/v1");
             (base.to_string(), None)
         }
-        "openai" | _ => {
+        _ => {
             let base = params
                 .get("api_base")
                 .and_then(|v| v.as_str())

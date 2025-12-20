@@ -24,6 +24,7 @@ struct MemoryEntry {
     value: JsonValue,
     metadata: Option<JsonValue>,
     expires_at: Option<Instant>,
+    #[allow(dead_code)]
     created_at: Instant,
 }
 

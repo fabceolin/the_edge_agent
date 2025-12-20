@@ -91,6 +91,7 @@ impl ExecutionEvent {
 
 /// Execution options
 #[derive(Clone)]
+#[derive(Default)]
 pub struct ExecutionOptions {
     /// Enable streaming mode
     pub stream: bool,
@@ -116,16 +117,6 @@ impl std::fmt::Debug for ExecutionOptions {
     }
 }
 
-impl Default for ExecutionOptions {
-    fn default() -> Self {
-        Self {
-            stream: false,
-            checkpointer: None,
-            resume_from: None,
-            parallel_config: ParallelConfig::default(),
-        }
-    }
-}
 
 /// Graph executor
 pub struct Executor {
@@ -142,6 +133,7 @@ pub struct Executor {
     actions: Arc<ActionRegistry>,
 
     /// Parallel executor
+    #[allow(dead_code)]
     parallel_executor: ParallelExecutor,
 
     /// Retry executor
@@ -463,7 +455,7 @@ impl Executor {
         }
 
         // Check for parallel edges first
-        for (target, edge) in &edges {
+        for (_target, edge) in &edges {
             if let EdgeType::Parallel { branches } = &edge.edge_type {
                 return Ok(NextNode::Parallel(branches.clone()));
             }

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use the_edge_agent::actions;
-use the_edge_agent::engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};
+use the_edge_agent::engine::checkpoint::{Checkpointer, FileCheckpointer};
 use the_edge_agent::engine::executor::{ExecutionOptions, Executor};
 use the_edge_agent::engine::yaml::YamlEngine;
 use the_edge_agent::{TeaError, YamlConfig};
@@ -168,7 +168,7 @@ fn run_workflow(
 ) -> Result<()> {
     // Load workflow
     let engine = YamlEngine::new();
-    let mut graph = engine
+    let graph = engine
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
 
@@ -235,7 +235,7 @@ fn run_workflow(
 fn resume_workflow(
     checkpoint_path: PathBuf,
     input: Option<String>,
-    stream: bool,
+    _stream: bool,
     checkpoint_dir: Option<PathBuf>,
 ) -> Result<()> {
     // Determine checkpoint directory

@@ -18,6 +18,7 @@ use crate::error::{TeaError, TeaResult};
 
 /// Parallel execution configuration
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ParallelConfig {
     /// Timeout for entire parallel flow
     pub timeout: Option<Duration>,
@@ -32,16 +33,6 @@ pub struct ParallelConfig {
     pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
 
-impl Default for ParallelConfig {
-    fn default() -> Self {
-        Self {
-            timeout: None,
-            fail_fast: false,
-            retry_policy: None,
-            circuit_breaker: None,
-        }
-    }
-}
 
 /// Retry policy for parallel branches
 #[derive(Debug, Clone)]

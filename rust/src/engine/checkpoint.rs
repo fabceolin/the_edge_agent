@@ -175,7 +175,7 @@ impl Checkpointer for FileCheckpointer {
 
         let mut file = fs::File::open(&path)?;
 
-        let checkpoint = if self.binary || path.extension().map_or(false, |e| e == "bin") {
+        let checkpoint = if self.binary || path.extension().is_some_and(|e| e == "bin") {
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)?;
             Checkpoint::from_bytes(&bytes)?
@@ -206,7 +206,7 @@ impl Checkpointer for FileCheckpointer {
             let entry = entry?;
             let path = entry.path();
 
-            if path.extension().map_or(false, |e| e == ext) {
+            if path.extension().is_some_and(|e| e == ext) {
                 if let Some(stem) = path.file_stem() {
                     ids.push(stem.to_string_lossy().to_string());
                 }
@@ -262,6 +262,7 @@ impl Checkpointer for MemoryCheckpointer {
 
 /// Interrupt configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct InterruptConfig {
     /// Nodes to interrupt before
     pub interrupt_before: Vec<String>,
@@ -270,14 +271,6 @@ pub struct InterruptConfig {
     pub interrupt_after: Vec<String>,
 }
 
-impl Default for InterruptConfig {
-    fn default() -> Self {
-        Self {
-            interrupt_before: vec![],
-            interrupt_after: vec![],
-        }
-    }
-}
 
 impl InterruptConfig {
     /// Create config to interrupt before specific nodes
