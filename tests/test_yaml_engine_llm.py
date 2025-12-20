@@ -95,6 +95,7 @@ class TestLLMEnhancedActionsP0:
         # Verify it's the same function for both namespaces
         assert engine.actions_registry['llm.call'] is engine.actions_registry['actions.llm_call']
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_respects_max_retries(self, engine):
         """(P0) llm.retry must not exceed max_retries to prevent infinite loops."""
         with patch('the_edge_agent.yaml_engine.time.sleep'):  # Don't actually sleep
@@ -177,6 +178,7 @@ class TestLLMEnhancedActionsP0:
             assert result.get('success') is False
             assert 'Invalid action reference' in result.get('error', '') or 'not found' in result.get('error', '')
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_handles_timeout_error(self, engine):
         """(P0) llm.retry must retry on timeout errors."""
         with patch('the_edge_agent.yaml_engine.time.sleep'):
@@ -216,6 +218,7 @@ class TestLLMEnhancedActionsP0:
                 assert result.get('content') == "Success"
                 assert result.get('attempts') == 3
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_handles_5xx_errors(self, engine):
         """(P0) llm.retry must retry on 5xx server errors."""
         with patch('the_edge_agent.yaml_engine.time.sleep'):
@@ -308,6 +311,7 @@ class TestLLMEnhancedActionsP1:
             assert 'usage' in result
             assert result.get('streamed') is True
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_succeeds_first_try(self, engine, mock_openai_response):
         """(P1) llm.retry should succeed on first try when no errors."""
         llm_retry = engine.actions_registry['llm.retry']
@@ -327,6 +331,7 @@ class TestLLMEnhancedActionsP1:
             assert result.get('attempts') == 1
             assert result.get('total_delay') == 0.0
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_succeeds_after_failures(self, engine):
         """(P1) llm.retry should succeed after transient failures."""
         with patch('the_edge_agent.yaml_engine.time.sleep'):
@@ -489,6 +494,7 @@ class TestLLMEnhancedActionsP1:
 class TestLLMEnhancedActionsP2:
     """P2 (Advanced) tests - Retry-after header, multi-turn, edge cases."""
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_uses_retry_after_header(self, engine):
         """(P2) llm.retry should respect Retry-After header."""
         with patch('the_edge_agent.yaml_engine.time.sleep') as mock_sleep:
@@ -662,6 +668,7 @@ class TestLLMEnhancedActionsIntegration:
             assert final_state.get('streamed') is True
             assert final_state.get('content') == "Hello World!"
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_in_yaml_workflow(self, engine, mock_openai_response):
         """(P1) llm.retry should work in YAML workflow."""
         with patch('openai.OpenAI') as mock_openai_class:

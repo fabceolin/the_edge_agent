@@ -13,7 +13,10 @@ Test Categories:
 
 import unittest
 import time
+import warnings
 from typing import Dict, Any
+
+import pytest
 
 from the_edge_agent import YAMLEngine
 
@@ -44,6 +47,7 @@ class TestCodeExecutionActions(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(result['return_value'], 'hellohellohello')
 
+    @pytest.mark.filterwarnings("ignore:.*Prints, but never reads 'printed' variable:SyntaxWarning")
     def test_code_execute_captures_stdout(self):
         """P1: Verify print() output is captured."""
         result = self.registry['code.execute'](
@@ -141,6 +145,7 @@ class TestCodeExecutionActions(unittest.TestCase):
         result4 = self.registry['actions.code_sandbox'](state={}, action="list")
         self.assertTrue(result4['success'])
 
+    @pytest.mark.filterwarnings("ignore:.*Prints, but never reads 'printed' variable:SyntaxWarning")
     def test_max_output_bytes_truncation(self):
         """P1: Verify output is truncated at max_output_bytes."""
         # Generate output larger than limit

@@ -180,6 +180,7 @@ class TestLLMCallConsolidationP0:
 
             assert result.get('content') == "Test response"
 
+    @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_delegates_to_llm_call(self, engine, mock_openai_response):
         """(P0) llm.retry delegates to llm.call with same parameters."""
         llm_retry = engine.actions_registry['llm.retry']
