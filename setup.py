@@ -42,6 +42,8 @@ setup(
             "requests>=2.32.5",     # For web actions tests
             "RestrictedPython>=8.0",  # For code execution tests
             "duckdb>=0.10.0",       # For tabular data tests (data_query, data_consolidate)
+            "opik>=1.9.0",          # For observability tests
+            "pygraphviz>=1.13",     # For graph visualization tests (requires libgraphviz-dev)
             "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
