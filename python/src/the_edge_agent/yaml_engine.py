@@ -20,11 +20,15 @@ import yaml
 import json
 import os
 import re
+import threading
 import time
 import importlib
 import importlib.util
 import logging
+from functools import lru_cache
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Union
+
+from jinja2 import Environment, BaseLoader, StrictUndefined, TemplateError
 
 from .stategraph import StateGraph, START, END
 
@@ -119,6 +123,9 @@ class YAMLEngine:
         vector_index: Optional[Any] = None,
         enable_vector_index: bool = True,
         embedding_fn: Optional[Callable[[str], List[float]]] = None,
+        # TEA-LUA.P1: Lua runtime integration
+        lua_enabled: bool = False,
+        lua_timeout: float = 30.0,
     ):
         """
         Initialize the YAML engine.
@@ -189,6 +196,12 @@ class YAMLEngine:
             embedding_fn: Optional function to generate embeddings from text.
                          Signature: (text: str) -> List[float].
                          Used by vector_actions for memory.vector_search.
+            lua_enabled: Enable Lua runtime for run: blocks (default: False).
+                        When True, code blocks starting with '-- lua' or containing
+                        Lua-specific syntax (local, end, then) will be executed
+                        with the Lua runtime instead of Python exec().
+                        Requires pip install 'the_edge_agent[lua]'.
+            lua_timeout: Timeout for Lua code execution in seconds (default: 30.0).
         """
         # TEA-BUILTIN-005.3: Store Opik constructor params first (needed for exporter creation)
         self._opik_constructor_params = {
@@ -344,6 +357,13 @@ class YAMLEngine:
         # Embedding function for vector search
         self._embedding_fn = embedding_fn
 
+        # TEA-LUA.P1: Lua runtime integration
+        self._lua_enabled = lua_enabled
+        self._lua_timeout = lua_timeout
+        self._lua_runtime: Optional[Any] = None  # Lazy-initialized (main thread)
+        self._lua_thread_local = threading.local()  # Thread-local for parallel branches
+        self._main_thread_id = threading.get_ident()  # Track main thread for isolation
+
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
 
@@ -362,6 +382,29 @@ class YAMLEngine:
 
         # Track loaded external modules to detect circular imports
         self._loaded_modules: Set[str] = set()
+
+        # TEA-YAML-001: Initialize Jinja2 environment for template processing
+        self._jinja_env = Environment(
+            loader=BaseLoader(),
+            undefined=StrictUndefined,
+            keep_trailing_newline=True,
+        )
+
+        # Custom filter: safe fromjson that returns input on parse error
+        def safe_fromjson(value):
+            """Parse JSON string, returning original value on error."""
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return value
+
+        # Add custom filters
+        self._jinja_env.filters['fromjson'] = safe_fromjson
+        # Map legacy filter names to Jinja2 equivalents
+        self._jinja_env.filters['json'] = lambda v: json.dumps(v)
+
+        # Template cache for performance (AC: 8)
+        self._template_cache: Dict[str, Any] = {}
 
     @property
     def memory_backend(self) -> Any:
@@ -1104,8 +1147,92 @@ class YAMLEngine:
         # No run function
         return None
 
+    def _detect_lua_code(self, code: str) -> bool:
+        """
+        Detect if code block is Lua (vs Python/Jinja2).
+
+        Detection rules:
+        1. Explicit marker: code starts with '-- lua' or '--lua'
+        2. Heuristic: contains Lua-specific keywords not valid in Python
+
+        Args:
+            code: Code string to check
+
+        Returns:
+            True if code appears to be Lua
+        """
+        import re
+
+        # Strip leading whitespace for marker check
+        stripped = code.strip()
+
+        # Explicit marker
+        if stripped.startswith('-- lua') or stripped.startswith('--lua'):
+            return True
+
+        # Heuristic: Lua keywords not valid in Python
+        lua_patterns = [
+            r'\blocal\b',      # local variable declaration
+            r'\bthen\b',       # if-then
+            r'\bend\b',        # block terminator
+            r'\belseif\b',     # Lua uses elseif, Python uses elif
+            r'\.\.+',          # string concatenation operator (.. or more dots)
+        ]
+
+        return any(re.search(pattern, code) for pattern in lua_patterns)
+
+    def _get_lua_runtime(self):
+        """
+        Get or create the Lua runtime with parallel isolation.
+
+        TEA-PY-002: Each parallel branch gets its own LuaRuntime to prevent
+        cross-branch contamination of globals and functions.
+
+        - Main thread: Uses cached self._lua_runtime (shared for sequential execution)
+        - Worker threads: Uses thread-local storage (fresh runtime per branch)
+
+        Returns:
+            LuaRuntime: Isolated runtime for current execution context
+        """
+        from .lua_runtime import LuaRuntime, LUPA_AVAILABLE
+        if not LUPA_AVAILABLE:
+            raise ImportError(
+                "Lua runtime requires the 'lupa' package.\n"
+                "Install it with: pip install 'the_edge_agent[lua]'\n"
+                "Or directly: pip install lupa>=2.0"
+            )
+
+        current_thread = threading.get_ident()
+
+        # Check if we're in the main thread (sequential execution)
+        if current_thread == self._main_thread_id:
+            # Main thread uses cached instance for backwards compatibility
+            if self._lua_runtime is None:
+                self._lua_runtime = LuaRuntime(timeout=self._lua_timeout)
+            return self._lua_runtime
+
+        # Parallel branch: use thread-local storage for isolation
+        # Each thread gets its own fresh LuaRuntime
+        if not hasattr(self._lua_thread_local, 'runtime'):
+            self._lua_thread_local.runtime = LuaRuntime(timeout=self._lua_timeout)
+        return self._lua_thread_local.runtime
+
     def _create_inline_function(self, code: str) -> Callable:
-        """Create a function that executes inline Python code."""
+        """Create a function that executes inline Python or Lua code."""
+        # TEA-LUA.P1: Check if this is Lua code and lua is enabled
+        is_lua = self._lua_enabled and self._detect_lua_code(code)
+
+        if is_lua:
+            # Create Lua execution function
+            def run_lua(state, **kwargs):
+                lua_runtime = self._get_lua_runtime()
+                # Convert state to dict if it's a DotDict or other mapping
+                state_dict = dict(state) if hasattr(state, 'items') else state
+                return lua_runtime.execute_node_code(code, state_dict)
+
+            return run_lua
+
+        # Original Python inline execution
         def run_inline(state, **kwargs):
             # Prepare execution context
             exec_globals = {
@@ -1267,22 +1394,21 @@ class YAMLEngine:
             cond_config = edge_config['condition']
             when_value = edge_config.get('when', True)
 
-            # Create condition function
+            # Create condition function using Jinja2 (TEA-YAML-001)
             if isinstance(cond_config, dict):
                 if cond_config.get('type') == 'expression':
                     expr = cond_config['value']
-                    cond_func = lambda state, **kw: eval(
-                        self._process_template(expr, state),
-                        {'state': state, **kw}
-                    )
+                    # Use a factory function to capture expr properly
+                    def make_cond(e):
+                        return lambda state, **kw: self._evaluate_condition(e, state)
+                    cond_func = make_cond(expr)
                 else:
                     raise ValueError(f"Unknown condition type: {cond_config.get('type')}")
             elif isinstance(cond_config, str):
                 # Simple expression
-                cond_func = lambda state, **kw: eval(
-                    self._process_template(cond_config, state),
-                    {'state': state, **kw}
-                )
+                def make_cond(e):
+                    return lambda state, **kw: self._evaluate_condition(e, state)
+                cond_func = make_cond(cond_config)
             else:
                 raise ValueError(f"Invalid condition configuration: {cond_config}")
 
@@ -1305,12 +1431,11 @@ class YAMLEngine:
                 elif when_expr.lower() == 'false':
                     when_result = False
                 else:
-                    # Expression like "!escalate" or "has_results"
-                    when_expr_processed = self._convert_simple_expression(when_expr)
-                    cond_func = lambda state, **kw: eval(
-                        when_expr_processed,
-                        {'state': state, **kw}
-                    )
+                    # Expression like "!escalate", "has_results", or "{{ state.x > 5 }}"
+                    # TEA-YAML-001: Use Jinja2 for condition evaluation
+                    def make_cond(e):
+                        return lambda state, **kw: self._evaluate_condition(e, state)
+                    cond_func = make_cond(when_expr)
                     graph.add_conditional_edges(from_node, cond_func, {True: to_node})
                     return
             else:
@@ -1329,7 +1454,9 @@ class YAMLEngine:
 
     def _process_template(self, text: str, state: Dict[str, Any]) -> Any:
         """
-        Process template variables in text.
+        Process template variables in text using Jinja2.
+
+        TEA-YAML-001: Refactored to use Jinja2 instead of Python eval().
 
         Supports:
         - {{ state.key }} - access state values
@@ -1337,17 +1464,23 @@ class YAMLEngine:
         - {{ secrets.key }} - access secrets
         - {{ checkpoint.dir }} - configured checkpoint directory
         - {{ checkpoint.last }} - most recent auto-saved checkpoint path
-        - {{ state.key | json }} - apply filters
+        - {{ value | filter }} - Jinja2 filter syntax (tojson, upper, lower, length, etc.)
+        - {% if %}...{% endif %} - Jinja2 conditionals
+        - {% for %}...{% endfor %} - Jinja2 loops
+        - {{ data | fromjson }} - custom filter to parse JSON strings
 
         When the entire value is a single template expression (e.g., "{{ state.data }}"),
         returns the actual object instead of converting to string. This allows passing
-        complex objects between actions.
+        complex objects between actions (AC: 5).
+
+        Uses StrictUndefined mode for helpful error messages on undefined variables (AC: 7).
+        Templates are cached for performance (AC: 8).
         """
         if not isinstance(text, str):
             return text
 
-        # Build evaluation context with checkpoint support
-        eval_context = {
+        # Build render context with checkpoint support (AC: 4)
+        context = {
             'state': DotDict(state),
             'variables': DotDict(self.variables),
             'secrets': DotDict(self.secrets),
@@ -1357,72 +1490,51 @@ class YAMLEngine:
             })
         }
 
-        # Check if the entire string is a single template expression
+        text_stripped = text.strip()
+
+        # Check if the entire string is a single template expression (AC: 5)
         # This allows returning actual objects instead of string representation
-        single_expr_pattern = r'^\s*\{\{\s*([^}]+)\s*\}\}\s*$'
-        single_match = re.match(single_expr_pattern, text)
-        if single_match:
-            expr = single_match.group(1).strip()
+        # Pattern matches {{ expr }} without Jinja2 block tags
+        single_expr_pattern = r'^\{\{\s*(.+?)\s*\}\}$'
+        single_match = re.match(single_expr_pattern, text_stripped)
 
-            # Handle filters (e.g., "state.key | json")
-            if '|' in expr:
-                parts = expr.split('|')
-                expr = parts[0].strip()
-                filters = [f.strip() for f in parts[1:]]
-            else:
-                filters = []
+        if single_match and '{%' not in text_stripped:
+            expr = single_match.group(1)
 
             try:
-                value = eval(expr, eval_context)
+                # Use compile_expression for single expressions to return native objects
+                # Check cache first
+                cache_key = f"expr:{expr}"
+                if cache_key not in self._template_cache:
+                    self._template_cache[cache_key] = self._jinja_env.compile_expression(expr)
 
-                # Apply filters
-                for filter_name in filters:
-                    if filter_name == 'json':
-                        value = json.dumps(value)
-                    elif filter_name == 'upper':
-                        value = str(value).upper()
-                    elif filter_name == 'lower':
-                        value = str(value).lower()
-
-                # Return actual value (preserves dicts, lists, etc.)
-                return value
+                compiled = self._template_cache[cache_key]
+                return compiled(**context)
+            except TemplateError as e:
+                # Re-raise with helpful context
+                raise ValueError(f"Template error in expression '{{{{ {expr} }}}}': {e}")
             except Exception:
-                return text  # Return original if evaluation fails
+                # Return original text if evaluation fails (backward compat)
+                return text
 
-        # Replace {{ state.key }} style templates (multiple or embedded)
-        pattern = r'\{\{\s*([^}]+)\s*\}\}'
+        # Check if this has any template syntax at all
+        if '{{' not in text and '{%' not in text and '${' not in text:
+            return text
 
-        def replace_var(match):
-            expr = match.group(1).strip()
+        # Multi-expression or mixed content: render as string (AC: 1, 3)
+        try:
+            # Check cache for full templates
+            cache_key = f"tmpl:{text}"
+            if cache_key not in self._template_cache:
+                self._template_cache[cache_key] = self._jinja_env.from_string(text)
 
-            # Handle filters (e.g., "state.key | json")
-            if '|' in expr:
-                parts = expr.split('|')
-                expr = parts[0].strip()
-                filters = [f.strip() for f in parts[1:]]
-            else:
-                filters = []
+            template = self._template_cache[cache_key]
+            result = template.render(**context)
+        except TemplateError as e:
+            # Re-raise with helpful context
+            raise ValueError(f"Template error: {e}")
 
-            # Evaluate expression
-            try:
-                value = eval(expr, eval_context)
-
-                # Apply filters
-                for filter_name in filters:
-                    if filter_name == 'json':
-                        value = json.dumps(value)
-                    elif filter_name == 'upper':
-                        value = str(value).upper()
-                    elif filter_name == 'lower':
-                        value = str(value).lower()
-
-                return str(value)
-            except Exception:
-                return match.group(0)  # Return original if evaluation fails
-
-        result = re.sub(pattern, replace_var, text)
-
-        # Also handle ${ } style (GitLab CI)
+        # Also handle ${ } style (GitLab CI) for backward compatibility
         pattern2 = r'\$\{([^}]+)\}'
         result = re.sub(pattern2, lambda m: str(self.variables.get(m.group(1), m.group(0))), result)
 
@@ -1449,9 +1561,52 @@ class YAMLEngine:
 
         return processed
 
+    def _evaluate_condition(self, expr: str, state: Dict[str, Any]) -> bool:
+        """
+        Evaluate a condition expression using Jinja2.
+
+        TEA-YAML-001: Unified condition evaluation using Jinja2 templates.
+
+        Supports:
+        - Jinja2 template: "{{ state.x > 5 }}" or "{{ 'urgent' in state.tags }}"
+        - Simple variable: "has_results" -> state.get('has_results', False)
+        - Negation: "!escalate" -> not state.get('escalate', False)
+        - Jinja2 expressions without braces: "state.x > 5"
+
+        Returns:
+            bool: Result of the condition evaluation
+        """
+        if not isinstance(expr, str):
+            return bool(expr)
+
+        expr = expr.strip()
+
+        # Handle simple negation syntax: "!variable"
+        if expr.startswith('!') and not expr.startswith('{{'):
+            var_name = expr[1:].strip()
+            if var_name.isidentifier():
+                return not state.get(var_name, False)
+
+        # Handle simple variable reference: "variable_name"
+        if expr.isidentifier():
+            return bool(state.get(expr, False))
+
+        # If already a Jinja2 template, process it
+        if '{{' in expr or '{%' in expr:
+            result = self._process_template(expr, state)
+            return bool(result)
+
+        # Otherwise, treat as a Jinja2 expression without braces
+        # Wrap it to make a proper template
+        template_expr = "{{ " + expr + " }}"
+        result = self._process_template(template_expr, state)
+        return bool(result)
+
     def _convert_simple_expression(self, expr: str) -> str:
         """
         Convert simple expression syntax to Python.
+
+        DEPRECATED: Use _evaluate_condition with Jinja2 instead (TEA-YAML-001).
 
         Examples:
         - "!escalate" -> "not state.get('escalate', False)"

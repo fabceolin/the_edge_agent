@@ -2,6 +2,9 @@
 //!
 //! Usage:
 //!   tea run workflow.yaml --input '{"key": "value"}'
+//!   tea run workflow.yaml --secrets '{"api_key": "sk-123"}' --input '{"prompt": "hello"}'
+//!   tea run workflow.yaml --secrets @secrets.json --input '{"prompt": "hello"}'
+//!   tea run workflow.yaml --secrets-env TEA_SECRET_ --input '{"prompt": "hello"}'
 //!   tea resume checkpoint.bin --input '{"update": "value"}'
 //!   tea validate workflow.yaml
 //!   tea inspect workflow.yaml
@@ -9,6 +12,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +51,16 @@ enum Commands {
         #[arg(short, long)]
         input: Option<String>,
 
+        /// Secrets as JSON string or @file.json
+        /// Use {{ secrets.key }} in templates to reference
+        #[arg(long)]
+        secrets: Option<String>,
+
+        /// Load secrets from environment variables with this prefix
+        /// e.g., --secrets-env TEA_SECRET_ loads TEA_SECRET_API_KEY as secrets.api_key
+        #[arg(long)]
+        secrets_env: Option<String>,
+
         /// Output events as NDJSON stream
         #[arg(short, long)]
         stream: bool,
@@ -73,9 +87,23 @@ enum Commands {
         /// Path to checkpoint file
         checkpoint: PathBuf,
 
+        /// Path to the original workflow YAML file
+        #[arg(short, long)]
+        workflow: PathBuf,
+
         /// State updates as JSON string or @file.json
         #[arg(short, long)]
         input: Option<String>,
+
+        /// Secrets as JSON string or @file.json
+        /// Use {{ secrets.key }} in templates to reference
+        #[arg(long)]
+        secrets: Option<String>,
+
+        /// Load secrets from environment variables with this prefix
+        /// e.g., --secrets-env TEA_SECRET_ loads TEA_SECRET_API_KEY as secrets.api_key
+        #[arg(long)]
+        secrets_env: Option<String>,
 
         /// Output events as NDJSON stream
         #[arg(short, long)]
@@ -128,6 +156,8 @@ fn main() -> Result<()> {
         Commands::Run {
             file,
             input,
+            secrets,
+            secrets_env,
             stream,
             checkpoint_dir,
             config,
@@ -136,6 +166,8 @@ fn main() -> Result<()> {
         } => run_workflow(
             file,
             input,
+            secrets,
+            secrets_env,
             stream,
             checkpoint_dir,
             config,
@@ -145,10 +177,13 @@ fn main() -> Result<()> {
 
         Commands::Resume {
             checkpoint,
+            workflow,
             input,
+            secrets,
+            secrets_env,
             stream,
             checkpoint_dir,
-        } => resume_workflow(checkpoint, input, stream, checkpoint_dir),
+        } => resume_workflow(checkpoint, workflow, input, secrets, secrets_env, stream, checkpoint_dir),
 
         Commands::Validate { file, detailed } => validate_workflow(file, detailed),
 
@@ -157,9 +192,12 @@ fn main() -> Result<()> {
 }
 
 /// Run a workflow
+#[allow(clippy::too_many_arguments)]
 fn run_workflow(
     file: PathBuf,
     input: Option<String>,
+    secrets: Option<String>,
+    secrets_env: Option<String>,
     stream: bool,
     checkpoint_dir: Option<PathBuf>,
     _config: Option<String>,
@@ -167,7 +205,15 @@ fn run_workflow(
     interrupt_after: Option<String>,
 ) -> Result<()> {
     // Load workflow
-    let engine = YamlEngine::new();
+    let mut engine = YamlEngine::new();
+
+    // Load secrets from file/string and/or environment
+    let secrets_map = parse_secrets(secrets, secrets_env)?;
+    if !secrets_map.is_empty() {
+        engine.set_secrets(secrets_map);
+        tracing::debug!("Loaded {} secrets", engine.secrets().len());
+    }
+
     let graph = engine
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
@@ -234,8 +280,11 @@ fn run_workflow(
 /// Resume from checkpoint
 fn resume_workflow(
     checkpoint_path: PathBuf,
+    workflow_path: PathBuf,
     input: Option<String>,
-    _stream: bool,
+    secrets: Option<String>,
+    secrets_env: Option<String>,
+    stream: bool,
     checkpoint_dir: Option<PathBuf>,
 ) -> Result<()> {
     // Determine checkpoint directory
@@ -249,7 +298,7 @@ fn resume_workflow(
     let checkpointer = FileCheckpointer::new(&cp_dir)?;
 
     // Load checkpoint
-    let checkpoint = checkpointer
+    let mut checkpoint = checkpointer
         .load(checkpoint_path.to_str().unwrap())?
         .context("Checkpoint not found")?;
 
@@ -259,29 +308,65 @@ fn resume_workflow(
         checkpoint.current_node
     );
 
-    // Parse state updates
+    // Parse state updates and merge into checkpoint state
     let updates = parse_input(input)?;
+    checkpoint.merge_state(&updates);
 
-    // Merge updates into checkpoint state
-    let mut state = checkpoint.state;
-    if let (Some(base), Some(upd)) = (state.as_object_mut(), updates.as_object()) {
-        for (k, v) in upd {
-            base.insert(k.clone(), v.clone());
-        }
+    // Load the workflow with secrets
+    let mut engine = YamlEngine::new();
+
+    // Load secrets from file/string and/or environment
+    let secrets_map = parse_secrets(secrets, secrets_env)?;
+    if !secrets_map.is_empty() {
+        engine.set_secrets(secrets_map);
+        tracing::debug!("Loaded {} secrets", engine.secrets().len());
     }
 
-    // We need the original workflow to resume
-    // The checkpoint should store the graph name or we need it as an argument
-    eprintln!("Note: Resume requires the original workflow file.");
-    eprintln!(
-        "Checkpoint state: {}",
-        serde_json::to_string_pretty(&state)?
-    );
+    let graph = engine
+        .load_from_file(&workflow_path)
+        .context(format!("Failed to load workflow from {:?}", workflow_path))?;
 
-    // For now, just output the merged state
-    println!("{}", serde_json::to_string_pretty(&state)?);
+    // Compile graph
+    let compiled = graph.compile()?;
 
-    Ok(())
+    // Setup executor with actions
+    let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
+    actions::register_defaults(&registry);
+
+    let executor = Executor::with_actions(compiled, registry)?;
+
+    // Setup checkpointer for continued execution
+    let checkpointer_arc: Arc<dyn Checkpointer> = Arc::new(checkpointer);
+
+    let options = ExecutionOptions {
+        stream,
+        checkpointer: Some(checkpointer_arc),
+        resume_from: Some(checkpoint_path.to_string_lossy().to_string()),
+        ..Default::default()
+    };
+
+    // Execute from checkpoint state
+    match executor.execute(checkpoint.state, &options) {
+        Ok(events) => {
+            if stream {
+                for event in events {
+                    println!("{}", serde_json::to_string(&event)?);
+                }
+            } else {
+                // Output final state
+                if let Some(last) = events.last() {
+                    println!("{}", serde_json::to_string_pretty(&last.state)?);
+                }
+            }
+            Ok(())
+        }
+        Err(TeaError::Interrupt(node)) => {
+            eprintln!("Execution interrupted at node: {}", node);
+            eprintln!("Use 'tea resume <checkpoint> --workflow <file>' to continue");
+            std::process::exit(130); // SIGINT exit code
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Validate workflow
@@ -450,4 +535,54 @@ fn parse_input(input: Option<String>) -> Result<JsonValue> {
         }
         Some(s) => serde_json::from_str(&s).context("Failed to parse input JSON"),
     }
+}
+
+/// Parse secrets from JSON string/file and/or environment variables
+///
+/// Secrets can be provided via:
+/// - `--secrets '{"key": "value"}'` - inline JSON
+/// - `--secrets @secrets.json` - JSON file
+/// - `--secrets-env PREFIX_` - environment variables with prefix (converted to lowercase)
+///
+/// When both are provided, they are merged (env vars take precedence).
+fn parse_secrets(
+    secrets: Option<String>,
+    secrets_env: Option<String>,
+) -> Result<HashMap<String, JsonValue>> {
+    let mut result = HashMap::new();
+
+    // Load from JSON string/file
+    if let Some(s) = secrets {
+        let json_value: JsonValue = if let Some(path) = s.strip_prefix('@') {
+            let content = fs::read_to_string(path).context(format!("Failed to read secrets file {}", path))?;
+            serde_json::from_str(&content).context("Failed to parse secrets JSON file")?
+        } else {
+            serde_json::from_str(&s).context("Failed to parse secrets JSON")?
+        };
+
+        // Convert JSON object to HashMap
+        if let JsonValue::Object(obj) = json_value {
+            for (key, value) in obj {
+                result.insert(key, value);
+            }
+        } else {
+            anyhow::bail!("Secrets must be a JSON object");
+        }
+    }
+
+    // Load from environment variables with prefix
+    if let Some(prefix) = secrets_env {
+        for (key, value) in std::env::vars() {
+            if key.starts_with(&prefix) {
+                // Remove prefix and convert to lowercase
+                let secret_key = key[prefix.len()..].to_lowercase();
+                if !secret_key.is_empty() {
+                    // Environment vars override file-based secrets
+                    result.insert(secret_key, JsonValue::String(value));
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }

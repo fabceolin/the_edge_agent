@@ -46,5 +46,30 @@ jobs:
     - name: Run tests
       run: cd rust && cargo test
 
+    - name: Run doc tests
+      run: cd rust && cargo test --doc
+
+    - name: Generate docs
+      run: cd rust && cargo doc --no-deps
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+
     - name: Build release
       run: cd rust && cargo build --release
+
+    - name: Check binary size
+      run: |
+        SIZE=$(stat -c%s rust/target/release/tea)
+        SIZE_MB=$((SIZE / 1024 / 1024))
+        echo "Binary size: ${SIZE_MB}MB (${SIZE} bytes)"
+        if [ $SIZE -gt 15728640 ]; then
+          echo "::error::Binary size exceeds 15MB limit"
+          exit 1
+        fi
+
+    - name: Build examples
+      run: cd rust && cargo build --examples
+
+    - name: Run benchmarks (dry-run)
+      run: cd rust && cargo bench -- --test
+      continue-on-error: true

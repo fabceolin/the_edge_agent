@@ -17,11 +17,57 @@ import time
 import warnings
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
+from contextlib import contextmanager
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from the_edge_agent import YAMLEngine
+
+
+# =============================================================================
+# Helper for mocking OpenAI inside function-level imports
+# =============================================================================
+
+@contextmanager
+def mock_openai():
+    """
+    Context manager to properly mock OpenAI when it's imported inside a function.
+
+    The llm_actions module uses `from openai import OpenAI` inside the function,
+    so we need to patch the openai module in sys.modules to make the mock work.
+
+    This is necessary because Python's `from X import Y` inside a function
+    looks up `Y` in `sys.modules['X'].__dict__['Y']`, not via `X.Y` attribute access.
+    """
+    import openai as real_openai
+
+    # Create mock client
+    mock_client = Mock()
+
+    # Create a MagicMock that mimics the openai module
+    mock_module = MagicMock()
+    mock_module.OpenAI = Mock(return_value=mock_client)
+    mock_module.AzureOpenAI = Mock(return_value=mock_client)
+
+    # Copy over exception classes from real module (needed for except clauses)
+    mock_module.APIError = real_openai.APIError
+    mock_module.APIConnectionError = real_openai.APIConnectionError
+    mock_module.RateLimitError = real_openai.RateLimitError
+    mock_module.APITimeoutError = real_openai.APITimeoutError
+
+    # Temporarily replace the module
+    original_module = sys.modules.get('openai')
+    sys.modules['openai'] = mock_module
+
+    try:
+        yield mock_client
+    finally:
+        # Restore the original module
+        if original_module is not None:
+            sys.modules['openai'] = original_module
+        else:
+            del sys.modules['openai']
 
 
 # =============================================================================
@@ -61,10 +107,7 @@ class TestLLMCallConsolidationP0:
         """(P0) Verify llm.call defaults to max_retries=0."""
         llm_call = engine.actions_registry['llm.call']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
-
+        with mock_openai() as mock_client:
             mock_response = Mock()
             mock_response.choices = [Mock()]
             mock_response.choices[0].message.content = "Success"
@@ -85,15 +128,12 @@ class TestLLMCallConsolidationP0:
 
     def test_llm_call_max_retries_zero_respects_retry_after_once(self, engine):
         """(P0) llm.call with max_retries=0 respects Retry-After header once."""
+        from openai import RateLimitError
+
         with patch('the_edge_agent.actions.llm_actions.time.sleep') as mock_sleep:
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
-
-                from openai import RateLimitError
-
+            with mock_openai() as mock_client:
                 call_count = [0]
 
                 def side_effect(*args, **kwargs):
@@ -133,15 +173,12 @@ class TestLLMCallConsolidationP0:
 
     def test_llm_call_max_retries_zero_fails_after_single_retry_attempt(self, engine):
         """(P0) llm.call with max_retries=0 fails if second attempt also hits rate limit."""
+        from openai import RateLimitError
+
         with patch('the_edge_agent.actions.llm_actions.time.sleep'):
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
-
-                from openai import RateLimitError
-
+            with mock_openai() as mock_client:
                 # Always rate limit
                 mock_response = Mock()
                 mock_response.status_code = 429
@@ -165,9 +202,7 @@ class TestLLMCallConsolidationP0:
         """(P0) Existing llm.call code without retry params still works."""
         llm_call = engine.actions_registry['llm.call']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             # Old signature - no retry params
@@ -185,9 +220,7 @@ class TestLLMCallConsolidationP0:
         """(P0) llm.retry delegates to llm.call with same parameters."""
         llm_retry = engine.actions_registry['llm.retry']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             result = llm_retry(
@@ -205,9 +238,7 @@ class TestLLMCallConsolidationP0:
         """(P0) llm.retry shows deprecation warning."""
         llm_retry = engine.actions_registry['llm.retry']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             with warnings.catch_warnings(record=True) as w:
@@ -237,11 +268,9 @@ class TestLLMCallConsolidationP1:
         with patch('the_edge_agent.actions.llm_actions.time.sleep'):
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import APIConnectionError
 
-                from openai import APIConnectionError
+            with mock_openai() as mock_client:
 
                 call_count = [0]
 
@@ -275,11 +304,9 @@ class TestLLMCallConsolidationP1:
         with patch('the_edge_agent.actions.llm_actions.time.sleep') as mock_sleep:
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import APIConnectionError
 
-                from openai import APIConnectionError
+            with mock_openai() as mock_client:
 
                 mock_client.chat.completions.create.side_effect = APIConnectionError(request=Mock())
 
@@ -306,11 +333,9 @@ class TestLLMCallConsolidationP1:
         with patch('the_edge_agent.actions.llm_actions.time.sleep') as mock_sleep:
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import RateLimitError
 
-                from openai import RateLimitError
+            with mock_openai() as mock_client:
 
                 call_count = [0]
 
@@ -352,11 +377,9 @@ class TestLLMCallConsolidationP1:
         with patch('the_edge_agent.actions.llm_actions.time.sleep'):
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import APITimeoutError
 
-                from openai import APITimeoutError
+            with mock_openai() as mock_client:
 
                 call_count = [0]
 
@@ -390,11 +413,9 @@ class TestLLMCallConsolidationP1:
         with patch('the_edge_agent.actions.llm_actions.time.sleep'):
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import APIError
 
-                from openai import APIError
+            with mock_openai() as mock_client:
 
                 call_count = [0]
 
@@ -433,11 +454,9 @@ class TestLLMCallConsolidationP1:
         """(P1) llm.call fails fast on 4xx errors (except 429)."""
         llm_call = engine.actions_registry['llm.call']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        from openai import APIError
 
-            from openai import APIError
+        with mock_openai() as mock_client:
 
             error = APIError(
                 message="Bad request",
@@ -463,9 +482,7 @@ class TestLLMCallConsolidationP1:
         """(P1) llm.call returns accurate attempt count."""
         llm_call = engine.actions_registry['llm.call']
 
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             result = llm_call(
@@ -491,11 +508,9 @@ class TestLLMCallConsolidationP2:
         with patch('the_edge_agent.actions.llm_actions.time.sleep') as mock_sleep:
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import APIConnectionError
 
-                from openai import APIConnectionError
+            with mock_openai() as mock_client:
 
                 mock_client.chat.completions.create.side_effect = APIConnectionError(request=Mock())
 
@@ -517,11 +532,9 @@ class TestLLMCallConsolidationP2:
         with patch('the_edge_agent.actions.llm_actions.time.sleep') as mock_sleep:
             llm_call = engine.actions_registry['llm.call']
 
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import RateLimitError
 
-                from openai import RateLimitError
+            with mock_openai() as mock_client:
 
                 # Rate limit without Retry-After header
                 mock_response = Mock()
@@ -585,9 +598,7 @@ class TestLLMCallConsolidationIntegration:
 
     def test_existing_llm_retry_yaml_still_works(self, engine, mock_openai_response):
         """(P0) Existing YAML using llm.retry continues to work."""
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             # Old YAML config using llm.retry
@@ -624,9 +635,7 @@ class TestLLMCallConsolidationIntegration:
 
     def test_llm_call_with_max_retries_in_yaml(self, engine, mock_openai_response):
         """(P1) llm.call with max_retries works in YAML workflow."""
-        with patch('openai.OpenAI') as mock_openai_class:
-            mock_client = Mock()
-            mock_openai_class.return_value = mock_client
+        with mock_openai() as mock_client:
             mock_client.chat.completions.create.return_value = mock_openai_response
 
             config = {
@@ -660,11 +669,9 @@ class TestLLMCallConsolidationIntegration:
         import threading
 
         with patch('the_edge_agent.actions.llm_actions.time.sleep'):
-            with patch('openai.OpenAI') as mock_openai_class:
-                mock_client = Mock()
-                mock_openai_class.return_value = mock_client
+            from openai import RateLimitError
 
-                from openai import RateLimitError
+            with mock_openai() as mock_client:
 
                 # Track calls per flow using thread-safe dict
                 flow_calls = {'flow1': 0, 'flow2': 0, 'flow3': 0}

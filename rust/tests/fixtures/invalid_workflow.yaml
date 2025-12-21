@@ -1,0 +1,12 @@
+name: invalid-workflow
+description: A workflow with validation errors
+
+nodes:
+  - name: orphan_node
+    run: |
+      return { result = "orphan" }
+
+edges:
+  # Missing edge from __start__ - this should fail validation
+  - from: orphan_node
+    to: __end__

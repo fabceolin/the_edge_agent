@@ -8,7 +8,7 @@
 | **Type** | Epic |
 | **Priority** | High |
 | **Estimated Effort** | 24-30 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports + DuckDB Memory Layer) |
-| **Status** | Draft |
+| **Status** | In Progress |
 
 ## Description
 
@@ -370,35 +370,46 @@ nodes:
 
 ## Sub-Stories
 
-| ID | Title | Points |
-|----|-------|--------|
-| TEA-RUST-002 | Core StateGraph with petgraph | 5 |
-| TEA-RUST-003 | YAML parser and tera template engine | 5 |
-| TEA-RUST-004 | Node execution and edge traversal | 3 |
-| TEA-RUST-005 | Conditional routing with Lua expressions | 3 |
-| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 |
-| TEA-RUST-007 | Checkpoint persistence and interrupt handling | 3 |
-| TEA-RUST-008 | Error handling with retry and fallback | 5 |
-| TEA-RUST-009 | Lua integration via mlua | 5 |
-| TEA-RUST-010 | Built-in actions - HTTP and file operations | 3 |
-| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 |
-| TEA-RUST-012 | Stream iterator implementation | 2 |
-| TEA-RUST-013 | CLI binary with clap | 3 |
-| TEA-RUST-014 | Library crate public API | 2 |
-| TEA-RUST-015 | Testing suite and documentation | 5 |
-| TEA-RUST-016 | Built-in actions - Memory (store, retrieve, summarize) | 3 |
-| TEA-RUST-017 | Built-in actions - Observability (trace start, log, end) | 3 |
-| TEA-RUST-018 | Built-in actions - Data Processing (json.*, csv.*, data.*) | 5 |
-| TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 |
-| TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 |
-| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 |
-| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 |
+| ID | Title | Points | Status |
+|----|-------|--------|--------|
+| TEA-RUST-002 | Core StateGraph with petgraph | 5 | ✅ Done |
+| TEA-RUST-003 | YAML parser and tera template engine | 5 | ✅ Done |
+| TEA-RUST-004 | Node execution and edge traversal | 3 | ✅ Done |
+| ~~TEA-RUST-005~~ | ~~Conditional routing with Lua expressions~~ | ~~3~~ | *Superseded by TEA-RUST-029* |
+| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 | ✅ Done (sequential due to Lua thread-safety) |
+| TEA-RUST-007 | Checkpoint persistence and interrupt handling | 3 | ✅ Done |
+| TEA-RUST-008 | Error handling with retry and fallback | 5 | ✅ Done |
+| TEA-RUST-009 | Lua integration via mlua | 5 | ✅ Done |
+| TEA-RUST-010 | Built-in actions - HTTP and file operations | 3 | ✅ Done |
+| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 | ✅ Done (llm.call + llm.complete, streaming/tools in TEA-RUST-022) |
+| TEA-RUST-012 | Stream iterator implementation | 2 | ✅ Done (QA Approved 2025-12-20) |
+| TEA-RUST-013 | CLI binary with clap | 3 | ✅ Done |
+| TEA-RUST-014 | Library crate public API | 2 | ✅ Done |
+| TEA-RUST-015 | Testing suite and documentation | 5 | ✅ Done (QA PASS 2025-12-20) |
+| TEA-RUST-016 | Secrets context in templates | 3 | ✅ Done |
+| TEA-RUST-017 | Checkpoint context in templates | 3 | ✅ Done |
+| TEA-RUST-018 | Template caching | 3 | ❌ Not Started (story doc filled, code not written) |
+| TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 | ❌ Not Started |
+| TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 | ❌ Not Started |
+| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 | ❌ Not Started |
+| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 | ❌ Not Started |
 | ~~TEA-RUST-023~~ | ~~Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5)~~ | ~~5~~ | *Merged into TEA-RUST-028* |
-| TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
-| TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
-| TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 |
-| TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 |
-| TEA-RUST-028 | **Unified DuckDB Memory Layer** (ltm.*, session.*, context.*, memory.*, local blob) | 8 |
+| TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 | ❌ Not Started |
+| TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 | ❌ Not Started |
+| TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 | ✅ Done (AC-47 to AC-52 implemented) |
+| TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 | ❌ Not Started |
+| TEA-RUST-028 | **Unified DuckDB Memory Layer** (ltm.*, session.*, context.*, memory.*, local blob) | 8 | ❌ Not Started |
+| TEA-RUST-029 | **Tera-Based Condition Evaluation** (Python/Jinja2 parity for `when:` conditions) | 3 | ✅ Done |
+| TEA-RUST-030 | **Parallel Lua VM Isolation** (per-branch LuaRuntime for true parallelism) | 3 | ✅ Done (QA PASS 2025-12-21) |
+
+### Implementation Summary
+
+| Status | Count | Points |
+|--------|-------|--------|
+| ✅ Done | 18 | 65 |
+| ❌ Not Started | 9 | 47 |
+| ~~Superseded/Merged~~ | 2 | - |
+| **Total** | **27** | **112** |
 
 ### Sub-Story Dependencies
 
@@ -413,7 +424,7 @@ flowchart TD
     subgraph Core["Core Execution Layer"]
         R003["TEA-RUST-003<br/>YAML Parser"]
         R004["TEA-RUST-004<br/>Node Execution"]
-        R005["TEA-RUST-005<br/>Conditional Routing"]
+        R029["TEA-RUST-029<br/>Tera Conditions"]
         R006["TEA-RUST-006<br/>Parallel"]
         R007["TEA-RUST-007<br/>Checkpointing"]
         R008["TEA-RUST-008<br/>Error Handling"]
@@ -434,6 +445,7 @@ flowchart TD
         R026["TEA-RUST-026<br/>Parallel Reliability"]
         R027["TEA-RUST-027<br/>External Imports"]
         R028["TEA-RUST-028<br/>DuckDB Memory"]
+        R030["TEA-RUST-030<br/>Parallel Lua Isolation"]
     end
 
     subgraph Advanced["Advanced Actions"]
@@ -448,13 +460,12 @@ flowchart TD
 
     R002 --> R003
     R002 --> R004
-    R003 --> R005
-    R004 --> R005
+    R003 --> R029
+    R004 --> R029
     R004 --> R006
     R004 --> R007
     R004 --> R008
     R004 --> R012
-    R009 --> R005
     R009 --> R021
     R009 --> R027
     R004 --> R010
@@ -470,11 +481,13 @@ flowchart TD
     R011 --> R022
     R008 --> R022
     R006 --> R026
+    R006 --> R030
+    R009 --> R030
     R028 --> R025
     R003 --> R013
     R007 --> R013
     R012 --> R013
-    R005 --> R013
+    R029 --> R013
     R014 --> R015
 ```
 
@@ -483,14 +496,14 @@ flowchart TD
 | Story | Depends On | Blocks | Can Parallelize With |
 |-------|------------|--------|---------------------|
 | **TEA-RUST-002** | - | 003, 004 | 009 |
-| **TEA-RUST-009** | - | 005, 021, 027 | 002 |
-| **TEA-RUST-003** | 002 | 005, 013 | 004 |
-| **TEA-RUST-004** | 002 | 005-008, 010, 012, 016-018, 024, 028 | 003 |
-| **TEA-RUST-005** | 003, 004, 009 | 013 | 006, 007, 008 |
-| **TEA-RUST-006** | 004 | 026 | 005, 007, 008 |
-| **TEA-RUST-007** | 004 | 013 | 005, 006, 008 |
-| **TEA-RUST-008** | 004 | 022 | 005, 006, 007 |
-| **TEA-RUST-012** | 004 | 013 | 005-008, 010 |
+| **TEA-RUST-009** | - | 021, 027 | 002 |
+| **TEA-RUST-003** | 002 | 029, 013 | 004 |
+| **TEA-RUST-004** | 002 | 006-008, 010, 012, 016-018, 024, 028, 029 | 003 |
+| **TEA-RUST-029** | 003, 004 | 013 | 006, 007, 008 |
+| **TEA-RUST-006** | 004 | 026 | 029, 007, 008 |
+| **TEA-RUST-007** | 004 | 013 | 029, 006, 008 |
+| **TEA-RUST-008** | 004 | 022 | 029, 006, 007 |
+| **TEA-RUST-012** | 004 | 013 | 006-008, 010, 029 |
 | **TEA-RUST-010** | 004 | 011, 019, 020 | 016-018 |
 | **TEA-RUST-011** | 010 | 020, 022 | 016-019 |
 | **TEA-RUST-016** | 004 | - | 010, 017, 018, 024 |
@@ -505,7 +518,8 @@ flowchart TD
 | **TEA-RUST-027** | 009 | - | All actions |
 | **TEA-RUST-028** | 004 | 025 | 016-024, 026, 027 |
 | **TEA-RUST-025** | 028 | - | - |
-| **TEA-RUST-013** | 003, 005, 007, 012 | 014 | - |
+| **TEA-RUST-030** | 006, 009 | - | 026, 027 |
+| **TEA-RUST-013** | 003, 029, 007, 012 | 014 | - |
 | **TEA-RUST-014** | 013 | 015 | - |
 | **TEA-RUST-015** | 014 | - | - |
 
@@ -524,7 +538,7 @@ The longest dependency chain determines minimum project duration:
 | Phase | Weeks | Parallel Tracks |
 |-------|-------|-----------------|
 | **1: Foundation** | 1-3 | Track A: 002 (StateGraph) ∥ Track B: 009 (Lua) |
-| **2: Core** | 4-6 | Track A: 003→005 ∥ Track B: 004→006/007/008 |
+| **2: Core** | 4-6 | Track A: 003→029 ∥ Track B: 004→006/007/008 |
 | **3: Actions** | 7-14 | Track A: 010→011→022 ∥ Track B: 016,017,018 ∥ Track C: 021 ∥ Track D: 028→025 |
 | **4: Integration** | 15-18 | Track A: 013→014→015 |
 
@@ -1407,6 +1421,48 @@ memory-vss = ["duckdb", "duckdb/bundled"]  # Includes VSS extension for vector s
 
 ---
 
+## Testing Strategy
+
+### Test Levels
+
+| Level | Scope | Tools | Coverage Target |
+|-------|-------|-------|-----------------|
+| **Unit** | Individual functions, structs | `#[test]`, `assert!`, `assert_eq!` | 80%+ per module |
+| **Integration** | Module interactions, YAML loading | `tests/*.rs`, `tempfile` | All AC items |
+| **E2E** | CLI binary, full workflows | Shell scripts, example YAML files | Critical paths |
+| **Performance** | Benchmarks vs Python | `criterion` | Meet success metrics |
+
+### Test Categories by Sub-Story Type
+
+| Story Type | Required Tests |
+|------------|----------------|
+| **Core Engine** (002-009) | Unit tests for each public function, integration test for graph execution |
+| **Actions** (010-028) | Unit tests for action logic, mock HTTP for external APIs |
+| **CLI** (013) | E2E tests with example YAML files, error handling scenarios |
+| **Library API** (014) | Documentation tests (`///` examples), public API stability |
+
+### Testing Approach
+
+1. **Test-Driven Development (TDD)**: Write tests before or alongside implementation
+2. **Property-Based Testing**: Use `proptest` crate for edge case discovery (parallel execution, state merging)
+3. **Regression Testing**: Port Python test scenarios to Rust equivalents
+4. **Performance Benchmarks**: Establish baselines, run in CI to prevent regressions
+
+### CI/CD Requirements
+
+- All unit tests must pass before merge
+- Integration tests run on PR to `main` or `rust` branch
+- Performance benchmarks run weekly (not blocking)
+- Code coverage reports generated (target: 75%+ overall)
+
+### Test Data
+
+- Example YAML agents in `examples/` directory
+- Test fixtures in `rust/tests/fixtures/` (to be created)
+- Mock LLM responses for offline testing
+
+---
+
 ## Dependencies
 
 | Type | Dependency |
@@ -1417,9 +1473,18 @@ memory-vss = ["duckdb", "duckdb/bundled"]  # Includes VSS extension for vector s
 | Runtime (optional) | Perplexity API key for web.search |
 | Runtime (optional) | OpenAI API key for embedding.create, llm.* |
 
-## Python TEA-BUILTIN Stories Reference
+## Python TEA Stories Reference
 
-The following Python built-in action stories have been implemented and inform this Rust migration:
+The following Python stories have been implemented and inform this Rust migration:
+
+### Core Python Stories
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-PY-001 | Lua Scripting Support | ✅ Done | TEA-RUST-009 (Lua via mlua) |
+| TEA-PY-002 | Parallel Lua VM Isolation | ✅ Done | TEA-RUST-030 (per-branch LuaRuntime) |
+
+### Built-in Action Stories
 
 | Story ID | Title | Status | Rust Migration Story |
 |----------|-------|--------|---------------------|
@@ -1492,3 +1557,6 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 | 2025-12-20 | 7.0 | Major update: Added 5 new Python stories to reference table: TEA-BUILTIN-005 (Opik - not migrated), TEA-BUILTIN-006 (Firebase Memory - partial), TEA-BUILTIN-007 (PostgreSQL/S3), TEA-YAML-001 (Jinja2→Tera), YE.7 (Conditional Start Edges). Added detailed "Partially Migrated" and "Not Migrated" sections clarifying Firebase vs DuckDB portability. | Sarah (PO Agent) |
 | 2025-12-20 | 7.1 | **Architecture consolidation**: Merged TEA-RUST-023 (SQLite LTM) into TEA-RUST-028 (Unified DuckDB Memory Layer). Single embedded database (DuckDB) for all memory: LTM, sessions, context, file metadata, vector search. Added AC-66 to AC-74 for session management, context assembly, and local blob storage. Updated TEA-RUST-028 to 8 story points. Rationale: DuckDB has FTS + VSS + Parquet + columnar analytics - no need for separate SQLite. Local filesystem for blob storage (no S3/GCS). | Sarah (PO Agent) |
 | 2025-12-20 | 7.2 | **SM Review - AC Clarifications & Dependencies**: Expanded AC-2 (execution order) with 6 sub-criteria for topological order, sequential/conditional/parallel edge behavior, and determinism. Expanded AC-4 (parallel execution) with 5 sub-criteria for state copying, fan-in behavior, and merge strategy. Expanded AC-8 (Lua conditions) with 5 sub-criteria for state access, return types, and error handling. Split AC-26 into AC-26a through AC-26f for JSON actions with specific error handling and RFC 8259 compliance. Added Sub-Story Dependencies section with Mermaid graph, dependency summary table, critical path analysis, and parallelization opportunities by phase. | Bob (SM Agent) |
+| 2025-12-20 | 7.3 | **Status → In Progress**: Updated status from Draft. Added Testing Strategy section with test levels, categories, approach, and CI/CD requirements. Created sub-story files TEA-RUST-012 (Stream Iterator - Done), TEA-RUST-013 (CLI Binary - Ready for Review), TEA-RUST-014 (Library API - Ready for Review), and TEA-RUST-015 (Testing & Docs - Draft). | Bob (SM Agent) |
+| 2025-12-21 | 7.4 | **TEA-RUST-029 Tera Condition Evaluation**: Added TEA-RUST-029 to replace TEA-RUST-005 (Lua conditions). Aligns Rust conditional routing with Python/Jinja2 parity (TEA-YAML-001). TEA-RUST-005 marked as superseded. TEA-RUST-029 depends on YAML parser (003) and node execution (004) only - no Lua dependency. Updated dependency diagram and summary table. Rationale: Same YAML agents should work in both Python and Rust runtimes. | Sarah (PO Agent) |
+| 2025-12-21 | 7.5 | **TEA-RUST-030 Parallel Lua Isolation**: Added TEA-RUST-030 (per-branch LuaRuntime for true parallelism). Added TEA-PY-001 and TEA-PY-002 to Python stories reference. Python TEA-PY-002 completed with thread-local storage implementation, informs Rust approach. Total sub-stories: 27 (112 points). | Quinn (QA Agent) |

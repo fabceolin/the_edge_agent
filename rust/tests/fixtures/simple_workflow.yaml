@@ -1,0 +1,22 @@
+name: simple-workflow
+description: A simple workflow for CLI testing
+
+nodes:
+  - name: process
+    run: |
+      -- Lua code
+      return { result = "processed: " .. (state.input or "none") }
+
+  - name: finalize
+    run: |
+      return { output = state.result .. " - done" }
+
+edges:
+  - from: __start__
+    to: process
+
+  - from: process
+    to: finalize
+
+  - from: finalize
+    to: __end__

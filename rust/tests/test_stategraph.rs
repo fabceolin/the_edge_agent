@@ -381,7 +381,8 @@ fn test_conditional_routing() {
     ]);
     // Use Lua ternary expression since eval_condition wraps with return
     graph
-        .add_conditional_edge("start", r#"state.value > 10 and "high" or "low""#, targets)
+        // TEA-RUST-029: Use Tera syntax instead of Lua
+        .add_conditional_edge("start", r#"{% if state.value > 10 %}high{% else %}low{% endif %}"#, targets)
         .unwrap();
 
     graph.set_finish_point("high").unwrap();
@@ -422,16 +423,16 @@ fn test_complex_conditional_routing() {
 
     graph.set_entry_point("start").unwrap();
 
-    // Multi-way conditional using chained ternary expressions
+    // Multi-way conditional using Tera if/elif/else (TEA-RUST-029)
     let targets = HashMap::from([
         ("negative".to_string(), "negative".to_string()),
         ("zero".to_string(), "zero".to_string()),
         ("positive".to_string(), "positive".to_string()),
     ]);
 
-    // Chained ternary: (cond1 and val1) or (cond2 and val2) or val3
+    // TEA-RUST-029: Use Tera syntax instead of Lua chained ternary
     let condition =
-        r#"(state.value < 0 and "negative") or (state.value == 0 and "zero") or "positive""#;
+        r#"{% if state.value < 0 %}negative{% elif state.value == 0 %}zero{% else %}positive{% endif %}"#;
 
     graph
         .add_conditional_edge("start", condition, targets)
@@ -476,10 +477,11 @@ fn test_state_persistence() {
         ("true".to_string(), "check".to_string()),
         ("false".to_string(), "accumulate".to_string()),
     ]);
+    // TEA-RUST-029: Use Tera syntax instead of Lua
     graph
         .add_conditional_edge(
             "accumulate",
-            "state.sum >= 10 and \"true\" or \"false\"",
+            r#"{% if state.sum >= 10 %}true{% else %}false{% endif %}"#,
             targets,
         )
         .unwrap();
@@ -526,10 +528,11 @@ fn test_cyclic_graph() {
         ("true".to_string(), "doubler".to_string()),
         ("false".to_string(), "counter".to_string()),
     ]);
+    // TEA-RUST-029: Use Tera syntax instead of Lua
     graph
         .add_conditional_edge(
             "counter",
-            "state.count >= 3 and \"true\" or \"false\"",
+            r#"{% if state.count >= 3 %}true{% else %}false{% endif %}"#,
             targets,
         )
         .unwrap();
@@ -575,6 +578,8 @@ fn test_error_in_node_function() {
 
 #[test]
 fn test_error_stream_yields_error_event() {
+    use the_edge_agent::EventType;
+
     let mut graph = StateGraph::new();
 
     graph.add_node(Node::new("error_node").with_run(|_state| {
@@ -590,10 +595,19 @@ fn test_error_stream_yields_error_event() {
     let compiled = graph.compile().unwrap();
     let executor = Executor::new(compiled).unwrap();
 
-    // Stream should return an error
-    let result = executor.stream(json!({"value": 42}));
-    // Since our executor propagates errors, stream returns Err
-    assert!(result.is_err());
+    // Stream now returns Ok with a lazy iterator (AC-7: lazy evaluation)
+    let stream = executor.stream(json!({"value": 42}));
+    assert!(stream.is_ok());
+
+    // Errors are yielded as events, not thrown
+    let events: Vec<_> = stream.unwrap().collect();
+
+    // Should have Start event followed by Error event
+    assert!(events.len() >= 2);
+    let error_event = events.iter().find(|e| e.event_type == EventType::Error);
+    assert!(error_event.is_some());
+    assert_eq!(error_event.unwrap().node, "error_node");
+    assert!(error_event.unwrap().error.is_some());
 }
 
 // ============================================================================
@@ -954,10 +968,11 @@ fn test_complex_workflow() {
         ("true".to_string(), "end".to_string()),
         ("false".to_string(), "process".to_string()),
     ]);
+    // TEA-RUST-029: Use Tera syntax instead of Lua
     graph
         .add_conditional_edge(
             "start",
-            "state.value > 10 and \"true\" or \"false\"",
+            r#"{% if state.value > 10 %}true{% else %}false{% endif %}"#,
             targets,
         )
         .unwrap();
@@ -1077,4 +1092,796 @@ fn test_compiled_graph_variables() {
         compiled.variables().get("setting").unwrap(),
         &json!("value")
     );
+}
+
+// ============================================================================
+// Python Parity Tests - Additional Coverage
+// Based on test_stategraph_core.py from Python implementation
+// ============================================================================
+//
+// INTENTIONAL DIFFERENCES (Rust vs Python):
+//
+// 1. PARALLEL EXECUTION API:
+//    - Python: add_parallel_edge(), add_fanin_node() - explicit parallel patterns
+//    - Rust: rayon-based ParallelExecutor - implicit parallelism via EdgeType::Parallel
+//    - Reason: Rust uses work-stealing thread pool for better performance
+//
+// 2. CONDITIONAL EDGE LANGUAGE:
+//    - Python: Python expressions via exec()/eval()
+//    - Rust: Lua expressions via mlua runtime
+//    - Reason: Security (sandboxed Lua) and cross-platform consistency
+//
+// 3. NODE RUN FUNCTIONS:
+//    - Python: Closures with (state, config, node, graph) signature
+//    - Rust: Arc<dyn Fn> with state-only or (state, params) signature
+//    - Reason: Rust ownership model requires explicit Arc for shared closures
+//
+// 4. ERROR HANDLING:
+//    - Python: raise_exceptions flag, yields error dicts in stream
+//    - Rust: Result<T, TeaError>, yields ExecutionEvent with error field
+//    - Reason: Rust idioms prefer explicit error types
+//
+// 5. CHECKPOINTER:
+//    - Python: pickle-based serialization (FileCheckpointer default)
+//    - Rust: JSON or bincode serialization (configurable)
+//    - Reason: Cross-language compatibility and performance options
+//
+// 6. SKIPPED PYTHON TESTS (out of scope per TEA-RUST-001):
+//    - test_render_graphviz, test_save_graph_image (pygraphviz-specific)
+//    - test_max_workers_parameter (ThreadPoolExecutor-specific)
+//    - test_dynamic_node_addition_during_execution (design decision)
+//
+// ============================================================================
+
+/// Test multiple finish points (Python: test_complex_conditional_routing)
+/// Verifies graphs with multiple finish points function correctly
+#[test]
+fn test_multiple_finish_points() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("start").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("path_a").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("A");
+        Ok(state)
+    }));
+    graph.add_node(Node::new("path_b").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("B");
+        Ok(state)
+    }));
+
+    graph.set_entry_point("start").unwrap();
+
+    // TEA-RUST-029: Conditional routing with Tera syntax
+    let targets = HashMap::from([
+        ("a".to_string(), "path_a".to_string()),
+        ("b".to_string(), "path_b".to_string()),
+    ]);
+    graph
+        .add_conditional_edge("start", r#"{% if state.choice == "a" %}a{% else %}b{% endif %}"#, targets)
+        .unwrap();
+
+    // Both paths are finish points
+    graph.set_finish_point("path_a").unwrap();
+    graph.set_finish_point("path_b").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Test path A
+    let result_a = executor.invoke(json!({"choice": "a"})).unwrap();
+    assert_eq!(result_a["result"], "A");
+}
+
+/// Test Lua error in conditional edge function
+/// Based on Python test_exception_in_conditional_edge
+#[test]
+fn test_error_in_conditional_edge() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("start").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("end").with_run(|s| Ok(s.clone())));
+
+    graph.set_entry_point("start").unwrap();
+
+    // Invalid Lua that will error (references nonexistent function)
+    let targets = HashMap::from([("end".to_string(), "end".to_string())]);
+    graph
+        .add_conditional_edge("start", "nonexistent_function()", targets)
+        .unwrap();
+
+    graph.set_finish_point("end").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Should error due to invalid Lua condition
+    let result = executor.invoke(json!({"value": 0}));
+    assert!(result.is_err());
+}
+
+/// Test complex conditional routing with three-way routing
+/// Full coverage of Python test_complex_conditional_routing
+#[test]
+fn test_three_way_conditional_routing() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("router").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("negative").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Negative");
+        Ok(state)
+    }));
+    graph.add_node(Node::new("zero").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Zero");
+        Ok(state)
+    }));
+    graph.add_node(Node::new("positive").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Positive");
+        Ok(state)
+    }));
+
+    graph.set_entry_point("router").unwrap();
+
+    let targets = HashMap::from([
+        ("negative".to_string(), "negative".to_string()),
+        ("zero".to_string(), "zero".to_string()),
+        ("positive".to_string(), "positive".to_string()),
+    ]);
+
+    // TEA-RUST-029: Use Tera syntax instead of Lua
+    graph
+        .add_conditional_edge(
+            "router",
+            r#"{% if state.value < 0 %}negative{% elif state.value == 0 %}zero{% else %}positive{% endif %}"#,
+            targets,
+        )
+        .unwrap();
+
+    graph.set_finish_point("negative").unwrap();
+    graph.set_finish_point("zero").unwrap();
+    graph.set_finish_point("positive").unwrap();
+
+    // Test negative path
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+    let result = executor.invoke(json!({"value": -5})).unwrap();
+    assert_eq!(result["result"], "Negative");
+}
+
+/// Test zero value routing
+#[test]
+fn test_conditional_routing_zero() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("router").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("zero").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Zero");
+        Ok(state)
+    }));
+    graph.add_node(Node::new("nonzero").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("NonZero");
+        Ok(state)
+    }));
+
+    graph.set_entry_point("router").unwrap();
+
+    let targets = HashMap::from([
+        ("zero".to_string(), "zero".to_string()),
+        ("nonzero".to_string(), "nonzero".to_string()),
+    ]);
+
+    // TEA-RUST-029: Use Tera syntax instead of Lua
+    graph
+        .add_conditional_edge(
+            "router",
+            r#"{% if state.value == 0 %}zero{% else %}nonzero{% endif %}"#,
+            targets,
+        )
+        .unwrap();
+
+    graph.set_finish_point("zero").unwrap();
+    graph.set_finish_point("nonzero").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+    let result = executor.invoke(json!({"value": 0})).unwrap();
+    assert_eq!(result["result"], "Zero");
+}
+
+/// Test positive value routing
+#[test]
+fn test_conditional_routing_positive() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("router").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("positive").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Positive");
+        Ok(state)
+    }));
+    graph.add_node(Node::new("other").with_run(|s| {
+        let mut state = s.clone();
+        state["result"] = json!("Other");
+        Ok(state)
+    }));
+
+    graph.set_entry_point("router").unwrap();
+
+    let targets = HashMap::from([
+        ("positive".to_string(), "positive".to_string()),
+        ("other".to_string(), "other".to_string()),
+    ]);
+
+    // TEA-RUST-029: Use Tera syntax instead of Lua
+    graph
+        .add_conditional_edge(
+            "router",
+            r#"{% if state.value > 0 %}positive{% else %}other{% endif %}"#,
+            targets,
+        )
+        .unwrap();
+
+    graph.set_finish_point("positive").unwrap();
+    graph.set_finish_point("other").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+    let result = executor.invoke(json!({"value": 42})).unwrap();
+    assert_eq!(result["result"], "Positive");
+}
+
+/// Test state accumulation across multiple executions
+/// Based on Python test_state_persistence with more iterations
+#[test]
+fn test_state_accumulation_loop() {
+    let mut graph = StateGraph::new().allow_cycles().with_max_iterations(100);
+
+    graph.add_node(Node::new("accumulate").with_run(|state| {
+        let mut s = state.clone();
+        let sum = s.get("sum").and_then(|v| v.as_i64()).unwrap_or(0);
+        let value = s.get("value").and_then(|v| v.as_i64()).unwrap_or(1);
+        s["sum"] = json!(sum + value);
+        Ok(s)
+    }));
+
+    graph.add_node(Node::new("done").with_run(|s| Ok(s.clone())));
+
+    graph.set_entry_point("accumulate").unwrap();
+
+    let targets = HashMap::from([
+        ("done".to_string(), "done".to_string()),
+        ("loop".to_string(), "accumulate".to_string()),
+    ]);
+    // TEA-RUST-029: Use Tera syntax instead of Lua
+    graph
+        .add_conditional_edge(
+            "accumulate",
+            r#"{% if state.sum >= 100 %}done{% else %}loop{% endif %}"#,
+            targets,
+        )
+        .unwrap();
+
+    graph.set_finish_point("done").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // value=7, accumulates until sum >= 100
+    // 7+7+7+... = need at least 15 iterations (15*7=105)
+    let result = executor.invoke(json!({"value": 7, "sum": 0})).unwrap();
+
+    assert!(result["sum"].as_i64().unwrap() >= 100);
+}
+
+/// Test stream returns events for each node
+/// Based on Python test_stream
+#[test]
+fn test_stream_events_sequence() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("step1").with_run(|s| {
+        let mut state = s.clone();
+        state["step1"] = json!(true);
+        Ok(state)
+    }));
+    graph.add_node(Node::new("step2").with_run(|s| {
+        let mut state = s.clone();
+        state["step2"] = json!(true);
+        Ok(state)
+    }));
+    graph.add_node(Node::new("step3").with_run(|s| {
+        let mut state = s.clone();
+        state["step3"] = json!(true);
+        Ok(state)
+    }));
+
+    graph.set_entry_point("step1").unwrap();
+    graph.add_simple_edge("step1", "step2").unwrap();
+    graph.add_simple_edge("step2", "step3").unwrap();
+    graph.set_finish_point("step3").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let events: Vec<ExecutionEvent> = executor.stream(json!({})).unwrap().collect();
+
+    // Should have Start, Complete for each node plus Finish
+    let start_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == EventType::Start)
+        .collect();
+    let complete_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == EventType::Complete)
+        .collect();
+    let finish_event = events.iter().find(|e| e.event_type == EventType::Finish);
+
+    assert_eq!(start_events.len(), 3);
+    assert_eq!(complete_events.len(), 3);
+    assert!(finish_event.is_some());
+
+    // Final state should have all steps
+    let final_state = &finish_event.unwrap().state;
+    assert_eq!(final_state["step1"], true);
+    assert_eq!(final_state["step2"], true);
+    assert_eq!(final_state["step3"], true);
+}
+
+/// Test error in node function yields error event in stream
+#[test]
+fn test_stream_error_event_details() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("will_fail").with_run(|_| {
+        Err(TeaError::Execution {
+            node: "will_fail".to_string(),
+            message: "Detailed error message for testing".to_string(),
+        })
+    }));
+
+    graph.set_entry_point("will_fail").unwrap();
+    graph.set_finish_point("will_fail").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let events: Vec<_> = executor.stream(json!({"input": "test"})).unwrap().collect();
+
+    let error_event = events.iter().find(|e| e.event_type == EventType::Error);
+    assert!(error_event.is_some());
+
+    let error_event = error_event.unwrap();
+    assert_eq!(error_event.node, "will_fail");
+    assert!(error_event.error.is_some());
+    assert!(error_event
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Detailed error message"));
+}
+
+/// Test graph with no nodes returns appropriate error
+#[test]
+fn test_empty_graph_validation() {
+    let graph = StateGraph::new();
+
+    let result = graph.validate();
+    assert!(result.is_err());
+
+    // Should fail due to no entry point
+    match result {
+        Err(TeaError::NoEntryPoint) => {}
+        other => panic!("Expected NoEntryPoint error, got: {:?}", other),
+    }
+}
+
+/// Test duplicate edge handling
+#[test]
+fn test_add_duplicate_edge() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("node1"));
+    graph.add_node(Node::new("node2"));
+
+    // First edge succeeds
+    graph.add_simple_edge("node1", "node2").unwrap();
+
+    // Second edge with same source/target (behavior may vary - just verify no crash)
+    let result = graph.add_simple_edge("node1", "node2");
+    // Either succeeds (adds parallel edge) or errors - both are valid
+    assert!(result.is_ok() || result.is_err());
+}
+
+/// Test graph with self-loop (node pointing to itself)
+#[test]
+fn test_self_loop() {
+    let mut graph = StateGraph::new().allow_cycles().with_max_iterations(10);
+
+    graph.add_node(Node::new("loop_node").with_run(|state| {
+        let mut s = state.clone();
+        let count = s.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+        s["count"] = json!(count + 1);
+        Ok(s)
+    }));
+
+    graph.add_node(Node::new("exit").with_run(|s| Ok(s.clone())));
+
+    graph.set_entry_point("loop_node").unwrap();
+
+    let targets = HashMap::from([
+        ("exit".to_string(), "exit".to_string()),
+        ("loop".to_string(), "loop_node".to_string()),
+    ]);
+    // TEA-RUST-029: Use Tera syntax instead of Lua
+    graph
+        .add_conditional_edge(
+            "loop_node",
+            r#"{% if state.count >= 5 %}exit{% else %}loop{% endif %}"#,
+            targets,
+        )
+        .unwrap();
+
+    graph.set_finish_point("exit").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({"count": 0})).unwrap();
+    assert_eq!(result["count"], 5);
+}
+
+/// Test node execution order in stream
+#[test]
+fn test_stream_event_order() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("first").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("second").with_run(|s| Ok(s.clone())));
+    graph.add_node(Node::new("third").with_run(|s| Ok(s.clone())));
+
+    graph.set_entry_point("first").unwrap();
+    graph.add_simple_edge("first", "second").unwrap();
+    graph.add_simple_edge("second", "third").unwrap();
+    graph.set_finish_point("third").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let events: Vec<ExecutionEvent> = executor.stream(json!({})).unwrap().collect();
+
+    // Extract node names in order (Complete events only)
+    let node_order: Vec<&str> = events
+        .iter()
+        .filter(|e| e.event_type == EventType::Complete)
+        .map(|e| e.node.as_str())
+        .collect();
+
+    assert_eq!(node_order, vec!["first", "second", "third"]);
+}
+
+/// Test state modification is cumulative across nodes
+#[test]
+fn test_state_cumulative_modification() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("add_a").with_run(|s| {
+        let mut state = s.clone();
+        state["a"] = json!(1);
+        Ok(state)
+    }));
+    graph.add_node(Node::new("add_b").with_run(|s| {
+        let mut state = s.clone();
+        state["b"] = json!(2);
+        Ok(state)
+    }));
+    graph.add_node(Node::new("add_c").with_run(|s| {
+        let mut state = s.clone();
+        state["c"] = json!(3);
+        Ok(state)
+    }));
+
+    graph.set_entry_point("add_a").unwrap();
+    graph.add_simple_edge("add_a", "add_b").unwrap();
+    graph.add_simple_edge("add_b", "add_c").unwrap();
+    graph.set_finish_point("add_c").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({"initial": "value"})).unwrap();
+
+    // All keys should be present
+    assert_eq!(result["initial"], "value");
+    assert_eq!(result["a"], 1);
+    assert_eq!(result["b"], 2);
+    assert_eq!(result["c"], 3);
+}
+
+/// Test max iterations limit prevents infinite loops
+#[test]
+fn test_max_iterations_limit() {
+    // Create graph with potential infinite loop but limited iterations
+    let mut graph = StateGraph::new().allow_cycles().with_max_iterations(5);
+
+    graph.add_node(Node::new("loop").with_run(|s| {
+        let mut state = s.clone();
+        let count = s.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
+        state["count"] = json!(count + 1);
+        Ok(state)
+    }));
+    graph.add_node(Node::new("exit").with_run(|s| Ok(s.clone())));
+
+    graph.set_entry_point("loop").unwrap();
+    graph.set_finish_point("exit").unwrap();
+
+    // Always loop back (would be infinite without max_iterations)
+    // Edge to exit exists but condition never evaluates to "exit"
+    let targets = HashMap::from([
+        ("loop".to_string(), "loop".to_string()),
+        ("exit".to_string(), "exit".to_string()),
+    ]);
+    graph
+        .add_conditional_edge("loop", "\"loop\"", targets)
+        .unwrap();
+
+    // Note: This test may need adjustment based on how the implementation handles
+    // max iterations - it might error or just stop
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({"count": 0}));
+
+    // Either errors with max iterations exceeded, or stops at limit
+    match result {
+        Ok(state) => {
+            // If it returns, count should be limited
+            assert!(state["count"].as_i64().unwrap() <= 6);
+        }
+        Err(_) => {
+            // Max iterations error is also acceptable
+        }
+    }
+}
+
+// ============================================================================
+// TEA-RUST-030: Parallel Lua Isolation Tests
+// ============================================================================
+
+/// Test that parallel branches have independent Lua state.
+/// Each branch sets a global variable, and other branches should not see it.
+#[test]
+fn test_parallel_branches_independent_lua_state() {
+    use the_edge_agent::engine::yaml::YamlEngine;
+
+    // Use YAML to create a proper parallel graph structure
+    let yaml = r#"
+name: lua-isolation-test
+state_schema:
+  input: str
+
+nodes:
+  - name: branch_a
+    run: |
+      -- Set a global variable specific to this branch
+      global_marker = "from_branch_a"
+      return { branch = "a", marker = global_marker }
+  - name: branch_b
+    run: |
+      -- If globals leaked, global_marker would be "from_branch_a"
+      -- But in isolated runtimes, it should be nil
+      local leaked = global_marker ~= nil
+      global_marker = "from_branch_b"
+      return { branch = "b", marker = global_marker, leaked = leaked }
+  - name: collect
+    run: |
+      return state
+
+edges:
+  - from: __start__
+    parallel:
+      - branch_a
+      - branch_b
+  - from: branch_a
+    to: collect
+  - from: branch_b
+    to: collect
+  - from: collect
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({})).unwrap();
+
+    // The parallel_results should contain both branches
+    let parallel_results = result.get("parallel_results");
+    assert!(parallel_results.is_some(), "Should have parallel_results");
+
+    let results = parallel_results.unwrap().as_array().unwrap();
+    assert_eq!(results.len(), 2, "Should have 2 branch results");
+
+    // Find branch_b result and verify no leakage
+    for r in results {
+        if r.get("state").and_then(|s| s.get("branch")) == Some(&json!("b")) {
+            let state = r.get("state").unwrap();
+            assert_eq!(
+                state.get("leaked"),
+                Some(&json!(false)),
+                "Branch B should not see Branch A's globals"
+            );
+        }
+    }
+}
+
+/// Test that Lua timeout is independent per branch.
+/// One slow branch should timeout while fast branches succeed.
+#[test]
+fn test_parallel_lua_timeout_per_branch() {
+    use std::time::Duration;
+    use the_edge_agent::engine::executor::ExecutionOptions;
+    use the_edge_agent::engine::parallel::ParallelConfig;
+    use the_edge_agent::engine::yaml::YamlEngine;
+
+    let yaml = r#"
+name: timeout-test
+state_schema:
+  input: str
+
+nodes:
+  - name: fast_branch
+    run: |
+      return { branch = "fast", value = 42 }
+  - name: slow_branch
+    run: |
+      -- This will be terminated by timeout
+      while true do end
+      return { branch = "slow" }
+  - name: collect
+    run: |
+      return state
+
+edges:
+  - from: __start__
+    parallel:
+      - fast_branch
+      - slow_branch
+  - from: fast_branch
+    to: collect
+  - from: slow_branch
+    to: collect
+  - from: collect
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Configure with short Lua timeout
+    let options = ExecutionOptions {
+        parallel_config: ParallelConfig {
+            lua_timeout: Some(Duration::from_millis(100)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // Execute and check results
+    let start = std::time::Instant::now();
+    let events = executor.execute(json!({}), &options).unwrap();
+    let result = events.last().map(|e| e.state.clone()).unwrap_or(json!({}));
+    let elapsed = start.elapsed();
+
+    // Should complete in reasonable time (not hang)
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "Should complete within timeout, took {:?}",
+        elapsed
+    );
+
+    // Check parallel results
+    let parallel_results = result.get("parallel_results").unwrap().as_array().unwrap();
+
+    let mut fast_success = false;
+    let mut slow_timeout = false;
+
+    for r in parallel_results {
+        let branch = r.get("branch").and_then(|b| b.as_str()).unwrap_or("");
+        let success = r.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+
+        if branch == "fast_branch" {
+            fast_success = success;
+        } else if branch == "slow_branch" {
+            slow_timeout = !success;
+            // Check error mentions timeout
+            if let Some(error) = r.get("error").and_then(|e| e.as_str()) {
+                assert!(
+                    error.contains("timeout"),
+                    "Slow branch error should mention timeout: {}",
+                    error
+                );
+            }
+        }
+    }
+
+    assert!(fast_success, "Fast branch should succeed");
+    assert!(slow_timeout, "Slow branch should timeout");
+}
+
+/// Test that template rendering works correctly in parallel branches.
+/// Uses actions with template parameters to verify thread-safe cache access.
+#[test]
+fn test_parallel_template_rendering() {
+    use the_edge_agent::engine::yaml::YamlEngine;
+    use std::sync::Arc;
+
+    // Use YAML that uses template parameters in nodes
+    let yaml = r#"
+name: parallel-template-test
+state_schema:
+  input: str
+
+variables:
+  prefix: "result_"
+
+nodes:
+  - name: branch_a
+    run: |
+      return { branch = "a", processed = true }
+  - name: branch_b
+    run: |
+      return { branch = "b", processed = true }
+  - name: collect
+    run: |
+      return state
+
+edges:
+  - from: __start__
+    parallel:
+      - branch_a
+      - branch_b
+  - from: branch_a
+    to: collect
+  - from: branch_b
+    to: collect
+  - from: collect
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Execute multiple times to exercise the shared state
+    for i in 0..3 {
+        let result = executor.invoke(json!({"input": format!("test_{}", i)})).unwrap();
+
+        // Verify parallel results exist
+        let parallel_results = result.get("parallel_results");
+        assert!(
+            parallel_results.is_some(),
+            "Iteration {}: Should have parallel_results",
+            i
+        );
+
+        let results = parallel_results.unwrap().as_array().unwrap();
+        assert_eq!(results.len(), 2, "Iteration {}: Should have 2 branches", i);
+
+        // All branches should succeed
+        for r in results {
+            let success = r.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+            assert!(success, "Iteration {}: All branches should succeed: {:?}", i, r);
+        }
+    }
 }

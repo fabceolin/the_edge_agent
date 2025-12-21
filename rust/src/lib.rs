@@ -14,23 +14,90 @@
 //!
 //! # Quick Start
 //!
-//! ```rust,no_run
-//! use the_edge_agent::{StateGraph, YamlEngine};
-//! use the_edge_agent::engine::executor::Executor;
+//! Load and execute a workflow from YAML:
 //!
-//! // Load from YAML
-//! let engine = YamlEngine::new();
-//! let graph = engine.load_from_file("workflow.yaml")?;
+//! ```rust
+//! use the_edge_agent::prelude::*;
+//!
+//! let yaml = r#"
+//! name: greeting
+//! nodes:
+//!   - name: greet
+//!     run: |
+//!       return { greeting = "Hello, " .. (state.name or "World") }
+//! edges:
+//!   - from: __start__
+//!     to: greet
+//!   - from: greet
+//!     to: __end__
+//! "#;
+//!
+//! // Load from YAML string
+//! let graph = StateGraph::from_yaml(yaml)?;
 //! let compiled = graph.compile()?;
 //!
 //! // Execute
 //! let executor = Executor::new(compiled)?;
-//! let initial_state = serde_json::json!({"input": "hello"});
-//! for event in executor.stream(initial_state)? {
-//!     println!("{:?}", event);
-//! }
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! let result = executor.invoke(serde_json::json!({"name": "World"}))?;
+//!
+//! assert_eq!(result["greeting"], "Hello, World");
+//! # Ok::<(), the_edge_agent::TeaError>(())
 //! ```
+//!
+//! # Custom Actions
+//!
+//! Register custom Rust functions as actions callable from YAML:
+//!
+//! ```rust
+//! use the_edge_agent::prelude::*;
+//! use std::sync::Arc;
+//!
+//! // Create action registry with custom action
+//! let registry = Arc::new(ActionRegistry::new());
+//! registry.register("custom.greet", |state, params| {
+//!     let name = params.get("name")
+//!         .and_then(|v| v.as_str())
+//!         .unwrap_or("World");
+//!     let mut result = state.clone();
+//!     result["greeting"] = serde_json::json!(format!("Hello, {}!", name));
+//!     Ok(result)
+//! });
+//!
+//! // Verify action is registered
+//! assert!(registry.has("custom.greet"));
+//! ```
+//!
+//! # Programmatic Graph Building
+//!
+//! Build graphs programmatically without YAML:
+//!
+//! ```rust
+//! use the_edge_agent::prelude::*;
+//!
+//! let mut graph = StateGraph::new();
+//!
+//! // Add a node with a run function
+//! graph.add_node(Node::new("process").with_run(|state| {
+//!     let mut new_state = state.clone();
+//!     new_state["processed"] = serde_json::json!(true);
+//!     Ok(new_state)
+//! }));
+//!
+//! graph.set_entry_point("process")?;
+//! graph.set_finish_point("process")?;
+//!
+//! let compiled = graph.compile()?;
+//! let executor = Executor::new(compiled)?;
+//! let result = executor.invoke(serde_json::json!({"input": "test"}))?;
+//!
+//! assert_eq!(result["processed"], true);
+//! # Ok::<(), the_edge_agent::TeaError>(())
+//! ```
+//!
+//! # API Stability
+//!
+//! This crate is pre-1.0. The API may change between minor versions.
+//! Core types (`StateGraph`, `Executor`, `ActionRegistry`) are considered stable.
 
 pub mod actions;
 pub mod engine;
@@ -38,7 +105,9 @@ mod error;
 
 // Re-exports
 pub use engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};
-pub use engine::executor::{ExecutionEvent, ExecutionOptions};
+pub use engine::executor::{
+    ActionRegistry, EventType, ExecutionEvent, ExecutionOptions, Executor, StreamIterator,
+};
 pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, StateGraph};
 pub use engine::yaml::{YamlConfig, YamlEngine};
 pub use error::{TeaError, TeaResult};
@@ -50,10 +119,17 @@ pub const END: &str = "__end__";
 pub const START: &str = "__start__";
 
 /// Prelude module for convenient imports
+///
+/// Import all commonly-used types with a single statement:
+///
+/// ```rust
+/// use the_edge_agent::prelude::*;
+/// ```
 pub mod prelude {
+    pub use crate::actions::register_defaults;
     pub use crate::{
-        Checkpoint, Checkpointer, CompiledGraph, Edge, EdgeType, ExecutionEvent, ExecutionOptions,
-        FileCheckpointer, Node, StateGraph, TeaError, TeaResult, YamlConfig, YamlEngine, END,
-        START,
+        ActionRegistry, Checkpoint, Checkpointer, CompiledGraph, Edge, EdgeType, ExecutionEvent,
+        ExecutionOptions, Executor, FileCheckpointer, Node, StateGraph, TeaError, TeaResult,
+        YamlConfig, YamlEngine, END, START,
     };
 }

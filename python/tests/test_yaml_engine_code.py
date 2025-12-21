@@ -9,6 +9,8 @@ This module tests the sandboxed Python code execution functionality:
 Test Categories:
 - P0: Security tests - MUST ALL PASS before deployment
 - P1: Core functionality tests
+
+Note: These tests require RestrictedPython to be installed.
 """
 
 import unittest

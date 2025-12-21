@@ -198,10 +198,17 @@ class TestTemplateProcessing:
         result = engine._process_template('{{ state.msg | lower }}', state)
         assert result == 'world'
 
-    def test_unit_050_invalid_template_fallback(self, engine):
-        """YAML-001-UNIT-050: Invalid template expression returns original string."""
-        result = engine._process_template('{{ nonexistent.deeply.nested }}', {})
-        assert result == '{{ nonexistent.deeply.nested }}'
+    def test_unit_050_invalid_template_raises_error(self, engine):
+        """YAML-001-UNIT-050: Invalid nested template expression raises ValueError.
+
+        TEA-YAML-001: With Jinja2 StrictUndefined, nested access on undefined
+        variables raises an error rather than returning the original string.
+        Use `| default(val)` filter for graceful fallbacks.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            engine._process_template('{{ nonexistent.deeply.nested }}', {})
+        # Error should mention the undefined access
+        assert 'nonexistent' in str(exc_info.value) or 'undefined' in str(exc_info.value).lower()
 
 
 # =============================================================================

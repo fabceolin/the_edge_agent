@@ -67,20 +67,20 @@ return {"os_available": True}
         # This demonstrates os IS available - security concern documented
         assert events[-1]['state']['os_available'] is True
 
-    def test_sec_003_template_eval_not_sandboxed(self, engine):
-        """YAML-001-SEC-003: Document that template eval is NOT sandboxed.
+    def test_sec_003_template_blocks_import(self, engine):
+        """YAML-001-SEC-003: Jinja2 templates block __import__ (security improvement).
 
-        SECURITY CONCERN: Templates can access __import__ and other builtins.
-        This test documents the current attack surface.
+        TEA-YAML-001: Migrating to Jinja2 improves security - templates can no longer
+        use __import__ or other dangerous builtins. This is a significant security
+        improvement over the previous eval()-based approach.
+
+        Note: `run:` blocks still use exec() and have full Python access by design.
         """
-        import os as os_module
-        import types
-
-        # __import__ IS available - documenting security concern
-        result = engine._process_template('{{ __import__("os") }}', {})
-        # This shows templates can import modules - major security concern
-        # Templates now return actual objects when the entire value is a single expression
-        assert result is os_module or isinstance(result, types.ModuleType)
+        # With Jinja2, __import__ is not available in the template context
+        with pytest.raises(ValueError) as exc_info:
+            engine._process_template('{{ __import__("os") }}', {})
+        # Error indicates __import__ is undefined (blocked by Jinja2)
+        assert '__import__' in str(exc_info.value)
 
 
 # =============================================================================

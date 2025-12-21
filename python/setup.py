@@ -22,6 +22,7 @@ setup(
         "networkx==3.3",
         # "pygraphviz==1.13",  # REMOVED: Requires gcc, not available in Firebase emulator
         "pyyaml>=6.0",
+        "jinja2>=3.0",  # TEA-YAML-001: Template engine for declarative workflows
         "jmespath>=1.0.0",
         "jsonschema>=4.20.0",
         "fsspec>=2023.1.0",
@@ -45,6 +46,7 @@ setup(
             "opik>=1.9.0",          # For observability tests
             "pygraphviz>=1.13",     # For graph visualization tests (requires libgraphviz-dev)
             "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
+            "lupa>=2.0",            # For Lua runtime tests
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
@@ -67,6 +69,7 @@ setup(
             "langchain>=1.1.0",
             "langchain-community>=0.4.0",
         ],
+        "lua": ["lupa>=2.0"],
         "storage-s3": ["s3fs"],
         "storage-gcs": ["gcsfs"],
         "storage-azure": ["adlfs"],
@@ -81,6 +84,7 @@ setup(
             "s3fs",
             "gcsfs",
             "adlfs",
+            "lupa>=2.0",
         ],
     },
 )

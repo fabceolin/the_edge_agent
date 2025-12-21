@@ -8,8 +8,10 @@ use petgraph::visit::{EdgeRef, Topo, Walker};
 use petgraph::Direction;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
+use crate::engine::yaml::YamlEngine;
 use crate::error::{TeaError, TeaResult};
 use crate::{END, START};
 
@@ -259,6 +261,7 @@ impl Edge {
 }
 
 /// The StateGraph - core workflow representation
+#[must_use = "StateGraph must be compiled and executed to produce results"]
 pub struct StateGraph {
     /// Internal directed graph
     graph: DiGraph<Node, Edge>,
@@ -338,6 +341,54 @@ impl StateGraph {
         let mut graph = Self::new();
         graph.name = name.into();
         graph
+    }
+
+    /// Load a StateGraph from a YAML string
+    ///
+    /// This is a convenience method that creates a YamlEngine internally
+    /// and parses the provided YAML configuration.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use the_edge_agent::StateGraph;
+    ///
+    /// let yaml = r#"
+    /// name: example
+    /// nodes:
+    ///   - name: greet
+    ///     run: |
+    ///       return { greeting = "Hello, " .. (state.name or "World") }
+    /// edges:
+    ///   - from: __start__
+    ///     to: greet
+    ///   - from: greet
+    ///     to: __end__
+    /// "#;
+    ///
+    /// let graph = StateGraph::from_yaml(yaml).unwrap();
+    /// assert_eq!(graph.name, "example");
+    /// assert!(graph.has_node("greet"));
+    /// ```
+    pub fn from_yaml(yaml: &str) -> TeaResult<Self> {
+        YamlEngine::new().load_from_string(yaml)
+    }
+
+    /// Load a StateGraph from a YAML file
+    ///
+    /// This is a convenience method that creates a YamlEngine internally
+    /// and loads the workflow configuration from the specified file path.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use the_edge_agent::StateGraph;
+    ///
+    /// let graph = StateGraph::from_yaml_file("workflow.yaml")?;
+    /// # Ok::<(), the_edge_agent::TeaError>(())
+    /// ```
+    pub fn from_yaml_file<P: AsRef<Path>>(path: P) -> TeaResult<Self> {
+        YamlEngine::new().load_from_file(path)
     }
 
     /// Add a node to the graph
@@ -565,6 +616,7 @@ impl std::fmt::Debug for StateGraph {
 }
 
 /// A compiled graph ready for execution
+#[must_use = "CompiledGraph should be passed to Executor for execution"]
 pub struct CompiledGraph {
     /// The underlying graph
     graph: StateGraph,
@@ -776,5 +828,29 @@ mod tests {
 
         assert!(node.retry.is_some());
         assert_eq!(node.retry.as_ref().unwrap().max_retries, 5);
+    }
+
+    #[test]
+    fn test_from_yaml() {
+        let yaml = r#"
+name: test-from-yaml
+nodes:
+  - name: process
+    run: |
+      return { result = "done" }
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__
+"#;
+
+        let graph = StateGraph::from_yaml(yaml).unwrap();
+
+        assert_eq!(graph.name, "test-from-yaml");
+        assert!(graph.has_node("process"));
+        assert_eq!(graph.entry_point(), Some("process"));
+        assert_eq!(graph.finish_point(), Some("process"));
     }
 }

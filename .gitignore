@@ -186,3 +186,7 @@ setup.py.orig
 web-bundles/
 {{ variables.output_dir }}/
 .gemini/
+python/=2.0
+python/=3.0
+MLUA_RESEARCH.md
+

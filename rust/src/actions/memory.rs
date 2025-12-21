@@ -672,9 +672,18 @@ mod tests {
     fn test_memory_namespace_isolation_via_prefix() {
         let state = json!({});
 
+        // Use unique keys per test run to avoid race conditions with parallel tests
+        let test_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let key1 = format!("ns1:shared_key_{}", test_id);
+        let key2 = format!("ns2:shared_key_{}", test_id);
+
         // Store in "namespace1"
         let store_params1: HashMap<String, JsonValue> = [
-            ("key".to_string(), json!("ns1:shared_key")),
+            ("key".to_string(), json!(key1.clone())),
             ("value".to_string(), json!("value1")),
         ]
         .into_iter()
@@ -683,7 +692,7 @@ mod tests {
 
         // Store in "namespace2"
         let store_params2: HashMap<String, JsonValue> = [
-            ("key".to_string(), json!("ns2:shared_key")),
+            ("key".to_string(), json!(key2.clone())),
             ("value".to_string(), json!("value2")),
         ]
         .into_iter()
@@ -692,7 +701,7 @@ mod tests {
 
         // Retrieve from namespace1
         let retrieve_params1: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("ns1:shared_key"))]
+            [("key".to_string(), json!(key1.clone()))]
                 .into_iter()
                 .collect();
         let result1 = memory_retrieve(&state, &retrieve_params1).unwrap();
@@ -700,7 +709,7 @@ mod tests {
 
         // Retrieve from namespace2
         let retrieve_params2: HashMap<String, JsonValue> =
-            [("key".to_string(), json!("ns2:shared_key"))]
+            [("key".to_string(), json!(key2.clone()))]
                 .into_iter()
                 .collect();
         let result2 = memory_retrieve(&state, &retrieve_params2).unwrap();

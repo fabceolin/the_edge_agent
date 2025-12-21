@@ -129,9 +129,18 @@ edges:
 | **Interrupts** | Pause points for human-in-the-loop workflows |
 | **YAMLEngine** | Declarative agent configuration from YAML |
 
+## Template Engine
+
+YAML templates use **Jinja2** for variable interpolation (`{{ state.key }}`), providing:
+- Familiar syntax from Flask, Ansible, and dbt
+- Built-in conditionals (`{% if %}`) and loops (`{% for %}`)
+- Filters: `| tojson`, `| fromjson`, `| upper`, `| lower`, `| default`, `| length`
+- Object passthrough: single expressions return native Python objects
+- Security: `__import__` and dangerous builtins are blocked in templates
+
 ## Security Warning
 
-YAML files execute arbitrary Python code via `exec()` and `eval()`. Only load YAML from trusted sources.
+YAML files execute arbitrary Python code via `exec()` in `run:` blocks. Only load YAML from trusted sources. Template expressions (`{{ }}`) use Jinja2's sandboxed environment with improved security.
 
 ## Important Notes
 

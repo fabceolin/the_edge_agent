@@ -22,6 +22,15 @@ pub struct ParallelConfig {
     /// Timeout for entire parallel flow
     pub timeout: Option<Duration>,
 
+    /// Per-branch Lua script timeout
+    ///
+    /// Each parallel branch gets its own Lua runtime instance.
+    /// This timeout controls how long each branch's Lua code
+    /// can execute before being terminated.
+    ///
+    /// Defaults to 30 seconds if not specified.
+    pub lua_timeout: Option<Duration>,
+
     /// Fail fast on first error
     pub fail_fast: bool,
 
@@ -669,6 +678,7 @@ mod tests {
     fn test_parallel_config_default_values() {
         let config = ParallelConfig::default();
         assert!(config.timeout.is_none());
+        assert!(config.lua_timeout.is_none());
         assert!(!config.fail_fast);
         assert!(config.retry_policy.is_none());
         assert!(config.circuit_breaker.is_none());
@@ -678,6 +688,7 @@ mod tests {
     fn test_parallel_config_custom_values() {
         let config = ParallelConfig {
             timeout: Some(Duration::from_secs(30)),
+            lua_timeout: Some(Duration::from_secs(5)),
             fail_fast: true,
             retry_policy: Some(RetryPolicy {
                 max_retries: 5,
@@ -689,6 +700,7 @@ mod tests {
             }),
         };
         assert_eq!(config.timeout, Some(Duration::from_secs(30)));
+        assert_eq!(config.lua_timeout, Some(Duration::from_secs(5)));
         assert!(config.fail_fast);
         assert_eq!(config.retry_policy.as_ref().unwrap().max_retries, 5);
         assert_eq!(

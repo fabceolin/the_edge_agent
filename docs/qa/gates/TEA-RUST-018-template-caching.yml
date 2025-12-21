@@ -1,0 +1,64 @@
+# Quality Gate Decision
+schema: 1
+story: "TEA-RUST-018"
+story_title: "Add Template Caching to Rust YAML Engine"
+gate: PASS
+status_reason: "All 4 ACs verified, ~17x performance improvement measured, 6 unit tests + benchmarks, clean clippy/test."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-21T23:45:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+expires: "2026-01-04T23:45:00Z"
+
+evidence:
+  tests_reviewed: 6
+  benchmarks_reviewed: 5
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No security implications - internal optimization only"
+  performance:
+    status: PASS
+    notes: "~17x speedup verified (18µs cold → 1.08µs warm)"
+  reliability:
+    status: PASS
+    notes: "Double-check locking pattern prevents race conditions"
+  maintainability:
+    status: PASS
+    notes: "Clean implementation with proper documentation"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - action: "Monitor cache size in long-running workflows"
+        refs: ["rust/src/engine/yaml.rs:196-198"]
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add LRU eviction if memory growth becomes issue"
+      refs: ["TEA-RUST-018.1"]
+    - action: "Add cache hit/miss metrics for observability"
+      refs: ["rust/src/engine/yaml.rs"]
+
+notes:
+  dependency_investigation: |
+    The original benchmark referenced `set_secrets()` and `set_checkpoint_dir()`
+    methods from TEA-RUST-016/017. These APIs are NOT in yaml.rs despite those
+    stories being marked "Done".
+
+    For TEA-RUST-018: No action required - Dev Agent correctly removed speculative
+    API calls. Template caching works independently.
+
+    Recommend: Investigate TEA-RUST-016/017 implementation status separately.

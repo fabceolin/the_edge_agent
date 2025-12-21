@@ -1,0 +1,53 @@
+# Quality Gate: TEA-PY-002
+# Parallel Lua VM Isolation in Python TEA
+
+schema: 1
+story: "TEA-PY-002"
+story_title: "Parallel Lua VM Isolation"
+gate: PASS
+status_reason: "All 10 acceptance criteria met. 77 tests pass (18 new isolation tests + 59 existing). Thread-local storage provides complete isolation with 0.13ms average overhead."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-21T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Thread-local cleanup relies on GC when threads terminate"
+
+quality_score: 100
+expires: "2026-01-04T00:00:00Z"
+
+evidence:
+  tests_reviewed: 77
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new security surface. Each LuaRuntime maintains existing sandbox guarantees."
+  performance:
+    status: PASS
+    notes: "0.13ms avg LuaRuntime creation (better than 1-5ms requirement). Max observed: 1.05ms."
+  reliability:
+    status: PASS
+    notes: "Thread-local storage provides deterministic isolation. No mutex contention in parallel paths."
+  maintainability:
+    status: PASS
+    notes: "Minimal code change (~20 lines in yaml_engine.py). Clean separation of concerns."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider explicit thread-local cleanup for long-running thread pools"
+      refs: ["python/src/the_edge_agent/yaml_engine.py"]
+    - action: "Monitor memory usage in workflows with many parallel branches (>100)"
+      refs: ["python/src/the_edge_agent/stategraph.py"]

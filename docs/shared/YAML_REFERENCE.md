@@ -84,6 +84,9 @@ Unlike GitHub Actions (which runs in isolated VMs with a limited expression lang
 - Do not load YAML from untrusted user input
 - Consider running untrusted agents in a container/sandbox
 
+**Lua sandbox (when `lua_enabled=True`):**
+Lua code blocks are sandboxed with dangerous globals removed (`os`, `io`, `debug`, `loadfile`, `dofile`). However, this is not a complete security boundary—the Python host process still has full access.
+
 ---
 
 ## Basic Structure
@@ -394,6 +397,112 @@ Alias for `run:`, inspired by GitLab CI:
     return {"doubled": result}
 ```
 
+#### Method 2b: Lua Code (`run:` with `-- lua` marker)
+
+Execute Lua code instead of Python for cross-runtime compatibility with the Rust implementation.
+
+**Enabling Lua:**
+```python
+engine = YAMLEngine(lua_enabled=True)
+```
+
+**Explicit marker (recommended):**
+```yaml
+- name: process_lua
+  run: |
+    -- lua
+    local result = {}
+    result.value = state.value * 2
+    result.message = state.name .. "!"
+    return result
+```
+
+**Auto-detection (heuristic):**
+Lua code is auto-detected when it contains Lua-specific syntax:
+- `local` keyword (variable declaration)
+- `then` / `end` keywords (control flow)
+- `elseif` keyword (Lua uses elseif, Python uses elif)
+- `..` operator (string concatenation)
+
+```yaml
+- name: auto_detected_lua
+  run: |
+    local count = state.count + 1
+    local doubled = state.count * 2
+    return {count = count, doubled = doubled}
+```
+
+**Lua Sandbox:**
+For security, the following Lua globals are removed:
+- `os` - Operating system access
+- `io` - File I/O operations
+- `debug` - Debugging facilities
+- `loadfile`, `dofile` - File loading
+
+Safe libraries remain available: `string`, `math`, `table`, `pairs`, `ipairs`, `type`, `tostring`, `tonumber`.
+
+**Timeout Protection:**
+Lua code execution has a configurable timeout (default: 30 seconds):
+```python
+engine = YAMLEngine(lua_enabled=True, lua_timeout=10.0)  # 10 second timeout
+```
+
+**Installation:**
+```bash
+pip install 'the_edge_agent[lua]'
+# or
+pip install lupa>=2.0
+```
+
+**Cross-Runtime Compatibility:**
+Lua code in YAML agents runs identically in both Python and Rust TEA implementations, enabling portable agents.
+
+**Lua Version Compatibility (LuaJIT 2.1 vs Lua 5.4):**
+
+The Python implementation uses **LuaJIT 2.1** (via `lupa`) while the Rust implementation uses **Lua 5.4** (via `mlua`). For cross-runtime compatibility, use the **portable subset** of Lua syntax.
+
+| Feature | LuaJIT 2.1 (Python) | Lua 5.4 (Rust) | Portable Alternative |
+|---------|---------------------|----------------|---------------------|
+| Integer division | `math.floor(a/b)` | `a // b` | Use `math.floor(a/b)` |
+| Bitwise ops | `bit.band()`, `bit.bor()` | `&`, `\|`, `~` | Avoid bitwise; use math |
+| Const variables | ❌ Not supported | `local x <const>` | Use `local x = ...` |
+| Close variables | ❌ Not supported | `local f <close>` | Avoid `<close>` |
+| UTF-8 library | ❌ Not built-in | `utf8.*` | Use `string.len` for ASCII |
+| Warning system | ❌ Not available | `warn()` | Avoid `warn()` |
+
+**Portable Syntax Examples (works in both):**
+```lua
+-- State access
+local count = state.count + 1
+
+-- Conditionals (ternary style)
+local result = state.value > 5 and "high" or "low"
+
+-- Table creation
+return { count = count, status = "done" }
+
+-- Loops
+for i, v in ipairs(state.items) do
+    -- process
+end
+
+-- String and math operations
+local upper = string.upper(state.name)
+local avg = math.floor(total / count)
+```
+
+**Syntax to Avoid (Lua 5.4 only - will fail in Python):**
+```lua
+-- Integer division operator (Lua 5.4 only)
+local quotient = 17 // 5  -- Use: math.floor(17/5)
+
+-- Bitwise operators (Lua 5.4 only)
+local flags = a & b | c  -- Use: bit.band/bit.bor in LuaJIT
+
+-- Const/close attributes (Lua 5.4 only)
+local x <const> = 10  -- Use: local x = 10
+```
+
 #### Method 3: Built-in Actions (`uses:`)
 
 ```yaml
@@ -562,6 +671,8 @@ Execute flows concurrently:
 
 ## Template Syntax
 
+Templates use **Jinja2** (TEA-YAML-001), providing familiar syntax used in Flask, Ansible, and dbt.
+
 ### Basic Substitution
 
 | Syntax | Description | Example |
@@ -569,17 +680,109 @@ Execute flows concurrently:
 | `{{ state.key }}` | State value | `{{ state.user_name }}` |
 | `{{ variables.key }}` | Global variable | `{{ variables.api_url }}` |
 | `{{ secrets.key }}` | Secret value | `{{ secrets.api_key }}` |
+| `{{ checkpoint.dir }}` | Checkpoint directory | `{{ checkpoint.dir }}/backup.pkl` |
+| `{{ checkpoint.last }}` | Last checkpoint path | `{{ checkpoint.last }}` |
 | `${ key }` | GitLab CI style | `${ CI_COMMIT_SHA }` |
 
-### Filters
+### Jinja2 Filters
 
-Apply transformations to values:
+All standard Jinja2 filters are available, plus custom filters:
 
 | Filter | Description | Example |
 |--------|-------------|---------|
-| `json` | JSON serialize | `{{ state.data \| json }}` |
+| `tojson` | JSON serialize | `{{ state.data \| tojson }}` |
+| `json` | Alias for tojson | `{{ state.data \| json }}` |
+| `fromjson` | Parse JSON string | `{{ state.json_str \| fromjson }}` |
 | `upper` | Uppercase | `{{ state.name \| upper }}` |
 | `lower` | Lowercase | `{{ state.name \| lower }}` |
+| `length` | Get length | `{{ state.items \| length }}` |
+| `default` | Default for undefined | `{{ state.missing \| default("N/A") }}` |
+| `truncate` | Truncate string | `{{ state.text \| truncate(50) }}` |
+| `join` | Join list items | `{{ state.tags \| join(", ") }}` |
+| `first` | First item | `{{ state.items \| first }}` |
+| `last` | Last item | `{{ state.items \| last }}` |
+
+### Jinja2 Constructs
+
+#### Conditionals
+
+```yaml
+- name: format_message
+  uses: template.render
+  with:
+    template: |
+      {% if state.priority == 'high' %}
+      🚨 URGENT: {{ state.message }}
+      {% elif state.priority == 'medium' %}
+      ⚠️ {{ state.message }}
+      {% else %}
+      {{ state.message }}
+      {% endif %}
+```
+
+#### Loops
+
+```yaml
+- name: format_report
+  uses: template.render
+  with:
+    template: |
+      Report Items:
+      {% for item in state.items %}
+      - {{ item.name }}: {{ item.value | tojson }}
+      {% endfor %}
+      Total: {{ state.items | length }} items
+```
+
+### GitHub Actions to Jinja2 Equivalents
+
+| GitHub Actions Style | Jinja2 Native Equivalent |
+|---------------------|--------------------------|
+| `contains(s, v)` | `'v' in s` |
+| `startsWith(s, p)` | `s.startswith('p')` |
+| `endsWith(s, x)` | `s.endswith('x')` |
+| `join(arr, sep)` | `arr \| join(sep)` |
+| `toJSON(v)` | `v \| tojson` |
+| `fromJSON(s)` | `s \| fromjson` |
+| `len(c)` | `c \| length` |
+| `format('{0}', a)` | `'%s' % a` or inline `{{ a }}` |
+
+### Object Passthrough
+
+When a template is a single expression (e.g., `"{{ state.data }}"`), it returns the actual Python object, not a string representation. This enables passing complex objects between actions:
+
+```yaml
+- name: get_data
+  uses: http.get
+  with:
+    url: "{{ variables.api_url }}"
+  output: response
+
+- name: process
+  uses: json.transform
+  with:
+    # data receives the actual dict, not a string
+    data: "{{ state.response }}"
+    expression: "items[*].name"
+```
+
+### Undefined Variable Handling
+
+Templates use `StrictUndefined` mode. Undefined variables:
+- **Single-level access** (`{{ state.missing }}`) returns `None`
+- **Nested access** (`{{ state.missing.deep }}`) raises `ValueError`
+- Use `| default("fallback")` filter for graceful fallbacks:
+
+```yaml
+url: "{{ state.custom_url | default(variables.default_url) }}"
+```
+
+### Security Note
+
+Template processing uses Jinja2's sandboxed environment. Unlike the old `eval()` approach:
+- `__import__` and dangerous builtins are **blocked** in templates
+- This improves security for template expressions
+- `run:` blocks still use `exec()` with full Python access (by design)
 
 ### Template in Different Contexts
 

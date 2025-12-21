@@ -1,8 +1,46 @@
-# The edge agent
+# The Edge Agent
 
 ![The Edge Agent Logo](images/tea.jpg)
 
 The Edge Agent (tea) ☕ is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity, making it ideal for use with local standalone AI agents, including edge computing environments. Tea provides an easy-to-use framework for building state-driven LLM workflows, avoiding unnecessary features to efficiently support local, single-app operations.
+
+## Implementations
+
+This is a **polyglot monorepo** with two implementations:
+
+| Implementation | Status | Best For |
+|----------------|--------|----------|
+| **[Python](docs/python/getting-started.md)** | Production-ready | Full feature set, rapid prototyping, 20+ built-in actions |
+| **[Rust](docs/rust/getting-started.md)** | Active development | Performance-critical deployments, embedded systems |
+
+Both implementations share the same YAML agent syntax and can run the same agent configurations from the `examples/` directory.
+
+### Quick Start by Language
+
+**Python:**
+```bash
+cd python && pip install -e .
+python -c "import the_edge_agent as tea; print(tea.__version__)"
+```
+
+**Rust:**
+```bash
+cd rust && cargo build --release
+./target/release/tea --help
+```
+
+### Repository Structure
+
+```
+the_edge_agent/
+├── python/          # Python implementation (full features)
+├── rust/            # Rust implementation (performance)
+├── examples/        # Shared YAML agents (works with both)
+└── docs/
+    ├── shared/      # Language-agnostic docs (YAML reference)
+    ├── python/      # Python-specific guides
+    └── rust/        # Rust-specific guides
+```
 
 ## Features
 
@@ -10,12 +48,13 @@ The Edge Agent (tea) ☕ is a lightweight, single-app state graph library inspir
 - Easy-to-use graph construction
 - Single app focus
 - Streamlined workflow creation
-- Ease integration with any language models (like GPT)
+- Easy integration with any language models (like GPT)
 - LLM library agnostic
 - Parallel fan out fan in support
 - Visualization of state graphs
+- Declarative YAML-based agent configuration
 
-## Installation
+## Installation (Python)
 
 You can install the_edge_agent using pip:
 

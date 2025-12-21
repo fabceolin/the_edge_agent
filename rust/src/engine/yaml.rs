@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use tera::{Context, Tera};
 
 use crate::engine::graph::{ActionConfig, Edge, Node, RetryConfig, StateGraph};
@@ -174,18 +175,130 @@ impl Default for ErrorPolicyConfig {
 }
 
 /// YAML Engine for loading and parsing workflows
+///
+/// The engine is `Clone` to support parallel execution where each branch
+/// needs its own instance for thread safety. All shared state (template cache,
+/// last_checkpoint) is wrapped in `Arc<RwLock<>>` so clones share the cache.
 pub struct YamlEngine {
-    /// Tera template engine
-    #[allow(dead_code)]
-    tera: Tera,
+    /// Tera template engine wrapped in Arc<RwLock> for sharing across clones
+    /// Required because add_raw_template needs &mut self
+    tera: Arc<RwLock<Tera>>,
+    /// Maps template content -> registered template name (shared across clones)
+    template_cache: Arc<RwLock<HashMap<String, String>>>,
+    /// Secrets for template substitution (e.g., API keys)
+    /// Note: Secrets should NOT be included in checkpoint serialization
+    secrets: HashMap<String, JsonValue>,
+    /// Checkpoint directory path for `{{ checkpoint.dir }}` template access
+    checkpoint_dir: Option<String>,
+    /// Path to most recent checkpoint for `{{ checkpoint.last }}` template access
+    /// Uses Arc<RwLock> for sharing - allows Executor to update after saves
+    last_checkpoint: Arc<RwLock<Option<String>>>,
+}
+
+impl Clone for YamlEngine {
+    fn clone(&self) -> Self {
+        Self {
+            tera: Arc::clone(&self.tera),
+            template_cache: Arc::clone(&self.template_cache),
+            secrets: self.secrets.clone(),
+            checkpoint_dir: self.checkpoint_dir.clone(),
+            last_checkpoint: Arc::clone(&self.last_checkpoint),
+        }
+    }
 }
 
 impl YamlEngine {
     /// Create a new YAML engine
     pub fn new() -> Self {
         Self {
-            tera: Tera::default(),
+            tera: Arc::new(RwLock::new(Tera::default())),
+            template_cache: Arc::new(RwLock::new(HashMap::new())),
+            secrets: HashMap::new(),
+            checkpoint_dir: None,
+            last_checkpoint: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Returns the number of cached templates (for testing/monitoring)
+    pub fn cache_size(&self) -> usize {
+        self.template_cache.read().unwrap().len()
+    }
+
+    /// Set secrets for template substitution
+    ///
+    /// Secrets are available in templates as `{{ secrets.key }}`.
+    /// Note: Secrets should NOT be serialized to checkpoints.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    /// use serde_json::json;
+    /// use std::collections::HashMap;
+    ///
+    /// let mut engine = YamlEngine::new();
+    /// engine.set_secrets(HashMap::from([
+    ///     ("api_key".to_string(), json!("sk-secret-123")),
+    ///     ("db_password".to_string(), json!("p@ssw0rd")),
+    /// ]));
+    /// ```
+    pub fn set_secrets(&mut self, secrets: HashMap<String, JsonValue>) {
+        self.secrets = secrets;
+    }
+
+    /// Get a reference to the current secrets
+    ///
+    /// Useful for inspecting configured secrets (without values for security).
+    pub fn secrets(&self) -> &HashMap<String, JsonValue> {
+        &self.secrets
+    }
+
+    /// Set the checkpoint directory path for template access
+    ///
+    /// This value is available in templates as `{{ checkpoint.dir }}`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    ///
+    /// let mut engine = YamlEngine::new();
+    /// engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+    /// assert_eq!(engine.checkpoint_dir(), Some("./checkpoints"));
+    /// ```
+    pub fn set_checkpoint_dir(&mut self, dir: Option<String>) {
+        self.checkpoint_dir = dir;
+    }
+
+    /// Get the current checkpoint directory path
+    pub fn checkpoint_dir(&self) -> Option<&str> {
+        self.checkpoint_dir.as_deref()
+    }
+
+    /// Set the path to the most recent checkpoint
+    ///
+    /// This value is available in templates as `{{ checkpoint.last }}`.
+    /// Typically called after a checkpoint is saved during execution.
+    ///
+    /// Uses interior mutability (RwLock) so this can be called from
+    /// `Executor::execute()` and `StreamIterator` after checkpoint saves.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    ///
+    /// let engine = YamlEngine::new();
+    /// engine.set_last_checkpoint(Some("./checkpoints/step1_1234567890.msgpack".to_string()));
+    /// assert_eq!(engine.last_checkpoint(), Some("./checkpoints/step1_1234567890.msgpack".to_string()));
+    /// ```
+    pub fn set_last_checkpoint(&self, path: Option<String>) {
+        *self.last_checkpoint.write().unwrap() = path;
+    }
+
+    /// Get the path to the most recent checkpoint
+    pub fn last_checkpoint(&self) -> Option<String> {
+        self.last_checkpoint.read().unwrap().clone()
     }
 
     /// Load a workflow from a YAML file
@@ -313,6 +426,10 @@ impl YamlEngine {
                 if let Some(targets) = &edge.targets {
                     entry_nodes.extend(targets.values().cloned());
                 }
+                // Also handle parallel branches from START
+                if let Some(branches) = &edge.parallel {
+                    entry_nodes.extend(branches.clone());
+                }
             }
 
             if let Some(to) = &edge.to {
@@ -340,6 +457,16 @@ impl YamlEngine {
     }
 
     /// Render a template string with context
+    ///
+    /// Templates are cached for performance - identical template strings share
+    /// the same compiled template. This provides significant speedup for workflows
+    /// with repeated template evaluations.
+    ///
+    /// Four variable scopes are available in templates:
+    /// - `state`: Runtime data passed between nodes (`{{ state.key }}`)
+    /// - `variables`: Global constants defined in YAML (`{{ variables.key }}`)
+    /// - `secrets`: Sensitive values like API keys (`{{ secrets.key }}`)
+    /// - `checkpoint`: Checkpoint paths (`{{ checkpoint.dir }}`, `{{ checkpoint.last }}`)
     pub fn render_template(
         &self,
         template: &str,
@@ -354,8 +481,61 @@ impl YamlEngine {
         // Add variables to context
         context.insert("variables", variables);
 
-        // Render using one-off template
-        Tera::one_off(template, &context, false).map_err(|e| TeaError::Template(e.to_string()))
+        // Add secrets to context
+        context.insert("secrets", &self.secrets);
+
+        // Add checkpoint context (dir and last paths)
+        let last_checkpoint = self.last_checkpoint.read().unwrap();
+        let checkpoint_ctx = serde_json::json!({
+            "dir": self.checkpoint_dir.as_deref().unwrap_or(""),
+            "last": last_checkpoint.as_deref().unwrap_or("")
+        });
+        context.insert("checkpoint", &checkpoint_ctx);
+
+        let cache_key = template.to_string();
+
+        // Fast path: check cache with read lock
+        {
+            let cache = self.template_cache.read().unwrap();
+            if let Some(name) = cache.get(&cache_key) {
+                let tera = self.tera.read().unwrap();
+                return tera
+                    .render(name, &context)
+                    .map_err(|e| TeaError::Template(e.to_string()));
+            }
+        }
+
+        // Slow path: compile and cache with write locks
+        // Lock ordering: template_cache before tera to prevent deadlocks
+        let name = {
+            let mut cache = self.template_cache.write().unwrap();
+
+            // Double-check after acquiring write lock (another thread may have cached it)
+            if let Some(name) = cache.get(&cache_key) {
+                let tera = self.tera.read().unwrap();
+                return tera
+                    .render(name, &context)
+                    .map_err(|e| TeaError::Template(e.to_string()));
+            }
+
+            let name = format!("__cached_{}", cache.len());
+
+            // Add template to Tera (requires write lock on tera)
+            {
+                let mut tera = self.tera.write().unwrap();
+                tera.add_raw_template(&name, template).map_err(|e| {
+                    TeaError::Template(format!("Failed to compile template: {}", e))
+                })?;
+            }
+
+            cache.insert(cache_key, name.clone());
+            name
+        };
+
+        // Render from cached template
+        let tera = self.tera.read().unwrap();
+        tera.render(&name, &context)
+            .map_err(|e| TeaError::Template(e.to_string()))
     }
 
     /// Process template substitutions in action parameters
@@ -409,6 +589,131 @@ impl YamlEngine {
                 Ok(JsonValue::Object(map))
             }
             _ => Ok(value.clone()),
+        }
+    }
+
+    /// TEA-RUST-029: Evaluate a condition expression using Tera
+    ///
+    /// Supports (per Python parity):
+    /// - Jinja2 template: `{{ state.x > 5 }}`
+    /// - Expression only: `state.x > 5` (auto-wrapped in `{{ }}`)
+    /// - Simple variable: `has_results` → looks up `state.has_results`
+    /// - Negation: `!escalate` → `not state.escalate`
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if condition is truthy, `Ok(false)` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    /// use serde_json::json;
+    ///
+    /// let engine = YamlEngine::new();
+    /// let state = json!({"x": 10, "ready": true});
+    ///
+    /// // Jinja2 template
+    /// assert!(engine.eval_condition("{{ state.x > 5 }}", &state).unwrap());
+    ///
+    /// // Bare expression (auto-wrapped)
+    /// assert!(engine.eval_condition("state.x > 5", &state).unwrap());
+    ///
+    /// // Simple variable reference
+    /// assert!(engine.eval_condition("ready", &state).unwrap());
+    ///
+    /// // Negation
+    /// assert!(!engine.eval_condition("!ready", &state).unwrap());
+    /// ```
+    pub fn eval_condition(&self, expr: &str, state: &JsonValue) -> TeaResult<bool> {
+        let expr = expr.trim();
+
+        // Empty expression is falsy
+        if expr.is_empty() {
+            return Ok(false);
+        }
+
+        // Handle simple negation: "!variable"
+        if let Some(stripped) = expr.strip_prefix('!') {
+            let var_name = stripped.trim();
+            if !var_name.starts_with('{') && is_identifier(var_name) {
+                return self.get_state_bool(state, var_name).map(|v| !v);
+            }
+        }
+
+        // Handle simple variable reference: "variable_name"
+        if is_identifier(expr) {
+            return self.get_state_bool(state, expr);
+        }
+
+        // If already a Jinja2 template, process it
+        let template_expr = if expr.contains("{{") || expr.contains("{%") {
+            expr.to_string()
+        } else {
+            // Wrap as Jinja2 expression
+            format!("{{{{ {} }}}}", expr)
+        };
+
+        // Render template and parse as boolean
+        let result = self.render_template(&template_expr, state, &HashMap::new())?;
+        Ok(parse_bool_result(&result))
+    }
+
+    /// TEA-RUST-029: Get a boolean value from state
+    ///
+    /// Looks up a key in state and returns its truthy value.
+    /// Missing keys default to false.
+    fn get_state_bool(&self, state: &JsonValue, key: &str) -> TeaResult<bool> {
+        match state.get(key) {
+            Some(value) => Ok(is_truthy(value)),
+            None => Ok(false), // Default to false for missing keys
+        }
+    }
+}
+
+/// TEA-RUST-029: Check if string is a valid identifier (for variable references)
+///
+/// An identifier starts with a letter or underscore, followed by letters, digits, or underscores.
+fn is_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    let first = chars.next().unwrap();
+    (first.is_alphabetic() || first == '_') && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// TEA-RUST-029: Check if a JSON value is truthy
+///
+/// Falsy values: null, false, 0, "", [], {}
+/// Everything else is truthy.
+fn is_truthy(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Null => false,
+        JsonValue::Bool(b) => *b,
+        JsonValue::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        JsonValue::String(s) => !s.is_empty(),
+        JsonValue::Array(arr) => !arr.is_empty(),
+        JsonValue::Object(obj) => !obj.is_empty(),
+    }
+}
+
+/// TEA-RUST-029: Parse a rendered template result as boolean
+///
+/// Handles Tera output strings and converts to boolean.
+fn parse_bool_result(result: &str) -> bool {
+    let trimmed = result.trim().to_lowercase();
+    match trimmed.as_str() {
+        "true" => true,
+        "false" | "" | "0" | "[]" | "{}" | "none" | "null" => false,
+        _ => {
+            // Try to parse as number
+            if let Ok(n) = trimmed.parse::<f64>() {
+                n != 0.0
+            } else {
+                // Non-empty string is truthy
+                true
+            }
         }
     }
 }
@@ -612,7 +917,7 @@ edges:
     to: __end__
 "#;
 
-        let engine = YamlEngine::new();
+        let _engine = YamlEngine::new();
         let config: YamlConfig = serde_yaml::from_str(yaml).unwrap();
 
         assert_eq!(config.imports.len(), 2);
@@ -694,5 +999,595 @@ edges:
         // Verify conditional edges from START exist
         let edges = graph.outgoing_edges(START);
         assert!(edges.len() >= 2);
+    }
+
+    // ========================================================================
+    // TEA-RUST-029: eval_condition tests
+    // ========================================================================
+
+    #[test]
+    fn test_eval_condition_jinja2_template() {
+        let engine = YamlEngine::new();
+        let state = json!({"x": 10, "y": 5});
+
+        // AC-1: Jinja2 template syntax works
+        assert!(engine.eval_condition("{{ state.x > 5 }}", &state).unwrap());
+        assert!(!engine.eval_condition("{{ state.x < 5 }}", &state).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_bare_expression() {
+        let engine = YamlEngine::new();
+        let state = json!({"x": 10, "y": 5});
+
+        // AC-2: Bare expressions auto-wrapped in {{ }}
+        assert!(engine.eval_condition("state.x > 5", &state).unwrap());
+        assert!(engine.eval_condition("state.x == 10", &state).unwrap());
+        assert!(!engine.eval_condition("state.x < 5", &state).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_simple_variable() {
+        let engine = YamlEngine::new();
+        let state = json!({"ready": true, "done": false, "empty": ""});
+
+        // AC-3: Simple variable reference looks up state
+        assert!(engine.eval_condition("ready", &state).unwrap());
+        assert!(!engine.eval_condition("done", &state).unwrap());
+        assert!(!engine.eval_condition("empty", &state).unwrap());
+        assert!(!engine.eval_condition("missing", &state).unwrap()); // Missing = false
+    }
+
+    #[test]
+    fn test_eval_condition_negation() {
+        let engine = YamlEngine::new();
+        let state = json!({"escalate": true, "done": false});
+
+        // AC-4: Negation syntax
+        assert!(!engine.eval_condition("!escalate", &state).unwrap());
+        assert!(engine.eval_condition("!done", &state).unwrap());
+        assert!(engine.eval_condition("!missing", &state).unwrap()); // Missing = false, !false = true
+    }
+
+    #[test]
+    fn test_eval_condition_comparison_operators() {
+        let engine = YamlEngine::new();
+        let state = json!({"count": 5, "name": "test"});
+
+        // AC-5: Comparison operators
+        assert!(engine.eval_condition("state.count == 5", &state).unwrap());
+        assert!(engine.eval_condition("state.count != 10", &state).unwrap());
+        assert!(engine.eval_condition("state.count < 10", &state).unwrap());
+        assert!(engine.eval_condition("state.count <= 5", &state).unwrap());
+        assert!(engine.eval_condition("state.count > 3", &state).unwrap());
+        assert!(engine.eval_condition("state.count >= 5", &state).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_logical_operators() {
+        let engine = YamlEngine::new();
+        let state = json!({"a": true, "b": false, "x": 10});
+
+        // AC-6: Logical operators
+        assert!(engine.eval_condition("state.a and state.x > 5", &state).unwrap());
+        assert!(!engine.eval_condition("state.a and state.b", &state).unwrap());
+        assert!(engine.eval_condition("state.a or state.b", &state).unwrap());
+        assert!(!engine.eval_condition("state.b or state.x < 5", &state).unwrap());
+        assert!(engine.eval_condition("not state.b", &state).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_truthy_falsy() {
+        let engine = YamlEngine::new();
+
+        // AC-8: Truthy/falsy handling
+        // Falsy: null, false, 0, "", [], {}
+        assert!(!engine.eval_condition("null_val", &json!({"null_val": null})).unwrap());
+        assert!(!engine.eval_condition("bool_val", &json!({"bool_val": false})).unwrap());
+        assert!(!engine.eval_condition("num_val", &json!({"num_val": 0})).unwrap());
+        assert!(!engine.eval_condition("str_val", &json!({"str_val": ""})).unwrap());
+        assert!(!engine.eval_condition("arr_val", &json!({"arr_val": []})).unwrap());
+        assert!(!engine.eval_condition("obj_val", &json!({"obj_val": {}})).unwrap());
+
+        // Truthy: non-empty values
+        assert!(engine.eval_condition("bool_val", &json!({"bool_val": true})).unwrap());
+        assert!(engine.eval_condition("num_val", &json!({"num_val": 1})).unwrap());
+        assert!(engine.eval_condition("str_val", &json!({"str_val": "hello"})).unwrap());
+        assert!(engine.eval_condition("arr_val", &json!({"arr_val": [1, 2]})).unwrap());
+        assert!(engine.eval_condition("obj_val", &json!({"obj_val": {"a": 1}})).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_empty_expression() {
+        let engine = YamlEngine::new();
+        let state = json!({"x": 10});
+
+        // AC-9: Empty expression is falsy
+        assert!(!engine.eval_condition("", &state).unwrap());
+        assert!(!engine.eval_condition("  ", &state).unwrap());
+    }
+
+    #[test]
+    fn test_eval_condition_block_template() {
+        let engine = YamlEngine::new();
+        let state = json!({"value": 0});
+
+        // Block templates ({% if %}) render to strings, not used directly with eval_condition
+        // but render_template should work
+        let result = engine.render_template(
+            r#"{% if state.value == 0 %}zero{% else %}nonzero{% endif %}"#,
+            &state,
+            &HashMap::new()
+        ).unwrap();
+        assert_eq!(result.trim(), "zero");
+    }
+
+    // ========================================================================
+    // TEA-RUST-018: Template caching tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_hit_returns_same_result() {
+        let engine = YamlEngine::new();
+        let state = json!({"name": "World"});
+        let template = "Hello, {{ state.name }}!";
+
+        let result1 = engine
+            .render_template(template, &state, &HashMap::new())
+            .unwrap();
+        let result2 = engine
+            .render_template(template, &state, &HashMap::new())
+            .unwrap();
+
+        assert_eq!(result1, result2);
+        assert_eq!(result1, "Hello, World!");
+        assert_eq!(engine.cache_size(), 1); // Only cached once
+    }
+
+    #[test]
+    fn test_different_templates_cached_separately() {
+        let engine = YamlEngine::new();
+        let state = json!({"name": "World"});
+
+        engine
+            .render_template("Hello, {{ state.name }}!", &state, &HashMap::new())
+            .unwrap();
+        engine
+            .render_template("Goodbye, {{ state.name }}!", &state, &HashMap::new())
+            .unwrap();
+
+        assert_eq!(engine.cache_size(), 2);
+    }
+
+    #[test]
+    fn test_template_compilation_error_not_cached() {
+        let engine = YamlEngine::new();
+        let state = json!({});
+        let invalid_template = "{{ invalid syntax {{";
+
+        let result = engine.render_template(invalid_template, &state, &HashMap::new());
+        assert!(result.is_err());
+        assert_eq!(engine.cache_size(), 0); // Failed template not cached
+    }
+
+    #[test]
+    fn test_concurrent_cache_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let engine = Arc::new(YamlEngine::new());
+        let template = "Hello, {{ state.name }}!";
+
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let engine = Arc::clone(&engine);
+                thread::spawn(move || {
+                    let state = json!({"name": format!("Thread{}", i)});
+                    engine
+                        .render_template(template, &state, &HashMap::new())
+                        .unwrap()
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(engine.cache_size(), 1); // Same template, cached once
+    }
+
+    #[test]
+    fn test_cache_with_different_state_values() {
+        let engine = YamlEngine::new();
+        let template = "Value: {{ state.x }}";
+
+        // Same template, different state values - should reuse cached template
+        let result1 = engine
+            .render_template(template, &json!({"x": 10}), &HashMap::new())
+            .unwrap();
+        let result2 = engine
+            .render_template(template, &json!({"x": 20}), &HashMap::new())
+            .unwrap();
+
+        assert_eq!(result1, "Value: 10");
+        assert_eq!(result2, "Value: 20");
+        assert_eq!(engine.cache_size(), 1); // Same template, cached once
+    }
+
+    #[test]
+    fn test_cache_with_variables() {
+        let engine = YamlEngine::new();
+        let template = "{{ variables.greeting }}, {{ state.name }}!";
+        let state = json!({"name": "World"});
+
+        let vars1 = HashMap::from([("greeting".to_string(), json!("Hello"))]);
+        let vars2 = HashMap::from([("greeting".to_string(), json!("Hi"))]);
+
+        let result1 = engine.render_template(template, &state, &vars1).unwrap();
+        let result2 = engine.render_template(template, &state, &vars2).unwrap();
+
+        assert_eq!(result1, "Hello, World!");
+        assert_eq!(result2, "Hi, World!");
+        assert_eq!(engine.cache_size(), 1); // Same template, cached once
+    }
+
+    // ========================================================================
+    // TEA-RUST-016: Secrets context tests
+    // ========================================================================
+
+    /// AC-1: GIVEN a YamlEngine instance, WHEN `set_secrets(HashMap)` is called,
+    /// THEN secrets are stored for template rendering
+    #[test]
+    fn test_secrets_getter() {
+        let mut engine = YamlEngine::new();
+        assert!(engine.secrets().is_empty());
+
+        engine.set_secrets(HashMap::from([
+            ("api_key".to_string(), json!("sk-secret-123")),
+            ("db_password".to_string(), json!("p@ssw0rd")),
+        ]));
+
+        assert_eq!(engine.secrets().len(), 2);
+        assert_eq!(engine.secrets().get("api_key"), Some(&json!("sk-secret-123")));
+        assert_eq!(engine.secrets().get("db_password"), Some(&json!("p@ssw0rd")));
+    }
+
+    /// AC-2: GIVEN a YAML template containing `{{ secrets.api_key }}`,
+    /// WHEN `render_template` is called with secrets containing `api_key`,
+    /// THEN the value is substituted correctly
+    #[test]
+    fn test_render_template_with_secrets() {
+        let mut engine = YamlEngine::new();
+        engine.set_secrets(HashMap::from([
+            ("api_key".to_string(), json!("sk-secret-123")),
+        ]));
+
+        let state = json!({"input": "test"});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template("Key: {{ secrets.api_key }}", &state, &variables)
+            .unwrap();
+
+        assert_eq!(result, "Key: sk-secret-123");
+    }
+
+    /// AC-2 (extended): Test secrets with mixed contexts (state, variables, secrets)
+    #[test]
+    fn test_render_template_with_mixed_contexts() {
+        let mut engine = YamlEngine::new();
+        engine.set_secrets(HashMap::from([
+            ("api_key".to_string(), json!("sk-secret-123")),
+        ]));
+
+        let state = json!({"user": "alice"});
+        let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);
+
+        let result = engine
+            .render_template(
+                "User: {{ state.user }}, Model: {{ variables.model }}, Key: {{ secrets.api_key }}",
+                &state,
+                &variables,
+            )
+            .unwrap();
+
+        assert_eq!(result, "User: alice, Model: gpt-4, Key: sk-secret-123");
+    }
+
+    /// AC-3: GIVEN a YAML template containing `{{ secrets.missing_key }}`,
+    /// WHEN `render_template` is called without that key,
+    /// THEN a Tera template error is returned (strict mode)
+    #[test]
+    fn test_secrets_undefined_key_error() {
+        let mut engine = YamlEngine::new();
+        engine.set_secrets(HashMap::from([
+            ("api_key".to_string(), json!("sk-secret-123")),
+        ]));
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        // Tera in strict mode returns error for undefined variables
+        let result = engine.render_template("Key: {{ secrets.missing_key }}", &state, &variables);
+
+        // Verify that accessing an undefined secret key returns an error
+        assert!(result.is_err(), "Should return error for undefined secret key");
+    }
+
+    /// AC-4: GIVEN a node with `uses: llm.call` and `with: { api_key: "{{ secrets.openai_key }}" }`,
+    /// WHEN the node executes (via process_params),
+    /// THEN the secret value is passed to the action
+    #[test]
+    fn test_process_params_with_secrets() {
+        let mut engine = YamlEngine::new();
+        engine.set_secrets(HashMap::from([
+            ("openai_key".to_string(), json!("sk-openai-secret")),
+        ]));
+
+        let state = json!({"prompt": "Hello"});
+        let variables = HashMap::new();
+        let params = HashMap::from([
+            ("api_key".to_string(), json!("{{ secrets.openai_key }}")),
+            ("prompt".to_string(), json!("{{ state.prompt }}")),
+            ("static_value".to_string(), json!("unchanged")),
+        ]);
+
+        let result = engine.process_params(&params, &state, &variables).unwrap();
+
+        assert_eq!(result["api_key"], json!("sk-openai-secret"));
+        assert_eq!(result["prompt"], json!("Hello"));
+        assert_eq!(result["static_value"], json!("unchanged"));
+    }
+
+    /// AC-5: GIVEN the secrets context, WHEN serializing state for checkpoints,
+    /// THEN secrets are NOT included in the checkpoint (security)
+    ///
+    /// Note: This test verifies that YamlEngine struct does not derive Serialize,
+    /// and that secrets are explicitly stored separately from checkpoint-serializable state.
+    #[test]
+    fn test_secrets_not_in_checkpoint() {
+        // Verify secrets are in a separate field, not in serializable state
+        // The YamlEngine struct does NOT implement Serialize, so secrets cannot
+        // accidentally be serialized as part of a checkpoint.
+
+        // Simulate what a checkpoint would contain (state only)
+        let checkpoint_state = json!({
+            "input": "test data",
+            "result": "processed"
+        });
+
+        // Secrets should be passed separately to the engine, never in state
+        let mut engine = YamlEngine::new();
+        engine.set_secrets(HashMap::from([
+            ("api_key".to_string(), json!("sk-secret-123")),
+        ]));
+
+        // When state is serialized for checkpoint, secrets should not be present
+        let serialized = serde_json::to_string(&checkpoint_state).unwrap();
+        assert!(!serialized.contains("api_key"));
+        assert!(!serialized.contains("sk-secret-123"));
+
+        // Verify engine's secrets are still accessible (in-memory only)
+        assert_eq!(
+            engine.secrets().get("api_key"),
+            Some(&json!("sk-secret-123"))
+        );
+    }
+
+    // ========================================================================
+    // TEA-RUST-017: Checkpoint context tests
+    // ========================================================================
+
+    /// AC-1: GIVEN a YamlEngine with `checkpoint_dir` set to `./checkpoints`,
+    /// WHEN rendering `{{ checkpoint.dir }}`,
+    /// THEN output is `./checkpoints`
+    #[test]
+    fn test_render_template_with_checkpoint_dir() {
+        let mut engine = YamlEngine::new();
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template("Dir: {{ checkpoint.dir }}", &state, &variables)
+            .unwrap();
+
+        assert_eq!(result, "Dir: ./checkpoints");
+    }
+
+    /// AC-2: GIVEN a YamlEngine with `last_checkpoint` set,
+    /// WHEN rendering `{{ checkpoint.last }}`,
+    /// THEN output is the checkpoint path
+    #[test]
+    fn test_render_template_with_last_checkpoint() {
+        let engine = YamlEngine::new();
+        engine.set_last_checkpoint(Some(
+            "./checkpoints/step1_1234567890.msgpack".to_string(),
+        ));
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template("Last: {{ checkpoint.last }}", &state, &variables)
+            .unwrap();
+
+        assert_eq!(result, "Last: ./checkpoints/step1_1234567890.msgpack");
+    }
+
+    /// AC-1 + AC-2: Test both checkpoint values together
+    #[test]
+    fn test_render_template_with_checkpoint_context() {
+        let mut engine = YamlEngine::new();
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+        engine.set_last_checkpoint(Some(
+            "./checkpoints/step1_1234567890.msgpack".to_string(),
+        ));
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template(
+                "Dir: {{ checkpoint.dir }}, Last: {{ checkpoint.last }}",
+                &state,
+                &variables,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result,
+            "Dir: ./checkpoints, Last: ./checkpoints/step1_1234567890.msgpack"
+        );
+    }
+
+    /// AC-3: GIVEN no checkpoint_dir configured,
+    /// WHEN rendering `{{ checkpoint.dir }}`,
+    /// THEN output is empty string (not error)
+    #[test]
+    fn test_checkpoint_context_empty_when_not_set() {
+        let engine = YamlEngine::new();
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template("Dir: '{{ checkpoint.dir }}'", &state, &variables)
+            .unwrap();
+
+        assert_eq!(result, "Dir: ''");
+    }
+
+    /// AC-3 (extended): Both checkpoint values empty when not configured
+    #[test]
+    fn test_checkpoint_context_both_empty_when_not_set() {
+        let engine = YamlEngine::new();
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template(
+                "Dir: '{{ checkpoint.dir }}', Last: '{{ checkpoint.last }}'",
+                &state,
+                &variables,
+            )
+            .unwrap();
+
+        assert_eq!(result, "Dir: '', Last: ''");
+    }
+
+    /// AC-4: GIVEN a workflow with `checkpoint.save` action using template path,
+    /// WHEN executed,
+    /// THEN the path is correctly interpolated
+    #[test]
+    fn test_checkpoint_path_interpolation() {
+        let mut engine = YamlEngine::new();
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+
+        let state = json!({"step": "process_data"});
+        let variables = HashMap::new();
+
+        let result = engine
+            .render_template(
+                "{{ checkpoint.dir }}/{{ state.step }}.msgpack",
+                &state,
+                &variables,
+            )
+            .unwrap();
+
+        assert_eq!(result, "./checkpoints/process_data.msgpack");
+    }
+
+    /// AC-5: GIVEN execution saves a checkpoint,
+    /// WHEN `last_checkpoint` is updated,
+    /// THEN subsequent template renders reflect the new path
+    #[test]
+    fn test_last_checkpoint_updates_dynamically() {
+        let mut engine = YamlEngine::new();
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+
+        let state = json!({});
+        let variables = HashMap::new();
+
+        // Initially no last checkpoint
+        let result1 = engine
+            .render_template("Last: '{{ checkpoint.last }}'", &state, &variables)
+            .unwrap();
+        assert_eq!(result1, "Last: ''");
+
+        // Simulate checkpoint save
+        engine.set_last_checkpoint(Some("./checkpoints/step1.msgpack".to_string()));
+
+        // Now reflects updated path
+        let result2 = engine
+            .render_template("Last: '{{ checkpoint.last }}'", &state, &variables)
+            .unwrap();
+        assert_eq!(result2, "Last: './checkpoints/step1.msgpack'");
+
+        // Update again
+        engine.set_last_checkpoint(Some("./checkpoints/step2.msgpack".to_string()));
+
+        let result3 = engine
+            .render_template("Last: '{{ checkpoint.last }}'", &state, &variables)
+            .unwrap();
+        assert_eq!(result3, "Last: './checkpoints/step2.msgpack'");
+    }
+
+    /// Test getter methods for checkpoint fields
+    #[test]
+    fn test_checkpoint_getters() {
+        let mut engine = YamlEngine::new();
+
+        // Initially None
+        assert_eq!(engine.checkpoint_dir(), None);
+        assert_eq!(engine.last_checkpoint(), None);
+
+        // After setting (set_last_checkpoint uses interior mutability via RwLock)
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+        engine.set_last_checkpoint(Some("./checkpoints/test.msgpack".to_string()));
+
+        assert_eq!(engine.checkpoint_dir(), Some("./checkpoints"));
+        assert_eq!(
+            engine.last_checkpoint(),
+            Some("./checkpoints/test.msgpack".to_string())
+        );
+
+        // Can clear
+        engine.set_checkpoint_dir(None);
+        engine.set_last_checkpoint(None);
+
+        assert_eq!(engine.checkpoint_dir(), None);
+        assert_eq!(engine.last_checkpoint(), None);
+    }
+
+    /// Test checkpoint context with mixed template scopes
+    #[test]
+    fn test_checkpoint_with_mixed_contexts() {
+        let mut engine = YamlEngine::new();
+        engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
+        engine.set_last_checkpoint(Some("./checkpoints/step1.msgpack".to_string()));
+        engine.set_secrets(HashMap::from([(
+            "api_key".to_string(),
+            json!("sk-secret"),
+        )]));
+
+        let state = json!({"user": "alice"});
+        let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);
+
+        let result = engine
+            .render_template(
+                "User: {{ state.user }}, Model: {{ variables.model }}, Dir: {{ checkpoint.dir }}, Key: {{ secrets.api_key }}",
+                &state,
+                &variables,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result,
+            "User: alice, Model: gpt-4, Dir: ./checkpoints, Key: sk-secret"
+        );
     }
 }

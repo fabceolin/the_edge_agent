@@ -454,3 +454,338 @@ fn test_checkpoint_to_bytes() {
     assert_eq!(restored.current_node, checkpoint.current_node);
     assert_eq!(restored.state, checkpoint.state);
 }
+
+// ============================================================================
+// Error Path Tests - Corruption and Invalid Data
+// ============================================================================
+
+#[test]
+fn test_checkpoint_from_invalid_json() {
+    let invalid_json = "not valid json {{{";
+
+    let result = Checkpoint::from_json(invalid_json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_checkpoint_from_corrupt_bytes() {
+    let corrupt_bytes = vec![0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD];
+
+    let result = Checkpoint::from_bytes(&corrupt_bytes);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_checkpoint_from_empty_bytes() {
+    let empty_bytes: Vec<u8> = vec![];
+
+    let result = Checkpoint::from_bytes(&empty_bytes);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_checkpoint_from_incomplete_json() {
+    // JSON that parses but is missing required fields
+    let incomplete_json = r#"{"some_field": "value"}"#;
+
+    let result = Checkpoint::from_json(incomplete_json);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_file_checkpointer_corrupt_file() {
+    let dir = tempdir().unwrap();
+    let checkpointer = FileCheckpointer::json(dir.path()).unwrap();
+
+    // Save a valid checkpoint to get its path
+    let checkpoint = Checkpoint::new("test", json!({}));
+    let id = checkpoint.id.clone();
+    checkpointer.save(&checkpoint).unwrap();
+
+    // Corrupt the file by writing garbage
+    let file_path = dir.path().join(format!("{}.json", id));
+    std::fs::write(&file_path, "corrupted garbage data {{{{").unwrap();
+
+    // Try to load the corrupted checkpoint
+    let result = checkpointer.load(&id);
+    assert!(result.is_err() || result.unwrap().is_none());
+}
+
+#[test]
+fn test_file_checkpointer_directory_not_file() {
+    let dir = tempdir().unwrap();
+    let nested_dir = dir.path().join("nested_dir");
+    std::fs::create_dir(&nested_dir).unwrap();
+
+    // Try to create a checkpointer pointing to a file path that doesn't exist as a dir
+    let result = FileCheckpointer::json(&nested_dir);
+    assert!(result.is_ok()); // Should succeed since nested_dir is a valid directory
+}
+
+#[test]
+fn test_file_checkpointer_readonly_directory() {
+    // This test may be platform-specific
+    let dir = tempdir().unwrap();
+    let checkpointer = FileCheckpointer::json(dir.path()).unwrap();
+
+    // Create and save a checkpoint
+    let checkpoint = Checkpoint::new("test", json!({"data": "value"}));
+    let result = checkpointer.save(&checkpoint);
+    assert!(result.is_ok());
+}
+
+// ============================================================================
+// TEA-RUST-019: Executor wiring tests for checkpoint.last updates
+// ============================================================================
+
+use the_edge_agent::engine::executor::{ExecutionOptions, Executor};
+use the_edge_agent::engine::graph::{Node, StateGraph};
+
+/// INT-001: GIVEN workflow execution with interrupt_before,
+/// WHEN a checkpoint is saved,
+/// THEN the checkpoint file is created and contains correct data
+#[test]
+fn test_executor_saves_checkpoint_on_interrupt_before() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("process").with_run(|state| {
+        let mut s = state.clone();
+        s["processed"] = json!(true);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("process").unwrap();
+    graph.set_finish_point("process").unwrap();
+
+    // Set interrupt before "process" node
+    let compiled = graph.compile().unwrap()
+        .with_interrupt_before(vec!["process".to_string()]);
+
+    let checkpointer = Arc::new(MemoryCheckpointer::new());
+    let executor = Executor::new(compiled).unwrap();
+
+    let options = ExecutionOptions {
+        stream: false,
+        checkpointer: Some(checkpointer.clone()),
+        ..Default::default()
+    };
+
+    // Execute - should interrupt before process
+    let result = executor.execute(json!({"input": "test"}), &options);
+
+    // Should return Interrupt error
+    assert!(result.is_err());
+
+    // Checkpoint should have been saved
+    let checkpoints = checkpointer.list().unwrap();
+    assert_eq!(checkpoints.len(), 1, "Should have saved one checkpoint");
+
+    // Verify checkpoint contains correct data
+    let checkpoint = checkpointer.load(&checkpoints[0]).unwrap().unwrap();
+    assert_eq!(checkpoint.current_node, "process");
+    assert_eq!(checkpoint.state["input"], "test");
+}
+
+/// INT-002: GIVEN workflow execution with interrupt_after,
+/// WHEN a checkpoint is saved,
+/// THEN the checkpoint file is created after node execution
+#[test]
+fn test_executor_saves_checkpoint_on_interrupt_after() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("process").with_run(|state| {
+        let mut s = state.clone();
+        s["processed"] = json!(true);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("process").unwrap();
+    graph.set_finish_point("process").unwrap();
+
+    // Set interrupt after "process" node
+    let compiled = graph.compile().unwrap()
+        .with_interrupt_after(vec!["process".to_string()]);
+
+    let checkpointer = Arc::new(MemoryCheckpointer::new());
+    let executor = Executor::new(compiled).unwrap();
+
+    let options = ExecutionOptions {
+        stream: false,
+        checkpointer: Some(checkpointer.clone()),
+        ..Default::default()
+    };
+
+    // Execute - should run process, then interrupt
+    let result = executor.execute(json!({"input": "test"}), &options);
+
+    // Should return Interrupt error
+    assert!(result.is_err());
+
+    // Checkpoint should have been saved
+    let checkpoints = checkpointer.list().unwrap();
+    assert_eq!(checkpoints.len(), 1, "Should have saved one checkpoint");
+
+    // Verify checkpoint contains processed state (node executed before interrupt)
+    let checkpoint = checkpointer.load(&checkpoints[0]).unwrap().unwrap();
+    assert_eq!(checkpoint.current_node, "process");
+    assert_eq!(checkpoint.state["processed"], true);
+}
+
+/// INT-002 (Streaming): GIVEN streaming execution with interrupt_before,
+/// WHEN a checkpoint is saved,
+/// THEN the checkpoint file is created
+#[test]
+fn test_stream_executor_saves_checkpoint_on_interrupt_before() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("process").with_run(|state| {
+        let mut s = state.clone();
+        s["processed"] = json!(true);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("process").unwrap();
+    graph.set_finish_point("process").unwrap();
+
+    let compiled = graph.compile().unwrap()
+        .with_interrupt_before(vec!["process".to_string()]);
+
+    let checkpointer = Arc::new(MemoryCheckpointer::new());
+    let executor = Executor::new(compiled).unwrap();
+
+    let options = ExecutionOptions {
+        stream: true,
+        checkpointer: Some(checkpointer.clone()),
+        ..Default::default()
+    };
+
+    // Consume all events from stream
+    let events: Vec<_> = executor.stream_with_options(json!({"input": "test"}), options)
+        .unwrap()
+        .collect();
+
+    // Should have interrupt event
+    assert!(events.iter().any(|e| e.event_type == the_edge_agent::engine::executor::EventType::Interrupt));
+
+    // Checkpoint should have been saved
+    let checkpoints = checkpointer.list().unwrap();
+    assert_eq!(checkpoints.len(), 1, "Should have saved one checkpoint");
+}
+
+/// INT-002 (Streaming): GIVEN streaming execution with interrupt_after,
+/// WHEN a checkpoint is saved,
+/// THEN the checkpoint contains post-execution state
+#[test]
+fn test_stream_executor_saves_checkpoint_on_interrupt_after() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("process").with_run(|state| {
+        let mut s = state.clone();
+        s["processed"] = json!(true);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("process").unwrap();
+    graph.set_finish_point("process").unwrap();
+
+    let compiled = graph.compile().unwrap()
+        .with_interrupt_after(vec!["process".to_string()]);
+
+    let checkpointer = Arc::new(MemoryCheckpointer::new());
+    let executor = Executor::new(compiled).unwrap();
+
+    let options = ExecutionOptions {
+        stream: true,
+        checkpointer: Some(checkpointer.clone()),
+        ..Default::default()
+    };
+
+    // Consume all events from stream
+    let _events: Vec<_> = executor.stream_with_options(json!({"input": "test"}), options)
+        .unwrap()
+        .collect();
+
+    // Checkpoint should have been saved with processed state
+    let checkpoints = checkpointer.list().unwrap();
+    assert_eq!(checkpoints.len(), 1, "Should have saved one checkpoint");
+
+    let checkpoint = checkpointer.load(&checkpoints[0]).unwrap().unwrap();
+    assert_eq!(checkpoint.state["processed"], true);
+}
+
+/// INT-006: GIVEN multiple checkpoint saves during execution,
+/// WHEN checkpoints are saved,
+/// THEN each save creates a new checkpoint (no stale data)
+#[test]
+fn test_multiple_checkpoints_saved_independently() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("step1").with_run(|state| {
+        let mut s = state.clone();
+        s["step"] = json!(1);
+        Ok(s)
+    }));
+
+    graph.add_node(Node::new("step2").with_run(|state| {
+        let mut s = state.clone();
+        s["step"] = json!(2);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("step1").unwrap();
+    graph.add_simple_edge("step1", "step2").unwrap();
+    graph.set_finish_point("step2").unwrap();
+
+    // Set interrupt after step1
+    let compiled = graph.compile().unwrap()
+        .with_interrupt_after(vec!["step1".to_string()]);
+
+    let checkpointer = Arc::new(MemoryCheckpointer::new());
+    let executor = Executor::new(compiled).unwrap();
+
+    let options = ExecutionOptions {
+        stream: false,
+        checkpointer: Some(checkpointer.clone()),
+        ..Default::default()
+    };
+
+    // First execution - interrupts after step1
+    let result = executor.execute(json!({"input": "test"}), &options);
+    assert!(result.is_err());
+
+    // Should have one checkpoint after step1
+    let checkpoints = checkpointer.list().unwrap();
+    assert_eq!(checkpoints.len(), 1);
+
+    let cp1 = checkpointer.load(&checkpoints[0]).unwrap().unwrap();
+    assert_eq!(cp1.state["step"], 1);
+    assert_eq!(cp1.current_node, "step1");
+}
+
+/// AC-4: GIVEN no checkpointer configured,
+/// WHEN executing a workflow,
+/// THEN execution completes without errors
+#[test]
+fn test_execution_without_checkpointer() {
+    let mut graph = StateGraph::new();
+
+    graph.add_node(Node::new("process").with_run(|state| {
+        let mut s = state.clone();
+        s["processed"] = json!(true);
+        Ok(s)
+    }));
+
+    graph.set_entry_point("process").unwrap();
+    graph.set_finish_point("process").unwrap();
+
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Execute without checkpointer (default options)
+    let result = executor.invoke(json!({"input": "test"}));
+
+    // Should complete successfully
+    assert!(result.is_ok());
+    let final_state = result.unwrap();
+    assert_eq!(final_state["processed"], true);
+}

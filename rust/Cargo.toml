@@ -93,6 +93,10 @@ optional = true
 version = "0.7"
 optional = true
 
+[[bench]]
+name = "graph_benchmarks"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
