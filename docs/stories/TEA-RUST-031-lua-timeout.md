@@ -1,4 +1,4 @@
-# Story: TEA-RUST-002 - Implement Lua Execution Timeout
+# Story: TEA-RUST-031 - Implement Lua Execution Timeout
 
 ## Status
 

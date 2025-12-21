@@ -382,7 +382,11 @@ fn test_conditional_routing() {
     // Use Lua ternary expression since eval_condition wraps with return
     graph
         // TEA-RUST-029: Use Tera syntax instead of Lua
-        .add_conditional_edge("start", r#"{% if state.value > 10 %}high{% else %}low{% endif %}"#, targets)
+        .add_conditional_edge(
+            "start",
+            r#"{% if state.value > 10 %}high{% else %}low{% endif %}"#,
+            targets,
+        )
         .unwrap();
 
     graph.set_finish_point("high").unwrap();
@@ -431,8 +435,7 @@ fn test_complex_conditional_routing() {
     ]);
 
     // TEA-RUST-029: Use Tera syntax instead of Lua chained ternary
-    let condition =
-        r#"{% if state.value < 0 %}negative{% elif state.value == 0 %}zero{% else %}positive{% endif %}"#;
+    let condition = r#"{% if state.value < 0 %}negative{% elif state.value == 0 %}zero{% else %}positive{% endif %}"#;
 
     graph
         .add_conditional_edge("start", condition, targets)
@@ -1159,7 +1162,11 @@ fn test_multiple_finish_points() {
         ("b".to_string(), "path_b".to_string()),
     ]);
     graph
-        .add_conditional_edge("start", r#"{% if state.choice == "a" %}a{% else %}b{% endif %}"#, targets)
+        .add_conditional_edge(
+            "start",
+            r#"{% if state.choice == "a" %}a{% else %}b{% endif %}"#,
+            targets,
+        )
         .unwrap();
 
     // Both paths are finish points
@@ -1822,8 +1829,8 @@ edges:
 /// Uses actions with template parameters to verify thread-safe cache access.
 #[test]
 fn test_parallel_template_rendering() {
-    use the_edge_agent::engine::yaml::YamlEngine;
     use std::sync::Arc;
+    use the_edge_agent::engine::yaml::YamlEngine;
 
     // Use YAML that uses template parameters in nodes
     let yaml = r#"
@@ -1865,7 +1872,9 @@ edges:
 
     // Execute multiple times to exercise the shared state
     for i in 0..3 {
-        let result = executor.invoke(json!({"input": format!("test_{}", i)})).unwrap();
+        let result = executor
+            .invoke(json!({"input": format!("test_{}", i)}))
+            .unwrap();
 
         // Verify parallel results exist
         let parallel_results = result.get("parallel_results");
@@ -1881,7 +1890,11 @@ edges:
         // All branches should succeed
         for r in results {
             let success = r.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
-            assert!(success, "Iteration {}: All branches should succeed: {:?}", i, r);
+            assert!(
+                success,
+                "Iteration {}: All branches should succeed: {:?}",
+                i, r
+            );
         }
     }
 }

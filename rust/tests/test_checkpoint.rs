@@ -558,7 +558,9 @@ fn test_executor_saves_checkpoint_on_interrupt_before() {
     graph.set_finish_point("process").unwrap();
 
     // Set interrupt before "process" node
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_before(vec!["process".to_string()]);
 
     let checkpointer = Arc::new(MemoryCheckpointer::new());
@@ -603,7 +605,9 @@ fn test_executor_saves_checkpoint_on_interrupt_after() {
     graph.set_finish_point("process").unwrap();
 
     // Set interrupt after "process" node
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_after(vec!["process".to_string()]);
 
     let checkpointer = Arc::new(MemoryCheckpointer::new());
@@ -647,7 +651,9 @@ fn test_stream_executor_saves_checkpoint_on_interrupt_before() {
     graph.set_entry_point("process").unwrap();
     graph.set_finish_point("process").unwrap();
 
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_before(vec!["process".to_string()]);
 
     let checkpointer = Arc::new(MemoryCheckpointer::new());
@@ -660,12 +666,15 @@ fn test_stream_executor_saves_checkpoint_on_interrupt_before() {
     };
 
     // Consume all events from stream
-    let events: Vec<_> = executor.stream_with_options(json!({"input": "test"}), options)
+    let events: Vec<_> = executor
+        .stream_with_options(json!({"input": "test"}), options)
         .unwrap()
         .collect();
 
     // Should have interrupt event
-    assert!(events.iter().any(|e| e.event_type == the_edge_agent::engine::executor::EventType::Interrupt));
+    assert!(events
+        .iter()
+        .any(|e| e.event_type == the_edge_agent::engine::executor::EventType::Interrupt));
 
     // Checkpoint should have been saved
     let checkpoints = checkpointer.list().unwrap();
@@ -688,7 +697,9 @@ fn test_stream_executor_saves_checkpoint_on_interrupt_after() {
     graph.set_entry_point("process").unwrap();
     graph.set_finish_point("process").unwrap();
 
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_after(vec!["process".to_string()]);
 
     let checkpointer = Arc::new(MemoryCheckpointer::new());
@@ -701,7 +712,8 @@ fn test_stream_executor_saves_checkpoint_on_interrupt_after() {
     };
 
     // Consume all events from stream
-    let _events: Vec<_> = executor.stream_with_options(json!({"input": "test"}), options)
+    let _events: Vec<_> = executor
+        .stream_with_options(json!({"input": "test"}), options)
         .unwrap()
         .collect();
 
@@ -737,7 +749,9 @@ fn test_multiple_checkpoints_saved_independently() {
     graph.set_finish_point("step2").unwrap();
 
     // Set interrupt after step1
-    let compiled = graph.compile().unwrap()
+    let compiled = graph
+        .compile()
+        .unwrap()
         .with_interrupt_after(vec!["step1".to_string()]);
 
     let checkpointer = Arc::new(MemoryCheckpointer::new());

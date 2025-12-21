@@ -183,7 +183,15 @@ fn main() -> Result<()> {
             secrets_env,
             stream,
             checkpoint_dir,
-        } => resume_workflow(checkpoint, workflow, input, secrets, secrets_env, stream, checkpoint_dir),
+        } => resume_workflow(
+            checkpoint,
+            workflow,
+            input,
+            secrets,
+            secrets_env,
+            stream,
+            checkpoint_dir,
+        ),
 
         Commands::Validate { file, detailed } => validate_workflow(file, detailed),
 
@@ -554,7 +562,8 @@ fn parse_secrets(
     // Load from JSON string/file
     if let Some(s) = secrets {
         let json_value: JsonValue = if let Some(path) = s.strip_prefix('@') {
-            let content = fs::read_to_string(path).context(format!("Failed to read secrets file {}", path))?;
+            let content = fs::read_to_string(path)
+                .context(format!("Failed to read secrets file {}", path))?;
             serde_json::from_str(&content).context("Failed to parse secrets JSON file")?
         } else {
             serde_json::from_str(&s).context("Failed to parse secrets JSON")?

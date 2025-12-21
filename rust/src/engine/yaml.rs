@@ -1069,10 +1069,16 @@ edges:
         let state = json!({"a": true, "b": false, "x": 10});
 
         // AC-6: Logical operators
-        assert!(engine.eval_condition("state.a and state.x > 5", &state).unwrap());
-        assert!(!engine.eval_condition("state.a and state.b", &state).unwrap());
+        assert!(engine
+            .eval_condition("state.a and state.x > 5", &state)
+            .unwrap());
+        assert!(!engine
+            .eval_condition("state.a and state.b", &state)
+            .unwrap());
         assert!(engine.eval_condition("state.a or state.b", &state).unwrap());
-        assert!(!engine.eval_condition("state.b or state.x < 5", &state).unwrap());
+        assert!(!engine
+            .eval_condition("state.b or state.x < 5", &state)
+            .unwrap());
         assert!(engine.eval_condition("not state.b", &state).unwrap());
     }
 
@@ -1082,19 +1088,41 @@ edges:
 
         // AC-8: Truthy/falsy handling
         // Falsy: null, false, 0, "", [], {}
-        assert!(!engine.eval_condition("null_val", &json!({"null_val": null})).unwrap());
-        assert!(!engine.eval_condition("bool_val", &json!({"bool_val": false})).unwrap());
-        assert!(!engine.eval_condition("num_val", &json!({"num_val": 0})).unwrap());
-        assert!(!engine.eval_condition("str_val", &json!({"str_val": ""})).unwrap());
-        assert!(!engine.eval_condition("arr_val", &json!({"arr_val": []})).unwrap());
-        assert!(!engine.eval_condition("obj_val", &json!({"obj_val": {}})).unwrap());
+        assert!(!engine
+            .eval_condition("null_val", &json!({"null_val": null}))
+            .unwrap());
+        assert!(!engine
+            .eval_condition("bool_val", &json!({"bool_val": false}))
+            .unwrap());
+        assert!(!engine
+            .eval_condition("num_val", &json!({"num_val": 0}))
+            .unwrap());
+        assert!(!engine
+            .eval_condition("str_val", &json!({"str_val": ""}))
+            .unwrap());
+        assert!(!engine
+            .eval_condition("arr_val", &json!({"arr_val": []}))
+            .unwrap());
+        assert!(!engine
+            .eval_condition("obj_val", &json!({"obj_val": {}}))
+            .unwrap());
 
         // Truthy: non-empty values
-        assert!(engine.eval_condition("bool_val", &json!({"bool_val": true})).unwrap());
-        assert!(engine.eval_condition("num_val", &json!({"num_val": 1})).unwrap());
-        assert!(engine.eval_condition("str_val", &json!({"str_val": "hello"})).unwrap());
-        assert!(engine.eval_condition("arr_val", &json!({"arr_val": [1, 2]})).unwrap());
-        assert!(engine.eval_condition("obj_val", &json!({"obj_val": {"a": 1}})).unwrap());
+        assert!(engine
+            .eval_condition("bool_val", &json!({"bool_val": true}))
+            .unwrap());
+        assert!(engine
+            .eval_condition("num_val", &json!({"num_val": 1}))
+            .unwrap());
+        assert!(engine
+            .eval_condition("str_val", &json!({"str_val": "hello"}))
+            .unwrap());
+        assert!(engine
+            .eval_condition("arr_val", &json!({"arr_val": [1, 2]}))
+            .unwrap());
+        assert!(engine
+            .eval_condition("obj_val", &json!({"obj_val": {"a": 1}}))
+            .unwrap());
     }
 
     #[test]
@@ -1114,11 +1142,13 @@ edges:
 
         // Block templates ({% if %}) render to strings, not used directly with eval_condition
         // but render_template should work
-        let result = engine.render_template(
-            r#"{% if state.value == 0 %}zero{% else %}nonzero{% endif %}"#,
-            &state,
-            &HashMap::new()
-        ).unwrap();
+        let result = engine
+            .render_template(
+                r#"{% if state.value == 0 %}zero{% else %}nonzero{% endif %}"#,
+                &state,
+                &HashMap::new(),
+            )
+            .unwrap();
         assert_eq!(result.trim(), "zero");
     }
 
@@ -1249,8 +1279,14 @@ edges:
         ]));
 
         assert_eq!(engine.secrets().len(), 2);
-        assert_eq!(engine.secrets().get("api_key"), Some(&json!("sk-secret-123")));
-        assert_eq!(engine.secrets().get("db_password"), Some(&json!("p@ssw0rd")));
+        assert_eq!(
+            engine.secrets().get("api_key"),
+            Some(&json!("sk-secret-123"))
+        );
+        assert_eq!(
+            engine.secrets().get("db_password"),
+            Some(&json!("p@ssw0rd"))
+        );
     }
 
     /// AC-2: GIVEN a YAML template containing `{{ secrets.api_key }}`,
@@ -1259,9 +1295,10 @@ edges:
     #[test]
     fn test_render_template_with_secrets() {
         let mut engine = YamlEngine::new();
-        engine.set_secrets(HashMap::from([
-            ("api_key".to_string(), json!("sk-secret-123")),
-        ]));
+        engine.set_secrets(HashMap::from([(
+            "api_key".to_string(),
+            json!("sk-secret-123"),
+        )]));
 
         let state = json!({"input": "test"});
         let variables = HashMap::new();
@@ -1277,9 +1314,10 @@ edges:
     #[test]
     fn test_render_template_with_mixed_contexts() {
         let mut engine = YamlEngine::new();
-        engine.set_secrets(HashMap::from([
-            ("api_key".to_string(), json!("sk-secret-123")),
-        ]));
+        engine.set_secrets(HashMap::from([(
+            "api_key".to_string(),
+            json!("sk-secret-123"),
+        )]));
 
         let state = json!({"user": "alice"});
         let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);
@@ -1301,9 +1339,10 @@ edges:
     #[test]
     fn test_secrets_undefined_key_error() {
         let mut engine = YamlEngine::new();
-        engine.set_secrets(HashMap::from([
-            ("api_key".to_string(), json!("sk-secret-123")),
-        ]));
+        engine.set_secrets(HashMap::from([(
+            "api_key".to_string(),
+            json!("sk-secret-123"),
+        )]));
 
         let state = json!({});
         let variables = HashMap::new();
@@ -1312,7 +1351,10 @@ edges:
         let result = engine.render_template("Key: {{ secrets.missing_key }}", &state, &variables);
 
         // Verify that accessing an undefined secret key returns an error
-        assert!(result.is_err(), "Should return error for undefined secret key");
+        assert!(
+            result.is_err(),
+            "Should return error for undefined secret key"
+        );
     }
 
     /// AC-4: GIVEN a node with `uses: llm.call` and `with: { api_key: "{{ secrets.openai_key }}" }`,
@@ -1321,9 +1363,10 @@ edges:
     #[test]
     fn test_process_params_with_secrets() {
         let mut engine = YamlEngine::new();
-        engine.set_secrets(HashMap::from([
-            ("openai_key".to_string(), json!("sk-openai-secret")),
-        ]));
+        engine.set_secrets(HashMap::from([(
+            "openai_key".to_string(),
+            json!("sk-openai-secret"),
+        )]));
 
         let state = json!({"prompt": "Hello"});
         let variables = HashMap::new();
@@ -1359,9 +1402,10 @@ edges:
 
         // Secrets should be passed separately to the engine, never in state
         let mut engine = YamlEngine::new();
-        engine.set_secrets(HashMap::from([
-            ("api_key".to_string(), json!("sk-secret-123")),
-        ]));
+        engine.set_secrets(HashMap::from([(
+            "api_key".to_string(),
+            json!("sk-secret-123"),
+        )]));
 
         // When state is serialized for checkpoint, secrets should not be present
         let serialized = serde_json::to_string(&checkpoint_state).unwrap();
@@ -1403,9 +1447,7 @@ edges:
     #[test]
     fn test_render_template_with_last_checkpoint() {
         let engine = YamlEngine::new();
-        engine.set_last_checkpoint(Some(
-            "./checkpoints/step1_1234567890.msgpack".to_string(),
-        ));
+        engine.set_last_checkpoint(Some("./checkpoints/step1_1234567890.msgpack".to_string()));
 
         let state = json!({});
         let variables = HashMap::new();
@@ -1422,9 +1464,7 @@ edges:
     fn test_render_template_with_checkpoint_context() {
         let mut engine = YamlEngine::new();
         engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
-        engine.set_last_checkpoint(Some(
-            "./checkpoints/step1_1234567890.msgpack".to_string(),
-        ));
+        engine.set_last_checkpoint(Some("./checkpoints/step1_1234567890.msgpack".to_string()));
 
         let state = json!({});
         let variables = HashMap::new();
@@ -1569,10 +1609,7 @@ edges:
         let mut engine = YamlEngine::new();
         engine.set_checkpoint_dir(Some("./checkpoints".to_string()));
         engine.set_last_checkpoint(Some("./checkpoints/step1.msgpack".to_string()));
-        engine.set_secrets(HashMap::from([(
-            "api_key".to_string(),
-            json!("sk-secret"),
-        )]));
+        engine.set_secrets(HashMap::from([("api_key".to_string(), json!("sk-secret"))]));
 
         let state = json!({"user": "alice"});
         let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);

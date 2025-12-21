@@ -1,10 +1,10 @@
-# TEA-RUST-019: Wire Checkpoint Path Updates in Executor
+# TEA-RUST-032: Wire Checkpoint Path Updates in Executor
 
 ## Story Overview
 
 | Field | Value |
 |-------|-------|
-| **ID** | TEA-RUST-019 |
+| **ID** | TEA-RUST-032 |
 | **Type** | Story |
 | **Priority** | Medium |
 | **Estimated Effort** | 1-2 hours |

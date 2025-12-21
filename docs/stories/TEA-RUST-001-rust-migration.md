@@ -314,6 +314,149 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 - `x86_64-unknown-linux-musl` (static binary)
 - `aarch64-unknown-linux-musl` (ARM64 edge devices)
 
+### TEA-RUST-002: Core StateGraph with petgraph - Design Rationale
+
+#### Goal Alignment
+
+| Goal | Alignment | Assessment |
+|------|-----------|------------|
+| **G1: Lightweight/Edge** | ✅ Strong | petgraph is zero-dependency, no-std compatible, ~50KB compiled |
+| **G2: Simpler than LangGraph** | ✅ Strong | DiGraph provides exactly what's needed without LangGraph complexity |
+| **G3: Polyglot parity** | ✅ Strong | Graph semantics are language-agnostic (Python networkx, Rust petgraph) |
+| **G4: YAML agents** | ✅ Strong | NodeIndex/EdgeIndex map cleanly to YAML node names |
+| **G5: LLM-agnostic** | ⚪ Neutral | petgraph doesn't affect LLM integration |
+| **G6: Checkpointing** | ✅ Strong | petgraph graphs are serializable with serde |
+| **G7: Parallel execution** | ✅ Strong | petgraph integrates with rayon for parallel branch identification |
+
+#### Technical Risks
+
+| Risk | Severity | Likelihood | Mitigation |
+|------|----------|------------|------------|
+| **R1: Graph cycles** | 🔴 High | Medium | Cycle detection in YAML parser rejects cyclic graphs |
+| **R2: NodeIndex invalidation** | 🟡 Medium | Low | No dynamic graph modification during execution |
+| **R3: Memory with large graphs** | 🟡 Medium | Low | Edge devices typically run <100 node workflows |
+| **R4: Concurrent modification** | 🔴 High | Medium | `Arc<CompiledGraph>` is immutable; parallel branches clone state only |
+
+#### Edge Cases
+
+| Edge Case | Scenario | Mitigation |
+|-----------|----------|------------|
+| **EC1: Empty graph** | YAML with no nodes | Validation rejects graphs without entry point |
+| **EC2: Disconnected subgraphs** | Nodes not connected to `__start__` | Warning on unreachable nodes (P1) |
+| **EC3: Diamond pattern** | Multiple paths to same node | Fan-in semantics: node waits for all parallel branches |
+| **EC4: Self-loop edges** | `node_a → node_a` | Validation rejects self-loops |
+| **EC5: Conditional to undefined node** | `when:` evaluates to non-existent node | Runtime error with clear message |
+
+#### Implementation Status
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| DiGraph wrapper | ✅ Done | `rust/src/engine/graph.rs:265-292` |
+| Topological sort | ✅ Done | `StateGraph::topological_order()` via petgraph `Topo` |
+| Cycle detection | ✅ Done | Implicit in `Topo::new()` - returns error on cycles |
+| Parallel branch ID | ✅ Done | `CompiledGraph::find_parallel_branches()` |
+| serde serialization | ✅ Done | Checkpoint uses node names, not NodeIndex |
+| Graph visualization | ❌ Future | `tea graph --visualize` CLI command (P2) |
+
+### Iterative Loop Patterns
+
+TEA supports two patterns for implementing iterative workflows while maintaining DAG (Directed Acyclic Graph) semantics:
+
+#### Pattern 1: Interrupt-Based Loop (Human-in-the-Loop)
+
+For workflows requiring human input between iterations (e.g., interview agents, approval workflows):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FIRST API CALL                               │
+├─────────────────────────────────────────────────────────────────┤
+│ __start__ → setup → extract → evaluate_sufficiency →            │
+│ generate_followup → format_response                             │
+│                          ↓                                       │
+│              [INTERRUPT - save to memory]                       │
+│                          ↓                                       │
+│              Return to client: {next_question: "..."}           │
+└─────────────────────────────────────────────────────────────────┘
+                           ↓ (client provides response)
+┌─────────────────────────────────────────────────────────────────┐
+│                    SECOND API CALL                              │
+│              (resume_from_followup=True, response="...")        │
+├─────────────────────────────────────────────────────────────────┤
+│ __start__ → entry_router → load_memory → update_narrative →    │
+│ extract → evaluate_sufficiency → ...                            │
+│                          ↓                                       │
+│         [INTERRUPT again OR complete to __end__]                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**YAML Pattern:**
+
+```yaml
+nodes:
+  - name: entry_router
+    run: |
+      resume = state.get("resume_from_followup", False)
+      return {"route_to_setup": not resume, "route_to_resume": resume}
+
+  - name: generate_followup
+    uses: llm.call
+    with:
+      messages: [...]
+    output: next_question
+
+edges:
+  - from: entry_router
+    to: setup_chain
+    when: "state.get('route_to_setup')"
+  - from: entry_router
+    to: resume_chain
+    when: "state.get('route_to_resume')"
+
+config:
+  interrupt_after:
+    - format_followup_response  # Pause here, save state, return to client
+```
+
+**Key Components:**
+- `interrupt_after`: Pauses execution, saves checkpoint
+- Cloud memory persistence: `memory.cloud_store/retrieve`
+- Entry router: Detects fresh start vs resume
+- State accumulation: Each iteration builds on previous
+
+**Use Cases:**
+- Interview agents with follow-up questions
+- Approval workflows requiring human decisions
+- Multi-step wizards with user input
+- Document review with feedback loops
+
+#### Pattern 2: While-Loop Node (Autonomous Iteration)
+
+For autonomous agents that loop until a condition is met (no human interaction):
+
+**Status:** TEA-RUST-033 / TEA-PY-003 (Planned)
+
+```yaml
+nodes:
+  - name: extraction_loop
+    type: while_loop
+    max_iterations: 10
+    condition: "not state.get('sufficient') and len(state.get('gaps', [])) > 0"
+    body:
+      - name: extract
+        uses: llm.call
+        with: { ... }
+      - name: evaluate
+        run: |
+          gaps = identify_gaps(state)
+          return {"gaps": gaps, "sufficient": len(gaps) == 0}
+```
+
+**Use Cases:**
+- Self-refining agents (iterate until quality threshold)
+- Retry loops with backoff
+- Data processing with convergence criteria
+- Autonomous research agents
+
 ---
 
 ## Error Handling Configuration
@@ -376,7 +519,7 @@ nodes:
 | TEA-RUST-003 | YAML parser and tera template engine | 5 | ✅ Done |
 | TEA-RUST-004 | Node execution and edge traversal | 3 | ✅ Done |
 | ~~TEA-RUST-005~~ | ~~Conditional routing with Lua expressions~~ | ~~3~~ | *Superseded by TEA-RUST-029* |
-| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 | ✅ Done (sequential due to Lua thread-safety) |
+| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 | ✅ Done (true parallelism via TEA-RUST-030) |
 | TEA-RUST-007 | Checkpoint persistence and interrupt handling | 3 | ✅ Done |
 | TEA-RUST-008 | Error handling with retry and fallback | 5 | ✅ Done |
 | TEA-RUST-009 | Lua integration via mlua | 5 | ✅ Done |
@@ -388,10 +531,10 @@ nodes:
 | TEA-RUST-015 | Testing suite and documentation | 5 | ✅ Done (QA PASS 2025-12-20) |
 | TEA-RUST-016 | Secrets context in templates | 3 | ✅ Done |
 | TEA-RUST-017 | Checkpoint context in templates | 3 | ✅ Done |
-| TEA-RUST-018 | Template caching | 3 | ❌ Not Started (story doc filled, code not written) |
+| TEA-RUST-018 | Template caching | 3 | ✅ Done |
 | TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 | ❌ Not Started |
 | TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 | ❌ Not Started |
-| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 | ❌ Not Started |
+| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 | ⏸️ Deferred (inline `run:` blocks sufficient for current needs) |
 | TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 | ❌ Not Started |
 | ~~TEA-RUST-023~~ | ~~Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5)~~ | ~~5~~ | *Merged into TEA-RUST-028* |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 | ❌ Not Started |
@@ -401,15 +544,19 @@ nodes:
 | TEA-RUST-028 | **Unified DuckDB Memory Layer** (ltm.*, session.*, context.*, memory.*, local blob) | 8 | ❌ Not Started |
 | TEA-RUST-029 | **Tera-Based Condition Evaluation** (Python/Jinja2 parity for `when:` conditions) | 3 | ✅ Done |
 | TEA-RUST-030 | **Parallel Lua VM Isolation** (per-branch LuaRuntime for true parallelism) | 3 | ✅ Done (QA PASS 2025-12-21) |
+| TEA-RUST-031 | **Lua Execution Timeout** (debug hook + watchdog thread for timeout protection) | 2 | ✅ Done |
+| TEA-RUST-032 | **Executor Checkpoint Wiring** (wire `set_last_checkpoint` in Executor) | 1 | ✅ Done |
+| TEA-RUST-033 | **While-Loop Node** (autonomous iteration with max_iterations guard) | 5 | ❌ Not Started |
 
 ### Implementation Summary
 
 | Status | Count | Points |
 |--------|-------|--------|
-| ✅ Done | 18 | 65 |
-| ❌ Not Started | 9 | 47 |
+| ✅ Done | 21 | 71 |
+| ❌ Not Started | 8 | 44 |
+| ⏸️ Deferred | 1 | 5 |
 | ~~Superseded/Merged~~ | 2 | - |
-| **Total** | **27** | **112** |
+| **Total** | **30** | **120** |
 
 ### Sub-Story Dependencies
 
@@ -718,27 +865,41 @@ impl InMemoryVectorStore {
 
 #### 6. Code Execution Actions
 
-**Python**: RestrictedPython bytecode transformation.
+##### Current State: `run:` Blocks vs `code.execute` Action
 
-**Rust**: **Lua sandbox** via `mlua`:
-```rust
-use mlua::{Lua, Result};
+Both Python and Rust support inline Lua code in `run:` blocks. The `code.execute` action provides additional capabilities beyond what `run:` blocks offer:
 
-fn code_execute(code: &str, timeout: Duration) -> Result<ExecutionResult> {
-    let lua = Lua::new();
-    // Sandbox: remove dangerous globals
-    lua.scope(|scope| {
-        // Set timeout via custom hook
-        lua.set_hook(mlua::HookTriggers::every_line(), move |_lua, _debug| {
-            // Check timeout
-            Ok(())
-        });
-        lua.load(code).exec()
-    })
-}
-```
+| Capability | `run:` blocks (Python & Rust) | `code.execute` action (Python only) |
+|------------|------------------------------|-------------------------------------|
+| Static inline code | ✅ Works | ✅ Works |
+| Dynamic code from state | ❌ Code compiled at parse time | ✅ `code: "{{ state.code }}"` |
+| Capture stdout/stderr | ❌ Lost (no capture) | ✅ Captured via PrintCollector |
+| Persistent sessions | ❌ Fresh context each node | ✅ `code.sandbox` sessions |
+| Execution timing | ❌ Not tracked | ✅ `execution_time_ms` returned |
+| Disable for security | ⚠️ `lua_enabled` only | ✅ `enable_code_execution=False` |
 
-**Key Difference**: Python `code.execute` runs Python; Rust `code.execute` runs Lua. This is a breaking change but provides true sandboxing without GIL concerns.
+##### Implementation Status
+
+| Runtime | `run:` blocks | `code.execute` action | Status |
+|---------|---------------|----------------------|--------|
+| **Python** | Python (exec) or Lua (lupa) | RestrictedPython sandbox | ✅ Done (TEA-BUILTIN-003.1) |
+| **Rust** | Lua only (mlua) | Lua sandbox | ⏸️ Deferred (TEA-RUST-021) |
+
+##### When `code.execute` is Needed
+
+The `code.execute` action is required for:
+1. **LLM-generated code**: Capture print output from dynamically generated code
+2. **Notebook-style workflows**: Persistent sessions sharing variables across steps
+3. **Dynamic code execution**: Run code stored in state, fetched from APIs, or generated at runtime
+
+If your workflows only use static inline code in `run:` blocks, the `code.execute` action is not needed.
+
+##### Language Difference
+
+- **Python `code.execute`**: Executes **Python** code via RestrictedPython bytecode transformation
+- **Rust `code.execute`** (if implemented): Would execute **Lua** code via mlua sandbox
+
+This is a deliberate design choice - Rust has no Python runtime, so Lua is the only scripting option.
 
 #### 7. Long-Term Memory Actions
 
@@ -1483,6 +1644,7 @@ The following Python stories have been implemented and inform this Rust migratio
 |----------|-------|--------|-----------------|
 | TEA-PY-001 | Lua Scripting Support | ✅ Done | TEA-RUST-009 (Lua via mlua) |
 | TEA-PY-002 | Parallel Lua VM Isolation | ✅ Done | TEA-RUST-030 (per-branch LuaRuntime) |
+| TEA-PY-003 | While-Loop Node | ❌ Not Started | TEA-RUST-033 (While-Loop Node) |
 
 ### Built-in Action Stories
 
@@ -1560,3 +1722,10 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 | 2025-12-20 | 7.3 | **Status → In Progress**: Updated status from Draft. Added Testing Strategy section with test levels, categories, approach, and CI/CD requirements. Created sub-story files TEA-RUST-012 (Stream Iterator - Done), TEA-RUST-013 (CLI Binary - Ready for Review), TEA-RUST-014 (Library API - Ready for Review), and TEA-RUST-015 (Testing & Docs - Draft). | Bob (SM Agent) |
 | 2025-12-21 | 7.4 | **TEA-RUST-029 Tera Condition Evaluation**: Added TEA-RUST-029 to replace TEA-RUST-005 (Lua conditions). Aligns Rust conditional routing with Python/Jinja2 parity (TEA-YAML-001). TEA-RUST-005 marked as superseded. TEA-RUST-029 depends on YAML parser (003) and node execution (004) only - no Lua dependency. Updated dependency diagram and summary table. Rationale: Same YAML agents should work in both Python and Rust runtimes. | Sarah (PO Agent) |
 | 2025-12-21 | 7.5 | **TEA-RUST-030 Parallel Lua Isolation**: Added TEA-RUST-030 (per-branch LuaRuntime for true parallelism). Added TEA-PY-001 and TEA-PY-002 to Python stories reference. Python TEA-PY-002 completed with thread-local storage implementation, informs Rust approach. Total sub-stories: 27 (112 points). | Quinn (QA Agent) |
+| 2025-12-21 | 7.6 | **TEA-RUST-021 Deferred**: Marked TEA-RUST-021 (Code Execution Actions) as Deferred. Current inline Lua `run:` blocks provide sufficient code execution capability for present needs. The `code.execute` and `code.sandbox` actions would be needed for: (1) stdout/stderr capture from LLM-generated code, (2) persistent sessions for notebook-style workflows, (3) dynamic code execution from state. Can be implemented when these use cases arise. | Sarah (PO Agent) |
+| 2025-12-21 | 7.7 | **Code Execution Actions documentation**: Updated section 6 (Code Execution Actions) with comprehensive comparison table showing `run:` blocks vs `code.execute` action capabilities. Documented that both Python and Rust `run:` blocks have the same limitations (no stdout capture, no persistent sessions, no dynamic code). Clarified that Python `code.execute` (TEA-BUILTIN-003.1) uses RestrictedPython while Rust would use Lua sandbox. Added "When `code.execute` is Needed" section with use cases. | Sarah (PO Agent) |
+| 2025-12-21 | 7.8 | **TEA-RUST-018 Done**: Updated TEA-RUST-018 (Template caching) status from "Not Started" to "Done". Implementation complete with RwLock-wrapped Tera instance and template cache. Updated summary: 19 Done (68 pts), 7 Not Started (39 pts), 1 Deferred (5 pts). | Sarah (PO Agent) |
+| 2025-12-21 | 7.9 | **TEA-RUST-006 warning removed**: Updated TEA-RUST-006 (Parallel fan-out/fan-in) status note from "sequential due to Lua thread-safety" to "true parallelism via TEA-RUST-030". The Lua thread-safety limitation was resolved by TEA-RUST-030 which creates per-branch LuaRuntime instances. | Sarah (PO Agent) |
+| 2025-12-21 | 7.10 | **Story renumbering**: Fixed ID conflicts between epic and story files. Renamed TEA-RUST-002-lua-timeout.md → TEA-RUST-031 (was conflicting with "Core StateGraph with petgraph"). Renamed TEA-RUST-019-executor-checkpoint-wiring.md → TEA-RUST-032 (was conflicting with "Built-in actions - Web"). Added both to sub-story table. Updated summary: 21 Done (71 pts), 7 Not Started (39 pts), 1 Deferred (5 pts). Total: 29 stories (115 pts). | Sarah (PO Agent) |
+| 2025-12-21 | 7.11 | **TEA-RUST-002 Design Rationale**: Added comprehensive documentation for "Core StateGraph with petgraph" decision. Documented goal alignment (7/7 goals supported), technical risks (R1-R4 with mitigations), edge cases (EC1-EC5 with handling), and implementation status. Key findings: petgraph is already implemented and provides strong alignment with TEA's lightweight/edge computing goals. | Sarah (PO Agent) |
+| 2025-12-21 | 7.12 | **Iterative Loop Patterns**: Added documentation for two loop patterns: (1) Interrupt-Based Loop for human-in-the-loop workflows with YAML example, (2) While-Loop Node for autonomous iteration. Created TEA-RUST-033 story for Rust While-Loop Node implementation (5 pts). Created TEA-PY-003 story for Python parity. Updated sub-story table and summary: 30 stories (120 pts). Added TEA-PY-003 to Python Stories Reference. | Sarah (PO Agent) |

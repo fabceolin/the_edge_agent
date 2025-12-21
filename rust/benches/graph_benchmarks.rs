@@ -452,11 +452,17 @@ fn bench_template_caching(c: &mut Criterion) {
         let state = json!({"name": "World"});
 
         // Warm up the cache
-        engine.render_template(template, &state, &HashMap::new()).unwrap();
+        engine
+            .render_template(template, &state, &HashMap::new())
+            .unwrap();
 
         b.iter(|| {
             for _ in 0..1000 {
-                black_box(engine.render_template(template, &state, &HashMap::new()).unwrap());
+                black_box(
+                    engine
+                        .render_template(template, &state, &HashMap::new())
+                        .unwrap(),
+                );
             }
         })
     });
@@ -491,7 +497,11 @@ fn bench_template_caching(c: &mut Criterion) {
         b.iter(|| {
             for i in 0..50 {
                 let template = format!("Template {} - Hello, {{{{ state.name }}}}!", i);
-                black_box(engine.render_template(&template, &state, &HashMap::new()).unwrap());
+                black_box(
+                    engine
+                        .render_template(&template, &state, &HashMap::new())
+                        .unwrap(),
+                );
             }
             // All 50 templates should be cached
             assert_eq!(engine.cache_size(), 50);
@@ -507,11 +517,17 @@ fn bench_template_caching(c: &mut Criterion) {
         let variables = HashMap::from([("model".to_string(), json!("gpt-4"))]);
 
         // Warm up cache
-        engine.render_template(template, &state, &variables).unwrap();
+        engine
+            .render_template(template, &state, &variables)
+            .unwrap();
 
         b.iter(|| {
             for _ in 0..100 {
-                black_box(engine.render_template(template, &state, &variables).unwrap());
+                black_box(
+                    engine
+                        .render_template(template, &state, &variables)
+                        .unwrap(),
+                );
             }
         })
     });

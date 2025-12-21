@@ -508,11 +508,8 @@ impl Executor {
 
         if let Some(ref action_config) = node.action {
             // Process template parameters
-            let processed_params = yaml_engine.process_params(
-                &action_config.with,
-                state,
-                graph.variables(),
-            )?;
+            let processed_params =
+                yaml_engine.process_params(&action_config.with, state, graph.variables())?;
 
             // Get action handler
             let handler = actions
