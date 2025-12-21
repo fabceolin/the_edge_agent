@@ -1189,7 +1189,8 @@ class YAMLEngine:
         cross-branch contamination of globals and functions.
 
         - Main thread: Uses cached self._lua_runtime (shared for sequential execution)
-        - Worker threads: Uses thread-local storage (fresh runtime per branch)
+        - Worker threads: Always creates fresh runtime (ThreadPoolExecutor reuses
+          threads, so thread-local storage would leak state between branches)
 
         Returns:
             LuaRuntime: Isolated runtime for current execution context
@@ -1211,11 +1212,10 @@ class YAMLEngine:
                 self._lua_runtime = LuaRuntime(timeout=self._lua_timeout)
             return self._lua_runtime
 
-        # Parallel branch: use thread-local storage for isolation
-        # Each thread gets its own fresh LuaRuntime
-        if not hasattr(self._lua_thread_local, 'runtime'):
-            self._lua_thread_local.runtime = LuaRuntime(timeout=self._lua_timeout)
-        return self._lua_thread_local.runtime
+        # Parallel branch: always create fresh runtime for isolation
+        # ThreadPoolExecutor reuses threads, so thread-local storage would
+        # leak Lua globals/functions between different branches
+        return LuaRuntime(timeout=self._lua_timeout)
 
     def _create_inline_function(self, code: str) -> Callable:
         """Create a function that executes inline Python or Lua code."""

@@ -180,7 +180,7 @@ impl Default for ErrorPolicyConfig {
 /// needs its own instance for thread safety. All shared state (template cache,
 /// last_checkpoint) is wrapped in `Arc<RwLock<>>` so clones share the cache.
 pub struct YamlEngine {
-    /// Tera template engine wrapped in Arc<RwLock> for sharing across clones
+    /// Tera template engine wrapped in `Arc<RwLock>` for sharing across clones
     /// Required because add_raw_template needs &mut self
     tera: Arc<RwLock<Tera>>,
     /// Maps template content -> registered template name (shared across clones)
@@ -191,7 +191,7 @@ pub struct YamlEngine {
     /// Checkpoint directory path for `{{ checkpoint.dir }}` template access
     checkpoint_dir: Option<String>,
     /// Path to most recent checkpoint for `{{ checkpoint.last }}` template access
-    /// Uses Arc<RwLock> for sharing - allows Executor to update after saves
+    /// Uses `Arc<RwLock>` for sharing - allows Executor to update after saves
     last_checkpoint: Arc<RwLock<Option<String>>>,
 }
 
