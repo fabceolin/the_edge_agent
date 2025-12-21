@@ -70,6 +70,10 @@ pub struct NodeConfig {
     /// Node name
     pub name: String,
 
+    /// Node type: "standard" (default) or "while_loop" (TEA-RUST-033)
+    #[serde(default, rename = "type")]
+    pub node_type: Option<String>,
+
     /// Action to use (e.g., "llm.call")
     #[serde(default)]
     pub uses: Option<String>,
@@ -97,6 +101,18 @@ pub struct NodeConfig {
     /// Node metadata
     #[serde(default)]
     pub metadata: HashMap<String, JsonValue>,
+
+    /// TEA-RUST-033: Maximum iterations for while_loop nodes (required for while_loop)
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
+
+    /// TEA-RUST-033: Condition expression for while_loop nodes (required for while_loop)
+    #[serde(default)]
+    pub condition: Option<String>,
+
+    /// TEA-RUST-033: Body nodes for while_loop (required for while_loop)
+    #[serde(default)]
+    pub body: Option<Vec<NodeConfig>>,
 }
 
 /// Edge configuration from YAML
@@ -340,6 +356,11 @@ impl YamlEngine {
 
     /// Build a Node from NodeConfig
     fn build_node(&self, config: &NodeConfig) -> TeaResult<Node> {
+        // TEA-RUST-033: Handle while_loop nodes
+        if config.node_type.as_deref() == Some("while_loop") {
+            return self.build_while_loop_node(config);
+        }
+
         let mut node = Node::new(&config.name);
 
         // Set action (uses or action field)
@@ -366,6 +387,83 @@ impl YamlEngine {
         }
 
         // Set metadata
+        node.metadata = config.metadata.clone();
+
+        Ok(node)
+    }
+
+    /// Build a while-loop node from NodeConfig (TEA-RUST-033)
+    ///
+    /// Validates:
+    /// - `max_iterations` is required and in range 1-1000 (AC-8, AC-9)
+    /// - `condition` is required (AC-2)
+    /// - `body` is required and non-empty (AC-3)
+    /// - No nested while-loops (AC-11)
+    fn build_while_loop_node(&self, config: &NodeConfig) -> TeaResult<Node> {
+        let name = &config.name;
+
+        // AC-8: max_iterations is required
+        let max_iterations = config.max_iterations.ok_or_else(|| {
+            TeaError::InvalidConfig(format!(
+                "while_loop node '{}' requires 'max_iterations'",
+                name
+            ))
+        })?;
+
+        // AC-9: max_iterations must be in range 1-1000
+        if !(1..=1000).contains(&max_iterations) {
+            return Err(TeaError::InvalidConfig(format!(
+                "while_loop node '{}': max_iterations must be between 1 and 1000, got {}",
+                name, max_iterations
+            )));
+        }
+
+        // AC-2: condition is required
+        let condition = config.condition.clone().ok_or_else(|| {
+            TeaError::InvalidConfig(format!(
+                "while_loop node '{}' requires 'condition'",
+                name
+            ))
+        })?;
+
+        // AC-3: body is required
+        let body_configs = config.body.as_ref().ok_or_else(|| {
+            TeaError::InvalidConfig(format!(
+                "while_loop node '{}' requires 'body' with at least one node",
+                name
+            ))
+        })?;
+
+        if body_configs.is_empty() {
+            return Err(TeaError::InvalidConfig(format!(
+                "while_loop node '{}' requires 'body' with at least one node",
+                name
+            )));
+        }
+
+        // Parse body nodes and check for nested while-loops (AC-11)
+        let mut body_nodes = Vec::with_capacity(body_configs.len());
+        for body_config in body_configs {
+            // AC-11: No nested while-loops
+            if body_config.node_type.as_deref() == Some("while_loop") {
+                return Err(TeaError::InvalidConfig(format!(
+                    "Nested while-loops not supported: '{}' contains while_loop '{}'",
+                    name, body_config.name
+                )));
+            }
+            body_nodes.push(self.build_node(body_config)?);
+        }
+
+        // Create the while-loop node
+        let mut node = Node::while_loop(name, condition, max_iterations, body_nodes);
+
+        // Copy optional fields (retry, fallback, metadata)
+        if let Some(retry) = &config.retry {
+            node.retry = Some(retry.clone());
+        }
+        if let Some(fallback) = &config.fallback {
+            node.fallback = Some(fallback.clone());
+        }
         node.metadata = config.metadata.clone();
 
         Ok(node)

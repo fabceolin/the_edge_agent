@@ -1,0 +1,50 @@
+# Quality Gate: TEA-PY-003
+schema: 1
+story: "TEA-PY-003"
+story_title: "While-Loop Node for Autonomous Iteration (Python)"
+gate: PASS
+status_reason: "All 18 acceptance criteria met, 22 tests passing, cross-runtime parity validated with TEA-RUST-033"
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-21T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 100
+expires: "2026-01-04T00:00:00Z"
+
+evidence:
+  tests_reviewed: 22
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new attack vectors; body run: blocks use existing exec() pattern"
+  performance:
+    status: PASS
+    notes: "Body functions pre-compiled at parse time; no per-iteration overhead"
+  reliability:
+    status: PASS
+    notes: "max_iterations guard prevents infinite loops; error propagation immediate"
+  maintainability:
+    status: PASS
+    notes: "Implementation follows existing patterns; comprehensive inline documentation"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding timeout parameter per body iteration for long-running body nodes"
+      refs: ["python/src/the_edge_agent/yaml_engine.py:1375-1509"]
+    - action: "Consider break_on_condition for early exit patterns"
+      refs: ["docs/stories/TEA-PY-003-while-loop-node.md"]

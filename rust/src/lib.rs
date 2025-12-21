@@ -106,9 +106,10 @@ mod error;
 // Re-exports
 pub use engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};
 pub use engine::executor::{
-    ActionRegistry, EventType, ExecutionEvent, ExecutionOptions, Executor, StreamIterator,
+    ActionRegistry, EventType, ExecutionEvent, ExecutionOptions, Executor, LoopExitReason,
+    StreamIterator,
 };
-pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, StateGraph};
+pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, NodeType, StateGraph};
 pub use engine::yaml::{YamlConfig, YamlEngine};
 pub use error::{TeaError, TeaResult};
 
@@ -129,7 +130,7 @@ pub mod prelude {
     pub use crate::actions::register_defaults;
     pub use crate::{
         ActionRegistry, Checkpoint, Checkpointer, CompiledGraph, Edge, EdgeType, ExecutionEvent,
-        ExecutionOptions, Executor, FileCheckpointer, Node, StateGraph, TeaError, TeaResult,
-        YamlConfig, YamlEngine, END, START,
+        ExecutionOptions, Executor, FileCheckpointer, LoopExitReason, Node, NodeType, StateGraph,
+        TeaError, TeaResult, YamlConfig, YamlEngine, END, START,
     };
 }

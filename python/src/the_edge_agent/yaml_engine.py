@@ -1017,6 +1017,16 @@ class YAMLEngine:
     def _add_node_from_config(self, graph: StateGraph, node_config: Dict[str, Any]) -> None:
         """Add a node to the graph from configuration."""
         node_name = node_config['name']
+        node_type = node_config.get('type')
+
+        # Handle while_loop node type (TEA-PY-003)
+        if node_type == 'while_loop':
+            run_func = self._create_while_loop_function(node_config)
+            # Wrap with auto-trace if enabled
+            if run_func is not None and self._auto_trace and self._trace_context is not None:
+                run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+            graph.add_node(node_name, run=run_func)
+            return
 
         # Determine if it's a fan-in node
         is_fan_in = node_config.get('fan_in', False)
@@ -1362,6 +1372,142 @@ class YAMLEngine:
 
         return run_expression
 
+    def _create_while_loop_function(self, node_config: Dict[str, Any]) -> Callable:
+        """
+        Create a function that executes a while-loop node.
+
+        TEA-PY-003: While-loop node for autonomous iteration.
+
+        Args:
+            node_config: Node configuration with:
+                - name: Node name
+                - type: 'while_loop'
+                - condition: Jinja2 expression (evaluated each iteration)
+                - max_iterations: Required safety guard (1-1000)
+                - body: List of body node configurations
+
+        Returns:
+            Callable that executes the while-loop
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        node_name = node_config['name']
+        condition = node_config.get('condition')
+        max_iterations = node_config.get('max_iterations')
+        body = node_config.get('body', [])
+
+        # Validate required fields (AC-8)
+        if not condition:
+            raise ValueError(f"while_loop node '{node_name}' requires 'condition'")
+        if max_iterations is None:
+            raise ValueError(f"while_loop node '{node_name}' requires 'max_iterations'")
+
+        # Validate max_iterations range (AC-9)
+        if not isinstance(max_iterations, int) or max_iterations < 1 or max_iterations > 1000:
+            raise ValueError(
+                f"while_loop node '{node_name}': max_iterations must be integer between 1-1000, "
+                f"got {max_iterations}"
+            )
+
+        # Validate body exists
+        if not body:
+            raise ValueError(f"while_loop node '{node_name}' requires 'body' with at least one node")
+
+        # Check for nested while-loops (AC-11)
+        for body_node in body:
+            if body_node.get('type') == 'while_loop':
+                raise ValueError(
+                    f"Nested while-loops not supported: '{node_name}' contains "
+                    f"nested while_loop '{body_node.get('name', 'unnamed')}'"
+                )
+
+        # Pre-compile body node functions
+        body_functions = []
+        for body_node_config in body:
+            body_node_name = body_node_config.get('name', f'body_{len(body_functions)}')
+            body_func = self._create_run_function(body_node_config)
+            if body_func:
+                body_functions.append((body_node_name, body_func))
+
+        # Capture references for closure
+        engine = self
+        trace_context = self._trace_context
+        enable_tracing = self._enable_tracing
+
+        def run_while_loop(state, **kwargs):
+            """Execute the while-loop."""
+            current_state = state.copy()
+            iteration = 0
+
+            # Emit LoopStart event (AC-12)
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        'event_type': 'LoopStart',
+                        'node_name': node_name,
+                        'max_iterations': max_iterations
+                    }
+                )
+
+            while iteration < max_iterations:
+                # Evaluate condition using Jinja2 (AC-2)
+                condition_result = engine._evaluate_condition(condition, current_state)
+
+                # Emit LoopIteration event (AC-13)
+                if enable_tracing and trace_context is not None:
+                    trace_context.log_event(
+                        event={
+                            'event_type': 'LoopIteration',
+                            'node_name': node_name,
+                            'iteration': iteration,
+                            'condition_result': condition_result
+                        }
+                    )
+
+                # Exit if condition is false (AC-4)
+                if not condition_result:
+                    break
+
+                # Execute body nodes sequentially (AC-3)
+                for body_node_name, body_func in body_functions:
+                    try:
+                        # AC-15: Body node events are emitted normally via auto-trace
+                        result = body_func(current_state, **kwargs)
+                        if isinstance(result, dict):
+                            # AC-6: State from each iteration is passed to next
+                            current_state.update(result)
+                    except Exception as e:
+                        # AC-10: If loop body execution fails, error propagates immediately
+                        raise RuntimeError(
+                            f"Error in while_loop '{node_name}' body node '{body_node_name}' "
+                            f"at iteration {iteration}: {e}"
+                        ) from e
+
+                iteration += 1
+
+            # Determine exit reason (AC-5)
+            if iteration >= max_iterations:
+                exit_reason = 'max_iterations_reached'
+            else:
+                exit_reason = 'condition_false'
+
+            # Emit LoopEnd event (AC-14)
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        'event_type': 'LoopEnd',
+                        'node_name': node_name,
+                        'iterations_completed': iteration,
+                        'exit_reason': exit_reason
+                    }
+                )
+
+            # AC-7: Final state after loop completion is passed to downstream nodes
+            return current_state
+
+        return run_while_loop
+
     def _add_edge_from_config(self, graph: StateGraph, edge_config: Dict[str, Any]) -> None:
         """Add an edge to the graph from configuration."""
         edge_type = edge_config.get('type', 'normal')
@@ -1572,6 +1718,7 @@ class YAMLEngine:
         - Simple variable: "has_results" -> state.get('has_results', False)
         - Negation: "!escalate" -> not state.get('escalate', False)
         - Jinja2 expressions without braces: "state.x > 5"
+        - Python boolean literals: "True", "False"
 
         Returns:
             bool: Result of the condition evaluation
@@ -1580,6 +1727,12 @@ class YAMLEngine:
             return bool(expr)
 
         expr = expr.strip()
+
+        # Handle Python boolean literals explicitly
+        if expr == 'True':
+            return True
+        if expr == 'False':
+            return False
 
         # Handle simple negation syntax: "!variable"
         if expr.startswith('!') and not expr.startswith('{{'):

@@ -21,11 +21,56 @@ pub type RunFn = Arc<dyn Fn(&serde_json::Value) -> TeaResult<serde_json::Value> 
 /// Type alias for condition function signature
 pub type ConditionFn = Arc<dyn Fn(&serde_json::Value) -> TeaResult<String> + Send + Sync>;
 
+/// Type of node in the state graph
+#[derive(Clone, Default)]
+pub enum NodeType {
+    /// Standard node with optional run function
+    #[default]
+    Standard,
+
+    /// While-loop node that iterates until a condition is met (TEA-RUST-033)
+    ///
+    /// The loop:
+    /// 1. Evaluates `condition` before each iteration
+    /// 2. If true, executes all nodes in `body` sequentially
+    /// 3. Repeats until condition is false or `max_iterations` is reached
+    /// 4. Passes final state to downstream nodes
+    WhileLoop {
+        /// Tera expression evaluated before each iteration
+        condition: String,
+        /// Maximum iterations to prevent infinite loops (1-1000)
+        max_iterations: usize,
+        /// Body nodes to execute on each iteration
+        body: Vec<Node>,
+    },
+}
+
+impl std::fmt::Debug for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeType::Standard => write!(f, "Standard"),
+            NodeType::WhileLoop {
+                condition,
+                max_iterations,
+                body,
+            } => f
+                .debug_struct("WhileLoop")
+                .field("condition", condition)
+                .field("max_iterations", max_iterations)
+                .field("body_count", &body.len())
+                .finish(),
+        }
+    }
+}
+
 /// A node in the state graph
 #[derive(Clone)]
 pub struct Node {
     /// Unique name of the node
     pub name: String,
+
+    /// Type of node (Standard or WhileLoop)
+    pub node_type: NodeType,
 
     /// The run function that processes state and returns updated state
     pub run: Option<RunFn>,
@@ -51,6 +96,7 @@ impl Node {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            node_type: NodeType::Standard,
             run: None,
             action: None,
             lua_code: None,
@@ -58,6 +104,50 @@ impl Node {
             fallback: None,
             metadata: HashMap::new(),
         }
+    }
+
+    /// Create a new while-loop node (TEA-RUST-033)
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name of the node
+    /// * `condition` - Tera expression evaluated before each iteration
+    /// * `max_iterations` - Maximum iterations (1-1000)
+    /// * `body` - Nodes to execute on each iteration
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use the_edge_agent::engine::graph::Node;
+    ///
+    /// let body = vec![Node::new("increment")];
+    /// let loop_node = Node::while_loop("counter", "state.count < 3", 5, body);
+    /// ```
+    pub fn while_loop(
+        name: impl Into<String>,
+        condition: impl Into<String>,
+        max_iterations: usize,
+        body: Vec<Node>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            node_type: NodeType::WhileLoop {
+                condition: condition.into(),
+                max_iterations,
+                body,
+            },
+            run: None,
+            action: None,
+            lua_code: None,
+            retry: None,
+            fallback: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Check if this is a while-loop node
+    pub fn is_while_loop(&self) -> bool {
+        matches!(self.node_type, NodeType::WhileLoop { .. })
     }
 
     /// Set the run function
@@ -98,6 +188,7 @@ impl std::fmt::Debug for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
             .field("name", &self.name)
+            .field("node_type", &self.node_type)
             .field("has_run", &self.run.is_some())
             .field("action", &self.action)
             .field("lua_code", &self.lua_code)

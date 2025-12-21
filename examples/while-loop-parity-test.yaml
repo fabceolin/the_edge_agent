@@ -1,0 +1,22 @@
+# TEA-RUST-033 / TEA-PY-003: Cross-runtime parity test for while-loop
+# This file should produce identical results in both Python and Rust
+
+name: while-loop-parity-test
+
+nodes:
+  - name: counter_loop
+    type: while_loop
+    condition: "state.count < 5"
+    max_iterations: 10
+    body:
+      - name: increment
+        run: |
+          local count = state.count or 0
+          local sum = state.sum or 0
+          return { count = count + 1, sum = sum + count + 1 }
+
+edges:
+  - from: __start__
+    to: counter_loop
+  - from: counter_loop
+    to: __end__

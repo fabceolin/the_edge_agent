@@ -14,7 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::engine::checkpoint::{Checkpoint, Checkpointer};
-use crate::engine::graph::{CompiledGraph, EdgeType};
+use crate::engine::graph::{CompiledGraph, EdgeType, Node, NodeType};
 use crate::engine::lua_runtime::LuaRuntime;
 use crate::engine::parallel::{ParallelConfig, ParallelExecutor, ParallelFlowResult};
 use crate::engine::retry::RetryExecutor;
@@ -63,6 +63,36 @@ pub enum EventType {
     ParallelComplete,
     /// Graph execution finished
     Finish,
+    /// TEA-RUST-033: While-loop started
+    LoopStart {
+        /// Maximum iterations allowed
+        max_iterations: usize,
+    },
+    /// TEA-RUST-033: While-loop iteration completed
+    LoopIteration {
+        /// Current iteration number (0-indexed)
+        iteration: usize,
+        /// Whether condition evaluated to true
+        condition_result: bool,
+    },
+    /// TEA-RUST-033: While-loop ended
+    LoopEnd {
+        /// Number of iterations completed
+        iterations_completed: usize,
+        /// Reason for loop exit
+        exit_reason: LoopExitReason,
+    },
+}
+
+/// TEA-RUST-033: Reason why a while-loop exited
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum LoopExitReason {
+    /// Condition evaluated to false
+    ConditionFalse,
+    /// Maximum iterations reached
+    MaxIterationsReached,
+    /// Error during loop execution
+    Error(String),
 }
 
 impl ExecutionEvent {
@@ -461,6 +491,21 @@ impl Executor {
 
     /// Inner node execution (without retry wrapper)
     fn execute_node_inner(&self, node_name: &str, state: &JsonValue) -> TeaResult<JsonValue> {
+        let node = self
+            .graph
+            .get_node(node_name)
+            .ok_or_else(|| TeaError::NodeNotFound(node_name.to_string()))?;
+
+        // TEA-RUST-033: Handle while-loop nodes
+        if let NodeType::WhileLoop {
+            ref condition,
+            max_iterations,
+            ref body,
+        } = node.node_type
+        {
+            return self.execute_while_loop(node_name, condition, max_iterations, body, state);
+        }
+
         Self::execute_node_with_lua(
             node_name,
             state,
@@ -469,6 +514,115 @@ impl Executor {
             &self.actions,
             &self.yaml_engine,
         )
+    }
+
+    /// Execute a while-loop node (TEA-RUST-033)
+    ///
+    /// Iterates until the condition is false or max_iterations is reached.
+    /// Each iteration executes all body nodes sequentially.
+    ///
+    /// # AC Coverage
+    ///
+    /// - AC-2: Condition is evaluated using Tera templates
+    /// - AC-3: Body nodes execute sequentially
+    /// - AC-4: State updates persist across iterations
+    /// - AC-5: Loop terminates when condition becomes false
+    /// - AC-7: Final state passed to downstream nodes
+    /// - AC-8, AC-9: max_iterations enforced (validated at parse time)
+    fn execute_while_loop(
+        &self,
+        loop_name: &str,
+        condition: &str,
+        max_iterations: usize,
+        body: &[Node],
+        initial_state: &JsonValue,
+    ) -> TeaResult<JsonValue> {
+        let mut state = initial_state.clone();
+        let mut iteration: usize = 0;
+
+        loop {
+            // Evaluate condition before each iteration (AC-2)
+            let condition_result = self.evaluate_loop_condition(condition, &state)?;
+
+            // Exit if condition is false (AC-5)
+            if !condition_result {
+                return Ok(state);
+            }
+
+            // Check max_iterations (AC-8, AC-9)
+            if iteration >= max_iterations {
+                return Err(TeaError::Execution {
+                    node: loop_name.to_string(),
+                    message: format!(
+                        "while_loop '{}' exceeded max_iterations ({})",
+                        loop_name, max_iterations
+                    ),
+                });
+            }
+
+            // Execute body nodes sequentially (AC-3)
+            for body_node in body {
+                state = self.execute_body_node(body_node, &state)?;
+            }
+
+            // State persists across iterations (AC-4)
+            iteration += 1;
+        }
+        // State is passed to downstream nodes (AC-7) via the return value
+    }
+
+    /// Evaluate a while-loop condition using Tera templates (TEA-RUST-033)
+    ///
+    /// Returns true if the condition evaluates to "true", false otherwise.
+    fn evaluate_loop_condition(&self, condition: &str, state: &JsonValue) -> TeaResult<bool> {
+        // Wrap in template syntax if not already wrapped
+        let template_expr = if condition.contains("{{") {
+            condition.to_string()
+        } else {
+            format!("{{{{ {} }}}}", condition)
+        };
+
+        let rendered = self.yaml_engine.render_template(
+            &template_expr,
+            state,
+            self.graph.variables(),
+        )?;
+
+        // Interpret as boolean
+        let trimmed = rendered.trim().to_lowercase();
+        Ok(trimmed == "true")
+    }
+
+    /// Execute a body node within a while-loop (TEA-RUST-033)
+    ///
+    /// Body nodes can be standard nodes with run functions, actions, or Lua code.
+    fn execute_body_node(&self, node: &Node, state: &JsonValue) -> TeaResult<JsonValue> {
+        // Priority: run function > action > lua code (same as standard nodes)
+        if let Some(ref run) = node.run {
+            return run(state);
+        }
+
+        if let Some(ref action_config) = node.action {
+            let processed_params = self.yaml_engine.process_params(
+                &action_config.with,
+                state,
+                self.graph.variables(),
+            )?;
+
+            let handler = self
+                .actions
+                .get(&action_config.uses)
+                .ok_or_else(|| TeaError::ActionNotFound(action_config.uses.clone()))?;
+
+            return handler(state, &processed_params);
+        }
+
+        if let Some(ref lua_code) = node.lua_code {
+            return self.lua.execute_node_code(lua_code, state);
+        }
+
+        // No-op body node - pass through state
+        Ok(state.clone())
     }
 
     /// Execute a node with an explicit Lua runtime
