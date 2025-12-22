@@ -1,0 +1,19 @@
+# Cross-Runtime Parity Test: Basic Arithmetic
+# This agent should produce identical results in both Python and Rust TEA
+name: prolog-parity-basic-arithmetic
+
+nodes:
+  - name: compute
+    language: prolog
+    run: "X is 10 + 20, Y is X * 2"
+
+edges:
+  - from: __start__
+    to: compute
+  - from: compute
+    to: __end__
+
+# Expected behavior:
+# - Both runtimes execute X is 10 + 20, Y is X * 2
+# - Query should succeed
+# - No state output (variables bound but not returned)

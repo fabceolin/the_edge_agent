@@ -78,8 +78,11 @@ pub struct Node {
     /// Optional action configuration (for YAML-defined nodes)
     pub action: Option<ActionConfig>,
 
-    /// Inline Lua code to execute
+    /// Inline code to execute (Lua or Prolog)
     pub lua_code: Option<String>,
+
+    /// Language for inline code: "lua" (default) or "prolog"
+    pub language: Option<String>,
 
     /// Retry configuration for this node
     pub retry: Option<RetryConfig>,
@@ -100,6 +103,7 @@ impl Node {
             run: None,
             action: None,
             lua_code: None,
+            language: None,
             retry: None,
             fallback: None,
             metadata: HashMap::new(),
@@ -139,6 +143,7 @@ impl Node {
             run: None,
             action: None,
             lua_code: None,
+            language: None,
             retry: None,
             fallback: None,
             metadata: HashMap::new(),
@@ -192,6 +197,7 @@ impl std::fmt::Debug for Node {
             .field("has_run", &self.run.is_some())
             .field("action", &self.action)
             .field("lua_code", &self.lua_code)
+            .field("language", &self.language)
             .field("retry", &self.retry)
             .field("fallback", &self.fallback)
             .finish()

@@ -83,9 +83,10 @@ web = []
 rag = []
 llm = []
 code = []
+prolog = ["dep:swipl"]
 ltm-duckdb = ["dep:duckdb"]
 graph = ["dep:cozo"]
-all = ["memory", "trace", "data", "web", "rag", "llm", "code", "ltm-duckdb", "graph"]
+all = ["memory", "trace", "data", "web", "rag", "llm", "code", "prolog", "ltm-duckdb", "graph"]
 
 [dependencies.duckdb]
 version = "1.1"
@@ -93,6 +94,11 @@ optional = true
 
 [dependencies.cozo]
 version = "0.7"
+optional = true
+
+# Prolog support (SWI-Prolog bindings)
+[dependencies.swipl]
+version = "0.3"
 optional = true
 
 [[bench]]

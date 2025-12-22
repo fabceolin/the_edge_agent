@@ -17,6 +17,8 @@ use crate::engine::checkpoint::{Checkpoint, Checkpointer};
 use crate::engine::graph::{CompiledGraph, EdgeType, Node, NodeType};
 use crate::engine::lua_runtime::LuaRuntime;
 use crate::engine::parallel::{ParallelConfig, ParallelExecutor, ParallelFlowResult};
+#[cfg(feature = "prolog")]
+use crate::engine::prolog_runtime::PrologRuntime;
 use crate::engine::retry::RetryExecutor;
 use crate::engine::yaml::YamlEngine;
 use crate::error::{TeaError, TeaResult};
@@ -160,6 +162,10 @@ pub struct Executor {
     /// Lua runtime
     lua: LuaRuntime,
 
+    /// Prolog runtime (optional, requires prolog feature)
+    #[cfg(feature = "prolog")]
+    prolog: Option<PrologRuntime>,
+
     /// YAML engine for template processing
     yaml_engine: YamlEngine,
 
@@ -233,6 +239,8 @@ impl Executor {
         Ok(Self {
             graph: Arc::new(graph),
             lua: LuaRuntime::new()?,
+            #[cfg(feature = "prolog")]
+            prolog: PrologRuntime::new().ok(),
             yaml_engine: YamlEngine::new(),
             actions: Arc::new(ActionRegistry::new()),
             parallel_executor: ParallelExecutor::new(),
@@ -245,6 +253,8 @@ impl Executor {
         Ok(Self {
             graph: Arc::new(graph),
             lua: LuaRuntime::new()?,
+            #[cfg(feature = "prolog")]
+            prolog: PrologRuntime::new().ok(),
             yaml_engine: YamlEngine::new(),
             actions,
             parallel_executor: ParallelExecutor::new(),
@@ -615,8 +625,30 @@ impl Executor {
             return handler(state, &processed_params);
         }
 
-        if let Some(ref lua_code) = node.lua_code {
-            return self.lua.execute_node_code(lua_code, state);
+        if let Some(ref code) = node.lua_code {
+            // Check language: prolog vs lua (default)
+            let is_prolog = node.language.as_deref() == Some("prolog");
+
+            #[cfg(feature = "prolog")]
+            if is_prolog {
+                if let Some(ref prolog) = self.prolog {
+                    return prolog.execute_node_code(code, state);
+                } else {
+                    return Err(TeaError::Prolog(
+                        crate::engine::prolog_runtime::get_install_instructions(),
+                    ));
+                }
+            }
+
+            #[cfg(not(feature = "prolog"))]
+            if is_prolog {
+                return Err(TeaError::PrologNotEnabled(
+                    "Prolog support not enabled. Rebuild with --features prolog".to_string(),
+                ));
+            }
+
+            // Default: Lua
+            return self.lua.execute_node_code(code, state);
         }
 
         // No-op body node - pass through state
@@ -671,8 +703,28 @@ impl Executor {
             return handler(state, &processed_params);
         }
 
-        if let Some(ref lua_code) = node.lua_code {
-            return lua.execute_node_code(lua_code, state);
+        if let Some(ref code) = node.lua_code {
+            // Check language: prolog vs lua (default)
+            let is_prolog = node.language.as_deref() == Some("prolog");
+
+            #[cfg(feature = "prolog")]
+            if is_prolog {
+                // For parallel execution with Prolog, create a new runtime per branch
+                match PrologRuntime::new() {
+                    Ok(prolog) => return prolog.execute_node_code(code, state),
+                    Err(e) => return Err(e),
+                }
+            }
+
+            #[cfg(not(feature = "prolog"))]
+            if is_prolog {
+                return Err(TeaError::PrologNotEnabled(
+                    "Prolog support not enabled. Rebuild with --features prolog".to_string(),
+                ));
+            }
+
+            // Default: Lua
+            return lua.execute_node_code(code, state);
         }
 
         // No-op node - just pass through state

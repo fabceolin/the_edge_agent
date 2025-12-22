@@ -45,6 +45,19 @@ pub enum TeaError {
     #[error("Lua error: {0}")]
     Lua(String),
 
+    // Prolog errors
+    #[error("Prolog error: {0}")]
+    Prolog(String),
+
+    #[error("Prolog timeout: execution exceeded {0} seconds")]
+    PrologTimeout(u64),
+
+    #[error("Prolog feature not enabled: {0}")]
+    PrologNotEnabled(String),
+
+    #[error("Prolog sandbox violation: {predicate} is not allowed")]
+    PrologSandboxViolation { predicate: String },
+
     // YAML/Config errors
     #[error("YAML parse error: {0}")]
     YamlParse(String),

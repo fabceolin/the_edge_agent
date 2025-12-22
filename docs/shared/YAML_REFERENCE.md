@@ -87,6 +87,9 @@ Unlike GitHub Actions (which runs in isolated VMs with a limited expression lang
 **Lua sandbox (when `lua_enabled=True`):**
 Lua code blocks are sandboxed with dangerous globals removed (`os`, `io`, `debug`, `loadfile`, `dofile`). However, this is not a complete security boundary—the Python host process still has full access.
 
+**Prolog sandbox (when `prolog_enabled=True`):**
+Prolog code blocks use SWI-Prolog's sandbox library with dangerous predicates restricted (file I/O, shell execution, network access). Timeouts prevent runaway queries. This is not a complete security boundary—the Python host process still has full access.
+
 ---
 
 ## Basic Structure
@@ -501,6 +504,208 @@ local flags = a & b | c  -- Use: bit.band/bit.bor in LuaJIT
 
 -- Const/close attributes (Lua 5.4 only)
 local x <const> = 10  -- Use: local x = 10
+```
+
+#### Method 2c: Prolog Code (`run:` with `% prolog` marker or `language: prolog`)
+
+Execute Prolog code for neurosymbolic AI workflows combining neural network outputs with symbolic reasoning.
+
+**Enabling Prolog:**
+
+*Python:*
+```python
+engine = YAMLEngine(prolog_enabled=True)
+```
+
+*Rust:*
+```bash
+# Build with Prolog feature
+cargo build --features prolog
+
+# Run agent with Prolog feature
+cargo run --features prolog -- run my-agent.yaml
+
+# Prolog requires SWI-Prolog 9.1+ system installation:
+# Ubuntu/Debian: sudo apt install swi-prolog swi-prolog-nox
+# macOS: brew install swi-prolog
+# Windows: choco install swi-prolog
+```
+
+**Important:** In Rust TEA, Prolog is an optional feature requiring:
+1. The `--features prolog` flag during build/run
+2. SWI-Prolog 9.1+ installed on the system
+
+If Prolog feature is not enabled, nodes with `language: prolog` will fail with a clear error message explaining how to enable it.
+
+**Module Pre-Loading:**
+The Python runtime automatically pre-loads common modules at initialization:
+- `lists` - List manipulation predicates
+- `clpfd` - Finite domain constraints (no `:- use_module` needed!)
+- `apply` - Higher-order predicates
+- `aggregate` - Aggregation predicates
+
+This means CLP(FD) constraints work immediately without explicit module imports.
+
+**Explicit marker (recommended):**
+```yaml
+- name: process_prolog
+  run: |
+    % prolog
+    state(value, V),
+    V2 is V * 2,
+    return(result, V2).
+```
+
+**Language attribute (explicit):**
+```yaml
+- name: process_prolog
+  language: prolog
+  run: |
+    state(value, V),
+    V2 is V + 10,
+    return(result, V2).
+```
+
+**Explicit type in run config:**
+```yaml
+- name: compute
+  run:
+    type: prolog
+    code: |
+      state(value, V),
+      V2 is V * 3,
+      return(result, V2).
+```
+
+**Auto-detection (heuristic):**
+Prolog code is auto-detected when it contains Prolog-specific syntax:
+- `:-` rule operator or directive
+- `state(` or `return(` predicates (TEA convention)
+- `assertz`, `findall`, `forall`, `aggregate_all` predicates
+- CLP(FD) operators (`#=`, `#<`, `#>`, `in`)
+- `use_module` directive
+
+```yaml
+- name: auto_detected_prolog
+  run: |
+    state(count, C),
+    C2 is C + 1,
+    return(count, C2).
+```
+
+**State Interface:**
+
+Access state via `state/2` predicate and set return values via `return/2`:
+
+```prolog
+% Read state["value"] into V
+state(value, V),
+
+% Compute result
+Result is V * 2,
+
+% Set state["doubled"] = Result
+return(doubled, Result).
+```
+
+**CLP(FD) Constraint Solving:**
+
+Prolog integration includes support for CLP(FD) finite domain constraints:
+
+```yaml
+- name: solve_constraints
+  language: prolog
+  run: |
+    :- use_module(library(clpfd)).
+    X in 1..10,
+    Y in 1..10,
+    X + Y #= 15,
+    X #< Y,
+    label([X, Y]),
+    return(x, X),
+    return(y, Y).
+```
+
+**Prolog Sandbox:**
+For security, the sandbox restricts:
+- File I/O operations (`open/3`, `read/1`, `write/1`)
+- Shell execution (`shell/1`, `process_create/3`)
+- Network access
+
+Safe predicates remain available: arithmetic, list operations, `findall`, `aggregate_all`, CLP(FD), etc.
+
+**Timeout Protection:**
+Prolog code execution has a configurable timeout (default: 30 seconds):
+```python
+engine = YAMLEngine(prolog_enabled=True, prolog_timeout=10.0)  # 10 second timeout
+```
+
+**Installation:**
+```bash
+# Install janus-swi Python binding (requires SWI-Prolog 9.1+)
+pip install 'the_edge_agent[prolog]'
+# or directly
+pip install janus-swi
+
+# Install SWI-Prolog 9.1+ system dependency
+# Ubuntu/Debian:
+sudo apt install swi-prolog
+
+# macOS:
+brew install swi-prolog
+
+# Verify version (must be 9.1+):
+swipl --version
+
+# Windows: Download from https://www.swi-prolog.org/download/stable
+```
+
+**Cross-Runtime Compatibility:**
+Prolog code in YAML agents runs identically in both Python and Rust TEA implementations (using janus-swi and swipl-rs respectively), enabling portable neurosymbolic agents.
+
+**Migration from pyswip (TEA-PY-005):**
+The Python runtime was migrated from pyswip to janus-swi for:
+- Proper timeout exception handling (no segfaults)
+- Native directive support via `consult()`
+- Full CLP(FD) module loading
+- Official SWI-Prolog 9.1+ bindings
+
+**Neurosymbolic AI Use Cases:**
+
+1. **Validate LLM outputs** with logical rules
+2. **Constraint-based reasoning** for scheduling, planning
+3. **Knowledge graph queries** with Datalog-style rules
+4. **Formal verification** of neural network predictions
+5. **Ontology reasoning** with OWL/RDF-style inference
+
+**Example - LLM + Prolog Validation:**
+```yaml
+nodes:
+  - name: generate
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "Generate a valid schedule for {{ state.constraints }}"
+    output: llm_response
+
+  - name: validate_with_prolog
+    language: prolog
+    run: |
+      % Define scheduling constraints
+      valid_schedule(Start, End) :-
+        Start >= 9,   % No earlier than 9 AM
+        End =< 17,    % No later than 5 PM
+        End > Start.  % End after start
+
+      % Parse and validate LLM output
+      state(llm_response, Response),
+      % Extract times from response (simplified)
+      Start = 10, End = 14,
+      (valid_schedule(Start, End)
+        -> return(valid, true), return(schedule, [Start, End])
+        ; return(valid, false), return(error, 'Invalid schedule')).
 ```
 
 #### Method 3: Built-in Actions (`uses:`)

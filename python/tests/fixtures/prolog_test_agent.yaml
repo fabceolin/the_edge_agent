@@ -1,0 +1,72 @@
+# Shared Prolog test fixture for cross-runtime compatibility verification
+# This YAML file should produce identical results in both Python and Rust TEA implementations.
+
+name: prolog-cross-runtime-test
+description: Tests Prolog code execution for Python-Rust parity
+
+state_schema:
+  input_value: int
+  input_string: str
+  input_list: list
+  result_math: int
+  result_doubled: int
+  result_sum: int
+  result_conditional: str
+  result_list_length: int
+
+nodes:
+  # Test 1: Basic math operations
+  - name: test_math
+    language: prolog
+    run: |
+      state(input_value, V),
+      R is V * 2 + 10,
+      return(result_math, R).
+
+  # Test 2: Arithmetic with multiple values
+  - name: test_doubled
+    language: prolog
+    run: |
+      state(input_value, V),
+      D is V * 2,
+      return(result_doubled, D).
+
+  # Test 3: Sum calculation
+  - name: test_sum
+    language: prolog
+    run: |
+      state(result_math, M),
+      state(result_doubled, D),
+      Sum is M + D,
+      return(result_sum, Sum).
+
+  # Test 4: List operations
+  - name: test_list
+    language: prolog
+    run: |
+      state(input_list, L),
+      length(L, Len),
+      return(result_list_length, Len).
+
+  # Test 5: Conditional logic
+  - name: test_conditional
+    language: prolog
+    run: |
+      state(input_value, V),
+      (V > 50 -> return(result_conditional, high)
+      ; V > 25 -> return(result_conditional, medium)
+      ; return(result_conditional, low)).
+
+edges:
+  - from: __start__
+    to: test_math
+  - from: test_math
+    to: test_doubled
+  - from: test_doubled
+    to: test_sum
+  - from: test_sum
+    to: test_list
+  - from: test_list
+    to: test_conditional
+  - from: test_conditional
+    to: __end__
