@@ -1,0 +1,75 @@
+name: Rust Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'rust/**'
+      - 'examples/**'
+      - '.github/workflows/rust-tests.yaml'
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'examples/**'
+      - '.github/workflows/rust-tests.yaml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          rust/target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+    - name: Check formatting
+      run: cd rust && cargo fmt --check
+
+    - name: Run clippy
+      run: cd rust && cargo clippy -- -D warnings
+
+    - name: Run tests
+      run: cd rust && cargo test
+
+    - name: Run doc tests
+      run: cd rust && cargo test --doc
+
+    - name: Generate docs
+      run: cd rust && cargo doc --no-deps
+      env:
+        RUSTDOCFLAGS: "-D warnings"
+
+    - name: Build release
+      run: cd rust && cargo build --release
+
+    - name: Check binary size
+      run: |
+        SIZE=$(stat -c%s rust/target/release/tea)
+        SIZE_MB=$((SIZE / 1024 / 1024))
+        echo "Binary size: ${SIZE_MB}MB (${SIZE} bytes)"
+        if [ $SIZE -gt 15728640 ]; then
+          echo "::error::Binary size exceeds 15MB limit"
+          exit 1
+        fi
+
+    - name: Build examples
+      run: cd rust && cargo build --examples
+
+    - name: Run benchmarks (dry-run)
+      run: cd rust && cargo bench -- --test
+      continue-on-error: true

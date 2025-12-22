@@ -1,0 +1,128 @@
+# Quality Gate: TEA-RUST-029-tera-condition-evaluation
+# Tera-Based Condition Evaluation for Python Parity
+
+schema: 1
+story: "TEA-RUST-029"
+story_title: "Tera-Based Condition Evaluation"
+gate: CONCERNS
+status_reason: "Implementation complete with excellent test coverage. AC-18 (performance benchmark) deferred - benchmark infrastructure not yet in place."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-21T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "PERF-001"
+    severity: low
+    finding: "AC-18 performance benchmark not implemented"
+    suggested_action: "Create benchmark in rust/benches/conditions.rs comparing Tera vs Lua condition evaluation"
+    suggested_owner: dev
+
+quality_score: 90  # 100 - (0*20 for FAIL) - (1*10 for CONCERNS)
+expires: "2026-01-04T00:00:00Z"
+
+evidence:
+  tests_reviewed: 194
+  risks_identified: 1
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    ac_gaps: [18]  # Performance benchmark not implemented
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Tera sandbox used for template evaluation. No arbitrary code execution in conditions. Lua isolated for run: blocks only."
+  performance:
+    status: CONCERNS
+    notes: "AC-18 benchmark not implemented. Template caching via render_template() should provide good performance but unverified."
+  reliability:
+    status: PASS
+    notes: "Comprehensive error handling with TeaResult. NoMatchingEdge error includes evaluated conditions for debugging."
+  maintainability:
+    status: PASS
+    notes: "Clean modular design. eval_condition() with helper functions. Doc comments with examples. 9 unit tests + integration tests updated."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Implement AC-18 performance benchmark using criterion crate"
+      refs: ["rust/benches/conditions.rs"]
+    - action: "Create example YAML demonstrating conditional routing patterns"
+      refs: ["rust/examples/conditional-routing.yaml"]
+    - action: "Fix unused variable warning in yaml.rs:740 test"
+      refs: ["rust/src/engine/yaml.rs:740"]
+
+# Requirements Traceability Matrix
+requirements_trace:
+  AC-1:
+    description: "Jinja2-style conditions work"
+    test: "test_eval_condition_jinja2_template"
+    status: COVERED
+  AC-2:
+    description: "Expression-only conditions work"
+    test: "test_eval_condition_bare_expression"
+    status: COVERED
+  AC-3:
+    description: "Simple variable reference works"
+    test: "test_eval_condition_simple_variable"
+    status: COVERED
+  AC-4:
+    description: "Negation syntax works"
+    test: "test_eval_condition_negation"
+    status: COVERED
+  AC-5:
+    description: "Comparison operators work"
+    test: "test_eval_condition_comparison_operators"
+    status: COVERED
+  AC-6:
+    description: "Logical operators work"
+    test: "test_eval_condition_logical_operators"
+    status: COVERED
+  AC-7:
+    description: "Containment check works"
+    test: "Verified via Tera native 'in' support"
+    status: COVERED
+  AC-8:
+    description: "Tera tests work (is starting_with)"
+    test: "Tera built-in tests documented in Dev Notes"
+    status: COVERED
+  AC-9:
+    description: "Condition returns bool, not String"
+    test: "eval_condition signature returns TeaResult<bool>"
+    status: COVERED
+  AC-10:
+    description: "Truthy/falsy values handled"
+    test: "test_eval_condition_truthy_falsy"
+    status: COVERED
+  AC-11:
+    description: "when: clause routes correctly"
+    test: "test_conditional_routing, test_complex_workflow"
+    status: COVERED
+  AC-12:
+    description: "First matching edge taken"
+    test: "executor.rs:574-576 returns on first match"
+    status: COVERED
+  AC-13:
+    description: "No matching condition returns helpful error"
+    test: "executor.rs:586-595 NoMatchingEdge with conditions"
+    status: COVERED
+  AC-14:
+    description: "Tera template syntax unchanged"
+    test: "test_render_template, existing template tests"
+    status: COVERED
+  AC-15:
+    description: "run: blocks use Lua"
+    test: "executor.rs:486-488 still calls lua.execute_node_code"
+    status: COVERED
+  AC-16:
+    description: "conditional_fn callbacks work"
+    test: "executor.rs:565-568 condition_fn path preserved"
+    status: COVERED
+  AC-17:
+    description: "Expression caching via template_cache"
+    test: "eval_condition uses render_template which caches"
+    status: COVERED
+  AC-18:
+    description: "Performance within 20% of Lua"
+    test: "NOT IMPLEMENTED - benchmark infrastructure needed"
+    status: GAP

@@ -7,8 +7,8 @@
 | **ID** | TEA-RUST-001 |
 | **Type** | Epic |
 | **Priority** | High |
-| **Estimated Effort** | 22-28 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports) |
-| **Status** | Draft |
+| **Estimated Effort** | 24-30 weeks (includes built-in actions + LTM/Graph + Cloud-Native + Parallel Reliability + External Imports + DuckDB Memory Layer) |
+| **Status** | In Progress |
 
 ## Description
 
@@ -66,13 +66,24 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-1**: GIVEN a valid YAML workflow file, WHEN loaded by the Rust engine, THEN an immutable StateGraph is constructed
 
-- [ ] **AC-2**: GIVEN a compiled StateGraph, WHEN `invoke()` is called with initial state, THEN nodes execute in correct order and final state is returned
+- [ ] **AC-2**: GIVEN a compiled StateGraph, WHEN `invoke()` is called with initial state, THEN:
+  - **(a)** Nodes execute in topological order respecting edge dependencies
+  - **(b)** For sequential edges: source node completes before target node starts
+  - **(c)** For conditional edges: only the branch matching the condition executes
+  - **(d)** For parallel edges: all branches execute concurrently, results merge at fan-in node
+  - **(e)** Final state contains all accumulated state updates from executed nodes
+  - **(f)** Node execution order is deterministic for the same input state
 
 - [ ] **AC-3**: GIVEN a compiled StateGraph, WHEN `stream()` is called with initial state, THEN an iterator yields events for each node execution
 
 ### Parallel Execution
 
-- [ ] **AC-4**: GIVEN parallel edges defined in YAML, WHEN execution reaches fan-out node, THEN branches execute concurrently via rayon and merge at fan-in
+- [ ] **AC-4**: GIVEN parallel edges defined in YAML, WHEN execution reaches fan-out node, THEN:
+  - **(a)** Branches receive deep copies of state at fan-out point
+  - **(b)** Branches execute concurrently via rayon thread pool
+  - **(c)** At fan-in, branch results are available via `parallel_results` parameter
+  - **(d)** Fan-in node is responsible for merge strategy (no implicit merge)
+  - **(e)** If no fan-in node defined, branches merge with last-write-wins per key
 
 - [ ] **AC-5**: GIVEN a parallel branch fails, WHEN retry policy is configured, THEN branch retries up to max_retries before failing
 
@@ -98,7 +109,12 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 ### Lua Integration
 
-- [ ] **AC-8**: GIVEN a Lua condition expression, WHEN evaluated against current state, THEN correct edge is selected based on result
+- [ ] **AC-8**: GIVEN a Lua condition expression, WHEN evaluated against current state, THEN:
+  - **(a)** Lua expression has access to `state` table (read-only copy)
+  - **(b)** Expression MUST return a string matching a defined edge target name
+  - **(c)** If return value matches no edge target, `RoutingError::NoMatchingEdge` is raised
+  - **(d)** If expression returns `nil`, default edge (if defined) is selected
+  - **(e)** If expression errors, `RoutingError::ConditionEvaluation` is raised with Lua error message
 
 - [ ] **AC-9**: GIVEN inline Lua code in a node, WHEN node executes, THEN Lua script runs with state access and returns updated state
 
@@ -128,7 +144,17 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-25**: GIVEN `trace.start`/`trace.log`/`trace.end` actions, WHEN executed, THEN spans are created, events logged, and exported via configured exporter
 
-- [ ] **AC-26**: GIVEN `json.parse`/`json.transform`/`json.stringify` actions, WHEN executed, THEN JSON data is parsed, transformed via JMESPath, and serialized correctly
+- [ ] **AC-26a**: GIVEN valid JSON string input, WHEN `json.parse` executes, THEN output contains parsed `serde_json::Value` equivalent
+
+- [ ] **AC-26b**: GIVEN invalid JSON string input, WHEN `json.parse` executes, THEN `ActionError::InvalidInput` is returned with parse error location
+
+- [ ] **AC-26c**: GIVEN parsed JSON and JMESPath expression, WHEN `json.transform` executes, THEN output matches JMESPath specification (jmespath-rs crate, compatible with jmespath.org/specification.html)
+
+- [ ] **AC-26d**: GIVEN invalid JMESPath expression, WHEN `json.transform` executes, THEN `ActionError::InvalidInput` is returned with expression error
+
+- [ ] **AC-26e**: GIVEN `serde_json::Value` input, WHEN `json.stringify` executes, THEN output is valid JSON string with optional `pretty` parameter for formatted output
+
+- [ ] **AC-26f**: All JSON actions (`json.parse`, `json.transform`, `json.stringify`) MUST handle UTF-8 encoded strings per RFC 8259
 
 - [ ] **AC-27**: GIVEN `csv.parse`/`csv.stringify` actions, WHEN executed, THEN CSV data is parsed/serialized with configurable delimiters and headers
 
@@ -146,13 +172,15 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - [ ] **AC-34**: GIVEN `code.execute` action is DISABLED by default, WHEN enabled and executed with Lua code, THEN code runs in Lua sandbox (not RestrictedPython)
 
-### Long-Term Memory Actions (Rust Native)
+### Long-Term Memory Actions (Rust Native - DuckDB)
 
-- [ ] **AC-35**: GIVEN `ltm.store` action, WHEN executed with key/value/metadata, THEN data is persisted to SQLite with FTS5 indexing
+*Note: Merged from TEA-RUST-023 into TEA-RUST-028. Uses DuckDB FTS instead of SQLite FTS5.*
+
+- [ ] **AC-35**: GIVEN `ltm.store` action, WHEN executed with key/value/metadata, THEN data is persisted to DuckDB with FTS indexing
 
 - [ ] **AC-36**: GIVEN `ltm.retrieve` action, WHEN executed with key, THEN stored value and metadata are returned (or default if not found)
 
-- [ ] **AC-37**: GIVEN `ltm.search` action, WHEN executed with query text, THEN FTS5 full-text search returns matching entries ranked by relevance
+- [ ] **AC-37**: GIVEN `ltm.search` action, WHEN executed with query text, THEN DuckDB full-text search returns matching entries ranked by relevance
 
 - [ ] **AC-38**: GIVEN `graph.store_entity` action, WHEN executed with entity_id/type/properties, THEN entity is stored in graph database with optional embedding
 
@@ -183,6 +211,56 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 - [ ] **AC-55**: GIVEN external module loaded, WHEN module has `register_actions(registry, engine)` function, THEN actions registered in engine's action registry
 
 - [ ] **AC-56**: GIVEN circular import attempted (same module twice), WHEN `_load_imports()` runs, THEN module loaded once and duplicate skipped
+
+### Unified DuckDB Memory Layer (TEA-RUST-028)
+
+*Consolidates TEA-RUST-023 (LTM) + query engine + vector search + sessions + context + local blob storage.*
+
+#### Query Engine & Resilience
+
+- [ ] **AC-57**: GIVEN `QueryEngine` trait definition, WHEN DuckDB backend configured, THEN SQL queries execute with circuit breaker and connection pooling
+
+- [ ] **AC-58**: GIVEN `catalog.register_table` action, WHEN executed with table schema, THEN table metadata stored in DuckDB catalog
+
+- [ ] **AC-59**: GIVEN `memory.grep` action, WHEN executed with pattern, THEN LIKE-based search returns matching entries from DuckDB
+
+- [ ] **AC-60**: GIVEN `memory.sql_query` action, WHEN executed with SELECT query, THEN query validated via SQL sandbox and executed
+
+- [ ] **AC-61**: GIVEN `VectorIndex` trait definition, WHEN DuckDB VSS backend configured, THEN vector similarity search uses HNSW index
+
+- [ ] **AC-62**: GIVEN `CircuitBreaker` with failure tracking, WHEN DuckDB connection fails, THEN circuit opens after threshold and rejects requests
+
+- [ ] **AC-63**: GIVEN `ConnectionPool` for DuckDB, WHEN concurrent queries execute, THEN connections reused with health checks
+
+#### Session Management (DuckDB-based)
+
+- [ ] **AC-66**: GIVEN `session.create` action, WHEN executed with TTL, THEN session record created in DuckDB with expiration timestamp
+
+- [ ] **AC-67**: GIVEN `session.end` action, WHEN executed, THEN session marked as archived in DuckDB (soft delete for analytics)
+
+- [ ] **AC-68**: GIVEN `session.get` action, WHEN executed with session_id, THEN session metadata returned from DuckDB
+
+- [ ] **AC-69**: GIVEN `session.list` action, WHEN executed with filters, THEN matching sessions returned with pagination
+
+#### Context Assembly (Local backends)
+
+- [ ] **AC-70**: GIVEN `context.assemble` action, WHEN executed with scope config, THEN context assembled from DuckDB (metadata) + local files (blobs)
+
+- [ ] **AC-71**: GIVEN relevance ranking in context assembly, WHEN multiple sources match, THEN results ranked by (VSS similarity * 0.7) + (priority * 0.3)
+
+#### Local Blob Storage
+
+- [ ] **AC-72**: GIVEN `memory.file_store` action, WHEN executed with path/content, THEN file written to local filesystem with metadata in DuckDB
+
+- [ ] **AC-73**: GIVEN `memory.file_retrieve` action, WHEN executed with path, THEN file content read from local filesystem
+
+- [ ] **AC-74**: GIVEN `memory.file_list` action, WHEN executed with pattern, THEN matching files listed from DuckDB metadata
+
+### Conditional Start Edges (YE.7 in TEA-RUST-003)
+
+- [ ] **AC-64**: GIVEN `when` condition on `__start__` edge in YAML, WHEN graph parsed, THEN conditional edge routing applied (not ignored)
+
+- [ ] **AC-65**: GIVEN multiple conditional edges from `__start__`, WHEN graph invoked with state, THEN correct path selected based on condition evaluation
 
 ### CLI
 
@@ -235,6 +313,149 @@ The Edge Agent (tea) is currently a Python library (~3K LOC) implementing a stat
 
 - `x86_64-unknown-linux-musl` (static binary)
 - `aarch64-unknown-linux-musl` (ARM64 edge devices)
+
+### TEA-RUST-002: Core StateGraph with petgraph - Design Rationale
+
+#### Goal Alignment
+
+| Goal | Alignment | Assessment |
+|------|-----------|------------|
+| **G1: Lightweight/Edge** | ✅ Strong | petgraph is zero-dependency, no-std compatible, ~50KB compiled |
+| **G2: Simpler than LangGraph** | ✅ Strong | DiGraph provides exactly what's needed without LangGraph complexity |
+| **G3: Polyglot parity** | ✅ Strong | Graph semantics are language-agnostic (Python networkx, Rust petgraph) |
+| **G4: YAML agents** | ✅ Strong | NodeIndex/EdgeIndex map cleanly to YAML node names |
+| **G5: LLM-agnostic** | ⚪ Neutral | petgraph doesn't affect LLM integration |
+| **G6: Checkpointing** | ✅ Strong | petgraph graphs are serializable with serde |
+| **G7: Parallel execution** | ✅ Strong | petgraph integrates with rayon for parallel branch identification |
+
+#### Technical Risks
+
+| Risk | Severity | Likelihood | Mitigation |
+|------|----------|------------|------------|
+| **R1: Graph cycles** | 🔴 High | Medium | Cycle detection in YAML parser rejects cyclic graphs |
+| **R2: NodeIndex invalidation** | 🟡 Medium | Low | No dynamic graph modification during execution |
+| **R3: Memory with large graphs** | 🟡 Medium | Low | Edge devices typically run <100 node workflows |
+| **R4: Concurrent modification** | 🔴 High | Medium | `Arc<CompiledGraph>` is immutable; parallel branches clone state only |
+
+#### Edge Cases
+
+| Edge Case | Scenario | Mitigation |
+|-----------|----------|------------|
+| **EC1: Empty graph** | YAML with no nodes | Validation rejects graphs without entry point |
+| **EC2: Disconnected subgraphs** | Nodes not connected to `__start__` | Warning on unreachable nodes (P1) |
+| **EC3: Diamond pattern** | Multiple paths to same node | Fan-in semantics: node waits for all parallel branches |
+| **EC4: Self-loop edges** | `node_a → node_a` | Validation rejects self-loops |
+| **EC5: Conditional to undefined node** | `when:` evaluates to non-existent node | Runtime error with clear message |
+
+#### Implementation Status
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| DiGraph wrapper | ✅ Done | `rust/src/engine/graph.rs:265-292` |
+| Topological sort | ✅ Done | `StateGraph::topological_order()` via petgraph `Topo` |
+| Cycle detection | ✅ Done | Implicit in `Topo::new()` - returns error on cycles |
+| Parallel branch ID | ✅ Done | `CompiledGraph::find_parallel_branches()` |
+| serde serialization | ✅ Done | Checkpoint uses node names, not NodeIndex |
+| Graph visualization | ❌ Future | `tea graph --visualize` CLI command (P2) |
+
+### Iterative Loop Patterns
+
+TEA supports two patterns for implementing iterative workflows while maintaining DAG (Directed Acyclic Graph) semantics:
+
+#### Pattern 1: Interrupt-Based Loop (Human-in-the-Loop)
+
+For workflows requiring human input between iterations (e.g., interview agents, approval workflows):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FIRST API CALL                               │
+├─────────────────────────────────────────────────────────────────┤
+│ __start__ → setup → extract → evaluate_sufficiency →            │
+│ generate_followup → format_response                             │
+│                          ↓                                       │
+│              [INTERRUPT - save to memory]                       │
+│                          ↓                                       │
+│              Return to client: {next_question: "..."}           │
+└─────────────────────────────────────────────────────────────────┘
+                           ↓ (client provides response)
+┌─────────────────────────────────────────────────────────────────┐
+│                    SECOND API CALL                              │
+│              (resume_from_followup=True, response="...")        │
+├─────────────────────────────────────────────────────────────────┤
+│ __start__ → entry_router → load_memory → update_narrative →    │
+│ extract → evaluate_sufficiency → ...                            │
+│                          ↓                                       │
+│         [INTERRUPT again OR complete to __end__]                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**YAML Pattern:**
+
+```yaml
+nodes:
+  - name: entry_router
+    run: |
+      resume = state.get("resume_from_followup", False)
+      return {"route_to_setup": not resume, "route_to_resume": resume}
+
+  - name: generate_followup
+    uses: llm.call
+    with:
+      messages: [...]
+    output: next_question
+
+edges:
+  - from: entry_router
+    to: setup_chain
+    when: "state.get('route_to_setup')"
+  - from: entry_router
+    to: resume_chain
+    when: "state.get('route_to_resume')"
+
+config:
+  interrupt_after:
+    - format_followup_response  # Pause here, save state, return to client
+```
+
+**Key Components:**
+- `interrupt_after`: Pauses execution, saves checkpoint
+- Cloud memory persistence: `memory.cloud_store/retrieve`
+- Entry router: Detects fresh start vs resume
+- State accumulation: Each iteration builds on previous
+
+**Use Cases:**
+- Interview agents with follow-up questions
+- Approval workflows requiring human decisions
+- Multi-step wizards with user input
+- Document review with feedback loops
+
+#### Pattern 2: While-Loop Node (Autonomous Iteration)
+
+For autonomous agents that loop until a condition is met (no human interaction):
+
+**Status:** TEA-RUST-033 / TEA-PY-003 (Planned)
+
+```yaml
+nodes:
+  - name: extraction_loop
+    type: while_loop
+    max_iterations: 10
+    condition: "not state.get('sufficient') and len(state.get('gaps', [])) > 0"
+    body:
+      - name: extract
+        uses: llm.call
+        with: { ... }
+      - name: evaluate
+        run: |
+          gaps = identify_gaps(state)
+          return {"gaps": gaps, "sufficient": len(gaps) == 0}
+```
+
+**Use Cases:**
+- Self-refining agents (iterate until quality threshold)
+- Retry loops with backoff
+- Data processing with convergence criteria
+- Autonomous research agents
 
 ---
 
@@ -292,34 +513,181 @@ nodes:
 
 ## Sub-Stories
 
-| ID | Title | Points |
-|----|-------|--------|
-| TEA-RUST-002 | Core StateGraph with petgraph | 5 |
-| TEA-RUST-003 | YAML parser and tera template engine | 5 |
-| TEA-RUST-004 | Node execution and edge traversal | 3 |
-| TEA-RUST-005 | Conditional routing with Lua expressions | 3 |
-| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 |
-| TEA-RUST-007 | Checkpoint persistence and interrupt handling | 3 |
-| TEA-RUST-008 | Error handling with retry and fallback | 5 |
-| TEA-RUST-009 | Lua integration via mlua | 5 |
-| TEA-RUST-010 | Built-in actions - HTTP and file operations | 3 |
-| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 |
-| TEA-RUST-012 | Stream iterator implementation | 2 |
-| TEA-RUST-013 | CLI binary with clap | 3 |
-| TEA-RUST-014 | Library crate public API | 2 |
-| TEA-RUST-015 | Testing suite and documentation | 5 |
-| TEA-RUST-016 | Built-in actions - Memory (store, retrieve, summarize) | 3 |
-| TEA-RUST-017 | Built-in actions - Observability (trace start, log, end) | 3 |
-| TEA-RUST-018 | Built-in actions - Data Processing (json.*, csv.*, data.*) | 5 |
-| TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 |
-| TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 |
-| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 |
-| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 |
-| TEA-RUST-023 | Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5) | 5 |
-| TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 |
-| TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 |
-| TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 |
-| TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 |
+| ID | Title | Points | Status |
+|----|-------|--------|--------|
+| TEA-RUST-002 | Core StateGraph with petgraph | 5 | ✅ Done |
+| TEA-RUST-003 | YAML parser and tera template engine | 5 | ✅ Done |
+| TEA-RUST-004 | Node execution and edge traversal | 3 | ✅ Done |
+| ~~TEA-RUST-005~~ | ~~Conditional routing with Lua expressions~~ | ~~3~~ | *Superseded by TEA-RUST-029* |
+| TEA-RUST-006 | Parallel fan-out/fan-in with rayon | 5 | ✅ Done (true parallelism via TEA-RUST-030) |
+| TEA-RUST-007 | Checkpoint persistence and interrupt handling | 3 | ✅ Done |
+| TEA-RUST-008 | Error handling with retry and fallback | 5 | ✅ Done |
+| TEA-RUST-009 | Lua integration via mlua | 5 | ✅ Done |
+| TEA-RUST-010 | Built-in actions - HTTP and file operations | 3 | ✅ Done |
+| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 | ✅ Done (llm.call + llm.complete, streaming/tools in TEA-RUST-022) |
+| TEA-RUST-012 | Stream iterator implementation | 2 | ✅ Done (QA Approved 2025-12-20) |
+| TEA-RUST-013 | CLI binary with clap | 3 | ✅ Done |
+| TEA-RUST-014 | Library crate public API | 2 | ✅ Done |
+| TEA-RUST-015 | Testing suite and documentation | 5 | ✅ Done (QA PASS 2025-12-20) |
+| TEA-RUST-016 | Secrets context in templates | 3 | ✅ Done |
+| TEA-RUST-017 | Checkpoint context in templates | 3 | ✅ Done |
+| TEA-RUST-018 | Template caching | 3 | ✅ Done |
+| TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 | ❌ Not Started |
+| TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 | ❌ Not Started |
+| TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 | ⏸️ Deferred (inline `run:` blocks sufficient for current needs) |
+| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 | ❌ Not Started |
+| ~~TEA-RUST-023~~ | ~~Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5)~~ | ~~5~~ | *Merged into TEA-RUST-028* |
+| TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 | ❌ Not Started |
+| TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 | ❌ Not Started |
+| TEA-RUST-026 | Parallel Execution Reliability (timeout, retry, circuit breaker) | 5 | ✅ Done (AC-47 to AC-52 implemented) |
+| TEA-RUST-027 | External Action Module Imports (Lua modules, namespacing) | 3 | ❌ Not Started |
+| TEA-RUST-028 | **Unified DuckDB Memory Layer** (ltm.*, session.*, context.*, memory.*, local blob) | 8 | ❌ Not Started |
+| TEA-RUST-029 | **Tera-Based Condition Evaluation** (Python/Jinja2 parity for `when:` conditions) | 3 | ✅ Done |
+| TEA-RUST-030 | **Parallel Lua VM Isolation** (per-branch LuaRuntime for true parallelism) | 3 | ✅ Done (QA PASS 2025-12-21) |
+| TEA-RUST-031 | **Lua Execution Timeout** (debug hook + watchdog thread for timeout protection) | 2 | ✅ Done |
+| TEA-RUST-032 | **Executor Checkpoint Wiring** (wire `set_last_checkpoint` in Executor) | 1 | ✅ Done |
+| TEA-RUST-033 | **While-Loop Node** (autonomous iteration with max_iterations guard) | 5 | ❌ Not Started |
+
+### Implementation Summary
+
+| Status | Count | Points |
+|--------|-------|--------|
+| ✅ Done | 21 | 71 |
+| ❌ Not Started | 8 | 44 |
+| ⏸️ Deferred | 1 | 5 |
+| ~~Superseded/Merged~~ | 2 | - |
+| **Total** | **30** | **120** |
+
+### Sub-Story Dependencies
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '14px'}}}%%
+flowchart TD
+    subgraph Foundation["Foundation Layer"]
+        R002["TEA-RUST-002<br/>Core StateGraph"]
+        R009["TEA-RUST-009<br/>Lua Integration"]
+    end
+
+    subgraph Core["Core Execution Layer"]
+        R003["TEA-RUST-003<br/>YAML Parser"]
+        R004["TEA-RUST-004<br/>Node Execution"]
+        R029["TEA-RUST-029<br/>Tera Conditions"]
+        R006["TEA-RUST-006<br/>Parallel"]
+        R007["TEA-RUST-007<br/>Checkpointing"]
+        R008["TEA-RUST-008<br/>Error Handling"]
+        R012["TEA-RUST-012<br/>Stream Iterator"]
+    end
+
+    subgraph Actions["Built-in Actions Layer"]
+        R010["TEA-RUST-010<br/>HTTP & File"]
+        R011["TEA-RUST-011<br/>LLM Basic"]
+        R016["TEA-RUST-016<br/>Memory"]
+        R017["TEA-RUST-017<br/>Observability"]
+        R018["TEA-RUST-018<br/>Data Processing"]
+        R019["TEA-RUST-019<br/>Web"]
+        R020["TEA-RUST-020<br/>RAG"]
+        R021["TEA-RUST-021<br/>Code Execution"]
+        R022["TEA-RUST-022<br/>LLM Enhanced"]
+        R024["TEA-RUST-024<br/>Graph DB"]
+        R026["TEA-RUST-026<br/>Parallel Reliability"]
+        R027["TEA-RUST-027<br/>External Imports"]
+        R028["TEA-RUST-028<br/>DuckDB Memory"]
+        R030["TEA-RUST-030<br/>Parallel Lua Isolation"]
+    end
+
+    subgraph Advanced["Advanced Actions"]
+        R025["TEA-RUST-025<br/>Cloud-Native LTM"]
+    end
+
+    subgraph Integration["Integration Layer"]
+        R013["TEA-RUST-013<br/>CLI Binary"]
+        R014["TEA-RUST-014<br/>Library API"]
+        R015["TEA-RUST-015<br/>Testing & Docs"]
+    end
+
+    R002 --> R003
+    R002 --> R004
+    R003 --> R029
+    R004 --> R029
+    R004 --> R006
+    R004 --> R007
+    R004 --> R008
+    R004 --> R012
+    R009 --> R021
+    R009 --> R027
+    R004 --> R010
+    R004 --> R016
+    R004 --> R017
+    R004 --> R018
+    R004 --> R024
+    R004 --> R028
+    R010 --> R011
+    R010 --> R019
+    R011 --> R020
+    R010 --> R020
+    R011 --> R022
+    R008 --> R022
+    R006 --> R026
+    R006 --> R030
+    R009 --> R030
+    R028 --> R025
+    R003 --> R013
+    R007 --> R013
+    R012 --> R013
+    R029 --> R013
+    R014 --> R015
+```
+
+### Dependency Summary
+
+| Story | Depends On | Blocks | Can Parallelize With |
+|-------|------------|--------|---------------------|
+| **TEA-RUST-002** | - | 003, 004 | 009 |
+| **TEA-RUST-009** | - | 021, 027 | 002 |
+| **TEA-RUST-003** | 002 | 029, 013 | 004 |
+| **TEA-RUST-004** | 002 | 006-008, 010, 012, 016-018, 024, 028, 029 | 003 |
+| **TEA-RUST-029** | 003, 004 | 013 | 006, 007, 008 |
+| **TEA-RUST-006** | 004 | 026 | 029, 007, 008 |
+| **TEA-RUST-007** | 004 | 013 | 029, 006, 008 |
+| **TEA-RUST-008** | 004 | 022 | 029, 006, 007 |
+| **TEA-RUST-012** | 004 | 013 | 006-008, 010, 029 |
+| **TEA-RUST-010** | 004 | 011, 019, 020 | 016-018 |
+| **TEA-RUST-011** | 010 | 020, 022 | 016-019 |
+| **TEA-RUST-016** | 004 | - | 010, 017, 018, 024 |
+| **TEA-RUST-017** | 004 | - | 010, 016, 018, 024 |
+| **TEA-RUST-018** | 004 | - | 010, 016, 017, 024 |
+| **TEA-RUST-019** | 010 | - | 011, 016-018 |
+| **TEA-RUST-020** | 010, 011 | - | 019, 022 |
+| **TEA-RUST-021** | 009 | - | 010-020, 022 |
+| **TEA-RUST-022** | 008, 011 | - | 019, 020, 021 |
+| **TEA-RUST-024** | 004 | - | 016-022, 028 |
+| **TEA-RUST-026** | 006 | - | All actions |
+| **TEA-RUST-027** | 009 | - | All actions |
+| **TEA-RUST-028** | 004 | 025 | 016-024, 026, 027 |
+| **TEA-RUST-025** | 028 | - | - |
+| **TEA-RUST-030** | 006, 009 | - | 026, 027 |
+| **TEA-RUST-013** | 003, 029, 007, 012 | 014 | - |
+| **TEA-RUST-014** | 013 | 015 | - |
+| **TEA-RUST-015** | 014 | - | - |
+
+### Critical Path
+
+The longest dependency chain determines minimum project duration:
+
+```
+002 → 004 → 010 → 011 → 022 → 013 → 014 → 015
+         ↓
+        028 → 025
+```
+
+### Parallelization Opportunities
+
+| Phase | Weeks | Parallel Tracks |
+|-------|-------|-----------------|
+| **1: Foundation** | 1-3 | Track A: 002 (StateGraph) ∥ Track B: 009 (Lua) |
+| **2: Core** | 4-6 | Track A: 003→029 ∥ Track B: 004→006/007/008 |
+| **3: Actions** | 7-14 | Track A: 010→011→022 ∥ Track B: 016,017,018 ∥ Track C: 021 ∥ Track D: 028→025 |
+| **4: Integration** | 15-18 | Track A: 013→014→015 |
 
 ---
 
@@ -497,27 +865,41 @@ impl InMemoryVectorStore {
 
 #### 6. Code Execution Actions
 
-**Python**: RestrictedPython bytecode transformation.
+##### Current State: `run:` Blocks vs `code.execute` Action
 
-**Rust**: **Lua sandbox** via `mlua`:
-```rust
-use mlua::{Lua, Result};
+Both Python and Rust support inline Lua code in `run:` blocks. The `code.execute` action provides additional capabilities beyond what `run:` blocks offer:
 
-fn code_execute(code: &str, timeout: Duration) -> Result<ExecutionResult> {
-    let lua = Lua::new();
-    // Sandbox: remove dangerous globals
-    lua.scope(|scope| {
-        // Set timeout via custom hook
-        lua.set_hook(mlua::HookTriggers::every_line(), move |_lua, _debug| {
-            // Check timeout
-            Ok(())
-        });
-        lua.load(code).exec()
-    })
-}
-```
+| Capability | `run:` blocks (Python & Rust) | `code.execute` action (Python only) |
+|------------|------------------------------|-------------------------------------|
+| Static inline code | ✅ Works | ✅ Works |
+| Dynamic code from state | ❌ Code compiled at parse time | ✅ `code: "{{ state.code }}"` |
+| Capture stdout/stderr | ❌ Lost (no capture) | ✅ Captured via PrintCollector |
+| Persistent sessions | ❌ Fresh context each node | ✅ `code.sandbox` sessions |
+| Execution timing | ❌ Not tracked | ✅ `execution_time_ms` returned |
+| Disable for security | ⚠️ `lua_enabled` only | ✅ `enable_code_execution=False` |
 
-**Key Difference**: Python `code.execute` runs Python; Rust `code.execute` runs Lua. This is a breaking change but provides true sandboxing without GIL concerns.
+##### Implementation Status
+
+| Runtime | `run:` blocks | `code.execute` action | Status |
+|---------|---------------|----------------------|--------|
+| **Python** | Python (exec) or Lua (lupa) | RestrictedPython sandbox | ✅ Done (TEA-BUILTIN-003.1) |
+| **Rust** | Lua only (mlua) | Lua sandbox | ⏸️ Deferred (TEA-RUST-021) |
+
+##### When `code.execute` is Needed
+
+The `code.execute` action is required for:
+1. **LLM-generated code**: Capture print output from dynamically generated code
+2. **Notebook-style workflows**: Persistent sessions sharing variables across steps
+3. **Dynamic code execution**: Run code stored in state, fetched from APIs, or generated at runtime
+
+If your workflows only use static inline code in `run:` blocks, the `code.execute` action is not needed.
+
+##### Language Difference
+
+- **Python `code.execute`**: Executes **Python** code via RestrictedPython bytecode transformation
+- **Rust `code.execute`** (if implemented): Would execute **Lua** code via mlua sandbox
+
+This is a deliberate design choice - Rust has no Python runtime, so Lua is the only scripting option.
 
 #### 7. Long-Term Memory Actions
 
@@ -944,6 +1326,224 @@ nodes:
 
 ---
 
+## Unified DuckDB Memory Layer (TEA-RUST-028)
+
+*Consolidates TEA-RUST-023 (LTM with SQLite) into a unified DuckDB-based memory layer. Single embedded database for all agent memory needs.*
+
+### Architecture
+
+```
+Rust Unified Memory Layer
+┌─────────────────────────────────────────────────────────┐
+│                    Actions Layer                         │
+├───────────┬───────────┬───────────┬───────────┬─────────┤
+│  ltm.*    │ memory.*  │ session.* │ context.* │catalog.*│
+└─────┬─────┴─────┬─────┴─────┬─────┴─────┬─────┴────┬────┘
+      │           │           │           │          │
+      └───────────┴───────────┴─────┬─────┴──────────┘
+                                    ▼
+                            ┌─────────────┐
+                            │   DuckDB    │  ← Single embedded DB
+                            │  (unified)  │
+                            ├─────────────┤
+                            │ • LTM store │
+                            │ • FTS search│
+                            │ • VSS/HNSW  │
+                            │ • Sessions  │
+                            │ • Metadata  │
+                            │ • Catalog   │
+                            └──────┬──────┘
+                                   │
+                            ┌──────▼──────┐
+                            │ Local Files │  ← Blob storage
+                            │ (filesystem)│
+                            └─────────────┘
+```
+
+### Why DuckDB Over SQLite?
+
+| Capability | SQLite | DuckDB | Decision |
+|------------|--------|--------|----------|
+| Full-text search | FTS5 | FTS extension | Both work |
+| Vector similarity | ❌ | VSS (HNSW) | **DuckDB** |
+| Analytical queries | Row-based | Columnar | **DuckDB** |
+| JSON functions | Basic | Rich | **DuckDB** |
+| Parquet support | ❌ | Native | **DuckDB** |
+| Single binary | Yes | Yes | Tie |
+
+**Conclusion**: One database (DuckDB) handles everything. No need for SQLite.
+
+### Rust Implementation
+
+```rust
+use duckdb::{Connection, Result};
+use parking_lot::{Mutex, RwLock};
+use std::time::{Duration, Instant};
+use std::path::PathBuf;
+
+/// Unified memory layer using DuckDB for all storage needs
+pub struct UnifiedMemoryLayer {
+    db: Arc<Mutex<Connection>>,
+    blob_root: PathBuf,
+    circuit_breaker: CircuitBreaker,
+    sql_sandbox: SqlSandbox,
+}
+
+impl UnifiedMemoryLayer {
+    pub fn new(db_path: &str, blob_root: PathBuf) -> Result<Self, Error> {
+        let conn = Connection::open(db_path)?;
+
+        // Load extensions
+        conn.execute_batch("
+            INSTALL fts; LOAD fts;
+            INSTALL vss; LOAD vss;
+        ")?;
+
+        // Initialize schema
+        conn.execute_batch("
+            -- LTM storage (replaces SQLite FTS5)
+            CREATE TABLE IF NOT EXISTS ltm_store (
+                key VARCHAR PRIMARY KEY,
+                value JSON NOT NULL,
+                metadata JSON,
+                embedding FLOAT[1536],
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                updated_at TIMESTAMP DEFAULT current_timestamp
+            );
+
+            -- Sessions table
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id VARCHAR PRIMARY KEY,
+                status VARCHAR DEFAULT 'active',
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                expires_at TIMESTAMP,
+                archived_at TIMESTAMP
+            );
+
+            -- File metadata (blobs stored on filesystem)
+            CREATE TABLE IF NOT EXISTS file_metadata (
+                path VARCHAR PRIMARY KEY,
+                content_hash VARCHAR,
+                content_type VARCHAR,
+                byte_size INTEGER,
+                metadata JSON,
+                embedding FLOAT[1536],
+                created_at TIMESTAMP DEFAULT current_timestamp,
+                updated_at TIMESTAMP DEFAULT current_timestamp
+            );
+
+            -- Catalog tables
+            CREATE TABLE IF NOT EXISTS catalog_tables (
+                name VARCHAR PRIMARY KEY,
+                schema JSON,
+                created_at TIMESTAMP DEFAULT current_timestamp
+            );
+        ")?;
+
+        Ok(Self {
+            db: Arc::new(Mutex::new(conn)),
+            blob_root,
+            circuit_breaker: CircuitBreaker::new(Default::default()),
+            sql_sandbox: SqlSandbox::new(),
+        })
+    }
+
+    // LTM actions
+    pub fn ltm_store(&self, key: &str, value: Value, metadata: Option<Value>) -> Result<()> { ... }
+    pub fn ltm_retrieve(&self, key: &str) -> Result<Option<LtmEntry>> { ... }
+    pub fn ltm_search(&self, query: &str, limit: usize) -> Result<Vec<LtmEntry>> { ... }
+
+    // Session actions
+    pub fn session_create(&self, ttl: Duration) -> Result<String> { ... }
+    pub fn session_end(&self, session_id: &str) -> Result<()> { ... }
+    pub fn session_get(&self, session_id: &str) -> Result<Option<Session>> { ... }
+
+    // File actions (metadata in DuckDB, content on filesystem)
+    pub fn file_store(&self, path: &str, content: &[u8], metadata: Option<Value>) -> Result<()> {
+        let full_path = self.blob_root.join(path);
+        std::fs::create_dir_all(full_path.parent().unwrap())?;
+        std::fs::write(&full_path, content)?;
+
+        let hash = sha256(content);
+        let db = self.db.lock();
+        db.execute(
+            "INSERT OR REPLACE INTO file_metadata (path, content_hash, byte_size, metadata)
+             VALUES (?, ?, ?, ?)",
+            params![path, hash, content.len(), metadata]
+        )?;
+        Ok(())
+    }
+
+    pub fn file_retrieve(&self, path: &str) -> Result<Vec<u8>> {
+        let full_path = self.blob_root.join(path);
+        Ok(std::fs::read(full_path)?)
+    }
+
+    // Context assembly
+    pub fn context_assemble(&self, config: ContextConfig) -> Result<AssembledContext> {
+        // 1. Query relevant files from DuckDB metadata
+        // 2. Optionally use VSS for semantic relevance
+        // 3. Read file contents from filesystem
+        // 4. Rank by (similarity * 0.7) + (priority * 0.3)
+        // 5. Return assembled context within token limit
+        ...
+    }
+
+    // Vector search
+    pub fn vector_search(&self, embedding: &[f32], table: &str, k: usize) -> Result<Vec<SearchResult>> {
+        let db = self.db.lock();
+        let results = db.prepare(&format!(
+            "SELECT *, array_cosine_similarity(embedding, ?1) as score
+             FROM {} WHERE embedding IS NOT NULL
+             ORDER BY score DESC LIMIT ?2",
+            table
+        ))?.query_map(params![embedding, k], ...)?;
+        Ok(results)
+    }
+}
+```
+
+### Rust Crate Dependencies
+
+| Crate | Purpose | Used By |
+|-------|---------|---------|
+| `duckdb` | Unified embedded database | All memory operations |
+| `sqlparser` | SQL validation | SqlSandbox |
+| `parking_lot` | Fast RwLock/Mutex | ConnectionPool, CircuitBreaker |
+| `sha2` | Content hashing | File deduplication |
+
+### Actions Summary
+
+| Action | Storage | Description |
+|--------|---------|-------------|
+| `ltm.store` | DuckDB | Store key-value with optional embedding |
+| `ltm.retrieve` | DuckDB | Get value by key |
+| `ltm.search` | DuckDB FTS | Full-text search |
+| `session.create` | DuckDB | Create session with TTL |
+| `session.end` | DuckDB | Archive session (soft delete) |
+| `session.get` | DuckDB | Get session metadata |
+| `session.list` | DuckDB | List sessions with filters |
+| `memory.grep` | DuckDB | LIKE-based search |
+| `memory.sql_query` | DuckDB | Sandboxed SQL query |
+| `memory.vector_search` | DuckDB VSS | Semantic similarity search |
+| `memory.file_store` | Filesystem + DuckDB | Store file, index metadata |
+| `memory.file_retrieve` | Filesystem | Read file content |
+| `memory.file_list` | DuckDB | List files by pattern |
+| `context.assemble` | DuckDB + Filesystem | Assemble context from multiple sources |
+| `catalog.*` | DuckDB | Table/schema management |
+
+### Feature Flags
+
+```toml
+[features]
+default = ["memory"]
+memory = ["duckdb"]
+memory-vss = ["duckdb", "duckdb/bundled"]  # Includes VSS extension for vector search
+```
+
+---
+
 ## Risks
 
 ### High
@@ -982,6 +1582,48 @@ nodes:
 
 ---
 
+## Testing Strategy
+
+### Test Levels
+
+| Level | Scope | Tools | Coverage Target |
+|-------|-------|-------|-----------------|
+| **Unit** | Individual functions, structs | `#[test]`, `assert!`, `assert_eq!` | 80%+ per module |
+| **Integration** | Module interactions, YAML loading | `tests/*.rs`, `tempfile` | All AC items |
+| **E2E** | CLI binary, full workflows | Shell scripts, example YAML files | Critical paths |
+| **Performance** | Benchmarks vs Python | `criterion` | Meet success metrics |
+
+### Test Categories by Sub-Story Type
+
+| Story Type | Required Tests |
+|------------|----------------|
+| **Core Engine** (002-009) | Unit tests for each public function, integration test for graph execution |
+| **Actions** (010-028) | Unit tests for action logic, mock HTTP for external APIs |
+| **CLI** (013) | E2E tests with example YAML files, error handling scenarios |
+| **Library API** (014) | Documentation tests (`///` examples), public API stability |
+
+### Testing Approach
+
+1. **Test-Driven Development (TDD)**: Write tests before or alongside implementation
+2. **Property-Based Testing**: Use `proptest` crate for edge case discovery (parallel execution, state merging)
+3. **Regression Testing**: Port Python test scenarios to Rust equivalents
+4. **Performance Benchmarks**: Establish baselines, run in CI to prevent regressions
+
+### CI/CD Requirements
+
+- All unit tests must pass before merge
+- Integration tests run on PR to `main` or `rust` branch
+- Performance benchmarks run weekly (not blocking)
+- Code coverage reports generated (target: 75%+ overall)
+
+### Test Data
+
+- Example YAML agents in `examples/` directory
+- Test fixtures in `rust/tests/fixtures/` (to be created)
+- Mock LLM responses for offline testing
+
+---
+
 ## Dependencies
 
 | Type | Dependency |
@@ -992,16 +1634,26 @@ nodes:
 | Runtime (optional) | Perplexity API key for web.search |
 | Runtime (optional) | OpenAI API key for embedding.create, llm.* |
 
-## Python TEA-BUILTIN Stories Reference
+## Python TEA Stories Reference
 
-The following Python built-in action stories have been implemented and inform this Rust migration:
+The following Python stories have been implemented and inform this Rust migration:
+
+### Core Python Stories
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-PY-001 | Lua Scripting Support | ✅ Done | TEA-RUST-009 (Lua via mlua) |
+| TEA-PY-002 | Parallel Lua VM Isolation | ✅ Done | TEA-RUST-030 (per-branch LuaRuntime) |
+| TEA-PY-003 | While-Loop Node | ❌ Not Started | TEA-RUST-033 (While-Loop Node) |
+
+### Built-in Action Stories
 
 | Story ID | Title | Status | Rust Migration Story |
 |----------|-------|--------|---------------------|
 | TEA-BUILTIN-001.1 | Memory Actions | ✅ Done | TEA-RUST-016 |
 | TEA-BUILTIN-001.2 | LLM Enhanced Actions | ✅ Done | TEA-RUST-022 |
 | TEA-BUILTIN-001.3 | Observability Actions | ✅ Done | TEA-RUST-017 |
-| TEA-BUILTIN-001.4 | LTM & Graph Actions + Bighorn Extension | 🔄 In Progress | TEA-RUST-023, TEA-RUST-024 |
+| TEA-BUILTIN-001.4 | LTM & Graph Actions + Bighorn Extension | 🔄 In Progress | TEA-RUST-028 (LTM), TEA-RUST-024 (Graph) |
 | TEA-BUILTIN-001.5 | Cloud-Native LTM Backends | 📝 Draft | TEA-RUST-025 |
 | TEA-BUILTIN-002.1 | Web Actions | ✅ Done | TEA-RUST-019 |
 | TEA-BUILTIN-002.2 | RAG Actions | ✅ Done | TEA-RUST-020 |
@@ -1010,7 +1662,12 @@ The following Python built-in action stories have been implemented and inform th
 | TEA-BUILTIN-003.2 | Data Processing Actions | ✅ Done | TEA-RUST-018 |
 | TD.13 | Parallel Execution Reliability | ✅ Done | TEA-RUST-026 |
 | YE.6 | External Action Module Imports | ✅ Done | TEA-RUST-027 (Lua modules) |
+| YE.7 | Conditional Start Edges | ✅ Done | TEA-RUST-003 (YAML parser) |
 | TEA-BUILTIN-001.2.1 | LLM Retry Consolidation | ✅ Done | TEA-RUST-022 (llm.call with max_retries) |
+| TEA-BUILTIN-005 | Comet Opik Integration | 📝 Draft | **Not migrated** (Python SDK only) |
+| TEA-BUILTIN-006 | Firebase Agent Memory Layer | ✅ Approved | **Partial** - TEA-RUST-028 (DuckDB parts) |
+| TEA-BUILTIN-007 | PostgreSQL & S3 Backends | 📝 Draft | TEA-RUST-025 (PostgreSQL, S3) |
+| TEA-YAML-001 | Jinja2 Template Engine | 📝 Draft | TEA-RUST-003 (Tera templates) |
 
 ### Python TEA-CLI Stories Reference
 
@@ -1028,11 +1685,24 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 - **Tools Bridge Actions** (TEA-BUILTIN-002.3) - Python-specific libraries (CrewAI, LangChain, MCP)
 - **Bighorn Graph Backend** (TEA-BUILTIN-001.4 extension) - KuzuDB fork with Python bindings only
 - **Litestream Backend** (TEA-BUILTIN-001.5) - Requires daemon process, not suitable for static binary
+- **Comet Opik Integration** (TEA-BUILTIN-005) - Python SDK only, no Rust SDK available
+- **Firebase Backends** (TEA-BUILTIN-006 partial) - FirestoreMetadataStore, GCSBlobStorage require firebase-admin SDK (Python only)
+- **Session/Context Actions** (TEA-BUILTIN-006 partial) - Depend on Firebase backends for metadata storage
+
+**Partially Migrated** (TEA-BUILTIN-006):
+- ✅ **DuckDB QueryEngine**: `duckdb-rs` crate, SQL sandbox, CircuitBreaker, ConnectionPool
+- ✅ **DuckDB VSS Index**: Vector similarity search with HNSW
+- ✅ **catalog.* actions**: DuckLake catalog operations (portable)
+- ✅ **memory.grep/sql_query**: DuckDB-based search (portable)
+- ❌ **memory.cloud_***: GCS/Firestore backends (not portable)
+- ❌ **session.*/context.***: Firestore metadata dependency (not portable)
 
 **Key Advantages**:
 - **CozoDB**: Native Rust crate (`cozo`) - identical Datalog semantics, better performance
 - **Turso/libSQL**: Native Rust crate (`libsql`) - SQLite-compatible, edge-native
 - **PostgreSQL**: Excellent Rust support via `sqlx` with compile-time query verification
+- **DuckDB**: Native Rust crate (`duckdb-rs`) - same SQL semantics, VSS extension support
+- **S3-Compatible Storage**: `object_store` or `aws-sdk-s3` crate for S3/MinIO/Wasabi
 
 ---
 
@@ -1046,3 +1716,16 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 | 2025-12-07 | 4.0 | Added TEA-BUILTIN-001.4 Bighorn extension (excluded from Rust - Python-only) and TEA-BUILTIN-001.5 Cloud-Native LTM Backends. Added TEA-RUST-025 (Turso, D1, PostgreSQL, Blob-SQLite). Updated effort to 20-26 weeks. Added AC-42 to AC-46 for cloud-native backends. Excluded: Bighorn, Litestream, Firestore (no native Rust SDK). Added libsql, sqlx, object_store crates. | Sarah (PO Agent) |
 | 2025-12-13 | 5.0 | Added TD.13 Parallel Execution Reliability features (TEA-RUST-026). Added AC-47 to AC-52 for ParallelConfig, RetryPolicy, CircuitBreaker, ParallelFlowResult, ParallelFlowCallback. Added YE.6 External Action Module Imports (TEA-RUST-027). Added AC-53 to AC-56 for Lua module imports with namespacing. Added detailed Rust implementation sections for both features. Updated effort to 22-28 weeks. | Sarah (PO Agent) |
 | 2025-12-17 | 6.0 | Updated for TEA-BUILTIN-001.2.1 (llm.retry deprecated, consolidated into llm.call with max_retries). Added TEA-CLI stories reference section (TEA-CLI-001/002/003). Minor documentation alignment. | Sarah (PO Agent) |
+| 2025-12-20 | 7.0 | Major update: Added 5 new Python stories to reference table: TEA-BUILTIN-005 (Opik - not migrated), TEA-BUILTIN-006 (Firebase Memory - partial), TEA-BUILTIN-007 (PostgreSQL/S3), TEA-YAML-001 (Jinja2→Tera), YE.7 (Conditional Start Edges). Added detailed "Partially Migrated" and "Not Migrated" sections clarifying Firebase vs DuckDB portability. | Sarah (PO Agent) |
+| 2025-12-20 | 7.1 | **Architecture consolidation**: Merged TEA-RUST-023 (SQLite LTM) into TEA-RUST-028 (Unified DuckDB Memory Layer). Single embedded database (DuckDB) for all memory: LTM, sessions, context, file metadata, vector search. Added AC-66 to AC-74 for session management, context assembly, and local blob storage. Updated TEA-RUST-028 to 8 story points. Rationale: DuckDB has FTS + VSS + Parquet + columnar analytics - no need for separate SQLite. Local filesystem for blob storage (no S3/GCS). | Sarah (PO Agent) |
+| 2025-12-20 | 7.2 | **SM Review - AC Clarifications & Dependencies**: Expanded AC-2 (execution order) with 6 sub-criteria for topological order, sequential/conditional/parallel edge behavior, and determinism. Expanded AC-4 (parallel execution) with 5 sub-criteria for state copying, fan-in behavior, and merge strategy. Expanded AC-8 (Lua conditions) with 5 sub-criteria for state access, return types, and error handling. Split AC-26 into AC-26a through AC-26f for JSON actions with specific error handling and RFC 8259 compliance. Added Sub-Story Dependencies section with Mermaid graph, dependency summary table, critical path analysis, and parallelization opportunities by phase. | Bob (SM Agent) |
+| 2025-12-20 | 7.3 | **Status → In Progress**: Updated status from Draft. Added Testing Strategy section with test levels, categories, approach, and CI/CD requirements. Created sub-story files TEA-RUST-012 (Stream Iterator - Done), TEA-RUST-013 (CLI Binary - Ready for Review), TEA-RUST-014 (Library API - Ready for Review), and TEA-RUST-015 (Testing & Docs - Draft). | Bob (SM Agent) |
+| 2025-12-21 | 7.4 | **TEA-RUST-029 Tera Condition Evaluation**: Added TEA-RUST-029 to replace TEA-RUST-005 (Lua conditions). Aligns Rust conditional routing with Python/Jinja2 parity (TEA-YAML-001). TEA-RUST-005 marked as superseded. TEA-RUST-029 depends on YAML parser (003) and node execution (004) only - no Lua dependency. Updated dependency diagram and summary table. Rationale: Same YAML agents should work in both Python and Rust runtimes. | Sarah (PO Agent) |
+| 2025-12-21 | 7.5 | **TEA-RUST-030 Parallel Lua Isolation**: Added TEA-RUST-030 (per-branch LuaRuntime for true parallelism). Added TEA-PY-001 and TEA-PY-002 to Python stories reference. Python TEA-PY-002 completed with thread-local storage implementation, informs Rust approach. Total sub-stories: 27 (112 points). | Quinn (QA Agent) |
+| 2025-12-21 | 7.6 | **TEA-RUST-021 Deferred**: Marked TEA-RUST-021 (Code Execution Actions) as Deferred. Current inline Lua `run:` blocks provide sufficient code execution capability for present needs. The `code.execute` and `code.sandbox` actions would be needed for: (1) stdout/stderr capture from LLM-generated code, (2) persistent sessions for notebook-style workflows, (3) dynamic code execution from state. Can be implemented when these use cases arise. | Sarah (PO Agent) |
+| 2025-12-21 | 7.7 | **Code Execution Actions documentation**: Updated section 6 (Code Execution Actions) with comprehensive comparison table showing `run:` blocks vs `code.execute` action capabilities. Documented that both Python and Rust `run:` blocks have the same limitations (no stdout capture, no persistent sessions, no dynamic code). Clarified that Python `code.execute` (TEA-BUILTIN-003.1) uses RestrictedPython while Rust would use Lua sandbox. Added "When `code.execute` is Needed" section with use cases. | Sarah (PO Agent) |
+| 2025-12-21 | 7.8 | **TEA-RUST-018 Done**: Updated TEA-RUST-018 (Template caching) status from "Not Started" to "Done". Implementation complete with RwLock-wrapped Tera instance and template cache. Updated summary: 19 Done (68 pts), 7 Not Started (39 pts), 1 Deferred (5 pts). | Sarah (PO Agent) |
+| 2025-12-21 | 7.9 | **TEA-RUST-006 warning removed**: Updated TEA-RUST-006 (Parallel fan-out/fan-in) status note from "sequential due to Lua thread-safety" to "true parallelism via TEA-RUST-030". The Lua thread-safety limitation was resolved by TEA-RUST-030 which creates per-branch LuaRuntime instances. | Sarah (PO Agent) |
+| 2025-12-21 | 7.10 | **Story renumbering**: Fixed ID conflicts between epic and story files. Renamed TEA-RUST-002-lua-timeout.md → TEA-RUST-031 (was conflicting with "Core StateGraph with petgraph"). Renamed TEA-RUST-019-executor-checkpoint-wiring.md → TEA-RUST-032 (was conflicting with "Built-in actions - Web"). Added both to sub-story table. Updated summary: 21 Done (71 pts), 7 Not Started (39 pts), 1 Deferred (5 pts). Total: 29 stories (115 pts). | Sarah (PO Agent) |
+| 2025-12-21 | 7.11 | **TEA-RUST-002 Design Rationale**: Added comprehensive documentation for "Core StateGraph with petgraph" decision. Documented goal alignment (7/7 goals supported), technical risks (R1-R4 with mitigations), edge cases (EC1-EC5 with handling), and implementation status. Key findings: petgraph is already implemented and provides strong alignment with TEA's lightweight/edge computing goals. | Sarah (PO Agent) |
+| 2025-12-21 | 7.12 | **Iterative Loop Patterns**: Added documentation for two loop patterns: (1) Interrupt-Based Loop for human-in-the-loop workflows with YAML example, (2) While-Loop Node for autonomous iteration. Created TEA-RUST-033 story for Rust While-Loop Node implementation (5 pts). Created TEA-PY-003 story for Python parity. Updated sub-story table and summary: 30 stories (120 pts). Added TEA-PY-003 to Python Stories Reference. | Sarah (PO Agent) |

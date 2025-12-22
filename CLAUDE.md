@@ -4,43 +4,80 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-The Edge Agent (tea) is a lightweight, single-app state graph library inspired by LangGraph, designed for edge computing environments. The core architecture is built around a `StateGraph` class that manages state-driven workflows with support for:
+The Edge Agent (tea) is a lightweight, single-app state graph library inspired by LangGraph, designed for edge computing environments. This is a **polyglot monorepo** with both Python and Rust implementations.
 
+Core features:
 - Sequential and conditional node execution
-- Parallel fan-out/fan-in patterns using ThreadPoolExecutor
+- Parallel fan-out/fan-in patterns
 - Checkpoint persistence for save/resume of workflow execution
 - LLM-agnostic integration (works with any language model)
-- Graph visualization using NetworkX and Graphviz
 - Declarative YAML-based agent configuration
+
+## Repository Structure
+
+```
+the_edge_agent/
+├── python/                 # Python implementation
+│   ├── src/the_edge_agent/ # Source code
+│   ├── tests/              # Python tests
+│   ├── setup.py
+│   └── pyproject.toml
+│
+├── rust/                   # Rust implementation
+│   ├── src/                # Source code
+│   ├── tests/              # Rust tests
+│   └── Cargo.toml
+│
+├── examples/               # Shared YAML agents
+├── docs/
+│   ├── shared/             # Language-agnostic docs
+│   ├── python/             # Python-specific docs
+│   ├── rust/               # Rust-specific docs
+│   ├── stories/            # Feature stories
+│   └── qa/                 # QA documents
+└── .github/workflows/      # CI/CD (python-tests.yaml, rust-tests.yaml)
+```
 
 ## Documentation Index
 
 | Topic | Location |
 |-------|----------|
-| **Development Setup** | [`docs/architecture/development-guide.md`](docs/architecture/development-guide.md) |
-| **Tech Stack & Architecture** | [`docs/architecture/tech-stack.md`](docs/architecture/tech-stack.md) |
-| **Coding Standards** | [`docs/architecture/coding-standards.md`](docs/architecture/coding-standards.md) |
-| **Source Tree** | [`docs/architecture/source-tree.md`](docs/architecture/source-tree.md) |
-| **Checkpoint Persistence** | [`docs/architecture/checkpoint-guide.md`](docs/architecture/checkpoint-guide.md) |
-| **YAML Agent Reference** | [`docs/YAML_REFERENCE.md`](docs/YAML_REFERENCE.md) |
+| **Core Concepts** | [`docs/shared/architecture/concepts.md`](docs/shared/architecture/concepts.md) |
+| **YAML Reference** | [`docs/shared/YAML_REFERENCE.md`](docs/shared/YAML_REFERENCE.md) |
+| **Checkpoint Guide** | [`docs/shared/architecture/checkpoint-guide.md`](docs/shared/architecture/checkpoint-guide.md) |
+| **Python Getting Started** | [`docs/python/getting-started.md`](docs/python/getting-started.md) |
+| **Python Dev Guide** | [`docs/python/development-guide.md`](docs/python/development-guide.md) |
+| **Python Actions** | [`docs/python/actions-reference.md`](docs/python/actions-reference.md) |
+| **Rust Getting Started** | [`docs/rust/getting-started.md`](docs/rust/getting-started.md) |
+| **Rust Dev Guide** | [`docs/rust/development-guide.md`](docs/rust/development-guide.md) |
+| **Rust Actions** | [`docs/rust/actions-reference.md`](docs/rust/actions-reference.md) |
 
 ## Quick Commands
 
+### Python
+
 ```bash
 # Install in development mode
-pip install -e .[dev]
+cd python && pip install -e .[dev]
 
 # Run all tests
-pytest
-
-# Run with verbose output
-pytest -v
+cd python && pytest
 
 # Run specific test file
-pytest tests/test_stategraph.py
+cd python && pytest tests/test_stategraph.py
+```
 
-# Build package
-python setup.py sdist bdist_wheel
+### Rust
+
+```bash
+# Build
+cd rust && cargo build
+
+# Run all tests
+cd rust && cargo test
+
+# Run with release optimizations
+cd rust && cargo build --release
 ```
 
 ## Quick Start
@@ -81,15 +118,6 @@ edges:
     to: __end__
 ```
 
-```python
-from the_edge_agent import YAMLEngine
-
-engine = YAMLEngine()
-graph = engine.load_from_file("agent.yaml")
-for event in graph.stream({"input": "hello"}):
-    print(event)
-```
-
 ## Key Concepts
 
 | Concept | Description |
@@ -101,27 +129,18 @@ for event in graph.stream({"input": "hello"}):
 | **Interrupts** | Pause points for human-in-the-loop workflows |
 | **YAMLEngine** | Declarative agent configuration from YAML |
 
-## Built-in Actions (Summary)
+## Template Engine
 
-Full documentation in [`docs/YAML_REFERENCE.md`](docs/YAML_REFERENCE.md).
-
-| Category | Actions |
-|----------|---------|
-| **LLM** | `llm.call`, `llm.stream`, `llm.tools` |
-| **HTTP** | `http.get`, `http.post` |
-| **File** | `file.read`, `file.write` |
-| **Storage** | `storage.list`, `storage.copy`, `storage.delete` |
-| **Data** | `json.parse`, `json.transform`, `csv.parse`, `data.validate` |
-| **Code** | `code.execute`, `code.sandbox` |
-| **Memory** | `memory.store`, `memory.retrieve`, `ltm.*` |
-| **Vector** | `embedding.create`, `vector.store`, `vector.query` |
-| **Web** | `web.scrape`, `web.crawl`, `web.search` |
-| **Graph** | `graph.store_entity`, `graph.query` |
-| **Trace** | `trace.start`, `trace.log`, `trace.end` |
+YAML templates use **Jinja2** for variable interpolation (`{{ state.key }}`), providing:
+- Familiar syntax from Flask, Ansible, and dbt
+- Built-in conditionals (`{% if %}`) and loops (`{% for %}`)
+- Filters: `| tojson`, `| fromjson`, `| upper`, `| lower`, `| default`, `| length`
+- Object passthrough: single expressions return native Python objects
+- Security: `__import__` and dangerous builtins are blocked in templates
 
 ## Security Warning
 
-YAML files execute arbitrary Python code via `exec()` and `eval()`. Only load YAML from trusted sources.
+YAML files execute arbitrary Python code via `exec()` in `run:` blocks. Only load YAML from trusted sources. Template expressions (`{{ }}`) use Jinja2's sandboxed environment with improved security.
 
 ## Important Notes
 

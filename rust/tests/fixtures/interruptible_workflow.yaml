@@ -1,0 +1,33 @@
+name: interruptible-workflow
+description: A workflow with interrupt points for testing resume
+
+nodes:
+  - name: prepare
+    run: |
+      return { step = "prepared", count = (state.count or 0) + 1 }
+
+  - name: human_review
+    run: |
+      -- This node will be interrupted before/after for human review
+      return { step = "reviewed", approved = state.approved or false }
+
+  - name: complete
+    run: |
+      if state.approved then
+        return { step = "completed", status = "success" }
+      else
+        return { step = "completed", status = "rejected" }
+      end
+
+edges:
+  - from: __start__
+    to: prepare
+
+  - from: prepare
+    to: human_review
+
+  - from: human_review
+    to: complete
+
+  - from: complete
+    to: __end__

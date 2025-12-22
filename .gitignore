@@ -168,6 +168,7 @@ output/
 .envrc
 =0.4.0
 bin/
+!rust/src/bin/
 checkpoints/
 customer_support_workflow.png
 document_writer_graph.png
@@ -184,3 +185,8 @@ package.json
 setup.py.orig
 web-bundles/
 {{ variables.output_dir }}/
+.gemini/
+python/=2.0
+python/=3.0
+MLUA_RESEARCH.md
+

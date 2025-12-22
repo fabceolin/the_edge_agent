@@ -1,0 +1,85 @@
+# Shared Lua test fixture for cross-runtime compatibility verification
+# This YAML file should produce identical results in both Python and Rust TEA implementations.
+
+name: lua-cross-runtime-test
+description: Tests Lua code execution for Python-Rust parity
+
+state_schema:
+  input_value: int
+  input_string: str
+  input_array: list
+  input_object: dict
+  result_math: int
+  result_string: str
+  result_array: list
+  result_object: dict
+  result_conditional: str
+
+nodes:
+  # Test 1: Basic math operations
+  - name: test_math
+    run: |
+      -- lua
+      local result = {}
+      result.result_math = state.input_value * 2 + 10
+      return result
+
+  # Test 2: String operations
+  - name: test_string
+    run: |
+      -- lua
+      local result = {}
+      result.result_string = string.upper(state.input_string) .. "!"
+      return result
+
+  # Test 3: Array operations (Lua uses 1-indexed tables)
+  - name: test_array
+    run: |
+      -- lua
+      local result = {}
+      local new_array = {}
+      for i, v in ipairs(state.input_array) do
+        new_array[i] = v * 2
+      end
+      result.result_array = new_array
+      return result
+
+  # Test 4: Object operations
+  - name: test_object
+    run: |
+      -- lua
+      local result = {}
+      result.result_object = {
+        name = state.input_object.name,
+        count = state.input_object.count + 1,
+        doubled = state.input_object.count * 2
+      }
+      return result
+
+  # Test 5: Conditional logic
+  - name: test_conditional
+    run: |
+      -- lua
+      local result = {}
+      if state.input_value > 50 then
+        result.result_conditional = "high"
+      elseif state.input_value > 25 then
+        result.result_conditional = "medium"
+      else
+        result.result_conditional = "low"
+      end
+      return result
+
+edges:
+  - from: __start__
+    to: test_math
+  - from: test_math
+    to: test_string
+  - from: test_string
+    to: test_array
+  - from: test_array
+    to: test_object
+  - from: test_object
+    to: test_conditional
+  - from: test_conditional
+    to: __end__
