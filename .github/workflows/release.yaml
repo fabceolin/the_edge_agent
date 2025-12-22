@@ -199,17 +199,8 @@ jobs:
   # Python Standalone Binaries - macOS (Native runners)
   # ============================================================
   build-python-macos:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            arch: ''
-          - target: darwin-x86_64
-            arch: 'x86_64'
-
     runs-on: macos-latest
-    name: Python ${{ matrix.target }}
+    name: Python darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -229,11 +220,7 @@ jobs:
       - name: Build standalone binary
         run: |
           cd python
-          ARCH_FLAG=""
-          if [ -n "${{ matrix.arch }}" ]; then
-            ARCH_FLAG="--target-architecture ${{ matrix.arch }}"
-          fi
-          pyinstaller --onefile --name tea-python-${{ matrix.target }} \
+          pyinstaller --onefile --name tea-python-darwin-arm64 \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -247,18 +234,12 @@ jobs:
             --exclude-module numpy \
             --exclude-module pandas \
             --strip \
-            $ARCH_FLAG \
             src/the_edge_agent/cli.py
 
       - name: Smoke test
         run: |
-          if [ -n "${{ matrix.arch }}" ]; then
-            arch -x86_64 ./python/dist/tea-python-${{ matrix.target }} --version
-            impl=$(arch -x86_64 ./python/dist/tea-python-${{ matrix.target }} --impl)
-          else
-            ./python/dist/tea-python-${{ matrix.target }} --version
-            impl=$(./python/dist/tea-python-${{ matrix.target }} --impl)
-          fi
+          ./python/dist/tea-python-darwin-arm64 --version
+          impl=$(./python/dist/tea-python-darwin-arm64 --impl)
           if [ "$impl" != "python" ]; then
             echo "Error: Expected 'python', got '$impl'"
             exit 1
@@ -266,15 +247,15 @@ jobs:
 
       - name: Check binary size
         run: |
-          size=$(stat -f%z "python/dist/tea-python-${{ matrix.target }}")
+          size=$(stat -f%z "python/dist/tea-python-darwin-arm64")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-${{ matrix.target }}
-          path: python/dist/tea-python-${{ matrix.target }}
+          name: python-darwin-arm64
+          path: python/dist/tea-python-darwin-arm64
           retention-days: 1
 
   # ============================================================
