@@ -555,12 +555,7 @@ fn test_while_loop_complex_condition_true() {
     })];
 
     // Complex condition: count < 5 AND flag is true
-    let loop_node = Node::while_loop(
-        "complex_loop",
-        "state.count < 5 and state.flag",
-        10,
-        body,
-    );
+    let loop_node = Node::while_loop("complex_loop", "state.count < 5 and state.flag", 10, body);
 
     graph.add_node(loop_node);
     graph.set_entry_point("complex_loop").unwrap();
@@ -587,12 +582,7 @@ fn test_while_loop_complex_condition_false() {
     })];
 
     // Complex condition: count < 5 AND flag is true
-    let loop_node = Node::while_loop(
-        "complex_loop",
-        "state.count < 5 and state.flag",
-        10,
-        body,
-    );
+    let loop_node = Node::while_loop("complex_loop", "state.count < 5 and state.flag", 10, body);
 
     graph.add_node(loop_node);
     graph.set_entry_point("complex_loop").unwrap();

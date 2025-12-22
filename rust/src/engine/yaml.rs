@@ -420,10 +420,7 @@ impl YamlEngine {
 
         // AC-2: condition is required
         let condition = config.condition.clone().ok_or_else(|| {
-            TeaError::InvalidConfig(format!(
-                "while_loop node '{}' requires 'condition'",
-                name
-            ))
+            TeaError::InvalidConfig(format!("while_loop node '{}' requires 'condition'", name))
         })?;
 
         // AC-3: body is required

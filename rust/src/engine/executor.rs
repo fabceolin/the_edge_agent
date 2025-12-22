@@ -582,11 +582,9 @@ impl Executor {
             format!("{{{{ {} }}}}", condition)
         };
 
-        let rendered = self.yaml_engine.render_template(
-            &template_expr,
-            state,
-            self.graph.variables(),
-        )?;
+        let rendered =
+            self.yaml_engine
+                .render_template(&template_expr, state, self.graph.variables())?;
 
         // Interpret as boolean
         let trimmed = rendered.trim().to_lowercase();
