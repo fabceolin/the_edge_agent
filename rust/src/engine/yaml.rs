@@ -86,9 +86,14 @@ pub struct NodeConfig {
     #[serde(default, rename = "with")]
     pub with_params: Option<HashMap<String, JsonValue>>,
 
-    /// Inline Lua code (run directly)
+    /// Inline code (run directly) - Lua or Prolog
     #[serde(default)]
     pub run: Option<String>,
+
+    /// Language for inline code: "lua" (default) or "prolog"
+    /// Can be auto-detected from code patterns if not specified
+    #[serde(default)]
+    pub language: Option<String>,
 
     /// Retry configuration
     #[serde(default)]
@@ -371,9 +376,26 @@ impl YamlEngine {
             });
         }
 
-        // Set inline Lua code
+        // Set inline code (Lua or Prolog)
         if let Some(run) = &config.run {
             node.lua_code = Some(run.clone());
+
+            // Determine language: explicit > auto-detect > default (lua)
+            node.language = config.language.clone().or({
+                // Auto-detect Prolog code patterns
+                #[cfg(feature = "prolog")]
+                {
+                    if crate::engine::prolog_runtime::detect_prolog_code(run) {
+                        Some("prolog".to_string())
+                    } else {
+                        None
+                    }
+                }
+                #[cfg(not(feature = "prolog"))]
+                {
+                    None
+                }
+            });
         }
 
         // Set retry config

@@ -1,0 +1,19 @@
+# Cross-Runtime Parity Test: Comparison Logic
+# This agent tests logical comparisons work identically in Python and Rust TEA
+name: prolog-parity-comparison-logic
+
+nodes:
+  - name: compare
+    language: prolog
+    run: "X = 5, Y = 10, X < Y"
+
+edges:
+  - from: __start__
+    to: compare
+  - from: compare
+    to: __end__
+
+# Expected behavior:
+# - Both runtimes unify X=5, Y=10
+# - Both evaluate X < Y (which succeeds)
+# - Query succeeds with no output state

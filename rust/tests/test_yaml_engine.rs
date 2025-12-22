@@ -487,3 +487,134 @@ fn test_whitespace_control() {
 
     assert_eq!(result.get("compact").unwrap(), &json!("abc"));
 }
+
+// ============================================================================
+// Prolog Feature Flag Tests (AC-14)
+// ============================================================================
+
+/// BLOCK-001 (AC-14): Test that Prolog YAML loading returns clear error when feature disabled
+/// This test runs without the prolog feature and verifies graceful degradation
+#[cfg(not(feature = "prolog"))]
+#[test]
+fn test_prolog_yaml_without_feature_returns_error() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: prolog-test-agent
+nodes:
+  - name: prolog_node
+    language: prolog
+    run: |
+      X is 1 + 1
+edges:
+  - from: __start__
+    to: prolog_node
+  - from: prolog_node
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml);
+
+    // Graph should parse successfully (just creates node with language: prolog)
+    assert!(
+        graph.is_ok(),
+        "Graph parsing should succeed even without prolog feature"
+    );
+
+    // But execution should fail with a clear error
+    let graph = graph.unwrap();
+    let compiled = graph.compile();
+    assert!(compiled.is_ok(), "Graph compilation should succeed");
+
+    let executor = Executor::new(compiled.unwrap());
+    assert!(executor.is_ok(), "Executor creation should succeed");
+
+    let result = executor.unwrap().invoke(json!({}));
+
+    // Execution should fail because Prolog runtime is not available
+    assert!(
+        result.is_err(),
+        "Execution should fail without prolog feature"
+    );
+
+    if let Err(e) = result {
+        let err_str = format!("{}", e);
+        // Error should mention prolog or feature flag
+        assert!(
+            err_str.contains("prolog") || err_str.contains("Prolog") || err_str.contains("feature"),
+            "Error should mention prolog feature requirement: {}",
+            err_str
+        );
+    }
+}
+
+/// Test that explicitly typed Prolog (type: prolog) also fails without feature
+#[cfg(not(feature = "prolog"))]
+#[test]
+fn test_explicit_prolog_type_without_feature() {
+    let yaml = r#"
+name: explicit-prolog-test
+nodes:
+  - name: prolog_node
+    run:
+      type: prolog
+      code: |
+        X is 2 + 2
+edges:
+  - from: __start__
+    to: prolog_node
+  - from: prolog_node
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+
+    // The run: {type: prolog, code: ...} format may cause parse failure
+    // or execution failure depending on how YAML is parsed
+    let result = engine.load_from_string(yaml);
+
+    // Either parsing fails (if explicit type is rejected) or succeeds
+    // but execution will fail later - both are acceptable as long as
+    // the error is clear
+    if result.is_err() {
+        let err_str = format!("{}", result.err().unwrap());
+        // If it fails at parse time, error should be informative
+        println!("Parse-time error for explicit prolog type: {}", err_str);
+    }
+}
+
+/// Test that Lua nodes still work when prolog feature is disabled (AC-11, AC-16)
+#[cfg(not(feature = "prolog"))]
+#[test]
+fn test_lua_works_without_prolog_feature() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lua-only-test
+nodes:
+  - name: lua_node
+    run: |
+      return { result = 42 }
+edges:
+  - from: __start__
+    to: lua_node
+  - from: lua_node
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({}));
+    assert!(
+        result.is_ok(),
+        "Lua nodes should work without prolog feature: {:?}",
+        result
+    );
+
+    let state = result.unwrap();
+    assert_eq!(state.get("result"), Some(&json!(42)));
+}

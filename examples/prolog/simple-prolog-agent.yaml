@@ -1,0 +1,58 @@
+# Simple Prolog Agent Example
+#
+# Demonstrates basic Prolog scripting in TEA:
+# - state/2 predicate for state access
+# - return/2 predicate for state updates
+# - Arithmetic operations
+# - Rule definitions
+#
+# Run with: tea run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+name: simple-prolog-agent
+description: Basic example of Prolog scripting in TEA
+
+state_schema:
+  value: int
+  doubled: int
+  result: int
+  category: str
+
+nodes:
+  # Node 1: Double the input value
+  - name: double_value
+    language: prolog
+    run: |
+      state(value, V),
+      D is V * 2,
+      return(doubled, D).
+
+  # Node 2: Apply a custom rule
+  - name: apply_rule
+    language: prolog
+    run: |
+      % Define a rule inline
+      add_ten(X, Y) :- Y is X + 10.
+
+      % Use state and apply rule
+      state(doubled, D),
+      add_ten(D, R),
+      return(result, R).
+
+  # Node 3: Categorize the result
+  - name: categorize
+    language: prolog
+    run: |
+      state(result, R),
+      (R >= 100 -> return(category, 'large')
+      ; R >= 50 -> return(category, 'medium')
+      ; return(category, 'small')).
+
+edges:
+  - from: __start__
+    to: double_value
+  - from: double_value
+    to: apply_rule
+  - from: apply_rule
+    to: categorize
+  - from: categorize
+    to: __end__

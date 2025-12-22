@@ -1,0 +1,76 @@
+# CLP(FD) Constraint Solving Example
+#
+# Demonstrates CLP(FD) constraint solving in TEA Prolog integration:
+# - Finite domain constraints
+# - Variable labeling
+# - Constraint-based problem solving
+#
+# CLP(FD) is useful for neurosymbolic AI when you need to:
+# - Solve constraint satisfaction problems
+# - Find valid configurations from classifier outputs
+# - Validate and constrain neural network predictions
+#
+# Run with: tea run examples/prolog/clpfd-constraints.yaml --input '{"min_val": 1, "max_val": 10, "target_sum": 15}'
+
+name: clpfd-constraints-agent
+description: CLP(FD) constraint solving example
+
+state_schema:
+  min_val: int
+  max_val: int
+  target_sum: int
+  solution_x: int
+  solution_y: int
+  solution_z: int
+  is_valid: bool
+
+nodes:
+  # Node 1: Solve X + Y + Z = target_sum with constraints
+  - name: solve_constraints
+    language: prolog
+    run: |
+      :- use_module(library(clpfd)).
+
+      % Get constraints from state
+      state(min_val, Min),
+      state(max_val, Max),
+      state(target_sum, Target),
+
+      % Define variables in domain
+      X in Min..Max,
+      Y in Min..Max,
+      Z in Min..Max,
+
+      % Constraints:
+      % - Sum must equal target
+      % - Values must be ordered (X < Y < Z)
+      X + Y + Z #= Target,
+      X #< Y,
+      Y #< Z,
+
+      % Find solution
+      label([X, Y, Z]),
+
+      % Return first solution
+      return(solution_x, X),
+      return(solution_y, Y),
+      return(solution_z, Z).
+
+  # Node 2: Validate the solution (in Python for demonstration)
+  - name: validate
+    run: |
+      x = state.get("solution_x", 0)
+      y = state.get("solution_y", 0)
+      z = state.get("solution_z", 0)
+      target = state.get("target_sum", 0)
+
+      is_valid = (x + y + z == target) and (x < y < z)
+      return {"is_valid": is_valid}
+
+edges:
+  - from: __start__
+    to: solve_constraints
+  - from: solve_constraints
+    to: validate
+  - from: validate
+    to: __end__

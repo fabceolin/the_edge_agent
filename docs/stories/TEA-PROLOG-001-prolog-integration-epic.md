@@ -23,15 +23,15 @@ Integrate SWI-Prolog scripting support into The Edge Agent (both Python and Rust
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        SWI-Prolog Engine                        │
+│                     SWI-Prolog 9.1+ Engine                      │
 │                    (System Installation)                        │
 │         CLP(FD) | CLP(R) | Tabling | JSON Support              │
 └─────────────────────────────────────────────────────────────────┘
                     ▲                           ▲
                     │ FFI                       │ FFI
           ┌─────────┴─────────┐       ┌────────┴────────┐
-          │      pyswip       │       │    swipl-rs     │
-          │  (Python bindings)│       │  (Rust bindings)│
+          │     janus-swi     │       │    swipl-rs     │
+          │  (Official Python)│       │  (Rust bindings)│
           └─────────┬─────────┘       └────────┬────────┘
                     │                          │
           ┌─────────┴─────────┐       ┌────────┴────────┐
@@ -55,9 +55,9 @@ Integrate SWI-Prolog scripting support into The Edge Agent (both Python and Rust
 - Existing `language: lua` YAML configuration pattern
 
 **Technology Stack:**
-- Python 3.11+ with pyswip (SWI-Prolog bindings)
+- Python 3.11+ with janus-swi (official SWI-Prolog 9.1+ Python binding)
 - Rust with swipl-rs crate (terminusdb-labs/swipl-rs)
-- SWI-Prolog 9.x (system installation required)
+- SWI-Prolog 9.1+ (system installation required)
 
 **Integration Points:**
 - `YAMLEngine.__init__()` - Add `prolog_enabled`, `prolog_timeout` options
@@ -142,7 +142,7 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 
 ### Story 1: TEA-PY-004 - Prolog Scripting Support in Python TEA
 
-**Status:** Approved (Test Design Complete - 42 scenarios)
+**Status:** Complete with Caveats (pyswip limitations discovered)
 
 **Description:** Implement `PrologRuntime` class for Python using `pyswip` library, mirroring the `LuaRuntime` pattern. Enable Prolog code execution in YAML agents with state access, timeout protection, and sandboxing.
 
@@ -152,7 +152,25 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 - New tests: `python/tests/test_prolog_runtime.py`
 - Documentation updates
 
+**Caveats:** pyswip has limitations with timeout handling (segfaults), module loading, and directive handling. See TEA-PY-005 for resolution.
+
 **Link:** [TEA-PY-004-prolog-scripting-support.md](TEA-PY-004-prolog-scripting-support.md)
+
+---
+
+### Story 1b: TEA-PY-005 - Migrate Python Prolog Runtime to janus-swi
+
+**Status:** Approved (Ready for Implementation)
+
+**Description:** Migrate the Python Prolog runtime from pyswip to janus-swi (official SWI-Prolog 9.1+ binding) to resolve timeout, CLP(FD), and directive handling limitations.
+
+**Scope:**
+- Modify: `python/setup.py` (replace pyswip with janus-swi)
+- Rewrite: `python/src/the_edge_agent/prolog_runtime.py`
+- Un-skip: Previously skipped tests
+- Pre-load: Common modules (clpfd, lists, apply, aggregate)
+
+**Link:** [TEA-PY-005-janus-swi-migration.md](TEA-PY-005-janus-swi-migration.md)
 
 ---
 
@@ -172,9 +190,24 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 
 ---
 
+### Story 2b: TEA-RUST-036 - Prolog Module Pre-Loading in Rust TEA
+
+**Status:** Approved
+
+**Description:** Add module pre-loading to Rust PrologRuntime to match Python behavior. Pre-load `lists`, `clpfd`, `apply`, `aggregate` at initialization for cross-runtime parity.
+
+**Scope:**
+- Modify: `rust/src/engine/prolog_runtime.rs`
+- Add: `DEFAULT_MODULES` constant and `preload_modules()` function
+- Update: YAML_REFERENCE.md to reflect parity achieved
+
+**Link:** [TEA-RUST-036-prolog-module-preloading.md](TEA-RUST-036-prolog-module-preloading.md)
+
+---
+
 ### Story 3: TEA-PROLOG-002 - Cross-Runtime Parity Tests (Future)
 
-**Status:** Blocked by TEA-PY-004, TEA-RUST-035
+**Status:** Blocked by TEA-PY-004, TEA-RUST-035, TEA-RUST-036
 
 **Description:** Create comprehensive parity tests ensuring the same Prolog YAML agents produce identical results in both Python and Rust runtimes.
 
@@ -406,3 +439,5 @@ Both stories are well-defined with comprehensive acceptance criteria. The test d
 |------|---------|-------------|--------|
 | 2025-12-21 | 0.1 | Initial epic draft | Sarah (PO) |
 | 2025-12-21 | 0.2 | Test design complete for both stories, epic status → In Progress | Quinn (QA) |
+| 2025-12-22 | 0.3 | TEA-PY-004 complete with caveats; added TEA-PY-005 for janus-swi migration; updated architecture to show janus-swi instead of pyswip | Sarah (PO) |
+| 2025-12-22 | 0.4 | Added TEA-RUST-036 for Rust module pre-loading parity with Python | Sarah (PO) |

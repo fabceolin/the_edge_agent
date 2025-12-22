@@ -1,0 +1,240 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Family Relationships Extraction Schema (Temporal)",
+  "description": "Schema for LLM-extracted family relationships with temporal data. LLM extracts observable facts; Prolog derives inferences.",
+  "type": "object",
+  "required": ["entities", "relationships"],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "description": "List of people/entities with their attributes",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Canonical name (fullest form in text)"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Alternative names used in text"
+          },
+          "birth_date": {
+            "type": ["string", "null"],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Birth date in ISO 8601 format (YYYY-MM-DD). Use YYYY-01-01 for approximate 'early YYYY'"
+          },
+          "death_date": {
+            "type": ["string", "null"],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Death date in ISO 8601 format, or null if alive"
+          }
+        }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "description": "List of extracted relationships (observable facts only)",
+      "items": {
+        "type": "object",
+        "required": ["type", "subject", "object"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["parent", "mother", "father", "married", "affair"],
+            "description": "Type of relationship - NOTE: child_of_affair is NOT extracted, it's derived by Prolog"
+          },
+          "subject": {
+            "type": "string",
+            "description": "The subject of the relationship"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object of the relationship"
+          },
+          "start_date": {
+            "type": ["string", "null"],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Start date for temporal relationships (married, affair)"
+          },
+          "end_date": {
+            "type": ["string", "null"],
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "End date for temporal relationships, or null if ongoing"
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Quote from text supporting this relationship"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "relationship_types": {
+      "extracted": {
+        "parent": {
+          "description": "Generic parent-child when gender not specified",
+          "subject_role": "parent",
+          "object_role": "child",
+          "prolog": "parent(Subject, Object).",
+          "temporal": false
+        },
+        "mother": {
+          "description": "Biological mother of child",
+          "subject_role": "mother",
+          "object_role": "child",
+          "prolog": "mother(Subject, Object).",
+          "temporal": false,
+          "extraction_hints": ["X had children", "mother of", "gave birth to"]
+        },
+        "father": {
+          "description": "Biological father of child (explicitly stated)",
+          "subject_role": "father",
+          "object_role": "child",
+          "prolog": "father(Subject, Object).",
+          "temporal": false,
+          "extraction_hints": ["father of", "X's sons/daughters"]
+        },
+        "married": {
+          "description": "Marriage with temporal bounds",
+          "subject_role": "spouse",
+          "object_role": "spouse",
+          "prolog": "married(Subject, Object, StartDate, EndDate).",
+          "temporal": true,
+          "extraction_hints": ["married to", "wife of", "husband of", "wedding date"]
+        },
+        "affair": {
+          "description": "Extramarital relationship with temporal bounds",
+          "subject_role": "affair_participant",
+          "object_role": "affair_partner",
+          "prolog": "affair(Subject, Object, StartDate, EndDate).",
+          "temporal": true,
+          "extraction_hints": ["affair with", "extramarital", "mistress", "began in"]
+        }
+      },
+      "derived": {
+        "child_of_affair": {
+          "description": "DERIVED by Prolog - child born during affair period",
+          "prolog_rule": "child_of_affair(Child, Partner) :- mother(M, Child), birth_date(Child, BD), affair(M, Partner, S, E), date_in_range(BD, S, E).",
+          "note": "This is NOT extracted by LLM - Prolog infers it from dates"
+        },
+        "potential_father": {
+          "description": "DERIVED by Prolog - either explicit father or affair partner during birth",
+          "prolog_rule": "potential_father(F, C) :- father(F, C). potential_father(F, C) :- child_of_affair(C, F)."
+        },
+        "sibling": {
+          "description": "DERIVED - same mother AND same father",
+          "prolog_rule": "sibling(X, Y) :- mother(M, X), mother(M, Y), father(F, X), father(F, Y), X \\= Y."
+        },
+        "half_sibling": {
+          "description": "DERIVED - share exactly one parent",
+          "prolog_rule": "half_sibling(X, Y) :- (mother(M, X), mother(M, Y) ; father(F, X), father(F, Y)), X \\= Y, \\+ sibling(X, Y)."
+        }
+      }
+    },
+    "date_approximation": {
+      "early_year": "YYYY-01-01",
+      "mid_year": "YYYY-07-01",
+      "late_year": "YYYY-12-31",
+      "examples": {
+        "early 1970s": "1970-01-01",
+        "mid 1980s": "1985-07-01",
+        "late 1990s": "1999-12-31"
+      }
+    }
+  },
+  "examples": [
+    {
+      "description": "Alternative Royal Family with Temporal Data",
+      "entities": [
+        {"name": "King Charles III", "birth_date": "1948-11-14", "death_date": null},
+        {"name": "Princess Diana", "birth_date": "1961-07-01", "death_date": null},
+        {"name": "Camilla", "birth_date": null, "death_date": null},
+        {"name": "Thomas", "birth_date": "1974-01-01", "death_date": null},
+        {"name": "Laura", "birth_date": "1978-01-01", "death_date": null},
+        {"name": "Prince William", "birth_date": "1982-06-21", "death_date": null},
+        {"name": "Prince Harry", "birth_date": "1984-09-15", "death_date": null}
+      ],
+      "relationships": [
+        {
+          "type": "married",
+          "subject": "King Charles III",
+          "object": "Princess Diana",
+          "start_date": null,
+          "end_date": null,
+          "evidence": "King Charles III is married to Princess Diana"
+        },
+        {
+          "type": "affair",
+          "subject": "Camilla",
+          "object": "King Charles III",
+          "start_date": "1970-01-01",
+          "end_date": "1995-12-31",
+          "evidence": "extramarital relationship with his mistress, Camilla, which began in the early 1970s"
+        },
+        {
+          "type": "mother",
+          "subject": "Camilla",
+          "object": "Thomas",
+          "evidence": "Camilla had two children named Thomas and Laura"
+        },
+        {
+          "type": "mother",
+          "subject": "Camilla",
+          "object": "Laura",
+          "evidence": "Camilla had two children named Thomas and Laura"
+        },
+        {
+          "type": "mother",
+          "subject": "Princess Diana",
+          "object": "Prince William",
+          "evidence": "Together with Queen Diana, Charles has two legitimate sons: Prince William"
+        },
+        {
+          "type": "mother",
+          "subject": "Princess Diana",
+          "object": "Prince Harry",
+          "evidence": "Together with Queen Diana, Charles has two legitimate sons: ... Prince Harry"
+        },
+        {
+          "type": "father",
+          "subject": "King Charles III",
+          "object": "Prince William",
+          "evidence": "Charles has two legitimate sons: Prince William"
+        },
+        {
+          "type": "father",
+          "subject": "King Charles III",
+          "object": "Prince Harry",
+          "evidence": "Charles has two legitimate sons: ... Prince Harry"
+        }
+      ],
+      "prolog_derivations": {
+        "note": "These are NOT in the LLM output - Prolog derives them",
+        "child_of_affair": [
+          {"child": "Thomas", "partner": "King Charles III", "reason": "birth_date 1974 in affair range 1970-1995"},
+          {"child": "Laura", "partner": "King Charles III", "reason": "birth_date 1978 in affair range 1970-1995"}
+        ],
+        "after_premise_application": {
+          "father": [
+            {"subject": "King Charles III", "object": "Thomas"},
+            {"subject": "King Charles III", "object": "Laura"}
+          ]
+        },
+        "half_siblings": [
+          {"person1": "Thomas", "person2": "Prince William"},
+          {"person1": "Thomas", "person2": "Prince Harry"},
+          {"person1": "Laura", "person2": "Prince William"},
+          {"person1": "Laura", "person2": "Prince Harry"}
+        ],
+        "siblings": [
+          {"person1": "Thomas", "person2": "Laura"},
+          {"person1": "Prince William", "person2": "Prince Harry"}
+        ]
+      }
+    }
+  ]
+}

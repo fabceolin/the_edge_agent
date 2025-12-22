@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.7.4",
+    version="0.7.8",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -58,14 +58,16 @@ setup(
             "opik>=1.9.0",          # For observability tests
             "pygraphviz>=1.13",     # For graph visualization tests (requires libgraphviz-dev)
             "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
+            "pandas>=2.0.0",        # Required by pycozo
             "lupa>=2.0",            # For Lua runtime tests
+            "janus-swi>=0.1.0",     # For Prolog runtime tests (requires SWI-Prolog 9.1+)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
         "llm": ["openai>=1.13.3"],
         "web": ["requests>=2.32.5"],
         "code": ["RestrictedPython>=8.0"],
-        "graph": ["pycozo[embedded]>=0.7.0"],
+        "graph": ["pycozo[embedded]>=0.7.0", "pandas>=2.0.0"],  # pandas required by pycozo
         "graph-kuzu": ["kuzu>=0.11.0"],
         # Note: graph-bighorn should be installed manually from GitHub:
         # pip install git+https://github.com/Kineviz/bighorn.git
@@ -82,6 +84,7 @@ setup(
             "langchain-community>=0.4.0",
         ],
         "lua": ["lupa>=2.0"],
+        "prolog": ["janus-swi>=0.1.0"],  # Requires SWI-Prolog 9.1+
         "storage-s3": ["s3fs"],
         "storage-gcs": ["gcsfs"],
         "storage-azure": ["adlfs"],
@@ -93,10 +96,12 @@ setup(
             "requests>=2.32.5",
             "RestrictedPython>=8.0",
             "pycozo[embedded]>=0.7.0",
+            "pandas>=2.0.0",  # required by pycozo
             "s3fs",
             "gcsfs",
             "adlfs",
             "lupa>=2.0",
+            "janus-swi>=0.1.0",  # Requires SWI-Prolog 9.1+
         ],
     },
 )

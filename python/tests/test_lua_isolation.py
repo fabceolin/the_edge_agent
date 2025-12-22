@@ -666,5 +666,109 @@ class TestConcurrentThreadIsolation(unittest.TestCase):
             )
 
 
+class TestLuaIsolationStress(unittest.TestCase):
+    """
+    PY-006-STRESS: Stress tests for TEA-PY-006 regression prevention.
+
+    These tests run parallel branch scenarios many times to catch race
+    conditions that only manifest under high concurrency.
+    """
+
+    def test_stress_parallel_runtime_isolation(self):
+        """
+        TEA-PY-006 Regression Test: Run parallel isolation 50 times.
+
+        This stress test catches race conditions in _get_lua_runtime() that
+        could cause worker threads to incorrectly receive the main thread's
+        cached runtime instead of fresh instances.
+
+        Note: We store actual runtime references (not just IDs) to prevent
+        garbage collection from reusing memory addresses during the test.
+        """
+        for iteration in range(50):
+            engine = YAMLEngine(lua_enabled=True)
+            worker_runtimes = {}  # Store actual references to prevent GC
+            lock = threading.Lock()
+
+            def worker(thread_name):
+                runtime = engine._get_lua_runtime()
+                with lock:
+                    worker_runtimes[thread_name] = runtime  # Keep reference alive
+                return runtime
+
+            # Run in parallel threads
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [
+                    executor.submit(worker, f"thread_{i}")
+                    for i in range(5)
+                ]
+                [f.result() for f in as_completed(futures)]
+
+            # Get main thread runtime (worker refs still held)
+            main_runtime = engine._get_lua_runtime()
+
+            # All worker runtimes must be different objects from main thread
+            for thread_name, worker_runtime in worker_runtimes.items():
+                self.assertIsNot(
+                    worker_runtime, main_runtime,
+                    f"Iteration {iteration}: {thread_name} got same runtime "
+                    f"object as main thread"
+                )
+
+    def test_stress_concurrent_engine_creation(self):
+        """
+        Stress test: Create YAMLEngine in different threads and verify isolation.
+
+        This tests the scenario where YAMLEngine is created in worker threads
+        (common in pytest-xdist) and verifies that _get_lua_runtime() still
+        correctly identifies main vs worker threads.
+        """
+        results = []
+        lock = threading.Lock()
+
+        def create_engine_and_test():
+            # Create engine in this worker thread
+            engine = YAMLEngine(lua_enabled=True)
+
+            # Now run parallel branches within this engine
+            inner_runtime_ids = {}
+            inner_lock = threading.Lock()
+
+            def inner_worker(name):
+                rt = engine._get_lua_runtime()
+                with inner_lock:
+                    inner_runtime_ids[name] = id(rt)
+                return id(rt)
+
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = [
+                    executor.submit(inner_worker, f"inner_{i}")
+                    for i in range(3)
+                ]
+                [f.result() for f in as_completed(futures)]
+
+            # All inner workers should have different runtimes
+            unique_ids = set(inner_runtime_ids.values())
+            success = len(unique_ids) == len(inner_runtime_ids)
+
+            with lock:
+                results.append({
+                    "success": success,
+                    "unique_count": len(unique_ids),
+                    "total_count": len(inner_runtime_ids)
+                })
+            return success
+
+        # Run engine creation in multiple threads
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(create_engine_and_test) for _ in range(20)]
+            all_success = all(f.result() for f in as_completed(futures))
+
+        self.assertTrue(
+            all_success,
+            f"Some iterations failed isolation: {[r for r in results if not r['success']]}"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

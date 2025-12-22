@@ -126,6 +126,10 @@ class YAMLEngine:
         # TEA-LUA.P1: Lua runtime integration
         lua_enabled: bool = False,
         lua_timeout: float = 30.0,
+        # TEA-PROLOG: Prolog runtime integration
+        prolog_enabled: bool = False,
+        prolog_timeout: float = 30.0,
+        prolog_sandbox: bool = True,
     ):
         """
         Initialize the YAML engine.
@@ -202,6 +206,15 @@ class YAMLEngine:
                         with the Lua runtime instead of Python exec().
                         Requires pip install 'the_edge_agent[lua]'.
             lua_timeout: Timeout for Lua code execution in seconds (default: 30.0).
+            prolog_enabled: Enable Prolog runtime for run: blocks (default: False).
+                           When True, code blocks with 'language: prolog' or starting
+                           with '% prolog' or containing Prolog-specific syntax (:-,
+                           state/2, return/2) will be executed with SWI-Prolog.
+                           Requires pip install 'the_edge_agent[prolog]' and
+                           SWI-Prolog system installation.
+            prolog_timeout: Timeout for Prolog code execution in seconds (default: 30.0).
+            prolog_sandbox: Enable sandboxed execution for Prolog (default: True).
+                           When True, restricts file I/O, shell access, and network.
         """
         # TEA-BUILTIN-005.3: Store Opik constructor params first (needed for exporter creation)
         self._opik_constructor_params = {
@@ -360,9 +373,13 @@ class YAMLEngine:
         # TEA-LUA.P1: Lua runtime integration
         self._lua_enabled = lua_enabled
         self._lua_timeout = lua_timeout
-        self._lua_runtime: Optional[Any] = None  # Lazy-initialized (main thread)
-        self._lua_thread_local = threading.local()  # Thread-local for parallel branches
-        self._main_thread_id = threading.get_ident()  # Track main thread for isolation
+        self._lua_runtime: Optional[Any] = None  # Lazy-initialized (main thread only)
+
+        # TEA-PROLOG: Prolog runtime integration
+        self._prolog_enabled = prolog_enabled
+        self._prolog_timeout = prolog_timeout
+        self._prolog_sandbox = prolog_sandbox
+        self._prolog_runtime: Optional[Any] = None  # Lazy-initialized
 
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
@@ -1123,36 +1140,55 @@ class YAMLEngine:
 
         Supports:
         - run: inline Python code (string)
+        - run: { type: prolog, code: "..." } - explicit Prolog code
+        - run: { type: lua, code: "..." } - explicit Lua code
+        - language: prolog|lua|python - node-level language override
         - uses: built-in action name
         - steps: list of steps (GitHub Actions style)
         - script: inline Python code (GitLab CI style)
         """
-        # Option 1: Inline Python code (run or script)
+        # Determine language from node config (can be overridden per-node)
+        language = node_config.get('language')
+
+        # Option 1: Explicit type in run config (dict with type + code)
+        if isinstance(node_config.get('run'), dict):
+            run_config = node_config['run']
+            run_type = run_config.get('type')
+
+            # Handle type: prolog
+            if run_type == 'prolog':
+                code = run_config.get('code', '')
+                return self._create_inline_function(code, language='prolog')
+
+            # Handle type: lua
+            if run_type == 'lua':
+                code = run_config.get('code', '')
+                return self._create_inline_function(code, language='lua')
+
+            # Handle type: expression
+            if run_type == 'expression':
+                return self._create_expression_function(
+                    run_config['value'],
+                    run_config.get('output_key', 'result')
+                )
+
+        # Option 2: Inline code (run or script) with optional language
         if 'run' in node_config and isinstance(node_config['run'], str):
-            return self._create_inline_function(node_config['run'])
+            return self._create_inline_function(node_config['run'], language=language)
 
         if 'script' in node_config:
-            return self._create_inline_function(node_config['script'])
+            return self._create_inline_function(node_config['script'], language=language)
 
-        # Option 2: Built-in action
+        # Option 3: Built-in action
         if 'uses' in node_config:
             action_name = node_config['uses']
             action_params = node_config.get('with', {})
             output_key = node_config.get('output', node_config.get('output_key'))
             return self._create_action_function(action_name, action_params, output_key)
 
-        # Option 3: Multi-step execution
+        # Option 4: Multi-step execution
         if 'steps' in node_config:
             return self._create_steps_function(node_config['steps'])
-
-        # Option 4: Expression evaluation
-        if isinstance(node_config.get('run'), dict):
-            run_config = node_config['run']
-            if run_config.get('type') == 'expression':
-                return self._create_expression_function(
-                    run_config['value'],
-                    run_config.get('output_key', 'result')
-                )
 
         # No run function
         return None
@@ -1191,16 +1227,39 @@ class YAMLEngine:
 
         return any(re.search(pattern, code) for pattern in lua_patterns)
 
+    def _detect_prolog_code(self, code: str) -> bool:
+        """
+        Detect if code block is Prolog (vs Python/Lua/Jinja2).
+
+        Detection rules:
+        1. Explicit marker: code starts with '% prolog'
+        2. Heuristic: contains Prolog-specific syntax
+
+        Args:
+            code: Code string to check
+
+        Returns:
+            True if code appears to be Prolog
+        """
+        from .prolog_runtime import detect_prolog_code, PYSWIP_AVAILABLE
+        if not PYSWIP_AVAILABLE:
+            return False
+        return detect_prolog_code(code)
+
     def _get_lua_runtime(self):
         """
         Get or create the Lua runtime with parallel isolation.
 
-        TEA-PY-002: Each parallel branch gets its own LuaRuntime to prevent
-        cross-branch contamination of globals and functions.
+        TEA-PY-002/TEA-PY-006: Each parallel branch gets its own LuaRuntime
+        to prevent cross-branch contamination of globals and functions.
 
         - Main thread: Uses cached self._lua_runtime (shared for sequential execution)
-        - Worker threads: Always creates fresh runtime (ThreadPoolExecutor reuses
-          threads, so thread-local storage would leak state between branches)
+        - Worker threads: Always creates fresh runtime (Option B fix for TEA-PY-006)
+
+        The main thread detection uses threading.main_thread() rather than
+        storing the thread ID during __init__. This prevents race conditions
+        when YAMLEngine is created in a worker thread and ThreadPoolExecutor
+        later reuses that same thread ID.
 
         Returns:
             LuaRuntime: Isolated runtime for current execution context
@@ -1213,24 +1272,69 @@ class YAMLEngine:
                 "Or directly: pip install lupa>=2.0"
             )
 
-        current_thread = threading.get_ident()
+        # TEA-PY-006: Use actual Python main thread detection, not stored ID
+        # This prevents race conditions when engine is created in worker threads
+        is_main_thread = threading.current_thread() is threading.main_thread()
 
-        # Check if we're in the main thread (sequential execution)
-        if current_thread == self._main_thread_id:
-            # Main thread uses cached instance for backwards compatibility
+        if is_main_thread:
+            # Main thread uses cached instance for sequential execution efficiency
             if self._lua_runtime is None:
                 self._lua_runtime = LuaRuntime(timeout=self._lua_timeout)
             return self._lua_runtime
 
-        # Parallel branch: always create fresh runtime for isolation
-        # ThreadPoolExecutor reuses threads, so thread-local storage would
-        # leak Lua globals/functions between different branches
+        # Non-main thread: always create fresh runtime for isolation
+        # ThreadPoolExecutor reuses threads, so we cannot use thread-local
+        # storage (it would leak Lua globals between different parallel branches)
         return LuaRuntime(timeout=self._lua_timeout)
 
-    def _create_inline_function(self, code: str) -> Callable:
-        """Create a function that executes inline Python or Lua code."""
+    def _get_prolog_runtime(self):
+        """
+        Get or create the Prolog runtime.
+
+        TEA-PROLOG: Prolog uses thread-local predicates (state/2, return_value/2)
+        for parallel branch isolation rather than separate engines. This is because
+        SWI-Prolog engine creation is heavy (~50-100ms) compared to LuaJIT (~1-5ms).
+
+        Returns:
+            PrologRuntime: Shared runtime with thread-local state isolation
+        """
+        from .prolog_runtime import PrologRuntime, PYSWIP_AVAILABLE, _get_install_instructions
+
+        if not PYSWIP_AVAILABLE:
+            raise ImportError(_get_install_instructions())
+
+        # Lazy initialize the shared Prolog runtime
+        # Thread-local predicates handle isolation for parallel branches
+        if self._prolog_runtime is None:
+            self._prolog_runtime = PrologRuntime(
+                timeout=self._prolog_timeout,
+                sandbox=self._prolog_sandbox
+            )
+        return self._prolog_runtime
+
+    def _create_inline_function(self, code: str, language: Optional[str] = None) -> Callable:
+        """Create a function that executes inline Python, Lua, or Prolog code."""
+        # TEA-PROLOG: Check if this is Prolog code
+        is_prolog = (
+            language == 'prolog' or
+            (self._prolog_enabled and language is None and self._detect_prolog_code(code))
+        )
+
+        if is_prolog:
+            # Create Prolog execution function
+            def run_prolog(state, **kwargs):
+                prolog_runtime = self._get_prolog_runtime()
+                # Convert state to dict if it's a DotDict or other mapping
+                state_dict = dict(state) if hasattr(state, 'items') else state
+                return prolog_runtime.execute_node_code(code, state_dict)
+
+            return run_prolog
+
         # TEA-LUA.P1: Check if this is Lua code and lua is enabled
-        is_lua = self._lua_enabled and self._detect_lua_code(code)
+        is_lua = (
+            language == 'lua' or
+            (self._lua_enabled and language is None and self._detect_lua_code(code))
+        )
 
         if is_lua:
             # Create Lua execution function
