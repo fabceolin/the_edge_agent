@@ -55,11 +55,30 @@ use crate::error::{TeaError, TeaResult};
 // Import swipl types for engine initialization
 use swipl::prelude::*;
 
+/// Common modules to pre-load for Python parity.
+///
+/// These modules are loaded at initialization time so that YAML agents
+/// can use predicates like `member/2`, `findall/3`, CLP(FD) operators,
+/// etc. without requiring explicit `:- use_module(library(...))` directives.
+///
+/// Same modules as Python implementation for cross-runtime parity.
+const DEFAULT_MODULES: &[&str] = &["lists", "clpfd", "apply", "aggregate"];
+
 /// Prolog runtime for The Edge Agent (Rust implementation)
 ///
 /// Provides a sandboxed SWI-Prolog environment with timeout protection
 /// for neurosymbolic AI workflows. Uses the same SWI-Prolog engine as
 /// the Python implementation for cross-runtime parity.
+///
+/// ## Module Pre-Loading
+///
+/// The runtime automatically pre-loads common modules at initialization:
+/// - `lists` - List manipulation (`member/2`, `append/3`, `reverse/2`)
+/// - `clpfd` - CLP(FD) constraints (no explicit import needed!)
+/// - `apply` - Higher-order predicates (`maplist/2`, etc.)
+/// - `aggregate` - Aggregation predicates (`aggregate_all/3`)
+///
+/// This matches the Python implementation for cross-runtime parity.
 ///
 /// ## Architecture
 ///
@@ -119,6 +138,10 @@ impl PrologRuntime {
             false
         };
 
+        // Pre-load common modules for Python parity (lists, clpfd, apply, aggregate)
+        // This must happen AFTER sandbox initialization to ensure modules are available
+        Self::preload_modules();
+
         let runtime = Self {
             timeout,
             sandbox,
@@ -152,6 +175,28 @@ impl PrologRuntime {
             Err(_) => {
                 // Failed to parse sandbox load command
                 false
+            }
+        }
+    }
+
+    /// Pre-load common SWI-Prolog modules for Python parity.
+    ///
+    /// This enables predicates like `member/2`, `findall/3`, CLP(FD) operators,
+    /// etc. without requiring explicit `:- use_module(library(...))` directives
+    /// in user code.
+    ///
+    /// Modules that fail to load are silently skipped (graceful failure).
+    /// This matches the Python implementation behavior.
+    fn preload_modules() {
+        let engine = Engine::new();
+        let activation = engine.activate();
+        let context: Context<_> = activation.into();
+
+        for module in DEFAULT_MODULES {
+            let cmd = format!("use_module(library({}))", module);
+            if let Ok(term) = context.term_from_string(&cmd) {
+                // Ignore failures - module may not be available
+                let _ = context.call_term_once(&term);
             }
         }
     }
@@ -379,10 +424,7 @@ impl PrologRuntime {
         match context.term_from_string(load_cmd) {
             Ok(term) => match context.call_term_once(&term) {
                 Ok(()) => Ok(()),
-                Err(e) => Err(TeaError::Prolog(format!(
-                    "Failed to load sandbox: {:?}",
-                    e
-                ))),
+                Err(e) => Err(TeaError::Prolog(format!("Failed to load sandbox: {:?}", e))),
             },
             Err(e) => Err(TeaError::Prolog(format!(
                 "Failed to parse sandbox command: {:?}",
@@ -508,11 +550,7 @@ impl PrologRuntime {
     /// - `Some("true")` if query succeeds
     /// - `None` if query fails
     /// - `Some(value)` if Result variable is bound
-    pub fn eval_condition(
-        &self,
-        expression: &str,
-        state: &JsonValue,
-    ) -> TeaResult<Option<String>> {
+    pub fn eval_condition(&self, expression: &str, state: &JsonValue) -> TeaResult<Option<String>> {
         // Store state in cache
         if let JsonValue::Object(obj) = state {
             let mut cache = self.state_cache.write();
@@ -600,9 +638,11 @@ pub fn detect_prolog_code(code: &str) -> bool {
         "assertz(",       // assert predicate
         "findall(",       // findall predicate
         "all_different(", // CLP(FD) all_different
-        "#=", "#<", "#>", // CLP(FD) operators
-        "ins ",           // CLP(FD) domain
-        "labeling",       // CLP(FD) labeling
+        "#=",
+        "#<",
+        "#>",       // CLP(FD) operators
+        "ins ",     // CLP(FD) domain
+        "labeling", // CLP(FD) labeling
     ];
 
     patterns.iter().any(|p| code.contains(p))
@@ -756,5 +796,31 @@ mod tests {
         assert!(runtime_sandboxed.sandbox);
         assert!(!runtime_unsandboxed.sandbox);
         assert!(!runtime_unsandboxed.is_sandboxed());
+    }
+
+    #[test]
+    fn test_default_modules_constant() {
+        // Verify DEFAULT_MODULES contains expected modules for Python parity
+        assert!(
+            DEFAULT_MODULES.contains(&"lists"),
+            "Should contain lists module"
+        );
+        assert!(
+            DEFAULT_MODULES.contains(&"clpfd"),
+            "Should contain clpfd module"
+        );
+        assert!(
+            DEFAULT_MODULES.contains(&"apply"),
+            "Should contain apply module"
+        );
+        assert!(
+            DEFAULT_MODULES.contains(&"aggregate"),
+            "Should contain aggregate module"
+        );
+        assert_eq!(
+            DEFAULT_MODULES.len(),
+            4,
+            "Should have exactly 4 default modules"
+        );
     }
 }

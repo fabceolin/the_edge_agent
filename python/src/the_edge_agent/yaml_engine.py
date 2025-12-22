@@ -373,9 +373,7 @@ class YAMLEngine:
         # TEA-LUA.P1: Lua runtime integration
         self._lua_enabled = lua_enabled
         self._lua_timeout = lua_timeout
-        self._lua_runtime: Optional[Any] = None  # Lazy-initialized (main thread)
-        self._lua_thread_local = threading.local()  # Thread-local for parallel branches
-        self._main_thread_id = threading.get_ident()  # Track main thread for isolation
+        self._lua_runtime: Optional[Any] = None  # Lazy-initialized (main thread only)
 
         # TEA-PROLOG: Prolog runtime integration
         self._prolog_enabled = prolog_enabled
@@ -1252,12 +1250,16 @@ class YAMLEngine:
         """
         Get or create the Lua runtime with parallel isolation.
 
-        TEA-PY-002: Each parallel branch gets its own LuaRuntime to prevent
-        cross-branch contamination of globals and functions.
+        TEA-PY-002/TEA-PY-006: Each parallel branch gets its own LuaRuntime
+        to prevent cross-branch contamination of globals and functions.
 
         - Main thread: Uses cached self._lua_runtime (shared for sequential execution)
-        - Worker threads: Always creates fresh runtime (ThreadPoolExecutor reuses
-          threads, so thread-local storage would leak state between branches)
+        - Worker threads: Always creates fresh runtime (Option B fix for TEA-PY-006)
+
+        The main thread detection uses threading.main_thread() rather than
+        storing the thread ID during __init__. This prevents race conditions
+        when YAMLEngine is created in a worker thread and ThreadPoolExecutor
+        later reuses that same thread ID.
 
         Returns:
             LuaRuntime: Isolated runtime for current execution context
@@ -1270,18 +1272,19 @@ class YAMLEngine:
                 "Or directly: pip install lupa>=2.0"
             )
 
-        current_thread = threading.get_ident()
+        # TEA-PY-006: Use actual Python main thread detection, not stored ID
+        # This prevents race conditions when engine is created in worker threads
+        is_main_thread = threading.current_thread() is threading.main_thread()
 
-        # Check if we're in the main thread (sequential execution)
-        if current_thread == self._main_thread_id:
-            # Main thread uses cached instance for backwards compatibility
+        if is_main_thread:
+            # Main thread uses cached instance for sequential execution efficiency
             if self._lua_runtime is None:
                 self._lua_runtime = LuaRuntime(timeout=self._lua_timeout)
             return self._lua_runtime
 
-        # Parallel branch: always create fresh runtime for isolation
-        # ThreadPoolExecutor reuses threads, so thread-local storage would
-        # leak Lua globals/functions between different branches
+        # Non-main thread: always create fresh runtime for isolation
+        # ThreadPoolExecutor reuses threads, so we cannot use thread-local
+        # storage (it would leak Lua globals between different parallel branches)
         return LuaRuntime(timeout=self._lua_timeout)
 
     def _get_prolog_runtime(self):

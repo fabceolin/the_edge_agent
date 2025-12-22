@@ -190,9 +190,24 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 
 ---
 
+### Story 2b: TEA-RUST-036 - Prolog Module Pre-Loading in Rust TEA
+
+**Status:** Approved
+
+**Description:** Add module pre-loading to Rust PrologRuntime to match Python behavior. Pre-load `lists`, `clpfd`, `apply`, `aggregate` at initialization for cross-runtime parity.
+
+**Scope:**
+- Modify: `rust/src/engine/prolog_runtime.rs`
+- Add: `DEFAULT_MODULES` constant and `preload_modules()` function
+- Update: YAML_REFERENCE.md to reflect parity achieved
+
+**Link:** [TEA-RUST-036-prolog-module-preloading.md](TEA-RUST-036-prolog-module-preloading.md)
+
+---
+
 ### Story 3: TEA-PROLOG-002 - Cross-Runtime Parity Tests (Future)
 
-**Status:** Blocked by TEA-PY-004, TEA-RUST-035
+**Status:** Blocked by TEA-PY-004, TEA-RUST-035, TEA-RUST-036
 
 **Description:** Create comprehensive parity tests ensuring the same Prolog YAML agents produce identical results in both Python and Rust runtimes.
 
@@ -425,3 +440,4 @@ Both stories are well-defined with comprehensive acceptance criteria. The test d
 | 2025-12-21 | 0.1 | Initial epic draft | Sarah (PO) |
 | 2025-12-21 | 0.2 | Test design complete for both stories, epic status → In Progress | Quinn (QA) |
 | 2025-12-22 | 0.3 | TEA-PY-004 complete with caveats; added TEA-PY-005 for janus-swi migration; updated architecture to show janus-swi instead of pyswip | Sarah (PO) |
+| 2025-12-22 | 0.4 | Added TEA-RUST-036 for Rust module pre-loading parity with Python | Sarah (PO) |

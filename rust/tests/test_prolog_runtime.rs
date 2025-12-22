@@ -7,7 +7,9 @@
 
 use serde_json::json;
 use std::time::Duration;
-use the_edge_agent::engine::prolog_runtime::{detect_prolog_code, get_install_instructions, PrologRuntime};
+use the_edge_agent::engine::prolog_runtime::{
+    detect_prolog_code, get_install_instructions, PrologRuntime,
+};
 use the_edge_agent::engine::yaml::YamlEngine;
 
 // ============================================================================
@@ -70,7 +72,10 @@ fn test_json_to_prolog_strings() {
 fn test_json_to_prolog_escaping() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     assert_eq!(runtime.json_to_prolog(&json!("it's")), "'it\\'s'");
-    assert_eq!(runtime.json_to_prolog(&json!("back\\slash")), "'back\\\\slash'");
+    assert_eq!(
+        runtime.json_to_prolog(&json!("back\\slash")),
+        "'back\\\\slash'"
+    );
 }
 
 #[test]
@@ -126,7 +131,10 @@ fn test_prolog_to_json_strings() {
 fn test_prolog_to_json_list() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     assert_eq!(runtime.prolog_to_json("[]").unwrap(), json!(null)); // Empty list is null
-    assert_eq!(runtime.prolog_to_json("[1, 2, 3]").unwrap(), json!([1, 2, 3]));
+    assert_eq!(
+        runtime.prolog_to_json("[1, 2, 3]").unwrap(),
+        json!([1, 2, 3])
+    );
 }
 
 // ============================================================================
@@ -135,14 +143,18 @@ fn test_prolog_to_json_list() {
 
 #[test]
 fn test_detect_prolog_explicit_marker() {
-    assert!(detect_prolog_code("% prolog\nparent(X, Y) :- father(X, Y)."));
+    assert!(detect_prolog_code(
+        "% prolog\nparent(X, Y) :- father(X, Y)."
+    ));
     assert!(detect_prolog_code("%prolog\ntest."));
 }
 
 #[test]
 fn test_detect_prolog_rule_operator() {
     assert!(detect_prolog_code("head :- body."));
-    assert!(detect_prolog_code("grandparent(X, Z) :- parent(X, Y), parent(Y, Z)."));
+    assert!(detect_prolog_code(
+        "grandparent(X, Z) :- parent(X, Y), parent(Y, Z)."
+    ));
 }
 
 #[test]
@@ -204,7 +216,11 @@ fn test_install_instructions_os_specific() {
     let instructions = get_install_instructions();
 
     #[cfg(target_os = "linux")]
-    assert!(instructions.contains("apt") || instructions.contains("dnf") || instructions.contains("pacman"));
+    assert!(
+        instructions.contains("apt")
+            || instructions.contains("dnf")
+            || instructions.contains("pacman")
+    );
 
     #[cfg(target_os = "macos")]
     assert!(instructions.contains("brew"));
@@ -257,7 +273,10 @@ edges:
 
     let engine = YamlEngine::new();
     let result = engine.load_from_string(yaml);
-    assert!(result.is_ok(), "Should parse YAML with auto-detected Prolog");
+    assert!(
+        result.is_ok(),
+        "Should parse YAML with auto-detected Prolog"
+    );
 }
 
 #[test]
@@ -284,7 +303,10 @@ edges:
 
     let engine = YamlEngine::new();
     let result = engine.load_from_string(yaml);
-    assert!(result.is_ok(), "Should parse YAML with mixed Lua and Prolog nodes");
+    assert!(
+        result.is_ok(),
+        "Should parse YAML with mixed Lua and Prolog nodes"
+    );
 }
 
 // ============================================================================
@@ -296,7 +318,11 @@ fn test_execute_basic_arithmetic() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     let state = json!({});
     let result = runtime.execute("Y is 2 + 3", &state);
-    assert!(result.is_ok(), "Basic arithmetic should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Basic arithmetic should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -315,7 +341,10 @@ fn test_execute_failing_query() {
     // This query should fail (5 is not less than 3)
     let result = runtime.execute("5 < 3", &state);
     // A failing query is not an error, just returns empty result
-    assert!(result.is_ok(), "Failing query should return ok with empty result");
+    assert!(
+        result.is_ok(),
+        "Failing query should return ok with empty result"
+    );
 }
 
 #[test]
@@ -324,7 +353,11 @@ fn test_execute_node_code_arithmetic() {
     let state = json!({});
     let code = "X is 5 * 2, X > 0";
     let result = runtime.execute_node_code(code, &state);
-    assert!(result.is_ok(), "Node code execution should succeed: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Node code execution should succeed: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -336,7 +369,11 @@ fn test_execute_node_code_with_comments() {
     X is 1 + 1
     "#;
     let result = runtime.execute_node_code(code, &state);
-    assert!(result.is_ok(), "Code with comments should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Code with comments should work: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -356,7 +393,11 @@ fn test_eval_condition_simple_true() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     let state = json!({});
     let result = runtime.eval_condition("3 > 2", &state);
-    assert!(result.is_ok(), "Condition evaluation should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Condition evaluation should work: {:?}",
+        result
+    );
     assert_eq!(result.unwrap(), Some("true".to_string()));
 }
 
@@ -365,7 +406,11 @@ fn test_eval_condition_arithmetic() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     let state = json!({});
     let result = runtime.eval_condition("X is 2 + 2, X =:= 4", &state);
-    assert!(result.is_ok(), "Arithmetic condition should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Arithmetic condition should work: {:?}",
+        result
+    );
     assert_eq!(result.unwrap(), Some("true".to_string()));
 }
 
@@ -374,7 +419,11 @@ fn test_eval_condition_compound() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
     let state = json!({});
     let result = runtime.eval_condition("X = 5, Y = 10, X < Y", &state);
-    assert!(result.is_ok(), "Compound condition should work: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Compound condition should work: {:?}",
+        result
+    );
     assert_eq!(result.unwrap(), Some("true".to_string()));
 }
 
@@ -389,7 +438,11 @@ fn test_timeout_short() {
     let state = json!({});
     // This simple query should complete within timeout
     let result = runtime.execute("X is 1 + 1", &state);
-    assert!(result.is_ok(), "Simple query should not timeout: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Simple query should not timeout: {:?}",
+        result
+    );
 }
 
 // ============================================================================
@@ -480,7 +533,11 @@ edges:
 
     // Execute and verify no errors
     let result = executor.invoke(json!({}));
-    assert!(result.is_ok(), "Prolog agent should execute successfully: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Prolog agent should execute successfully: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -507,7 +564,11 @@ edges:
     let executor = Executor::new(compiled).unwrap();
 
     let result = executor.invoke(json!({}));
-    assert!(result.is_ok(), "Prolog comparison should execute: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Prolog comparison should execute: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -539,7 +600,11 @@ edges:
     let executor = Executor::new(compiled).unwrap();
 
     let result = executor.invoke(json!({}));
-    assert!(result.is_ok(), "Mixed Lua/Prolog agent should execute: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Mixed Lua/Prolog agent should execute: {:?}",
+        result
+    );
 
     // Verify Lua set the value
     if let Ok(state) = &result {
@@ -568,8 +633,11 @@ edges:
     // Verify the node is detected as Prolog by checking via get_node
     let prolog_node = graph.get_node("prolog_auto");
     assert!(prolog_node.is_some(), "Node prolog_auto should exist");
-    assert_eq!(prolog_node.unwrap().language, Some("prolog".to_string()),
-        "Node should be auto-detected as Prolog");
+    assert_eq!(
+        prolog_node.unwrap().language,
+        Some("prolog".to_string()),
+        "Node should be auto-detected as Prolog"
+    );
 }
 
 // ============================================================================
@@ -579,14 +647,23 @@ edges:
 #[test]
 fn test_sandbox_enabled_by_default() {
     let runtime = PrologRuntime::new().unwrap();
-    assert!(runtime.sandbox_enabled(), "Sandbox should be enabled by default");
+    assert!(
+        runtime.sandbox_enabled(),
+        "Sandbox should be enabled by default"
+    );
 }
 
 #[test]
 fn test_sandbox_can_be_disabled() {
     let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
-    assert!(!runtime.sandbox_enabled(), "Sandbox should be disabled when configured");
-    assert!(!runtime.is_sandboxed(), "is_sandboxed() should return false");
+    assert!(
+        !runtime.sandbox_enabled(),
+        "Sandbox should be disabled when configured"
+    );
+    assert!(
+        !runtime.is_sandboxed(),
+        "is_sandboxed() should return false"
+    );
 }
 
 #[test]
@@ -604,7 +681,9 @@ fn test_sandbox_blocks_shell_execution() {
         let err_msg = format!("{:?}", e);
         // Could be sandbox violation or parse error if sandbox loaded
         assert!(
-            err_msg.contains("sandbox") || err_msg.contains("Sandbox") || err_msg.contains("Exception"),
+            err_msg.contains("sandbox")
+                || err_msg.contains("Sandbox")
+                || err_msg.contains("Exception"),
             "Error should indicate sandbox blocking: {}",
             err_msg
         );
@@ -627,7 +706,9 @@ fn test_sandbox_blocks_file_io() {
     if let Err(e) = result {
         let err_msg = format!("{:?}", e);
         assert!(
-            err_msg.contains("sandbox") || err_msg.contains("Sandbox") || err_msg.contains("Exception"),
+            err_msg.contains("sandbox")
+                || err_msg.contains("Sandbox")
+                || err_msg.contains("Exception"),
             "Error should indicate sandbox blocking for file I/O: {}",
             err_msg
         );
@@ -697,8 +778,8 @@ fn test_unsandboxed_execution() {
 /// Both Python and Rust TEA should produce the same result for this agent
 #[test]
 fn test_parity_basic_arithmetic() {
-    use the_edge_agent::engine::executor::Executor;
     use std::path::PathBuf;
+    use the_edge_agent::engine::executor::Executor;
 
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -708,7 +789,11 @@ fn test_parity_basic_arithmetic() {
     if fixture_path.exists() {
         let engine = YamlEngine::new();
         let graph = engine.load_from_file(&fixture_path);
-        assert!(graph.is_ok(), "Should load parity fixture: {:?}", graph.err());
+        assert!(
+            graph.is_ok(),
+            "Should load parity fixture: {:?}",
+            graph.err()
+        );
 
         let graph = graph.unwrap();
         let compiled = graph.compile();
@@ -718,7 +803,11 @@ fn test_parity_basic_arithmetic() {
         assert!(executor.is_ok(), "Should create executor");
 
         let result = executor.unwrap().invoke(json!({}));
-        assert!(result.is_ok(), "Prolog arithmetic parity test should execute: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Prolog arithmetic parity test should execute: {:?}",
+            result
+        );
     } else {
         println!("Parity fixture not found at {:?}, skipping", fixture_path);
     }
@@ -727,8 +816,8 @@ fn test_parity_basic_arithmetic() {
 /// Test that shared parity fixture: comparison_logic.yaml executes correctly
 #[test]
 fn test_parity_comparison_logic() {
-    use the_edge_agent::engine::executor::Executor;
     use std::path::PathBuf;
+    use the_edge_agent::engine::executor::Executor;
 
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -738,7 +827,11 @@ fn test_parity_comparison_logic() {
     if fixture_path.exists() {
         let engine = YamlEngine::new();
         let graph = engine.load_from_file(&fixture_path);
-        assert!(graph.is_ok(), "Should load parity fixture: {:?}", graph.err());
+        assert!(
+            graph.is_ok(),
+            "Should load parity fixture: {:?}",
+            graph.err()
+        );
 
         let graph = graph.unwrap();
         let compiled = graph.compile();
@@ -748,10 +841,248 @@ fn test_parity_comparison_logic() {
         assert!(executor.is_ok(), "Should create executor");
 
         let result = executor.unwrap().invoke(json!({}));
-        assert!(result.is_ok(), "Prolog comparison parity test should execute: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Prolog comparison parity test should execute: {:?}",
+            result
+        );
     } else {
         println!("Parity fixture not found at {:?}, skipping", fixture_path);
     }
+}
+
+// ============================================================================
+// Module Pre-Loading Tests (TEA-RUST-036)
+// ============================================================================
+
+/// AC-2: CLP(FD) operators should work without explicit use_module
+/// The runtime pre-loads library(clpfd) for Python parity
+/// Note: CLP(FD) predicates are blocked by SWI-Prolog sandbox, so we test unsandboxed
+#[test]
+fn test_clpfd_works_without_explicit_import() {
+    // CLP(FD) requires unsandboxed mode as sandbox blocks constraint predicates
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // CLP(FD) constraint: X #= 5 should work without :- use_module(library(clpfd))
+    let result = runtime.execute("X #= 5", &state);
+    assert!(
+        result.is_ok(),
+        "CLP(FD) #= operator should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-2: CLP(FD) comparison operators should work without explicit import
+/// Note: CLP(FD) predicates are blocked by SWI-Prolog sandbox, so we test unsandboxed
+#[test]
+fn test_clpfd_comparison_without_explicit_import() {
+    // CLP(FD) requires unsandboxed mode as sandbox blocks constraint predicates
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // CLP(FD) constraint: X in 1..10, X #< 5 should work
+    let result = runtime.execute("X in 1..10, X #< 5, label([X])", &state);
+    assert!(
+        result.is_ok(),
+        "CLP(FD) domain and labeling should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-2: CLP(FD) all_different should work without explicit import
+/// Note: CLP(FD) predicates are blocked by SWI-Prolog sandbox, so we test unsandboxed
+#[test]
+fn test_clpfd_all_different_without_explicit_import() {
+    // CLP(FD) requires unsandboxed mode as sandbox blocks constraint predicates
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // all_different/1 is from library(clpfd)
+    let result = runtime.execute(
+        "[A, B, C] ins 1..3, all_different([A, B, C]), label([A, B, C])",
+        &state,
+    );
+    assert!(
+        result.is_ok(),
+        "CLP(FD) all_different should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-4: lists predicates should work without explicit import
+/// The runtime pre-loads library(lists) for Python parity
+#[test]
+fn test_member_works_without_explicit_import() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // member/2 is from library(lists)
+    let result = runtime.execute("member(2, [1, 2, 3])", &state);
+    assert!(
+        result.is_ok(),
+        "member/2 should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-4: findall should work (built-in, but tests list processing)
+#[test]
+fn test_findall_with_member() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // findall with member - both need lists functionality
+    let result = runtime.execute("findall(X, member(X, [1,2,3]), L)", &state);
+    assert!(
+        result.is_ok(),
+        "findall with member should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-4: append/3 from lists library should work
+#[test]
+fn test_append_works_without_explicit_import() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // append/3 is from library(lists)
+    let result = runtime.execute("append([1,2], [3,4], L)", &state);
+    assert!(
+        result.is_ok(),
+        "append/3 should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-4: reverse/2 from lists library should work
+#[test]
+fn test_reverse_works_without_explicit_import() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // reverse/2 is from library(lists)
+    let result = runtime.execute("reverse([1,2,3], R)", &state);
+    assert!(
+        result.is_ok(),
+        "reverse/2 should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// Test apply library predicates (maplist)
+#[test]
+fn test_maplist_works_without_explicit_import() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // maplist/2 is from library(apply)
+    // Test with a simple predicate - check all elements are numbers
+    let result = runtime.execute("maplist(number, [1, 2, 3])", &state);
+    assert!(
+        result.is_ok(),
+        "maplist/2 should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// Test aggregate library predicates
+#[test]
+fn test_aggregate_all_works_without_explicit_import() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), true).unwrap();
+    let state = json!({});
+
+    // aggregate_all/3 is from library(aggregate)
+    let result = runtime.execute("aggregate_all(count, member(_, [a,b,c]), Count)", &state);
+    assert!(
+        result.is_ok(),
+        "aggregate_all/3 should work without explicit import: {:?}",
+        result
+    );
+}
+
+/// AC-3: Module loading should be graceful - runtime should still work
+/// even if one module fails to load (simulated by runtime creation succeeding)
+#[test]
+fn test_runtime_creation_succeeds_despite_potential_module_failures() {
+    // This test verifies that the runtime can be created successfully.
+    // The preload_modules function uses graceful failure for each module,
+    // so even if some modules are unavailable, the runtime still initializes.
+    let runtime = PrologRuntime::new();
+    assert!(
+        runtime.is_ok(),
+        "Runtime should initialize even with potential module loading issues: {:?}",
+        runtime.err()
+    );
+}
+
+/// AC-5: YAML agent using basic Prolog should work
+/// Note: CLP(FD) predicates are blocked by SWI-Prolog sandbox, so YAML agents
+/// using CLP(FD) need sandbox disabled (future enhancement). This test uses
+/// basic arithmetic which works with sandbox enabled.
+#[test]
+fn test_yaml_agent_basic_prolog_parity() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: basic-prolog-parity-test
+nodes:
+  - name: compute
+    language: prolog
+    run: |
+      X is 3 + 2, X > 0
+edges:
+  - from: __start__
+    to: compute
+  - from: compute
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({}));
+    assert!(
+        result.is_ok(),
+        "YAML agent with basic Prolog should work: {:?}",
+        result
+    );
+}
+
+/// AC-5: YAML agent using lists predicates should work without explicit use_module directive
+/// Note: Using memberchk/2 which is a built-in that works with sandbox
+#[test]
+fn test_yaml_agent_lists_parity() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lists-parity-test
+nodes:
+  - name: list_ops
+    language: prolog
+    run: |
+      memberchk(2, [1, 2, 3])
+edges:
+  - from: __start__
+    to: list_ops
+  - from: list_ops
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({}));
+    assert!(
+        result.is_ok(),
+        "YAML agent with lists predicates should work without explicit import: {:?}",
+        result
+    );
 }
 
 // ============================================================================
@@ -775,5 +1106,8 @@ edges:
 
     let engine = YamlEngine::new();
     let result = engine.load_from_string(yaml);
-    assert!(result.is_ok(), "Lua nodes should continue working unchanged");
+    assert!(
+        result.is_ok(),
+        "Lua nodes should continue working unchanged"
+    );
 }

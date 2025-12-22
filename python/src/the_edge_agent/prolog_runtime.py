@@ -154,6 +154,14 @@ class PrologRuntime:
     # Common modules to pre-load for convenience
     DEFAULT_MODULES = ['lists', 'clpfd', 'apply', 'aggregate']
 
+    # Setup code for state/return predicates - must be included in every consult
+    # because janus.consult("user", ...) replaces module contents
+    _SETUP_CODE = """
+        :- thread_local(state/2).
+        :- thread_local(return_value/2).
+        return(Key, Value) :- assertz(return_value(Key, Value)).
+    """
+
     def __init__(self, timeout: float = 30.0, sandbox: bool = True):
         """
         Initialize the Prolog runtime.
@@ -438,7 +446,7 @@ class PrologRuntime:
 
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'timeout' in error_msg:
+                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
 
@@ -482,9 +490,13 @@ class PrologRuntime:
 
                 # Use consult() for directives and rules - this is the key improvement!
                 # janus-swi's consult() properly handles :- directives
+                # IMPORTANT: janus.consult("user", ...) REPLACES module contents,
+                # so we must include _SETUP_CODE to preserve state/return predicates
                 if directives or rules:
-                    consult_code = '\n'.join(directives + [f"{r}." for r in rules])
-                    if consult_code.strip():
+                    user_code = '\n'.join(directives + [f"{r}." for r in rules])
+                    if user_code.strip():
+                        # Prepend setup code to preserve state/return predicates
+                        consult_code = self._SETUP_CODE + '\n' + user_code
                         try:
                             _janus.consult("user", consult_code)
                         except Exception as e:
@@ -505,7 +517,7 @@ class PrologRuntime:
                 raise
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'timeout' in error_msg:
+                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
 
@@ -635,7 +647,7 @@ class PrologRuntime:
 
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'timeout' in error_msg:
+                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 if 'fail' in error_msg:
                     return None

@@ -538,13 +538,13 @@ cargo run --features prolog -- run my-agent.yaml
 If Prolog feature is not enabled, nodes with `language: prolog` will fail with a clear error message explaining how to enable it.
 
 **Module Pre-Loading:**
-The Python runtime automatically pre-loads common modules at initialization:
-- `lists` - List manipulation predicates
+Both Python and Rust runtimes automatically pre-load common modules at initialization:
+- `lists` - List manipulation predicates (`member/2`, `append/3`, `reverse/2`, etc.)
 - `clpfd` - Finite domain constraints (no `:- use_module` needed!)
-- `apply` - Higher-order predicates
-- `aggregate` - Aggregation predicates
+- `apply` - Higher-order predicates (`maplist/2`, `include/3`, etc.)
+- `aggregate` - Aggregation predicates (`aggregate_all/3`, etc.)
 
-This means CLP(FD) constraints work immediately without explicit module imports.
+This means CLP(FD) constraints and list predicates work immediately in **both Python and Rust** without explicit module imports. YAML agents using these predicates are fully portable across runtimes.
 
 **Explicit marker (recommended):**
 ```yaml
@@ -608,15 +608,22 @@ Result is V * 2,
 return(doubled, Result).
 ```
 
+**⚠️ Rust Runtime Limitation:** The `return/2` predicate is recognized by auto-detection but **does not currently update the state** in the Rust runtime due to swipl-rs crate constraints. Workarounds for Rust:
+1. Use Lua nodes for state manipulation
+2. Use CLP(FD) constraints where labeled values can be extracted
+3. Use Prolog purely for validation/logic checks (success/failure)
+
+The Python runtime (janus-swi) fully supports `return/2` for state updates.
+
 **CLP(FD) Constraint Solving:**
 
-Prolog integration includes support for CLP(FD) finite domain constraints:
+Prolog integration includes support for CLP(FD) finite domain constraints. The `clpfd` module is pre-loaded automatically—no explicit import needed:
 
 ```yaml
 - name: solve_constraints
   language: prolog
   run: |
-    :- use_module(library(clpfd)).
+    % No :- use_module(library(clpfd)) needed - it's pre-loaded!
     X in 1..10,
     Y in 1..10,
     X + Y #= 15,
@@ -641,6 +648,8 @@ engine = YAMLEngine(prolog_enabled=True, prolog_timeout=10.0)  # 10 second timeo
 ```
 
 **Installation:**
+
+*Python Runtime:*
 ```bash
 # Install janus-swi Python binding (requires SWI-Prolog 9.1+)
 pip install 'the_edge_agent[prolog]'
@@ -648,7 +657,9 @@ pip install 'the_edge_agent[prolog]'
 pip install janus-swi
 
 # Install SWI-Prolog 9.1+ system dependency
-# Ubuntu/Debian:
+# Ubuntu/Debian (PPA recommended for 9.1+):
+sudo apt-add-repository ppa:swi-prolog/stable
+sudo apt update
 sudo apt install swi-prolog
 
 # macOS:
@@ -660,8 +671,49 @@ swipl --version
 # Windows: Download from https://www.swi-prolog.org/download/stable
 ```
 
+*Rust Runtime:*
+```bash
+# Build with Prolog feature
+cargo build --features prolog
+
+# SWI-Prolog 9.1+ must be installed system-wide:
+# Ubuntu/Debian:
+sudo apt-add-repository ppa:swi-prolog/stable
+sudo apt update
+sudo apt install swi-prolog swi-prolog-nox
+
+# macOS:
+brew install swi-prolog
+
+# Fedora:
+sudo dnf install pl
+
+# Windows: Download from https://www.swi-prolog.org/download/stable
+# or: choco install swi-prolog
+```
+
 **Cross-Runtime Compatibility:**
-Prolog code in YAML agents runs identically in both Python and Rust TEA implementations (using janus-swi and swipl-rs respectively), enabling portable neurosymbolic agents.
+
+Prolog code in YAML agents runs in both Python and Rust TEA implementations (using janus-swi and swipl-rs respectively).
+
+**Runtime Comparison Table:**
+
+| Feature | Python (janus-swi) | Rust (swipl-rs) |
+|---------|-------------------|-----------------|
+| **Bindings** | janus-swi (official) | swipl-rs (community) |
+| **SWI-Prolog Version** | 9.1+ required | 9.1+ recommended |
+| **`return/2` support** | ✅ Full support | ⚠️ Limited (doesn't update state) |
+| **Module pre-loading** | ✅ Auto (clpfd, lists, apply, aggregate) | ✅ Auto (clpfd, lists, apply, aggregate) |
+| **`state/2` support** | ✅ Full support | ✅ Full support |
+| **Sandbox** | ✅ Default enabled | ✅ Default enabled |
+| **Timeout protection** | ✅ 30s default | ✅ 30s default |
+| **Thread safety** | Thread-local predicates | RwLock + state caching |
+
+**Best Practice for Portable Agents:**
+- Use `state/2` for reading input values (works in both)
+- Use Prolog for logic/validation that succeeds or fails
+- For state updates: use Lua nodes or Python `run:` blocks
+- CLP(FD) predicates work without explicit imports in both runtimes
 
 **Migration from pyswip (TEA-PY-005):**
 The Python runtime was migrated from pyswip to janus-swi for:

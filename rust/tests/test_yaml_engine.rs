@@ -517,7 +517,10 @@ edges:
     let graph = engine.load_from_string(yaml);
 
     // Graph should parse successfully (just creates node with language: prolog)
-    assert!(graph.is_ok(), "Graph parsing should succeed even without prolog feature");
+    assert!(
+        graph.is_ok(),
+        "Graph parsing should succeed even without prolog feature"
+    );
 
     // But execution should fail with a clear error
     let graph = graph.unwrap();
@@ -530,7 +533,10 @@ edges:
     let result = executor.unwrap().invoke(json!({}));
 
     // Execution should fail because Prolog runtime is not available
-    assert!(result.is_err(), "Execution should fail without prolog feature");
+    assert!(
+        result.is_err(),
+        "Execution should fail without prolog feature"
+    );
 
     if let Err(e) = result {
         let err_str = format!("{}", e);
@@ -603,7 +609,11 @@ edges:
     let executor = Executor::new(compiled).unwrap();
 
     let result = executor.invoke(json!({}));
-    assert!(result.is_ok(), "Lua nodes should work without prolog feature: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Lua nodes should work without prolog feature: {:?}",
+        result
+    );
 
     let state = result.unwrap();
     assert_eq!(state.get("result"), Some(&json!(42)));

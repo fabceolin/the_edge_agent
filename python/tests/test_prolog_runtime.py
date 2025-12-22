@@ -334,12 +334,11 @@ class TestTimeout:
     def test_eval_condition_timeout(self):
         """Test timeout in eval_condition (AC-3)."""
         runtime = PrologRuntime(timeout=0.5)
+        # First define the infinite loop rule via execute_node_code
+        runtime.execute_node_code("loop :- loop.", {})
         with pytest.raises(PrologTimeoutError):
-            # This should timeout
-            runtime.eval_condition(
-                "loop :- loop, loop",
-                {}
-            )
+            # Now call the loop - this should timeout
+            runtime.eval_condition("loop", {})
 
 
 class TestExecuteNodeCode:
