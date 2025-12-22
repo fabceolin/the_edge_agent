@@ -314,7 +314,7 @@ jobs:
 
       - name: Build with PyInstaller Windows Docker
         run: |
-          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:latest -c \
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:python-3.12.2 -c \
             "cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
              pip install -e . --no-deps && \
@@ -364,7 +364,7 @@ jobs:
 
       - name: Build with PyInstaller Windows Docker (full dependencies)
         run: |
-          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:latest -c \
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:python-3.12.2 -c \
             "cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
                          openai 'numpy<2' chromadb requests RestrictedPython \
