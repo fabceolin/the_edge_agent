@@ -1,5 +1,14 @@
 from setuptools import setup, find_packages
 import sys
+from pathlib import Path
+
+# Read README.md from parent directory if available (for development installs)
+# For wheel builds, use a fallback description
+readme_path = Path(__file__).parent.parent / "README.md"
+if readme_path.exists():
+    long_description = readme_path.read_text(encoding="utf-8")
+else:
+    long_description = "A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing. See https://github.com/fabceolin/the_edge_agent for full documentation."
 
 setup(
     name="the_edge_agent",
@@ -7,7 +16,7 @@ setup(
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
-    long_description=open("../README.md").read(),
+    long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/fabceolin/the_edge_agent",
     package_dir={"": "src"},

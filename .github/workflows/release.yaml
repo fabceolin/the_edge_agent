@@ -2,8 +2,13 @@
 # Story: TEA-RELEASE-001
 #
 # Triggers on tag push (v*) and builds:
-# - Python standalone binaries (PyInstaller) for 5 platforms
-# - Rust binaries for 5 platforms
+# - Python standalone binaries (PyInstaller) for 5 platforms:
+#   - Linux x86_64: Docker (batonogov/pyinstaller-linux)
+#   - Linux ARM64: Native runner (ubuntu-24.04-arm)
+#   - Windows x86_64: Docker + Wine (batonogov/pyinstaller-windows)
+#   - macOS ARM64: Native runner (macos-latest)
+#   - macOS x86_64: Native runner with cross-compile
+# - Rust binaries for 5 platforms (native compilation)
 # - Python wheel (.whl) files
 #
 # All artifacts are published to GitHub Releases with SHA256 checksums.
@@ -24,31 +29,66 @@ env:
 
 jobs:
   # ============================================================
-  # Python Standalone Binaries (PyInstaller)
+  # Python Standalone Binaries - Linux (Docker-based)
   # ============================================================
-  build-python:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x86_64
-            ext: ''
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
-            ext: ''
-          - os: windows-latest
-            target: windows-x86_64
-            ext: '.exe'
-          - os: macos-13
-            target: darwin-x86_64
-            ext: ''
-          - os: macos-latest
-            target: darwin-arm64
-            ext: ''
+  build-python-linux:
+    runs-on: ubuntu-latest
+    name: Python linux-x86_64
 
-    runs-on: ${{ matrix.os }}
-    name: Python ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with PyInstaller Docker
+        run: |
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
+            "cd /src/python && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
+             pip install -e . --no-deps && \
+             pyinstaller --onefile --name tea-agent-linux-x86_64 \
+               --hidden-import=the_edge_agent \
+               --hidden-import=the_edge_agent.yaml_engine \
+               --hidden-import=the_edge_agent.stategraph \
+               --hidden-import=yaml \
+               --hidden-import=json \
+               --hidden-import=jinja2 \
+               --hidden-import=typer \
+               --collect-all the_edge_agent \
+               --exclude-module tkinter \
+               --exclude-module matplotlib \
+               --exclude-module numpy \
+               --exclude-module pandas \
+               --strip \
+               src/the_edge_agent/cli.py"
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-agent-linux-x86_64
+          ./python/dist/tea-agent-linux-x86_64 --version
+          impl=$(./python/dist/tea-agent-linux-x86_64 --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-agent-linux-x86_64")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64
+          path: python/dist/tea-agent-linux-x86_64
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 (Native runner)
+  # ============================================================
+  build-python-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -57,10 +97,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-          cache-dependency-path: python/setup.py
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz libgraphviz-dev
+
+      - name: Install Python dependencies
         run: |
           cd python
           pip install -e .[dev]
@@ -69,7 +112,7 @@ jobs:
       - name: Build standalone binary
         run: |
           cd python
-          pyinstaller --onefile --name tea-agent-${{ matrix.target }} \
+          pyinstaller --onefile --name tea-agent-linux-arm64 \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -85,44 +128,159 @@ jobs:
             --strip \
             src/the_edge_agent/cli.py
 
-      - name: Smoke test - version
+      - name: Smoke test
         run: |
-          ./python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }} --version
-        shell: bash
-
-      - name: Smoke test - impl
-        run: |
-          impl=$(./python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }} --impl)
+          ./python/dist/tea-agent-linux-arm64 --version
+          impl=$(./python/dist/tea-agent-linux-arm64 --impl)
           if [ "$impl" != "python" ]; then
             echo "Error: Expected 'python', got '$impl'"
             exit 1
           fi
-        shell: bash
-
-      - name: Verify version matches tag
-        run: |
-          version=$(./python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }} --version | awk '{print $2}')
-          tag="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$tag" ]; then
-            echo "Warning: Binary version ($version) does not match tag ($tag)"
-          fi
-        shell: bash
 
       - name: Check binary size
         run: |
-          size=$(stat -f%z "python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }}" 2>/dev/null || stat -c%s "python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }}")
+          size=$(stat -c%s "python/dist/tea-agent-linux-arm64")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
-          if [ $size_mb -gt 50 ]; then
-            echo "Warning: Binary exceeds 50MB target (${size_mb}MB)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64
+          path: python/dist/tea-agent-linux-arm64
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Windows (Docker + Wine)
+  # ============================================================
+  build-python-windows:
+    runs-on: ubuntu-latest
+    name: Python windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with PyInstaller Windows Docker
+        run: |
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:latest -c \
+            "cd /src/python && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
+             pip install -e . --no-deps && \
+             pyinstaller --onefile --name tea-agent-windows-x86_64 \
+               --hidden-import=the_edge_agent \
+               --hidden-import=the_edge_agent.yaml_engine \
+               --hidden-import=the_edge_agent.stategraph \
+               --hidden-import=yaml \
+               --hidden-import=json \
+               --hidden-import=jinja2 \
+               --hidden-import=typer \
+               --collect-all the_edge_agent \
+               --exclude-module tkinter \
+               --exclude-module matplotlib \
+               --exclude-module numpy \
+               --exclude-module pandas \
+               src/the_edge_agent/cli.py"
+
+      - name: Check binary exists
+        run: |
+          ls -la python/dist/
+          file python/dist/tea-agent-windows-x86_64.exe
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-agent-windows-x86_64.exe")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-windows-x86_64
+          path: python/dist/tea-agent-windows-x86_64.exe
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - macOS (Native runners)
+  # ============================================================
+  build-python-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            arch: ''
+          - target: darwin-x86_64
+            arch: 'x86_64'
+
+    runs-on: macos-latest
+    name: Python ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install graphviz
+        run: brew install graphviz
+
+      - name: Install dependencies
+        run: |
+          cd python
+          pip install -e .[dev]
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          ARCH_FLAG=""
+          if [ -n "${{ matrix.arch }}" ]; then
+            ARCH_FLAG="--target-architecture ${{ matrix.arch }}"
           fi
-        shell: bash
+          pyinstaller --onefile --name tea-agent-${{ matrix.target }} \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --collect-all the_edge_agent \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            $ARCH_FLAG \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          if [ -n "${{ matrix.arch }}" ]; then
+            arch -x86_64 ./python/dist/tea-agent-${{ matrix.target }} --version
+            impl=$(arch -x86_64 ./python/dist/tea-agent-${{ matrix.target }} --impl)
+          else
+            ./python/dist/tea-agent-${{ matrix.target }} --version
+            impl=$(./python/dist/tea-agent-${{ matrix.target }} --impl)
+          fi
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -f%z "python/dist/tea-agent-${{ matrix.target }}")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-${{ matrix.target }}
-          path: python/dist/tea-agent-${{ matrix.target }}${{ matrix.ext }}
+          path: python/dist/tea-agent-${{ matrix.target }}
           retention-days: 1
 
   # ============================================================
@@ -148,14 +306,14 @@ jobs:
             artifact: tea-windows-x86_64
             ext: '.exe'
             use_cross: false
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: tea-darwin-x86_64
-            ext: ''
-            use_cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: tea-darwin-arm64
+            ext: ''
+            use_cross: false
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: tea-darwin-x86_64
             ext: ''
             use_cross: false
 
@@ -204,11 +362,19 @@ jobs:
         shell: bash
 
       - name: Smoke test - version
+        if: matrix.target != 'x86_64-apple-darwin'
         run: |
           ./${{ matrix.artifact }}${{ matrix.ext }} --version
         shell: bash
 
+      - name: Smoke test - version (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --version
+        shell: bash
+
       - name: Smoke test - impl
+        if: matrix.target != 'x86_64-apple-darwin'
         run: |
           impl=$(./${{ matrix.artifact }}${{ matrix.ext }} --impl)
           if [ "$impl" != "rust" ]; then
@@ -217,9 +383,30 @@ jobs:
           fi
         shell: bash
 
+      - name: Smoke test - impl (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          impl=$(arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+        shell: bash
+
       - name: Verify version matches tag
+        if: matrix.target != 'x86_64-apple-darwin'
         run: |
           version=$(./${{ matrix.artifact }}${{ matrix.ext }} --version | awk '{print $2}')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Warning: Binary version ($version) does not match tag ($tag)"
+          fi
+        shell: bash
+
+      - name: Verify version matches tag (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          version=$(arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --version | awk '{print $2}')
           tag="${GITHUB_REF_NAME#v}"
           if [ "$version" != "$tag" ]; then
             echo "Warning: Binary version ($version) does not match tag ($tag)"
@@ -275,7 +462,7 @@ jobs:
   # Create Release
   # ============================================================
   release:
-    needs: [build-python, build-rust, build-wheel]
+    needs: [build-python-linux, build-python-linux-arm64, build-python-windows, build-python-macos, build-rust, build-wheel]
     runs-on: ubuntu-latest
     name: Create Release
 

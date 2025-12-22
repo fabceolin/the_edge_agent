@@ -59,10 +59,20 @@ else
     echo "Warning: $YAML_REF not found"
 fi
 
+# Update python/src/the_edge_agent/__init__.py (__version__)
+INIT_PY="$PROJECT_ROOT/python/src/the_edge_agent/__init__.py"
+if [ -f "$INIT_PY" ]; then
+    CURRENT_INIT_VERSION=$(grep -oP '__version__ = "\K[^"]+' "$INIT_PY")
+    echo "__init__.py: $CURRENT_INIT_VERSION -> $VERSION"
+    sed -i "s/__version__ = \"$CURRENT_INIT_VERSION\"/__version__ = \"$VERSION\"/" "$INIT_PY"
+else
+    echo "Warning: $INIT_PY not found"
+fi
+
 echo ""
 
 # Commit and tag
-git add "$SETUP_PY" "$CARGO_TOML" "$YAML_REF"
+git add "$SETUP_PY" "$CARGO_TOML" "$YAML_REF" "$INIT_PY"
 git commit -m "chore: bump version to $VERSION"
 git tag -a "v$VERSION" -m "$MESSAGE"
 
