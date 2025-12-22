@@ -25,6 +25,9 @@ from the_edge_agent.cli import (
 from the_edge_agent import __version__
 
 
+# Disable rich/ANSI color output for consistent test assertions
+os.environ["NO_COLOR"] = "1"
+
 runner = CliRunner()
 
 

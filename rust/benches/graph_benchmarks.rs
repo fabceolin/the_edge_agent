@@ -91,7 +91,11 @@ fn bench_graph_construction(c: &mut Criterion) {
                 ("b".to_string(), "node15".to_string()),
             ]);
             graph
-                .add_conditional_edge("node9", "state.branch or 'a'", targets)
+                .add_conditional_edge(
+                    "node9",
+                    r#"{% if state.branch %}{{ state.branch }}{% else %}a{% endif %}"#,
+                    targets,
+                )
                 .unwrap();
 
             // Chain remaining nodes to finish
@@ -202,7 +206,7 @@ fn bench_sequential_execution(c: &mut Criterion) {
         graph
             .add_conditional_edge(
                 "router",
-                "state.value > 0 and 'positive' or 'negative'",
+                r#"{% if state.value > 0 %}positive{% else %}negative{% endif %}"#,
                 targets,
             )
             .unwrap();
@@ -250,7 +254,7 @@ fn bench_cyclic_execution(c: &mut Criterion) {
         graph
             .add_conditional_edge(
                 "increment",
-                "state.count >= 10 and 'done' or 'loop'",
+                r#"{% if state.count >= 10 %}done{% else %}loop{% endif %}"#,
                 targets,
             )
             .unwrap();
@@ -287,7 +291,7 @@ fn bench_cyclic_execution(c: &mut Criterion) {
         graph
             .add_conditional_edge(
                 "increment",
-                "state.count >= 100 and 'done' or 'loop'",
+                r#"{% if state.count >= 100 %}done{% else %}loop{% endif %}"#,
                 targets,
             )
             .unwrap();

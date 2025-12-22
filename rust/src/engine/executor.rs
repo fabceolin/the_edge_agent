@@ -717,16 +717,15 @@ impl Executor {
                     has_conditional_edges = true;
 
                     // TEA-RUST-029: Evaluate condition using Tera
-                    // Two modes based on template syntax:
-                    // 1. String-match mode ({% if %}): condition outputs a string to match against target
-                    // 2. Boolean mode ({{ expr }}): condition evaluates to true/false
+                    // String-match mode: condition expression is evaluated and the result
+                    // is compared against the edge's expected target value.
+                    // Examples:
+                    //   - `state.value > 0 and 'positive' or 'negative'` → renders to "positive" or "negative"
+                    //   - `{% if state.x %}a{% else %}b{% endif %}` → renders to "a" or "b"
                     // AC-16: condition_fn (Rust callback) still supported
                     let matches = if let Some(expr) = condition {
-                        // Detect template type to determine evaluation mode
-                        let is_block_template = expr.contains("{%");
-
                         // Render the condition as a Tera template
-                        let template_expr = if expr.contains("{{") || is_block_template {
+                        let template_expr = if expr.contains("{{") || expr.contains("{%") {
                             expr.clone()
                         } else {
                             format!("{{{{ {} }}}}", expr)
@@ -740,16 +739,8 @@ impl Executor {
                         let rendered_trimmed = rendered.trim();
                         evaluated_conditions.push((expr.clone(), rendered_trimmed.to_string()));
 
-                        // Determine mode based on template syntax:
-                        // - Block templates ({% if %}) → string-match mode
-                        // - Expression templates ({{ }}) → boolean mode
-                        if is_block_template {
-                            // String-match mode: compare rendered result against expected target
-                            rendered_trimmed == expected_result
-                        } else {
-                            // Boolean mode: "true" → take edge, otherwise skip
-                            rendered_trimmed.to_lowercase() == "true"
-                        }
+                        // String-match mode: compare rendered result against expected target
+                        rendered_trimmed == expected_result
                     } else if let Some(f) = condition_fn {
                         // Rust callback - compare result against expected
                         let callback_result = f(state)?;
