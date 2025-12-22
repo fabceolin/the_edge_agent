@@ -1717,6 +1717,17 @@ All Opik actions are available via dual namespaces: `opik.*` and `actions.opik_*
 
 Session memory for storing data across graph invocations within the same engine instance.
 
+> **Warning: Global State**
+>
+> Memory actions use a **process-global** in-memory store:
+>
+> - All workflows in the same process share the same memory store
+> - `memory.clear` wipes ALL stored data, affecting all concurrent workflows
+> - Data does **not** persist across process restarts
+> - Use key prefixes (e.g., `session_123:user_name`) to namespace data
+>
+> For workflow-scoped storage, use state variables. For persistent storage, use [Long-Term Memory Actions](#long-term-memory-actions).
+
 #### `memory.store`
 
 Store key-value pair with optional TTL:

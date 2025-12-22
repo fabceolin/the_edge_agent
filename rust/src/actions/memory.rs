@@ -1,4 +1,32 @@
-//! Memory actions (memory.store, memory.retrieve)
+//! Memory actions (memory.store, memory.retrieve, memory.delete, memory.clear)
+//!
+//! # Global State Warning
+//!
+//! These actions use a **process-global** in-memory store. This has important implications:
+//!
+//! - All workflows in the same process share the same memory store
+//! - `memory.clear` wipes ALL stored data, affecting all concurrent workflows
+//! - Data does not persist across process restarts
+//!
+//! For workflow-scoped storage, use state variables instead of global memory.
+//!
+//! # Example
+//!
+//! ```yaml
+//! nodes:
+//!   - name: cache_result
+//!     uses: memory.store
+//!     with:
+//!       key: "user:{{ state.user_id }}:profile"
+//!       value: "{{ state.profile }}"
+//!       ttl: 3600  # expires in 1 hour
+//!
+//!   - name: get_cached
+//!     uses: memory.retrieve
+//!     with:
+//!       key: "user:{{ state.user_id }}:profile"
+//!       default: null
+//! ```
 
 use crate::engine::executor::ActionRegistry;
 use crate::error::{TeaError, TeaResult};
@@ -190,8 +218,31 @@ fn memory_clear(state: &JsonValue, _params: &HashMap<String, JsonValue>) -> TeaR
 mod tests {
     use super::*;
 
-    /// Helper to create isolated test functions that work directly with a local MemoryStore
-    /// This avoids race conditions with the global store during parallel test execution
+    // =========================================================================
+    // IMPORTANT: Testing Pattern for Global Memory Store
+    // =========================================================================
+    //
+    // The memory actions use a GLOBAL static store (`MEMORY_STORE`) which is
+    // shared across all tests. This creates race conditions when tests run
+    // in parallel:
+    //
+    //   - `memory_clear()` wipes ALL data, breaking concurrent tests
+    //   - Tests storing/retrieving may interfere with each other
+    //
+    // SOLUTION: Use local `MemoryStore::new()` for unit tests instead of
+    // calling the public action functions that use the global store.
+    //
+    // Example:
+    //   ```rust
+    //   let mut store = MemoryStore::new();  // Local, isolated store
+    //   store.store("key", json!("value"), None, None);
+    //   assert!(store.retrieve("key").is_some());
+    //   ```
+    //
+    // Only use the public action functions (`memory_store`, `memory_retrieve`,
+    // etc.) for integration tests or when you specifically need to test the
+    // global store behavior.
+    // =========================================================================
 
     #[test]
     fn test_memory_store_and_retrieve() {
@@ -487,35 +538,33 @@ mod tests {
 
     #[test]
     fn test_memory_clear() {
-        let state = json!({});
+        // Test MemoryStore directly to avoid race conditions with global store
+        let mut store = MemoryStore::new();
 
-        // Use unique keys for this test to minimize interference
-        let unique_prefix = format!("clear_test_{:?}", std::time::Instant::now());
-
-        // Store some values with unique prefix
+        // Store some values
         for i in 0..3 {
-            let store_params: HashMap<String, JsonValue> = [
-                ("key".to_string(), json!(format!("{}_{}", unique_prefix, i))),
-                ("value".to_string(), json!(i)),
-            ]
-            .into_iter()
-            .collect();
-            memory_store(&state, &store_params).unwrap();
+            store.store(&format!("key_{}", i), json!(i), None, None);
         }
 
-        // Note: memory_clear clears ALL memory which can interfere with parallel tests.
-        // We only verify that clear() returns success and our keys are gone.
-        let clear_result = memory_clear(&state, &HashMap::new()).unwrap();
-        assert_eq!(clear_result["cleared"], true);
-
-        // Verify our keys are cleared
+        // Verify values exist
         for i in 0..3 {
-            let retrieve_params: HashMap<String, JsonValue> =
-                [("key".to_string(), json!(format!("{}_{}", unique_prefix, i)))]
-                    .into_iter()
-                    .collect();
-            let result = memory_retrieve(&state, &retrieve_params).unwrap();
-            assert!(result["value"].is_null());
+            assert!(
+                store.retrieve(&format!("key_{}", i)).is_some(),
+                "key_{} should exist before clear",
+                i
+            );
+        }
+
+        // Clear all
+        store.clear();
+
+        // Verify all keys are cleared
+        for i in 0..3 {
+            assert!(
+                store.retrieve(&format!("key_{}", i)).is_none(),
+                "key_{} should not exist after clear",
+                i
+            );
         }
     }
 
@@ -661,49 +710,31 @@ mod tests {
 
     #[test]
     fn test_memory_namespace_isolation_via_prefix() {
-        let state = json!({});
+        // Test MemoryStore directly to avoid race conditions with global store
+        let mut store = MemoryStore::new();
 
-        // Use unique keys per test run to avoid race conditions with parallel tests
-        let test_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        let key1 = format!("ns1:shared_key_{}", test_id);
-        let key2 = format!("ns2:shared_key_{}", test_id);
+        let key1 = "ns1:shared_key";
+        let key2 = "ns2:shared_key";
 
         // Store in "namespace1"
-        let store_params1: HashMap<String, JsonValue> = [
-            ("key".to_string(), json!(key1.clone())),
-            ("value".to_string(), json!("value1")),
-        ]
-        .into_iter()
-        .collect();
-        memory_store(&state, &store_params1).unwrap();
+        store.store(key1, json!("value1"), None, None);
 
         // Store in "namespace2"
-        let store_params2: HashMap<String, JsonValue> = [
-            ("key".to_string(), json!(key2.clone())),
-            ("value".to_string(), json!("value2")),
-        ]
-        .into_iter()
-        .collect();
-        memory_store(&state, &store_params2).unwrap();
+        store.store(key2, json!("value2"), None, None);
 
         // Retrieve from namespace1
-        let retrieve_params1: HashMap<String, JsonValue> =
-            [("key".to_string(), json!(key1.clone()))]
-                .into_iter()
-                .collect();
-        let result1 = memory_retrieve(&state, &retrieve_params1).unwrap();
-        assert_eq!(result1["value"], "value1");
+        let result1 = store.retrieve(key1);
+        assert!(result1.is_some(), "namespace1 key should exist");
+        assert_eq!(result1.unwrap().0, json!("value1"));
 
         // Retrieve from namespace2
-        let retrieve_params2: HashMap<String, JsonValue> =
-            [("key".to_string(), json!(key2.clone()))]
-                .into_iter()
-                .collect();
-        let result2 = memory_retrieve(&state, &retrieve_params2).unwrap();
-        assert_eq!(result2["value"], "value2");
+        let result2 = store.retrieve(key2);
+        assert!(result2.is_some(), "namespace2 key should exist");
+        assert_eq!(result2.unwrap().0, json!("value2"));
+
+        // Verify isolation - keys with different prefixes are independent
+        assert!(store.retrieve("ns1:shared_key").is_some());
+        assert!(store.retrieve("ns2:shared_key").is_some());
+        assert!(store.retrieve("ns3:shared_key").is_none());
     }
 }
