@@ -7,8 +7,8 @@
 #   - Linux x86_64 Full: Docker with all optional dependencies
 #   - Linux ARM64: Native runner (ubuntu-24.04-arm) - core deps only
 #   - Linux ARM64 Full: Native runner with all optional dependencies
-#   - Windows x86_64: Docker + Wine (batonogov/pyinstaller-windows) - core deps only
-#   - Windows x86_64 Full: Docker + Wine with all optional dependencies
+#   - Windows x86_64: Native runner (windows-latest) - core deps only
+#   - Windows x86_64 Full: Native runner with all optional dependencies
 #   - macOS ARM64: Native runner (macos-latest) - core deps only
 #   - macOS ARM64 Full: Native runner with all optional dependencies
 # - Rust binaries for 5 platforms (native compilation)
@@ -303,46 +303,59 @@ jobs:
           retention-days: 1
 
   # ============================================================
-  # Python Standalone Binaries - Windows (Docker + Wine)
+  # Python Standalone Binaries - Windows (Native runner)
   # ============================================================
   build-python-windows:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     name: Python windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with PyInstaller Windows Docker
-        run: |
-          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:python-3.12.2 -c \
-            "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
-             pip install -e . --no-deps && \
-             pyinstaller --onefile --name tea-python-windows-x86_64 \
-               --hidden-import=the_edge_agent \
-               --hidden-import=the_edge_agent.yaml_engine \
-               --hidden-import=the_edge_agent.stategraph \
-               --hidden-import=yaml \
-               --hidden-import=json \
-               --hidden-import=jinja2 \
-               --hidden-import=typer \
-               --collect-all the_edge_agent \
-               --exclude-module tkinter \
-               --exclude-module matplotlib \
-               --exclude-module numpy \
-               --exclude-module pandas \
-               src/the_edge_agent/cli.py"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Check binary exists
+      - name: Install Python dependencies
         run: |
-          ls -la python/dist/
-          file python/dist/tea-python-windows-x86_64.exe
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-windows-x86_64 `
+            --hidden-import=the_edge_agent `
+            --hidden-import=the_edge_agent.yaml_engine `
+            --hidden-import=the_edge_agent.stategraph `
+            --hidden-import=yaml `
+            --hidden-import=json `
+            --hidden-import=jinja2 `
+            --hidden-import=typer `
+            --collect-all the_edge_agent `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            --exclude-module numpy `
+            --exclude-module pandas `
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          ./python/dist/tea-python-windows-x86_64.exe --version
+          $impl = ./python/dist/tea-python-windows-x86_64.exe --impl
+          if ($impl -ne "python") {
+            Write-Error "Error: Expected 'python', got '$impl'"
+            exit 1
+          }
 
       - name: Check binary size
         run: |
-          size=$(stat -c%s "python/dist/tea-python-windows-x86_64.exe")
-          size_mb=$((size / 1024 / 1024))
-          echo "Binary size: ${size_mb}MB"
+          $size = (Get-Item "python/dist/tea-python-windows-x86_64.exe").Length
+          $size_mb = [math]::Floor($size / 1024 / 1024)
+          Write-Host "Binary size: ${size_mb}MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -352,62 +365,75 @@ jobs:
           retention-days: 1
 
   # ============================================================
-  # Python Standalone Binaries - Windows Full (Docker + Wine)
+  # Python Standalone Binaries - Windows Full (Native runner)
   # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
   # ============================================================
   build-python-windows-full:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     name: Python windows-x86_64-full
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build with PyInstaller Windows Docker (full dependencies)
-        run: |
-          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-windows:python-3.12.2 -c \
-            "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
-                         openai 'numpy<2' chromadb requests RestrictedPython \
-                         'pycozo[embedded]' pandas \
-                         s3fs gcsfs adlfs lupa kuzu && \
-             pip install -e . --no-deps && \
-             pyinstaller --onefile --name tea-python-windows-x86_64-full \
-               --hidden-import=the_edge_agent \
-               --hidden-import=the_edge_agent.yaml_engine \
-               --hidden-import=the_edge_agent.stategraph \
-               --hidden-import=yaml \
-               --hidden-import=json \
-               --hidden-import=jinja2 \
-               --hidden-import=typer \
-               --hidden-import=openai \
-               --hidden-import=numpy \
-               --hidden-import=chromadb \
-               --hidden-import=requests \
-               --hidden-import=RestrictedPython \
-               --hidden-import=pycozo \
-               --hidden-import=pandas \
-               --hidden-import=s3fs \
-               --hidden-import=gcsfs \
-               --hidden-import=adlfs \
-               --hidden-import=lupa \
-               --hidden-import=kuzu \
-               --collect-all the_edge_agent \
-               --collect-all numpy \
-               --collect-all pandas \
-               --exclude-module tkinter \
-               --exclude-module matplotlib \
-               src/the_edge_agent/cli.py"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Check binary exists
+      - name: Install Python dependencies (full)
         run: |
-          ls -la python/dist/
-          file python/dist/tea-python-windows-x86_64-full.exe
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer `
+                      openai "numpy<2" chromadb requests RestrictedPython `
+                      "pycozo[embedded]" pandas `
+                      s3fs gcsfs adlfs lupa kuzu
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full)
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-windows-x86_64-full `
+            --hidden-import=the_edge_agent `
+            --hidden-import=the_edge_agent.yaml_engine `
+            --hidden-import=the_edge_agent.stategraph `
+            --hidden-import=yaml `
+            --hidden-import=json `
+            --hidden-import=jinja2 `
+            --hidden-import=typer `
+            --hidden-import=openai `
+            --hidden-import=numpy `
+            --hidden-import=chromadb `
+            --hidden-import=requests `
+            --hidden-import=RestrictedPython `
+            --hidden-import=pycozo `
+            --hidden-import=pandas `
+            --hidden-import=s3fs `
+            --hidden-import=gcsfs `
+            --hidden-import=adlfs `
+            --hidden-import=lupa `
+            --hidden-import=kuzu `
+            --collect-all the_edge_agent `
+            --collect-all numpy `
+            --collect-all pandas `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          ./python/dist/tea-python-windows-x86_64-full.exe --version
+          $impl = ./python/dist/tea-python-windows-x86_64-full.exe --impl
+          if ($impl -ne "python") {
+            Write-Error "Error: Expected 'python', got '$impl'"
+            exit 1
+          }
 
       - name: Check binary size
         run: |
-          size=$(stat -c%s "python/dist/tea-python-windows-x86_64-full.exe")
-          size_mb=$((size / 1024 / 1024))
-          echo "Binary size: ${size_mb}MB"
+          $size = (Get-Item "python/dist/tea-python-windows-x86_64-full.exe").Length
+          $size_mb = [math]::Floor($size / 1024 / 1024)
+          Write-Host "Binary size: ${size_mb}MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
