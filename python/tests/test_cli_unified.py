@@ -7,12 +7,19 @@ Tests the tea command-line interface with subcommands for run, resume, validate,
 import unittest
 import sys
 import json
+import re
 import tempfile
 import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from typer.testing import CliRunner
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text for consistent test assertions."""
+    ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
+    return ansi_pattern.sub("", text)
 
 from the_edge_agent.cli import (
     app,
@@ -429,37 +436,41 @@ class TestCliHelp(unittest.TestCase):
         """Test run --help shows all options."""
         result = runner.invoke(app, ["run", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--input", result.output)
-        self.assertIn("--secrets", result.output)
-        self.assertIn("--secrets-env", result.output)
-        self.assertIn("--stream", result.output)
-        self.assertIn("--interrupt-before", result.output)
-        self.assertIn("--interrupt-after", result.output)
-        self.assertIn("--auto-continue", result.output)
-        self.assertIn("--verbose", result.output)
-        self.assertIn("--quiet", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--input", output)
+        self.assertIn("--secrets", output)
+        self.assertIn("--secrets-env", output)
+        self.assertIn("--stream", output)
+        self.assertIn("--interrupt-before", output)
+        self.assertIn("--interrupt-after", output)
+        self.assertIn("--auto-continue", output)
+        self.assertIn("--verbose", output)
+        self.assertIn("--quiet", output)
 
     def test_resume_help(self):
         """Test resume --help shows required options."""
         result = runner.invoke(app, ["resume", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--workflow", result.output)
-        self.assertIn("--input", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--workflow", output)
+        self.assertIn("--input", output)
 
     def test_validate_help(self):
         """Test validate --help shows options."""
         result = runner.invoke(app, ["validate", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--detailed", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--detailed", output)
 
     def test_inspect_help(self):
         """Test inspect --help shows format options."""
         result = runner.invoke(app, ["inspect", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--format", result.output)
-        self.assertIn("text", result.output)
-        self.assertIn("json", result.output)
-        self.assertIn("dot", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--format", output)
+        self.assertIn("text", output)
+        self.assertIn("json", output)
+        self.assertIn("dot", output)
 
 
 if __name__ == "__main__":

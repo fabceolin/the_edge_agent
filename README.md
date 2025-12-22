@@ -12,11 +12,11 @@ Pre-built binaries are available for all major platforms. No Python or Rust inst
 
 | Platform | Python CLI | Rust CLI |
 |----------|-----------|----------|
-| Linux x86_64 | `tea-agent-linux-x86_64` | `tea-linux-x86_64` |
-| Linux ARM64 | `tea-agent-linux-arm64` | `tea-linux-arm64` |
-| macOS Intel | `tea-agent-darwin-x86_64` | `tea-darwin-x86_64` |
-| macOS Apple Silicon | `tea-agent-darwin-arm64` | `tea-darwin-arm64` |
-| Windows | `tea-agent-windows-x86_64.exe` | `tea-windows-x86_64.exe` |
+| Linux x86_64 | `tea-python-linux-x86_64` | `tea-linux-x86_64` |
+| Linux ARM64 | `tea-python-linux-arm64` | `tea-linux-arm64` |
+| macOS Intel | `tea-python-darwin-x86_64` | `tea-darwin-x86_64` |
+| macOS Apple Silicon | `tea-python-darwin-arm64` | `tea-darwin-arm64` |
+| Windows | `tea-python-windows-x86_64.exe` | `tea-windows-x86_64.exe` |
 
 ### Quick Install
 
@@ -161,22 +161,6 @@ tea --version --impl          # tea 0.1.0 (python)
 # Show help
 tea --help
 tea run --help
-```
-
-### Legacy CLI Syntax (Deprecated)
-
-The old `tea-agent` command and direct file arguments are deprecated but still work:
-
-```bash
-# Deprecated (still works with warning)
-tea-agent workflow.yaml
-tea-agent workflow.yaml --state '{"key": "value"}'
-tea-agent workflow.yaml --state-file state.json
-
-# Use these instead
-tea run workflow.yaml
-tea run workflow.yaml --input '{"key": "value"}'
-tea run workflow.yaml --input @state.json
 ```
 
 ### Custom Actions Modules
