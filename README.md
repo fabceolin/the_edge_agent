@@ -12,17 +12,17 @@ Pre-built binaries are available for all major platforms. No Python or Rust inst
 
 | Platform | Python CLI | Rust CLI |
 |----------|-----------|----------|
-| Linux x86_64 | `tea-python-linux-x86_64` | `tea-linux-x86_64` |
-| Linux ARM64 | `tea-python-linux-arm64` | `tea-linux-arm64` |
-| macOS Intel | `tea-python-darwin-x86_64` | `tea-darwin-x86_64` |
-| macOS Apple Silicon | `tea-python-darwin-arm64` | `tea-darwin-arm64` |
-| Windows | `tea-python-windows-x86_64.exe` | `tea-windows-x86_64.exe` |
+| Linux x86_64 | `tea-python-linux-x86_64` | `tea-rust-linux-x86_64` |
+| Linux ARM64 | `tea-python-linux-arm64` | `tea-rust-linux-arm64` |
+| macOS Intel | `tea-python-darwin-x86_64` | `tea-rust-darwin-x86_64` |
+| macOS Apple Silicon | `tea-python-darwin-arm64` | `tea-rust-darwin-arm64` |
+| Windows | `tea-python-windows-x86_64.exe` | `tea-rust-windows-x86_64.exe` |
 
 ### Quick Install
 
 ```bash
 # Linux/macOS - Download and install Rust binary
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-linux-x86_64 -o tea
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea
 chmod +x tea
 sudo mv tea /usr/local/bin/
 
@@ -37,7 +37,7 @@ Each release includes `SHA256SUMS.txt` for verification:
 ```bash
 # Download checksum file and binary
 curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/SHA256SUMS.txt -o SHA256SUMS.txt
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-linux-x86_64 -o tea-linux-x86_64
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea-rust-linux-x86_64
 
 # Verify (Linux)
 sha256sum -c SHA256SUMS.txt --ignore-missing

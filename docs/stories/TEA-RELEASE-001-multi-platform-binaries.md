@@ -46,11 +46,11 @@ Create a GitHub Actions workflow that:
 
 | Platform | Python Binary | Rust Binary | Runner |
 |----------|--------------|-------------|--------|
-| Linux x86_64 | `tea-agent-linux-x86_64` | `tea-linux-x86_64` | `ubuntu-latest` |
-| Linux ARM64 | `tea-agent-linux-arm64` | `tea-linux-arm64` | `ubuntu-24.04-arm` |
-| Windows x86_64 | `tea-agent-windows-x86_64.exe` | `tea-windows-x86_64.exe` | `windows-latest` |
-| macOS x86_64 | `tea-agent-darwin-x86_64` | `tea-darwin-x86_64` | `macos-13` |
-| macOS ARM64 | `tea-agent-darwin-arm64` | `tea-darwin-arm64` | `macos-latest` (M1) |
+| Linux x86_64 | `tea-python-linux-x86_64` | `tea-rust-linux-x86_64` | `ubuntu-latest` |
+| Linux ARM64 | `tea-python-linux-arm64` | `tea-rust-linux-arm64` | `ubuntu-24.04-arm` |
+| Windows x86_64 | `tea-python-windows-x86_64.exe` | `tea-rust-windows-x86_64.exe` | `windows-latest` |
+| macOS x86_64 | `tea-python-darwin-x86_64` | `tea-rust-darwin-x86_64` | `macos-13` |
+| macOS ARM64 | `tea-python-darwin-arm64` | `tea-rust-darwin-arm64` | `macos-latest` (M1) |
 
 ## Acceptance Criteria
 
@@ -178,23 +178,23 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact: tea-linux-x86_64
+            artifact: tea-rust-linux-x86_64
             ext: ''
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            artifact: tea-linux-arm64
+            artifact: tea-rust-linux-arm64
             ext: ''
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: tea-windows-x86_64
+            artifact: tea-rust-windows-x86_64
             ext: '.exe'
           - os: macos-13
             target: x86_64-apple-darwin
-            artifact: tea-darwin-x86_64
+            artifact: tea-rust-darwin-x86_64
             ext: ''
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: tea-darwin-arm64
+            artifact: tea-rust-darwin-arm64
             ext: ''
 
     runs-on: ${{ matrix.os }}
@@ -449,8 +449,8 @@ act push --dryrun -e .github/workflows/test-release-event.json
 ### Binary Naming Convention
 
 ```
-tea-agent-{os}-{arch}[.exe]   # Python standalone
-tea-{os}-{arch}[.exe]         # Rust native
+tea-python-{os}-{arch}[.exe]   # Python standalone
+tea-rust-{os}-{arch}[.exe]     # Rust native
 ```
 
 Where:

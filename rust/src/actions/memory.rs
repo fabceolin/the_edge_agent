@@ -190,6 +190,9 @@ fn memory_clear(state: &JsonValue, _params: &HashMap<String, JsonValue>) -> TeaR
 mod tests {
     use super::*;
 
+    /// Helper to create isolated test functions that work directly with a local MemoryStore
+    /// This avoids race conditions with the global store during parallel test execution
+
     #[test]
     fn test_memory_store_and_retrieve() {
         let state = json!({});
@@ -231,37 +234,21 @@ mod tests {
 
     #[test]
     fn test_memory_delete() {
-        let state = json!({});
-        // Use a unique key with timestamp to avoid conflicts with parallel tests
-        let unique_key = format!("delete_test_{:?}", std::time::Instant::now());
+        // Test the MemoryStore directly to avoid race conditions with global store
+        let mut store = MemoryStore::new();
 
-        // Store first
-        let store_params: HashMap<String, JsonValue> = [
-            ("key".to_string(), json!(unique_key.clone())),
-            ("value".to_string(), json!("value")),
-        ]
-        .into_iter()
-        .collect();
-        let store_result = memory_store(&state, &store_params).unwrap();
-        assert_eq!(store_result["stored"], true);
+        // Store a value
+        store.store("test_key", json!("test_value"), None, None);
 
-        // Delete
-        let delete_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!(unique_key.clone()))]
-                .into_iter()
-                .collect();
+        // Verify it exists
+        assert!(store.retrieve("test_key").is_some());
 
-        let delete_result = memory_delete(&state, &delete_params).unwrap();
-        assert_eq!(delete_result["deleted"], true);
+        // Delete it
+        let deleted = store.delete("test_key");
+        assert!(deleted, "delete should return true for existing key");
 
-        // Verify deleted
-        let retrieve_params: HashMap<String, JsonValue> =
-            [("key".to_string(), json!(unique_key.clone()))]
-                .into_iter()
-                .collect();
-
-        let retrieve_result = memory_retrieve(&state, &retrieve_params).unwrap();
-        assert_eq!(retrieve_result["value"], JsonValue::Null);
+        // Verify it's gone
+        assert!(store.retrieve("test_key").is_none());
     }
 
     // =============================================================================
@@ -502,10 +489,13 @@ mod tests {
     fn test_memory_clear() {
         let state = json!({});
 
-        // Store some values
+        // Use unique keys for this test to minimize interference
+        let unique_prefix = format!("clear_test_{:?}", std::time::Instant::now());
+
+        // Store some values with unique prefix
         for i in 0..3 {
             let store_params: HashMap<String, JsonValue> = [
-                ("key".to_string(), json!(format!("clear_test_{}", i))),
+                ("key".to_string(), json!(format!("{}_{}", unique_prefix, i))),
                 ("value".to_string(), json!(i)),
             ]
             .into_iter()
@@ -513,14 +503,15 @@ mod tests {
             memory_store(&state, &store_params).unwrap();
         }
 
-        // Clear all
+        // Note: memory_clear clears ALL memory which can interfere with parallel tests.
+        // We only verify that clear() returns success and our keys are gone.
         let clear_result = memory_clear(&state, &HashMap::new()).unwrap();
         assert_eq!(clear_result["cleared"], true);
 
-        // Verify all cleared
+        // Verify our keys are cleared
         for i in 0..3 {
             let retrieve_params: HashMap<String, JsonValue> =
-                [("key".to_string(), json!(format!("clear_test_{}", i)))]
+                [("key".to_string(), json!(format!("{}_{}", unique_prefix, i)))]
                     .into_iter()
                     .collect();
             let result = memory_retrieve(&state, &retrieve_params).unwrap();
