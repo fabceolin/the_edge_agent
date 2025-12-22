@@ -44,7 +44,7 @@ jobs:
             "cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
              pip install -e . --no-deps && \
-             pyinstaller --onefile --name tea-agent-linux-x86_64 \
+             pyinstaller --onefile --name tea-python-linux-x86_64 \
                --hidden-import=the_edge_agent \
                --hidden-import=the_edge_agent.yaml_engine \
                --hidden-import=the_edge_agent.stategraph \
@@ -62,9 +62,9 @@ jobs:
 
       - name: Smoke test
         run: |
-          chmod +x python/dist/tea-agent-linux-x86_64
-          ./python/dist/tea-agent-linux-x86_64 --version
-          impl=$(./python/dist/tea-agent-linux-x86_64 --impl)
+          sudo chmod +x python/dist/tea-python-linux-x86_64
+          ./python/dist/tea-python-linux-x86_64 --version
+          impl=$(./python/dist/tea-python-linux-x86_64 --impl)
           if [ "$impl" != "python" ]; then
             echo "Error: Expected 'python', got '$impl'"
             exit 1
@@ -72,7 +72,7 @@ jobs:
 
       - name: Check binary size
         run: |
-          size=$(stat -c%s "python/dist/tea-agent-linux-x86_64")
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
@@ -80,7 +80,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-linux-x86_64
-          path: python/dist/tea-agent-linux-x86_64
+          path: python/dist/tea-python-linux-x86_64
           retention-days: 1
 
   # ============================================================
@@ -98,21 +98,17 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y graphviz libgraphviz-dev
-
       - name: Install Python dependencies
         run: |
           cd python
-          pip install -e .[dev]
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install -e . --no-deps
           pip install pyinstaller
 
       - name: Build standalone binary
         run: |
           cd python
-          pyinstaller --onefile --name tea-agent-linux-arm64 \
+          pyinstaller --onefile --name tea-python-linux-arm64 \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -130,8 +126,8 @@ jobs:
 
       - name: Smoke test
         run: |
-          ./python/dist/tea-agent-linux-arm64 --version
-          impl=$(./python/dist/tea-agent-linux-arm64 --impl)
+          ./python/dist/tea-python-linux-arm64 --version
+          impl=$(./python/dist/tea-python-linux-arm64 --impl)
           if [ "$impl" != "python" ]; then
             echo "Error: Expected 'python', got '$impl'"
             exit 1
@@ -139,7 +135,7 @@ jobs:
 
       - name: Check binary size
         run: |
-          size=$(stat -c%s "python/dist/tea-agent-linux-arm64")
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
@@ -147,7 +143,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-linux-arm64
-          path: python/dist/tea-agent-linux-arm64
+          path: python/dist/tea-python-linux-arm64
           retention-days: 1
 
   # ============================================================
@@ -166,7 +162,7 @@ jobs:
             "cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
              pip install -e . --no-deps && \
-             pyinstaller --onefile --name tea-agent-windows-x86_64 \
+             pyinstaller --onefile --name tea-python-windows-x86_64 \
                --hidden-import=the_edge_agent \
                --hidden-import=the_edge_agent.yaml_engine \
                --hidden-import=the_edge_agent.stategraph \
@@ -184,11 +180,11 @@ jobs:
       - name: Check binary exists
         run: |
           ls -la python/dist/
-          file python/dist/tea-agent-windows-x86_64.exe
+          file python/dist/tea-python-windows-x86_64.exe
 
       - name: Check binary size
         run: |
-          size=$(stat -c%s "python/dist/tea-agent-windows-x86_64.exe")
+          size=$(stat -c%s "python/dist/tea-python-windows-x86_64.exe")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
@@ -196,7 +192,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-windows-x86_64
-          path: python/dist/tea-agent-windows-x86_64.exe
+          path: python/dist/tea-python-windows-x86_64.exe
           retention-days: 1
 
   # ============================================================
@@ -223,13 +219,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install graphviz
-        run: brew install graphviz
-
       - name: Install dependencies
         run: |
           cd python
-          pip install -e .[dev]
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install -e . --no-deps
           pip install pyinstaller
 
       - name: Build standalone binary
@@ -239,7 +233,7 @@ jobs:
           if [ -n "${{ matrix.arch }}" ]; then
             ARCH_FLAG="--target-architecture ${{ matrix.arch }}"
           fi
-          pyinstaller --onefile --name tea-agent-${{ matrix.target }} \
+          pyinstaller --onefile --name tea-python-${{ matrix.target }} \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -259,11 +253,11 @@ jobs:
       - name: Smoke test
         run: |
           if [ -n "${{ matrix.arch }}" ]; then
-            arch -x86_64 ./python/dist/tea-agent-${{ matrix.target }} --version
-            impl=$(arch -x86_64 ./python/dist/tea-agent-${{ matrix.target }} --impl)
+            arch -x86_64 ./python/dist/tea-python-${{ matrix.target }} --version
+            impl=$(arch -x86_64 ./python/dist/tea-python-${{ matrix.target }} --impl)
           else
-            ./python/dist/tea-agent-${{ matrix.target }} --version
-            impl=$(./python/dist/tea-agent-${{ matrix.target }} --impl)
+            ./python/dist/tea-python-${{ matrix.target }} --version
+            impl=$(./python/dist/tea-python-${{ matrix.target }} --impl)
           fi
           if [ "$impl" != "python" ]; then
             echo "Error: Expected 'python', got '$impl'"
@@ -272,7 +266,7 @@ jobs:
 
       - name: Check binary size
         run: |
-          size=$(stat -f%z "python/dist/tea-agent-${{ matrix.target }}")
+          size=$(stat -f%z "python/dist/tea-python-${{ matrix.target }}")
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
@@ -280,7 +274,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: python-${{ matrix.target }}
-          path: python/dist/tea-agent-${{ matrix.target }}
+          path: python/dist/tea-python-${{ matrix.target }}
           retention-days: 1
 
   # ============================================================
