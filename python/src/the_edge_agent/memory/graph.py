@@ -327,9 +327,14 @@ class CozoBackend:
         """
         Parse pycozo result into a list of rows.
 
-        pycozo returns: {'headers': [...], 'rows': [...], 'next': None}
+        pycozo returns pandas DataFrames in newer versions.
+        Legacy format was: {'headers': [...], 'rows': [...], 'next': None}
         """
-        if isinstance(result, dict) and 'rows' in result:
+        # Handle pandas DataFrame (current pycozo format)
+        if hasattr(result, 'values') and hasattr(result, 'columns'):
+            return result.values.tolist()
+        # Handle dict with rows key (legacy format)
+        elif isinstance(result, dict) and 'rows' in result:
             return result['rows']
         elif hasattr(result, 'rows'):
             return result.rows
@@ -505,7 +510,14 @@ class CozoBackend:
                 # Convert result to list of dicts
                 results = []
                 rows = self._parse_result(result)
-                headers = result.get('headers', []) if isinstance(result, dict) else []
+
+                # Extract headers from DataFrame or dict
+                if hasattr(result, 'columns'):
+                    headers = list(result.columns)
+                elif isinstance(result, dict):
+                    headers = result.get('headers', [])
+                else:
+                    headers = []
 
                 for row in rows:
                     if headers:
