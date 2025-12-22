@@ -39,12 +39,12 @@ else
     echo "Warning: $SETUP_PY not found"
 fi
 
-# Update rust/Cargo.toml
+# Update rust/Cargo.toml (only the [package] version, not dependencies)
 CARGO_TOML="$PROJECT_ROOT/rust/Cargo.toml"
 if [ -f "$CARGO_TOML" ]; then
-    CURRENT_RUST_VERSION=$(grep -oP '^version = "\K[^"]+' "$CARGO_TOML")
+    CURRENT_RUST_VERSION=$(grep -oP '^version = "\K[^"]+' "$CARGO_TOML" | head -1)
     echo "Rust Cargo.toml: $CURRENT_RUST_VERSION -> $VERSION"
-    sed -i "s/^version = \"$CURRENT_RUST_VERSION\"/version = \"$VERSION\"/" "$CARGO_TOML"
+    sed -i "0,/^version = \"$CURRENT_RUST_VERSION\"/s//version = \"$VERSION\"/" "$CARGO_TOML"
 else
     echo "Warning: $CARGO_TOML not found"
 fi

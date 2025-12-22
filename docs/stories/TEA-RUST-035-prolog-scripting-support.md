@@ -77,15 +77,25 @@ This story implements the same API as TEA-PY-004 to ensure cross-runtime parity:
 
 13. **AC-13**: JSON ↔ Prolog term conversion handles all JSON types
 
+### Optional Dependency Requirements
+
+14. **AC-14**: GIVEN a workflow YAML containing `language: prolog` nodes AND the `prolog` feature is NOT enabled, WHEN the YamlEngine loads the agent, THEN a `TeaError::Configuration` is returned at load time with build instructions (`cargo build --features prolog`)
+
+15. **AC-15**: GIVEN the `prolog` feature is not enabled, WHEN a user imports `the_edge_agent` crate, THEN compilation succeeds and only fails when Prolog features are actually used
+
+16. **AC-16**: GIVEN a mixed-language YAML with Lua and Prolog nodes AND the `prolog` feature is NOT enabled, WHEN the agent is loaded, THEN the error is raised only for the Prolog node, with a clear message that Lua works without the Prolog feature
+
+17. **AC-17**: GIVEN SWI-Prolog system library is not installed AND `prolog` feature IS enabled, WHEN the binary runs, THEN a clear runtime error with OS-specific installation instructions is displayed
+
 ### Quality Requirements
 
-14. **AC-14**: Unit tests cover Prolog execution, timeout, sandbox, and JSON conversion
+18. **AC-18**: Unit tests cover Prolog execution, timeout, sandbox, and JSON conversion
 
-15. **AC-15**: Integration tests verify YAML agents with Prolog nodes
+19. **AC-19**: Integration tests verify YAML agents with Prolog nodes
 
-16. **AC-16**: Cross-runtime parity tests with Python implementation
+20. **AC-20**: Cross-runtime parity tests with Python implementation
 
-17. **AC-17**: Documentation updated with Rust-specific notes
+21. **AC-21**: Documentation updated with Rust-specific notes, including a prominent note that Prolog requires `--features prolog` and SWI-Prolog system installation
 
 ---
 
@@ -512,10 +522,13 @@ cargo test --features prolog
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Add `swipl` crate dependency** (AC: 1, 2)
+- [ ] **Task 1: Add `swipl` crate dependency** (AC: 1, 2, 14-17)
   - [ ] Add `swipl = { version = "0.3", optional = true }` to Cargo.toml
   - [ ] Create `prolog` feature flag
   - [ ] Test compilation with and without feature
+  - [ ] Implement clear error message when feature disabled but Prolog YAML loaded
+  - [ ] Implement runtime error with OS-specific install instructions when SWI-Prolog missing
+  - [ ] Verify mixed-language YAML only fails on Prolog nodes when feature disabled
 
 - [ ] **Task 2: Implement PrologRuntime struct** (AC: 1-7, 13)
   - [ ] Create `rust/src/engine/prolog_runtime.rs`
@@ -660,8 +673,9 @@ The [swipl-rs](https://github.com/terminusdb-labs/swipl-rs) workspace provides:
 - [ ] Functional requirements met (AC 1-7)
 - [ ] Cross-runtime parity verified (AC 8-10)
 - [ ] Integration requirements verified (AC 11-13)
-- [ ] Tests pass with `--features prolog` (AC 14-16)
-- [ ] Documentation complete (AC 17)
+- [ ] Optional dependency behavior verified (AC 14-17)
+- [ ] Tests pass with `--features prolog` (AC 18-20)
+- [ ] Documentation complete (AC 21)
 - [ ] Same YAML agent produces same results in Python and Rust
 
 ---
@@ -678,18 +692,20 @@ The [swipl-rs](https://github.com/terminusdb-labs/swipl-rs) workspace provides:
 
 | Metric | Count |
 |--------|-------|
-| Total test scenarios | 48 |
-| Unit tests | 28 (58%) |
-| Integration tests | 14 (29%) |
-| E2E tests | 6 (13%) |
+| Total test scenarios | 56 |
+| Unit tests | 32 (57%) |
+| Integration tests | 16 (29%) |
+| E2E tests | 8 (14%) |
+
+*Note: 8 additional scenarios added for AC 14-17 (optional dependency behavior)*
 
 #### Priority Distribution
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| P0 | 18 | Critical - security, timeout, parity |
-| P1 | 20 | High - main features, backward compatibility |
-| P2 | 10 | Medium - edge cases, documentation |
+| P0 | 22 | Critical - security, timeout, parity, optional deps |
+| P1 | 22 | High - main features, backward compatibility |
+| P2 | 12 | Medium - edge cases, documentation |
 
 #### P0 Tests (Must Implement)
 
@@ -702,6 +718,10 @@ The [swipl-rs](https://github.com/terminusdb-labs/swipl-rs) workspace provides:
 7. `TEA-RUST-035-INT-009`, `INT-010` - Backward compatibility
 8. `TEA-RUST-035-INT-013` - Feature flag compilation
 9. `TEA-RUST-035-E2E-001` to `E2E-003` - Cross-runtime parity (3 tests)
+10. `TEA-RUST-035-INT-015` - Crate compiles without prolog feature
+11. `TEA-RUST-035-INT-016` - Mixed-language YAML graceful degradation
+12. `TEA-RUST-035-INT-017` - OS-specific SWI-Prolog install instructions
+13. `TEA-RUST-035-INT-018` - Feature-disabled clear error message
 
 #### Risk Coverage
 
@@ -710,9 +730,11 @@ The [swipl-rs](https://github.com/terminusdb-labs/swipl-rs) workspace provides:
 | Sandbox bypass | UNIT-010 through UNIT-015 |
 | Infinite recursion | UNIT-016, UNIT-017, UNIT-018 |
 | Cross-runtime parity | E2E-001 through E2E-006 |
-| Feature flag issues | INT-013, INT-014 |
+| Feature flag issues | INT-013, INT-014, INT-015, INT-018 |
 | swipl-rs instability | UNIT-035 through UNIT-038 |
 | Parallel contamination | INT-007, INT-008 |
+| Optional dependency failures | INT-015, INT-016, INT-017, INT-018 |
+| User confusion on install | INT-017, INT-018 |
 
 #### Cross-Runtime Parity Focus
 
@@ -733,7 +755,7 @@ This story has **6 dedicated E2E tests** for Python/Rust parity:
 
 #### Recommendation
 
-**APPROVED** - Story is well-defined with comprehensive acceptance criteria including cross-runtime parity requirements. Test design provides excellent coverage with 58% unit tests and dedicated parity tests. All 17 acceptance criteria have test coverage. Feature flag and swipl-rs crate integration explicitly tested.
+**APPROVED** - Story is well-defined with comprehensive acceptance criteria including cross-runtime parity requirements. Test design provides excellent coverage with 57% unit tests and dedicated parity tests. All 21 acceptance criteria have test coverage. Feature flag, optional dependency behavior (AC 14-17), and swipl-rs crate integration explicitly tested.
 
 ---
 
@@ -743,3 +765,4 @@ This story has **6 dedicated E2E tests** for Python/Rust parity:
 |------|---------|-------------|--------|
 | 2025-12-21 | 0.1 | Initial story draft | Sarah (PO) |
 | 2025-12-21 | 0.2 | Test design complete, status → Approved | Quinn (QA) |
+| 2025-12-21 | 0.3 | Added AC 14-17 for explicit optional dependency behavior (feature flag, crate compilation, mixed-language graceful degradation, OS-specific install instructions); updated tasks, DoD, and QA test counts | Sarah (PO) |

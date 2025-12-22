@@ -65,15 +65,23 @@ The Lua implementation in `python/src/the_edge_agent/lua_runtime.py` provides th
 
 12. **AC-12**: Prolog atoms map to Python strings, lists to lists, dicts to Prolog dicts/terms
 
+### Optional Dependency Requirements
+
+13. **AC-13**: GIVEN a workflow YAML containing `language: prolog` nodes AND pyswip is NOT installed, WHEN the YAMLEngine loads the agent, THEN an `ImportError` is raised at load time with platform-specific installation instructions
+
+14. **AC-14**: GIVEN pyswip is not installed, WHEN a user imports `the_edge_agent`, THEN the import succeeds (lazy loading) and only fails when Prolog features are actually used
+
+15. **AC-15**: GIVEN a mixed-language YAML with Python, Lua, and Prolog nodes AND pyswip is NOT installed, WHEN the agent is loaded, THEN the error is raised only for the Prolog node, with a clear message that other languages work without Prolog
+
 ### Quality Requirements
 
-13. **AC-13**: Unit tests cover Prolog execution, timeout, sandbox, and JSON conversion
+16. **AC-16**: Unit tests cover Prolog execution, timeout, sandbox, and JSON conversion
 
-14. **AC-14**: Integration tests verify YAML agents with Prolog nodes execute correctly
+17. **AC-17**: Integration tests verify YAML agents with Prolog nodes execute correctly
 
-15. **AC-15**: Documentation updated in YAML_REFERENCE.md with Prolog scripting section
+18. **AC-18**: Documentation updated in YAML_REFERENCE.md with Prolog scripting section, including a prominent note that Prolog is an optional feature requiring `pip install the-edge-agent[prolog]`
 
-16. **AC-16**: Clear error message with install instructions if `pyswip` not installed
+19. **AC-19**: Clear error message with install instructions if `pyswip` not installed
 
 ---
 
@@ -672,10 +680,12 @@ This means:
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Add `pyswip` dependency** (AC: 1, 2, 16)
+- [ ] **Task 1: Add `pyswip` dependency** (AC: 1, 2, 13-15, 19)
   - [ ] Add `pyswip` to `requirements.txt` and `pyproject.toml` as optional dependency
   - [ ] Create optional dependency group `[prolog]` for pip install
-  - [ ] Test import error handling with clear instructions
+  - [ ] Implement lazy loading so `import the_edge_agent` succeeds without pyswip
+  - [ ] Test import error handling with clear platform-specific instructions
+  - [ ] Verify mixed-language YAML only fails on Prolog nodes when pyswip missing
 
 - [ ] **Task 2: Implement PrologRuntime class** (AC: 1-7, 11, 12)
   - [ ] Create `python/src/the_edge_agent/prolog_runtime.py`
@@ -819,10 +829,11 @@ prolog.retractall("fact(_)")
 
 - [ ] Functional requirements met (AC 1-7)
 - [ ] Integration requirements verified (AC 8-12)
+- [ ] Optional dependency behavior verified (AC 13-15)
 - [ ] Existing functionality regression tested
 - [ ] Code follows existing patterns and standards
-- [ ] Tests pass (existing and new) (AC 13-14)
-- [ ] Documentation updated with Prolog section (AC 15-16)
+- [ ] Tests pass (existing and new) (AC 16-17)
+- [ ] Documentation updated with Prolog section (AC 18-19)
 
 ---
 
@@ -838,18 +849,20 @@ prolog.retractall("fact(_)")
 
 | Metric | Count |
 |--------|-------|
-| Total test scenarios | 42 |
-| Unit tests | 26 (62%) |
-| Integration tests | 12 (29%) |
-| E2E tests | 4 (9%) |
+| Total test scenarios | 48 |
+| Unit tests | 29 (60%) |
+| Integration tests | 14 (29%) |
+| E2E tests | 5 (10%) |
+
+*Note: 6 additional scenarios added for AC 13-15 (optional dependency behavior)*
 
 #### Priority Distribution
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| P0 | 16 | Critical - security, timeout, core functionality |
-| P1 | 18 | High - main features, backward compatibility |
-| P2 | 8 | Medium - edge cases, documentation validation |
+| P0 | 19 | Critical - security, timeout, core functionality, optional deps |
+| P1 | 20 | High - main features, backward compatibility |
+| P2 | 9 | Medium - edge cases, documentation validation |
 
 #### P0 Tests (Must Implement)
 
@@ -862,6 +875,9 @@ prolog.retractall("fact(_)")
 7. `TEA-PY-004-INT-001` - YAMLEngine type dispatch
 8. `TEA-PY-004-INT-007`, `INT-008` - Parallel isolation
 9. `TEA-PY-004-INT-009` to `INT-011` - Backward compatibility (3 tests)
+10. `TEA-PY-004-INT-012` - Lazy import (package imports without pyswip)
+11. `TEA-PY-004-INT-013` - Mixed-language YAML graceful degradation
+12. `TEA-PY-004-INT-014` - Platform-specific install instructions in error
 
 #### Risk Coverage
 
@@ -872,6 +888,8 @@ prolog.retractall("fact(_)")
 | Backward compatibility | INT-009, INT-010, INT-011 |
 | Parallel contamination | INT-007, INT-008 |
 | JSON conversion | UNIT-026 through UNIT-032 |
+| Optional dependency failures | INT-012, INT-013, INT-014 |
+| User confusion on install | INT-014, UNIT-035 |
 
 #### Test Design Document
 
@@ -879,7 +897,7 @@ prolog.retractall("fact(_)")
 
 #### Recommendation
 
-**APPROVED** - Story is well-defined with clear acceptance criteria. Test design provides comprehensive coverage with appropriate shift-left strategy (62% unit tests). Security-critical sandbox and timeout tests are P0. All 16 acceptance criteria have test coverage.
+**APPROVED** - Story is well-defined with clear acceptance criteria. Test design provides comprehensive coverage with appropriate shift-left strategy (60% unit tests). Security-critical sandbox and timeout tests are P0. All 19 acceptance criteria have test coverage. Optional dependency behavior (AC 13-15) explicitly tested.
 
 ---
 
@@ -889,3 +907,4 @@ prolog.retractall("fact(_)")
 |------|---------|-------------|--------|
 | 2025-12-21 | 0.1 | Initial story draft | Sarah (PO) |
 | 2025-12-21 | 0.2 | Test design complete, status → Approved | Quinn (QA) |
+| 2025-12-21 | 0.3 | Added AC 13-15 for explicit optional dependency behavior (lazy loading, mixed-language graceful degradation, platform-specific install instructions); updated tasks, DoD, and QA test counts | Sarah (PO) |
