@@ -4,6 +4,48 @@
 
 The Edge Agent (tea) ☕ is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity, making it ideal for use with local standalone AI agents, including edge computing environments. Tea provides an easy-to-use framework for building state-driven LLM workflows, avoiding unnecessary features to efficiently support local, single-app operations.
 
+## Download Pre-built Binaries
+
+Pre-built binaries are available for all major platforms. No Python or Rust installation required!
+
+**Latest Release:** [GitHub Releases](https://github.com/fabceolin/the_edge_agent/releases/latest)
+
+| Platform | Python CLI | Rust CLI |
+|----------|-----------|----------|
+| Linux x86_64 | `tea-agent-linux-x86_64` | `tea-linux-x86_64` |
+| Linux ARM64 | `tea-agent-linux-arm64` | `tea-linux-arm64` |
+| macOS Intel | `tea-agent-darwin-x86_64` | `tea-darwin-x86_64` |
+| macOS Apple Silicon | `tea-agent-darwin-arm64` | `tea-darwin-arm64` |
+| Windows | `tea-agent-windows-x86_64.exe` | `tea-windows-x86_64.exe` |
+
+### Quick Install
+
+```bash
+# Linux/macOS - Download and install Rust binary
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-linux-x86_64 -o tea
+chmod +x tea
+sudo mv tea /usr/local/bin/
+
+# Verify installation
+tea --version
+```
+
+### Verify Downloads
+
+Each release includes `SHA256SUMS.txt` for verification:
+
+```bash
+# Download checksum file and binary
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/SHA256SUMS.txt -o SHA256SUMS.txt
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-linux-x86_64 -o tea-linux-x86_64
+
+# Verify (Linux)
+sha256sum -c SHA256SUMS.txt --ignore-missing
+
+# Verify (macOS)
+shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+```
+
 ## Implementations
 
 This is a **polyglot monorepo** with two implementations:
@@ -62,44 +104,79 @@ You can install the_edge_agent using pip:
 pip install git+https://github.com/fabceolin/the_edge_agent.git
 ```
 
-After installation, the `tea-agent` command will be available globally.
+After installation, the `tea` command will be available globally.
 
 # Quick Start
 
-## CLI Usage
+## CLI Usage (Unified Interface)
 
-The Edge Agent includes a command-line interface for running YAML-defined agent workflows without writing Python code:
+Both Python and Rust implementations share the same CLI interface with identical subcommands and flags:
 
 ```bash
-# Run an agent from a YAML file
-tea-agent examples/yaml_agent_example.yaml
+# Run a workflow
+tea run workflow.yaml --input '{"query": "hello"}'
+tea run workflow.yaml --input @state.json
 
-# Run with initial state as JSON
-tea-agent examples/yaml_agent_example.yaml --state '{"query": "artificial intelligence"}'
+# Run with secrets
+tea run workflow.yaml --secrets '{"api_key": "sk-123"}'
+tea run workflow.yaml --secrets @secrets.json
+tea run workflow.yaml --secrets-env TEA_SECRET_
 
-# Run with initial state from a JSON file
-tea-agent examples/yaml_agent_example.yaml --state-file initial_state.json
+# Streaming NDJSON output (for pipelines)
+tea run workflow.yaml --stream
 
-# Load custom actions from a Python module
-tea-agent examples/yaml_agent_example.yaml --actions-module my_company.tea_actions
+# CLI interrupt control
+tea run workflow.yaml --interrupt-before node1,node2
+tea run workflow.yaml --interrupt-after classify
+tea run workflow.yaml --auto-continue
 
-# Load custom actions from a local Python file
-tea-agent examples/yaml_agent_example.yaml --actions-file ./my_custom_actions.py
+# Load custom actions (Python only)
+tea run workflow.yaml --actions-module my_package.actions
+tea run workflow.yaml --actions-file ./custom_actions.py
 
-# Load multiple actions sources (later sources override earlier ones)
-tea-agent agent.yaml --actions-module pkg1.actions --actions-module pkg2.actions --actions-file ./overrides.py
+# Resume from checkpoint
+tea resume checkpoint.pkl --workflow workflow.yaml
+tea resume checkpoint.pkl --workflow workflow.yaml --input '{"update": "value"}'
 
-# Resume from a checkpoint (human-in-the-loop workflows)
-tea-agent agent.yaml --resume ./checkpoints/node_1234567890.pkl
+# Validate workflow (without execution)
+tea validate workflow.yaml
+tea validate workflow.yaml --detailed
 
-# Auto-continue at interrupts (CI/CD mode)
-tea-agent agent.yaml --auto-continue
+# Inspect workflow structure
+tea inspect workflow.yaml
+tea inspect workflow.yaml --format json
+tea inspect workflow.yaml --format dot    # Graphviz output
 
-# Show version
-tea-agent --version
+# Verbosity control
+tea run workflow.yaml -v      # info
+tea run workflow.yaml -vv     # debug
+tea run workflow.yaml -vvv    # trace
+tea run workflow.yaml -q      # quiet (errors only)
+
+# Version and implementation info
+tea --version                 # tea 0.1.0
+tea --impl                    # python or rust
+tea --version --impl          # tea 0.1.0 (python)
 
 # Show help
-tea-agent --help
+tea --help
+tea run --help
+```
+
+### Legacy CLI Syntax (Deprecated)
+
+The old `tea-agent` command and direct file arguments are deprecated but still work:
+
+```bash
+# Deprecated (still works with warning)
+tea-agent workflow.yaml
+tea-agent workflow.yaml --state '{"key": "value"}'
+tea-agent workflow.yaml --state-file state.json
+
+# Use these instead
+tea run workflow.yaml
+tea run workflow.yaml --input '{"key": "value"}'
+tea run workflow.yaml --input @state.json
 ```
 
 ### Custom Actions Modules
@@ -146,9 +223,9 @@ nodes:
 Load the actions module when running the agent:
 
 ```bash
-tea-agent agent.yaml --actions-module my_custom_actions
+tea run agent.yaml --actions-module my_custom_actions
 # or from a file:
-tea-agent agent.yaml --actions-file ./my_custom_actions.py
+tea run agent.yaml --actions-file ./my_custom_actions.py
 ```
 
 **Security Warning:** The `--actions-module` and `--actions-file` flags execute Python code from the specified modules. Only load actions from trusted sources. For production use, prefer installed packages over local files.
@@ -168,13 +245,13 @@ The Edge Agent supports human-in-the-loop workflows via interactive interrupts. 
 
 ```bash
 # Run agent with interrupts (interactive mode)
-tea-agent examples/customer_support.yaml --state '{"message": "My bill is wrong"}'
+tea run examples/customer_support.yaml --input '{"message": "My bill is wrong"}'
 
 # Resume from a saved checkpoint
-tea-agent examples/customer_support.yaml --resume ./checkpoints/classify_intent_1734567890.pkl
+tea resume ./checkpoints/classify_intent_1734567890.pkl --workflow examples/customer_support.yaml
 
 # Auto-continue mode (skip interactive prompts for CI/CD)
-tea-agent examples/customer_support.yaml --auto-continue
+tea run examples/customer_support.yaml --auto-continue
 ```
 
 #### Interactive Prompt Example
@@ -252,15 +329,15 @@ config:
 You can resume from a checkpoint and merge in new state:
 
 ```bash
-# Resume with additional state via --state flag
-tea-agent agent.yaml \
-  --resume ./checkpoints/classify_intent_123.pkl \
-  --state '{"approved": true, "notes": "Verified with supervisor"}'
+# Resume with additional state via --input flag
+tea resume ./checkpoints/classify_intent_123.pkl \
+  --workflow agent.yaml \
+  --input '{"approved": true, "notes": "Verified with supervisor"}'
 ```
 
 **State Merge Precedence** (highest to lowest):
 1. User input from interactive prompt
-2. `--state` flag value
+2. `--input` flag value
 3. Checkpoint state
 4. YAML initial state defaults
 
@@ -270,7 +347,7 @@ For automated environments where interactive prompts would block execution:
 
 ```bash
 # Auto-continue mode: execution continues at interrupts without pausing
-tea-agent agent.yaml --auto-continue
+tea run agent.yaml --auto-continue
 
 # This also works in Docker, systemd services, and CI pipelines
 # where stdin is not a TTY

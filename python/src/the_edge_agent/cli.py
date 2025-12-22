@@ -2,19 +2,21 @@
 """
 CLI for executing YAML-defined Edge Agent workflows.
 
-This module provides the tea-agent command-line interface for running
-YAML agent configurations without Python boilerplate.
+This module provides the tea command-line interface for running
+YAML agent configurations with subcommands for run, resume, validate, and inspect.
 
 Usage:
-    tea-agent agent.yaml
-    tea-agent agent.yaml --state '{"key": "value"}'
-    tea-agent agent.yaml --state-file state.json
-    tea-agent --version
-    tea-agent --help
+    tea run workflow.yaml --input '{"key": "value"}'
+    tea run workflow.yaml --input @state.json
+    tea resume checkpoint.pkl --workflow workflow.yaml
+    tea validate workflow.yaml
+    tea inspect workflow.yaml --format dot
+    tea --version
+    tea --impl
 """
 
 import sys
-import argparse
+import os
 import json
 import yaml
 import importlib
@@ -22,155 +24,115 @@ import importlib.util
 import traceback
 import pickle
 import time
+import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
+from enum import Enum
+from datetime import datetime, timezone
+
+import typer
 
 from the_edge_agent import YAMLEngine, __version__
 
+# Implementation identifier
+IMPLEMENTATION = "python"
 
-def parse_args() -> argparse.Namespace:
+# Create the main app
+app = typer.Typer(
+    name="tea",
+    help="The Edge Agent - Lightweight State Graph Workflow Engine",
+    no_args_is_help=True,
+    add_completion=False,  # Disable shell completion for cleaner help
+)
+
+
+class OutputFormat(str, Enum):
+    """Output format for inspect command."""
+    text = "text"
+    json = "json"
+    dot = "dot"
+
+
+def parse_input(value: Optional[str]) -> Dict[str, Any]:
     """
-    Parse command-line arguments.
-
-    Returns:
-        argparse.Namespace: Parsed arguments containing yaml_file, state, and state_file.
-    """
-    parser = argparse.ArgumentParser(
-        prog="tea-agent",
-        description="Execute YAML-defined Edge Agent workflows",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  tea-agent agent.yaml
-  tea-agent agent.yaml --state '{"query": "hello"}'
-  tea-agent agent.yaml --state-file initial_state.json
-  tea-agent agent.yaml --actions-module my_company.tea_actions
-  tea-agent agent.yaml --actions-file ./dev_actions.py
-  tea-agent agent.yaml --actions-module pkg1.actions --actions-module pkg2.actions
-  tea-agent agent.yaml --resume ./checkpoints/classify_intent_1234567890.pkl
-  tea-agent agent.yaml --auto-continue
-
-For more information, visit: https://github.com/fabceolin/the_edge_agent
-        """,
-    )
-
-    parser.add_argument(
-        "yaml_file",
-        type=str,
-        help="Path to YAML agent configuration file",
-    )
-
-    parser.add_argument(
-        "--state",
-        type=str,
-        default=None,
-        help="Initial state as JSON string (e.g., '{\"key\": \"value\"}')",
-    )
-
-    parser.add_argument(
-        "--state-file",
-        type=str,
-        default=None,
-        help="Path to JSON file containing initial state",
-    )
-
-    parser.add_argument(
-        "--actions-module",
-        type=str,
-        action="append",
-        dest="actions_modules",
-        default=None,
-        help="Python module path to load actions from (e.g., 'my_package.actions'). Can be specified multiple times.",
-    )
-
-    parser.add_argument(
-        "--actions-file",
-        type=str,
-        action="append",
-        dest="actions_files",
-        default=None,
-        help="Python file path to load actions from (e.g., './my_actions.py'). Can be specified multiple times.",
-    )
-
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Resume from checkpoint file (e.g., ./checkpoints/node_123.pkl)",
-    )
-
-    parser.add_argument(
-        "--auto-continue",
-        action="store_true",
-        default=False,
-        help="Skip interactive prompts at interrupts (auto-continue)",
-    )
-
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"tea-agent {__version__}",
-    )
-
-    return parser.parse_args()
-
-
-def load_initial_state(args: argparse.Namespace) -> Dict[str, Any]:
-    """
-    Load initial state from command-line arguments.
+    Parse input from JSON string or @file.json.
 
     Args:
-        args (argparse.Namespace): Parsed command-line arguments.
+        value: JSON string or @file.json path
 
     Returns:
-        Dict[str, Any]: Initial state dictionary. If both --state and --state-file
-                        are provided, they are merged with --state taking precedence.
+        Parsed dictionary
 
     Raises:
-        SystemExit: If JSON parsing fails or file doesn't exist.
+        typer.Exit: On parse error
     """
-    state = {}
+    if value is None:
+        return {}
 
-    # Load from file first (if provided)
-    if args.state_file:
-        state_file_path = Path(args.state_file)
-        if not state_file_path.exists():
-            print(f"Error: State file not found: {args.state_file}", file=sys.stderr)
-            sys.exit(1)
-
+    if value.startswith("@"):
+        path = Path(value[1:])
+        if not path.exists():
+            typer.echo(f"Error: Input file not found: {path}", err=True)
+            raise typer.Exit(1)
         try:
-            with open(state_file_path, "r", encoding="utf-8") as f:
-                file_state = json.load(f)
-                if not isinstance(file_state, dict):
-                    print(
-                        f"Error: State file must contain a JSON object, got {type(file_state).__name__}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                state.update(file_state)
+            return json.loads(path.read_text())
         except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in state file: {e}", file=sys.stderr)
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error reading state file: {e}", file=sys.stderr)
-            sys.exit(1)
+            typer.echo(f"Error: Invalid JSON in input file: {e}", err=True)
+            raise typer.Exit(1)
 
-    # Load from --state argument (overrides file values)
-    if args.state:
-        try:
-            arg_state = json.loads(args.state)
-            if not isinstance(arg_state, dict):
-                print(
-                    f"Error: --state must be a JSON object, got {type(arg_state).__name__}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            state.update(arg_state)
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in --state argument: {e}", file=sys.stderr)
-            sys.exit(1)
+    try:
+        result = json.loads(value)
+        if not isinstance(result, dict):
+            typer.echo(f"Error: Input must be a JSON object, got {type(result).__name__}", err=True)
+            raise typer.Exit(1)
+        return result
+    except json.JSONDecodeError as e:
+        typer.echo(f"Error: Invalid JSON in --input: {e}", err=True)
+        raise typer.Exit(1)
 
-    return state
+
+def parse_secrets(
+    secrets: Optional[str],
+    secrets_env: Optional[str]
+) -> Dict[str, Any]:
+    """
+    Parse secrets from JSON/file and/or environment variables.
+
+    Args:
+        secrets: JSON string or @file.json path
+        secrets_env: Environment variable prefix
+
+    Returns:
+        Dictionary of secrets
+    """
+    result = {}
+
+    if secrets:
+        if secrets.startswith("@"):
+            path = Path(secrets[1:])
+            if not path.exists():
+                typer.echo(f"Error: Secrets file not found: {path}", err=True)
+                raise typer.Exit(1)
+            try:
+                result.update(json.loads(path.read_text()))
+            except json.JSONDecodeError as e:
+                typer.echo(f"Error: Invalid JSON in secrets file: {e}", err=True)
+                raise typer.Exit(1)
+        else:
+            try:
+                result.update(json.loads(secrets))
+            except json.JSONDecodeError as e:
+                typer.echo(f"Error: Invalid JSON in --secrets: {e}", err=True)
+                raise typer.Exit(1)
+
+    if secrets_env:
+        for key, value in os.environ.items():
+            if key.startswith(secrets_env):
+                secret_key = key[len(secrets_env):].lower()
+                if secret_key:
+                    result[secret_key] = value
+
+    return result
 
 
 def load_actions_from_module(module_path: str) -> Dict[str, Callable]:
@@ -178,55 +140,27 @@ def load_actions_from_module(module_path: str) -> Dict[str, Callable]:
     Load actions from a Python module (installed package).
 
     Args:
-        module_path (str): Python module path (e.g., 'my_package.actions').
+        module_path: Python module path (e.g., 'my_package.actions')
 
     Returns:
-        Dict[str, Callable]: Dictionary of action name -> action function.
-
-    Raises:
-        ImportError: If module cannot be imported.
-        AttributeError: If module lacks register_actions() function.
-        Exception: If register_actions() raises an error.
+        Dictionary of action name -> action function
     """
     try:
         module = importlib.import_module(module_path)
     except ImportError as e:
-        print(f"\nError: Cannot import module '{module_path}'", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print(f"\nHint: Install the module with: pip install {module_path.split('.')[0]}", file=sys.stderr)
-        print("\nModule contract example:", file=sys.stderr)
-        print(_get_module_contract_example(), file=sys.stderr)
-        raise
+        typer.echo(f"Error: Cannot import module '{module_path}': {e}", err=True)
+        raise typer.Exit(1)
 
     if not hasattr(module, 'register_actions'):
-        error_msg = (
-            f"\nError: Module '{module_path}' must define a register_actions(registry, engine) function.\n"
-            f"\nModule contract example:\n{_get_module_contract_example()}"
-        )
-        print(error_msg, file=sys.stderr)
-        raise AttributeError(f"Module '{module_path}' lacks register_actions() function")
-
-    # Log module metadata if available
-    if hasattr(module, '__tea_actions__'):
-        metadata = module.__tea_actions__
-        print(f"  Loading module '{module_path}' (v{metadata.get('version', 'unknown')}): {metadata.get('description', 'No description')}")
+        typer.echo(f"Error: Module '{module_path}' must define a register_actions(registry, engine) function", err=True)
+        raise typer.Exit(1)
 
     registry = {}
     try:
         module.register_actions(registry, engine=None)
     except Exception as e:
-        print(f"\nError: Failed to register actions from module '{module_path}':", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print("\nTraceback:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        raise
-
-    # Validate that registered actions are callables
-    for action_name, action_func in registry.items():
-        if not callable(action_func):
-            raise ValueError(
-                f"Module '{module_path}' registered non-callable '{action_name}': {type(action_func)}"
-            )
+        typer.echo(f"Error: Failed to register actions from '{module_path}': {e}", err=True)
+        raise typer.Exit(1)
 
     return registry
 
@@ -236,25 +170,17 @@ def load_actions_from_file(file_path: str) -> Dict[str, Callable]:
     Load actions from a Python file (local file path).
 
     Args:
-        file_path (str): Path to Python file (e.g., './my_actions.py').
+        file_path: Path to Python file
 
     Returns:
-        Dict[str, Callable]: Dictionary of action name -> action function.
-
-    Raises:
-        FileNotFoundError: If file doesn't exist.
-        AttributeError: If file lacks register_actions() function.
-        Exception: If register_actions() raises an error.
+        Dictionary of action name -> action function
     """
     path = Path(file_path).resolve()
 
     if not path.exists():
-        print(f"\nError: Actions file not found: {path}", file=sys.stderr)
-        print("\nModule contract example:", file=sys.stderr)
-        print(_get_module_contract_example(), file=sys.stderr)
-        raise FileNotFoundError(f"Actions file not found: {path}")
+        typer.echo(f"Error: Actions file not found: {path}", err=True)
+        raise typer.Exit(1)
 
-    # Load Python file dynamically
     try:
         spec = importlib.util.spec_from_file_location("custom_actions", path)
         if spec is None or spec.loader is None:
@@ -262,218 +188,105 @@ def load_actions_from_file(file_path: str) -> Dict[str, Callable]:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     except Exception as e:
-        print(f"\nError: Failed to load Python file '{path}':", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print("\nTraceback:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        raise
+        typer.echo(f"Error: Failed to load Python file '{path}': {e}", err=True)
+        raise typer.Exit(1)
 
     if not hasattr(module, 'register_actions'):
-        error_msg = (
-            f"\nError: File '{file_path}' must define a register_actions(registry, engine) function.\n"
-            f"\nModule contract example:\n{_get_module_contract_example()}"
-        )
-        print(error_msg, file=sys.stderr)
-        raise AttributeError(f"File '{file_path}' lacks register_actions() function")
-
-    # Log module metadata if available
-    if hasattr(module, '__tea_actions__'):
-        metadata = module.__tea_actions__
-        print(f"  Loading file '{file_path}' (v{metadata.get('version', 'unknown')}): {metadata.get('description', 'No description')}")
+        typer.echo(f"Error: File '{file_path}' must define a register_actions(registry, engine) function", err=True)
+        raise typer.Exit(1)
 
     registry = {}
     try:
         module.register_actions(registry, engine=None)
     except Exception as e:
-        print(f"\nError: Failed to register actions from file '{file_path}':", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print("\nTraceback:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        raise
-
-    # Validate that registered actions are callables
-    for action_name, action_func in registry.items():
-        if not callable(action_func):
-            raise ValueError(
-                f"File '{file_path}' registered non-callable '{action_name}': {type(action_func)}"
-            )
+        typer.echo(f"Error: Failed to register actions from '{file_path}': {e}", err=True)
+        raise typer.Exit(1)
 
     return registry
 
 
-def _get_module_contract_example() -> str:
-    """Return example module structure for error messages."""
-    return """
-# my_actions.py
-from typing import Any, Callable, Dict
-
-def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
-    \"\"\"Register actions into the provided registry.\"\"\"
-
-    def my_action(state, param1, param2=None, **kwargs):
-        return {"result": "value", "success": True}
-
-    registry['my_action'] = my_action
-
-# Optional metadata
-__tea_actions__ = {
-    "version": "1.0.0",
-    "description": "My custom actions",
-    "actions": ["my_action"],
-}
-"""
-
-
 def load_cli_actions(
-    actions_modules: Optional[list] = None,
-    actions_files: Optional[list] = None
+    actions_modules: Optional[List[str]] = None,
+    actions_files: Optional[List[str]] = None
 ) -> Dict[str, Callable]:
-    """
-    Load and merge actions from CLI-specified modules and files.
-
-    Args:
-        actions_modules (Optional[list]): List of module paths to load.
-        actions_files (Optional[list]): List of file paths to load.
-
-    Returns:
-        Dict[str, Callable]: Merged actions registry (later sources override earlier).
-
-    Note:
-        Loading order: modules first (in order), then files (in order).
-        Later flags override earlier flags.
-    """
+    """Load and merge actions from CLI-specified modules and files."""
     combined_registry = {}
 
-    # Load from --actions-module flags (in order)
     if actions_modules:
-        print("Loading actions from modules...")
         for module_path in actions_modules:
-            try:
-                module_actions = load_actions_from_module(module_path)
-                # Log overrides
-                for action_name in module_actions:
-                    if action_name in combined_registry:
-                        print(f"  Warning: Module '{module_path}' overrides action '{action_name}'", file=sys.stderr)
-                combined_registry.update(module_actions)
-                print(f"  Loaded {len(module_actions)} action(s) from module '{module_path}'")
-            except Exception:
-                # Error already printed by load_actions_from_module
-                sys.exit(1)
+            module_actions = load_actions_from_module(module_path)
+            combined_registry.update(module_actions)
 
-    # Load from --actions-file flags (in order)
     if actions_files:
-        print("Loading actions from files...")
         for file_path in actions_files:
-            try:
-                file_actions = load_actions_from_file(file_path)
-                # Log overrides
-                for action_name in file_actions:
-                    if action_name in combined_registry:
-                        print(f"  Warning: File '{file_path}' overrides action '{action_name}'", file=sys.stderr)
-                combined_registry.update(file_actions)
-                print(f"  Loaded {len(file_actions)} action(s) from file '{file_path}'")
-            except Exception:
-                # Error already printed by load_actions_from_file
-                sys.exit(1)
-
-    if combined_registry:
-        print(f"Total CLI actions loaded: {len(combined_registry)}\n")
+            file_actions = load_actions_from_file(file_path)
+            combined_registry.update(file_actions)
 
     return combined_registry
 
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Deep merge two dictionaries, preserving nested structures.
-
-    Args:
-        base (Dict[str, Any]): Base dictionary (will be modified in-place).
-        override (Dict[str, Any]): Dictionary with values to merge/override.
-
-    Returns:
-        Dict[str, Any]: Merged dictionary (same reference as base).
-
-    Note:
-        This prevents shallow merge data loss (DATA-001 risk mitigation).
-        None values in override are preserved (explicit None setting).
-    """
+    """Deep merge two dictionaries."""
     for key, value in override.items():
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-            # Recursively merge nested dicts
             deep_merge(base[key], value)
         else:
-            # Override value (including None)
             base[key] = value
     return base
 
 
-def load_checkpoint(checkpoint_path: str) -> Dict[str, Any]:
-    """
-    Load checkpoint from file.
+def setup_logging(verbose: int, quiet: bool):
+    """Configure logging based on verbosity flags."""
+    if quiet:
+        level = logging.ERROR
+    elif verbose >= 3:
+        level = logging.DEBUG
+    elif verbose >= 2:
+        level = logging.DEBUG
+    elif verbose >= 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
 
-    Args:
-        checkpoint_path (str): Path to checkpoint file.
-
-    Returns:
-        Dict[str, Any]: Checkpoint data dict with 'state' and 'node' keys.
-
-    Raises:
-        FileNotFoundError: If checkpoint file doesn't exist.
-        pickle.UnpicklingError: If checkpoint file is corrupted.
-        ValueError: If checkpoint format is invalid.
-    """
-    path = Path(checkpoint_path).resolve()
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Checkpoint file not found: {path}\n"
-            f"Ensure the file exists and the path is correct."
-        )
-
-    try:
-        with open(path, "rb") as f:
-            checkpoint = pickle.load(f)
-
-        if not isinstance(checkpoint, dict) or "state" not in checkpoint:
-            raise ValueError("Invalid checkpoint format - missing 'state' key")
-
-        return checkpoint
-    except pickle.UnpicklingError as e:
-        raise pickle.UnpicklingError(
-            f"Corrupted checkpoint file: {path}\n"
-            f"Error: {e}\n"
-            f"The checkpoint may have been created with an incompatible version."
-        )
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s: %(message)s"
+    )
 
 
 def is_interactive_terminal() -> bool:
-    """
-    Check if running in an interactive terminal (TTY).
-
-    Returns:
-        bool: True if stdin is a TTY, False otherwise.
-
-    Note:
-        This prevents input() from hanging in Docker/CI/systemd environments
-        (TECH-003 risk mitigation).
-    """
+    """Check if running in an interactive terminal (TTY)."""
     return sys.stdin.isatty()
 
 
+def emit_ndjson_event(event_type: str, **kwargs):
+    """Emit an NDJSON event to stdout."""
+    event = {
+        "type": event_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **kwargs
+    }
+    print(json.dumps(event), flush=True)
+
+
+def load_checkpoint(checkpoint_path: str) -> Dict[str, Any]:
+    """Load checkpoint from file."""
+    path = Path(checkpoint_path).resolve()
+
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {path}")
+
+    with open(path, "rb") as f:
+        checkpoint = pickle.load(f)
+
+    if not isinstance(checkpoint, dict) or "state" not in checkpoint:
+        raise ValueError("Invalid checkpoint format - missing 'state' key")
+
+    return checkpoint
+
+
 def handle_interrupt_interactive(event: Dict[str, Any], checkpoint_dir: str) -> Optional[Dict[str, Any]]:
-    """
-    Handle interrupt event with interactive prompt.
-
-    Args:
-        event (Dict[str, Any]): Interrupt event with state and node info.
-        checkpoint_dir (str): Directory for saving checkpoints.
-
-    Returns:
-        Optional[Dict[str, Any]]: Updated state dict or None to abort.
-
-    Note:
-        Saves checkpoint file in format: {node}_{timestamp_ms}.pkl
-    """
+    """Handle interrupt event with interactive prompt."""
     node = event.get("node")
     state = event.get("state", {})
 
@@ -482,230 +295,532 @@ def handle_interrupt_interactive(event: Dict[str, Any], checkpoint_dir: str) -> 
     checkpoint_path = Path(checkpoint_dir) / f"{node}_{timestamp_ms}.pkl"
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Save using pickle protocol 4 (TECH-001 risk mitigation)
-    # Include all required fields: state, node, config, timestamp, version
     checkpoint_data = {
         "state": state,
         "node": node,
-        "config": {},  # Empty config, will use graph defaults on resume
+        "config": {},
         "timestamp": timestamp_ms,
         "version": "1.0"
     }
     with open(checkpoint_path, "wb") as f:
         pickle.dump(checkpoint_data, f, protocol=4)
 
-    print(f"\nCheckpoint saved: {checkpoint_path}")
-    print("\nReview the state above. Options:")
-    print("  [c] Continue with current state")
-    print("  [u] Update state before continuing")
-    print("  [a] Abort execution")
+    typer.echo(f"\nCheckpoint saved: {checkpoint_path}")
+    typer.echo("\nReview the state above. Options:")
+    typer.echo("  [c] Continue with current state")
+    typer.echo("  [u] Update state before continuing")
+    typer.echo("  [a] Abort execution")
 
     choice = input("\nChoice: ").strip().lower()
 
     if choice == "c":
         return state
     elif choice == "u":
-        print("\nEnter state updates as JSON (or press Enter to skip):")
+        typer.echo("\nEnter state updates as JSON (or press Enter to skip):")
         json_input = input().strip()
         if json_input:
             try:
                 updates = json.loads(json_input)
                 if not isinstance(updates, dict):
-                    print(f"\nError: State updates must be a JSON object, got {type(updates).__name__}", file=sys.stderr)
-                    print("Example: {\"key\": \"value\", \"approved\": true}")
+                    typer.echo(f"Error: State updates must be a JSON object", err=True)
                     return None
-                # Use deep_merge to prevent data loss (DATA-001 risk mitigation)
                 state = deep_merge(state.copy(), updates)
-                print(f"\nState updated. Resuming execution...")
+                typer.echo("State updated. Resuming execution...")
                 return state
             except json.JSONDecodeError as e:
-                print(f"\nError: Invalid JSON - {e}", file=sys.stderr)
-                print("Example: {\"key\": \"value\", \"approved\": true}")
+                typer.echo(f"Error: Invalid JSON - {e}", err=True)
                 return None
         return state
     elif choice == "a":
-        print("\nExecution aborted by user.")
+        typer.echo("\nExecution aborted by user.")
         return None
     else:
-        print(f"\nInvalid choice: {choice}. Aborting.")
+        typer.echo(f"\nInvalid choice: {choice}. Aborting.")
         return None
 
 
-def run_agent(
-    yaml_path: str,
-    initial_state: Dict[str, Any],
-    cli_actions: Optional[Dict[str, Callable]] = None,
-    resume_checkpoint: Optional[str] = None,
-    auto_continue: bool = False
-) -> int:
-    """
-    Load and execute a YAML agent configuration.
+@app.command()
+def run(
+    file: Path = typer.Argument(..., help="Path to workflow YAML file"),
+    input: Optional[str] = typer.Option(None, "--input", "-i", help="Initial state as JSON or @file.json"),
+    secrets: Optional[str] = typer.Option(None, "--secrets", help="Secrets as JSON or @file.json"),
+    secrets_env: Optional[str] = typer.Option(None, "--secrets-env", help="Load secrets from env vars with prefix"),
+    stream: bool = typer.Option(False, "--stream", "-s", help="Output events as NDJSON"),
+    checkpoint_dir: Optional[Path] = typer.Option(None, "--checkpoint-dir", "-c", help="Checkpoint directory"),
+    interrupt_before: Optional[str] = typer.Option(None, "--interrupt-before", help="Nodes to interrupt before (comma-separated)"),
+    interrupt_after: Optional[str] = typer.Option(None, "--interrupt-after", help="Nodes to interrupt after (comma-separated)"),
+    auto_continue: bool = typer.Option(False, "--auto-continue", help="Skip interactive prompts at interrupts"),
+    actions_module: Optional[List[str]] = typer.Option(None, "--actions-module", help="Python module for actions"),
+    actions_file: Optional[List[str]] = typer.Option(None, "--actions-file", help="Python file for actions"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+    # Deprecated aliases (hidden)
+    state: Optional[str] = typer.Option(None, "--state", hidden=True),
+    state_file: Optional[Path] = typer.Option(None, "--state-file", hidden=True),
+):
+    """Execute a workflow."""
+    setup_logging(verbose, quiet)
 
-    Args:
-        yaml_path (str): Path to the YAML agent configuration file.
-        initial_state (Dict[str, Any]): Initial state (merged with checkpoint if resuming).
-        cli_actions (Optional[Dict[str, Callable]]): Actions registry from CLI flags.
-        resume_checkpoint (Optional[str]): Path to checkpoint file for resumption.
-        auto_continue (bool): Skip interactive prompts at interrupts.
+    # Handle deprecated flags
+    if state:
+        typer.echo("Warning: --state is deprecated, use --input", err=True)
+        input = input or state
+    if state_file:
+        typer.echo("Warning: --state-file is deprecated, use --input @file.json", err=True)
+        input = input or f"@{state_file}"
 
-    Returns:
-        int: Exit code (0 for success, 1 for failure).
-    """
-    # Load checkpoint if resuming
-    if resume_checkpoint:
-        try:
-            checkpoint = load_checkpoint(resume_checkpoint)
-            checkpoint_state = checkpoint.get("state", {})
-            checkpoint_node = checkpoint.get("node", "unknown")
+    # Validate file exists
+    if not file.exists():
+        typer.echo(f"Error: Workflow file not found: {file}", err=True)
+        raise typer.Exit(1)
 
-            # Deep merge: initial_state overrides checkpoint_state (TECH-002 risk mitigation)
-            merged_state = deep_merge(checkpoint_state.copy(), initial_state)
-            initial_state = merged_state
+    # Parse inputs
+    initial_state = parse_input(input)
+    secrets_dict = parse_secrets(secrets, secrets_env)
 
-            print(f"Resuming from checkpoint: {resume_checkpoint}")
-            print(f"Interrupted node: {checkpoint_node}")
-            print(f"Previous state merged with CLI state\n")
+    # Load CLI actions
+    cli_actions = load_cli_actions(
+        actions_modules=actions_module,
+        actions_files=actions_file
+    )
 
-        except (FileNotFoundError, pickle.UnpicklingError, ValueError) as e:
-            print(f"Error loading checkpoint: {e}", file=sys.stderr)
-            return 1
+    # Create engine
+    engine = YAMLEngine(actions_registry=cli_actions or {})
+    if secrets_dict:
+        engine.secrets = secrets_dict
 
-    # Validate YAML file exists
-    yaml_file_path = Path(yaml_path)
-    if not yaml_file_path.exists():
-        print(f"Error: YAML file not found: {yaml_path}", file=sys.stderr)
-        return 1
-
-    # Load and execute agent
     try:
-        print("=" * 80)
-        print(f"Running agent from: {yaml_path}")
-        print("=" * 80)
+        graph = engine.load_from_file(str(file))
+    except Exception as e:
+        typer.echo(f"Error loading workflow: {e}", err=True)
+        raise typer.Exit(1)
 
+    # Compile with interrupts
+    compiled = graph.compile()
+
+    # Apply interrupt points from CLI flags
+    if interrupt_before:
+        nodes = [n.strip() for n in interrupt_before.split(",")]
+        compiled = compiled.with_interrupt_before(nodes)
+    if interrupt_after:
+        nodes = [n.strip() for n in interrupt_after.split(",")]
+        compiled = compiled.with_interrupt_after(nodes)
+
+    # Determine checkpoint directory
+    cp_dir = str(checkpoint_dir) if checkpoint_dir else "./checkpoints"
+
+    if not quiet and not stream:
+        typer.echo("=" * 80)
+        typer.echo(f"Running agent from: {file}")
+        typer.echo("=" * 80)
         if initial_state:
-            print(f"\nInitial state: {json.dumps(initial_state, indent=2)}\n")
-        else:
-            print("\nInitial state: {}\n")
+            typer.echo(f"\nInitial state: {json.dumps(initial_state, indent=2)}\n")
 
-        # Create engine with CLI actions registry (if provided)
-        # CLI actions have lower priority than YAML imports (YAML imports override)
-        engine = YAMLEngine(actions_registry=cli_actions or {})
-        graph = engine.load_from_file(yaml_path)
+    if stream:
+        emit_ndjson_event("start", workflow=str(file))
 
-        # Determine checkpoint directory (from YAML config or default)
-        # NOTE: This is a simplified checkpoint_dir retrieval - proper implementation
-        # would require accessing YAMLEngine's config object if exposed
-        checkpoint_dir = "./checkpoints"  # Default fallback
+    # Execute
+    current_state = initial_state
+    checkpoint_path = None
 
-        # Track current state for resumption
-        current_state = initial_state
-        checkpoint_path = None
-
-        # Loop to handle interrupt/resume cycles
+    try:
         while True:
             completed = False
 
-            # Stream execution events (resume from checkpoint if available)
-            for event in graph.stream(current_state, checkpoint=checkpoint_path):
+            for event in compiled.stream(current_state, checkpoint=checkpoint_path):
                 event_type = event.get("type")
                 node = event.get("node")
 
-                if event_type == "state":
-                    print(f"✓ {node}")
+                if stream:
+                    # Emit NDJSON events
+                    if event_type == "state":
+                        emit_ndjson_event("node_complete", node=node, state=event.get("state", {}))
+                    elif event_type in ["interrupt_before", "interrupt_after", "interrupt"]:
+                        emit_ndjson_event("interrupt", node=node, state=event.get("state", {}))
+                    elif event_type == "final":
+                        emit_ndjson_event("complete", state=event.get("state", {}))
+                        completed = True
+                        break
+                    elif event_type == "error":
+                        emit_ndjson_event("error", node=node, error=str(event.get("error", "")))
+                        raise typer.Exit(1)
+                else:
+                    # Standard output
+                    if event_type == "state":
+                        if not quiet:
+                            typer.echo(f"✓ {node}")
 
-                elif event_type in ["interrupt_before", "interrupt_after", "interrupt"]:
-                    print(f"⏸  Interrupt at: {node}")
-                    state = event.get("state", {})
-                    print(f"   State: {json.dumps(state, indent=2)}")
+                    elif event_type in ["interrupt_before", "interrupt_after", "interrupt"]:
+                        state = event.get("state", {})
+                        if not quiet:
+                            typer.echo(f"⏸  Interrupt at: {node}")
+                            typer.echo(f"   State: {json.dumps(state, indent=2)}")
 
-                    # Get checkpoint path from event (if StateGraph provides it)
-                    checkpoint_path = event.get("checkpoint_path")
+                        checkpoint_path = event.get("checkpoint_path")
 
-                    # Handle interrupt interactively if not auto-continue
-                    if auto_continue:
-                        print("   (auto-continuing...)")
-                        current_state = state
-                        # Break inner loop to restart stream with checkpoint
+                        if auto_continue:
+                            if not quiet:
+                                typer.echo("   (auto-continuing...)")
+                            current_state = state
+                            break
+
+                        if not is_interactive_terminal():
+                            typer.echo("   (non-TTY detected, auto-continuing...)", err=True)
+                            current_state = state
+                            break
+
+                        updated_state = handle_interrupt_interactive(event, cp_dir)
+                        if updated_state is None:
+                            raise typer.Exit(1)
+
+                        current_state = updated_state
                         break
 
-                    # Check for TTY before prompting (TECH-003 risk mitigation)
-                    if not is_interactive_terminal():
-                        print("   (non-TTY detected, auto-continuing...)", file=sys.stderr)
-                        current_state = state
+                    elif event_type == "error":
+                        if not quiet:
+                            typer.echo(f"✗ Error at {node}: {event.get('error')}")
+                        raise typer.Exit(1)
+
+                    elif event_type == "final":
+                        if not quiet:
+                            typer.echo("\n" + "=" * 80)
+                            typer.echo("✓ Completed")
+                            typer.echo("=" * 80)
+                            typer.echo(f"Final state: {json.dumps(event.get('state', {}), indent=2)}")
+                        completed = True
                         break
 
-                    # Interactive prompt - saves its own checkpoint
-                    updated_state = handle_interrupt_interactive(event, checkpoint_dir)
-
-                    if updated_state is None:
-                        return 1  # User aborted
-
-                    current_state = updated_state
-                    print("\nResuming execution...")
-                    # Break inner loop to restart stream
-                    break
-
-                elif event_type == "error":
-                    print(f"✗ Error at {node}: {event.get('error')}")
-                    return 1
-
-                elif event_type == "final":
-                    print("\n" + "=" * 80)
-                    print("✓ Completed")
-                    print("=" * 80)
-                    final_state = event.get("state", {})
-                    print(f"Final state: {json.dumps(final_state, indent=2)}")
-                    completed = True
-                    break
-
-            # Exit outer loop if completed or no more events
             if completed:
                 break
 
-            # If we didn't break due to interrupt, we're done
             if event_type not in ["interrupt_before", "interrupt_after", "interrupt"]:
                 break
 
-        return 0
-
-    except FileNotFoundError as e:
-        print(f"Error: File not found: {e}", file=sys.stderr)
-        return 1
-    except yaml.YAMLError as e:
-        print(f"Error: Invalid YAML syntax: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
     except KeyboardInterrupt:
-        print("\n\nExecution interrupted by user (Ctrl+C)", file=sys.stderr)
-        return 130  # Standard exit code for SIGINT
+        typer.echo("\n\nExecution interrupted by user (Ctrl+C)", err=True)
+        raise typer.Exit(130)
 
 
-def main() -> int:
-    """
-    Main entry point for the tea-agent CLI.
+@app.command()
+def resume(
+    checkpoint: Path = typer.Argument(..., help="Path to checkpoint file"),
+    workflow: Path = typer.Option(..., "--workflow", "-w", help="Original workflow YAML"),
+    input: Optional[str] = typer.Option(None, "--input", "-i", help="State updates as JSON or @file.json"),
+    secrets: Optional[str] = typer.Option(None, "--secrets", help="Secrets as JSON or @file.json"),
+    secrets_env: Optional[str] = typer.Option(None, "--secrets-env", help="Load secrets from env vars with prefix"),
+    stream: bool = typer.Option(False, "--stream", "-s", help="Output events as NDJSON"),
+    auto_continue: bool = typer.Option(False, "--auto-continue", help="Skip interactive prompts at interrupts"),
+    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+):
+    """Resume execution from a checkpoint."""
+    setup_logging(verbose, quiet)
 
-    Returns:
-        int: Exit code (0 for success, non-zero for errors).
-    """
-    args = parse_args()
-    initial_state = load_initial_state(args)
+    # Validate files exist
+    if not checkpoint.exists():
+        typer.echo(f"Error: Checkpoint file not found: {checkpoint}", err=True)
+        raise typer.Exit(1)
+    if not workflow.exists():
+        typer.echo(f"Error: Workflow file not found: {workflow}", err=True)
+        raise typer.Exit(1)
 
-    # Load CLI actions (if specified)
-    cli_actions = load_cli_actions(
-        actions_modules=args.actions_modules,
-        actions_files=args.actions_files
-    )
+    # Load checkpoint
+    try:
+        cp_data = load_checkpoint(str(checkpoint))
+        checkpoint_state = cp_data.get("state", {})
+        checkpoint_node = cp_data.get("node", "unknown")
+    except Exception as e:
+        typer.echo(f"Error loading checkpoint: {e}", err=True)
+        raise typer.Exit(1)
 
-    return run_agent(
-        args.yaml_file,
-        initial_state,
-        cli_actions=cli_actions,
-        resume_checkpoint=args.resume,
-        auto_continue=args.auto_continue
-    )
+    # Parse state updates and merge
+    updates = parse_input(input)
+    merged_state = deep_merge(checkpoint_state.copy(), updates)
+
+    secrets_dict = parse_secrets(secrets, secrets_env)
+
+    if not quiet:
+        typer.echo(f"Resuming from checkpoint: {checkpoint}")
+        typer.echo(f"Interrupted node: {checkpoint_node}")
+
+    # Create engine and load workflow
+    engine = YAMLEngine(actions_registry={})
+    if secrets_dict:
+        engine.secrets = secrets_dict
+
+    try:
+        graph = engine.load_from_file(str(workflow))
+    except Exception as e:
+        typer.echo(f"Error loading workflow: {e}", err=True)
+        raise typer.Exit(1)
+
+    compiled = graph.compile()
+
+    # Execute from merged state (similar to run command)
+    cp_dir = str(checkpoint.parent)
+
+    if stream:
+        emit_ndjson_event("resume", workflow=str(workflow), checkpoint=str(checkpoint))
+
+    try:
+        for event in compiled.stream(merged_state, checkpoint=str(checkpoint)):
+            event_type = event.get("type")
+            node = event.get("node")
+
+            if stream:
+                if event_type == "state":
+                    emit_ndjson_event("node_complete", node=node, state=event.get("state", {}))
+                elif event_type == "final":
+                    emit_ndjson_event("complete", state=event.get("state", {}))
+                    break
+                elif event_type == "error":
+                    emit_ndjson_event("error", node=node, error=str(event.get("error", "")))
+                    raise typer.Exit(1)
+            else:
+                if event_type == "state":
+                    if not quiet:
+                        typer.echo(f"✓ {node}")
+                elif event_type == "final":
+                    if not quiet:
+                        typer.echo("\n" + "=" * 80)
+                        typer.echo("✓ Completed")
+                        typer.echo("=" * 80)
+                        typer.echo(f"Final state: {json.dumps(event.get('state', {}), indent=2)}")
+                    break
+                elif event_type == "error":
+                    if not quiet:
+                        typer.echo(f"✗ Error at {node}: {event.get('error')}")
+                    raise typer.Exit(1)
+
+    except KeyboardInterrupt:
+        typer.echo("\n\nExecution interrupted by user (Ctrl+C)", err=True)
+        raise typer.Exit(130)
+
+
+@app.command()
+def validate(
+    file: Path = typer.Argument(..., help="Path to workflow YAML file"),
+    detailed: bool = typer.Option(False, "--detailed", help="Show detailed validation info"),
+):
+    """Validate a workflow without execution."""
+    if not file.exists():
+        typer.echo(f"Error: File not found: {file}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        content = file.read_text()
+        config = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        typer.echo(f"Error: Invalid YAML syntax: {e}", err=True)
+        raise typer.Exit(1)
+
+    if detailed:
+        typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
+        if config.get('description'):
+            typer.echo(f"Description: {config.get('description')}")
+
+        nodes = config.get('nodes', [])
+        typer.echo(f"\nNodes: {len(nodes)}")
+        for node in nodes:
+            name = node.get('name', 'unnamed')
+            action = node.get('uses') or node.get('action')
+            if action:
+                typer.echo(f"  - {name} (uses: {action})")
+            else:
+                typer.echo(f"  - {name}")
+
+        edges = config.get('edges', [])
+        typer.echo(f"\nEdges: {len(edges)}")
+        for edge in edges:
+            from_node = edge.get('from', '?')
+            to_node = edge.get('to')
+            targets = edge.get('targets')
+            if to_node:
+                typer.echo(f"  - {from_node} -> {to_node}")
+            if targets:
+                for result, target in targets.items():
+                    typer.echo(f"  - {from_node} --[{result}]--> {target}")
+
+    # Actually try to build the graph to validate
+    try:
+        engine = YAMLEngine()
+        graph = engine.load_from_dict(config)
+        _ = graph.compile()
+    except Exception as e:
+        typer.echo(f"\nValidation failed: {e}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"\n✓ {file} is valid")
+
+
+@app.command()
+def inspect(
+    file: Path = typer.Argument(..., help="Path to workflow YAML file"),
+    format: OutputFormat = typer.Option(OutputFormat.text, "--format", "-f", help="Output format (text, json, dot)"),
+):
+    """Inspect workflow structure."""
+    if not file.exists():
+        typer.echo(f"Error: File not found: {file}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        content = file.read_text()
+        config = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        typer.echo(f"Error: Invalid YAML syntax: {e}", err=True)
+        raise typer.Exit(1)
+
+    if format == OutputFormat.json:
+        print(json.dumps(config, indent=2))
+
+    elif format == OutputFormat.dot:
+        name = config.get('name', 'workflow').replace('-', '_')
+        print(f"digraph {name} {{")
+        print("  rankdir=TB;")
+        print("  node [shape=box];")
+        print()
+        print('  "__start__" [label="START", shape=ellipse];')
+        print('  "__end__" [label="END", shape=ellipse];')
+        print()
+
+        # Nodes
+        for node in config.get('nodes', []):
+            node_name = node.get('name', 'unnamed')
+            action = node.get('uses') or node.get('action')
+            if node.get('run'):
+                label = f"{node_name}\\n(lua)"
+            elif action:
+                label = f"{node_name}\\n[{action}]"
+            else:
+                label = node_name
+            print(f'  "{node_name}" [label="{label}"];')
+
+        print()
+
+        # Edges
+        for edge in config.get('edges', []):
+            from_node = edge.get('from', '__start__')
+            to_node = edge.get('to')
+            condition = edge.get('condition') or edge.get('when')
+            targets = edge.get('targets')
+            parallel = edge.get('parallel')
+
+            if to_node:
+                if condition:
+                    condition_escaped = condition.replace('"', '\\"')
+                    print(f'  "{from_node}" -> "{to_node}" [label="when: {condition_escaped}"];')
+                else:
+                    print(f'  "{from_node}" -> "{to_node}";')
+
+            if targets:
+                for result, target in targets.items():
+                    print(f'  "{from_node}" -> "{target}" [label="{result}"];')
+
+            if parallel:
+                for branch in parallel:
+                    print(f'  "{from_node}" -> "{branch}" [style=dashed];')
+
+        print("}")
+
+    else:
+        # Text format
+        typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
+        if config.get('description'):
+            typer.echo(f"Description: {config.get('description')}")
+        typer.echo()
+
+        nodes = config.get('nodes', [])
+        typer.echo(f"Nodes ({len(nodes)}):")
+        for node in nodes:
+            name = node.get('name', 'unnamed')
+            parts = [f"  {name}"]
+            action = node.get('uses') or node.get('action')
+            if action:
+                parts.append(f"[{action}]")
+            if node.get('run'):
+                parts.append("(lua)")
+            if node.get('retry'):
+                parts.append("(retry)")
+            if node.get('fallback'):
+                parts.append(f"(fallback: {node.get('fallback')})")
+            typer.echo(" ".join(parts))
+
+        typer.echo()
+
+        edges = config.get('edges', [])
+        typer.echo(f"Edges ({len(edges)}):")
+        for edge in edges:
+            from_node = edge.get('from', '?')
+            to_node = edge.get('to')
+            condition = edge.get('condition') or edge.get('when')
+            targets = edge.get('targets')
+            parallel = edge.get('parallel')
+
+            if to_node:
+                line = f"  {from_node} -> {to_node}"
+                if condition:
+                    line += f" [when: {condition}]"
+                typer.echo(line)
+
+            if targets:
+                for result, target in targets.items():
+                    typer.echo(f"  {from_node} --[{result}]--> {target}")
+
+            if parallel:
+                typer.echo(f"  {from_node} => [{', '.join(parallel)}]")
+
+        variables = config.get('variables', {})
+        if variables:
+            typer.echo()
+            typer.echo("Variables:")
+            for key, value in variables.items():
+                typer.echo(f"  {key}: {value}")
+
+
+def version_callback(value: bool):
+    """Handle --version flag."""
+    if value:
+        typer.echo(f"tea {__version__}")
+        raise typer.Exit()
+
+
+def impl_callback(ctx: typer.Context, value: bool):
+    """Handle --impl flag."""
+    if value:
+        # Check if --version is also set
+        version_param = ctx.params.get("version", False)
+        if version_param:
+            typer.echo(f"tea {__version__} ({IMPLEMENTATION})")
+        else:
+            typer.echo(IMPLEMENTATION)
+        raise typer.Exit()
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    version: bool = typer.Option(None, "--version", callback=version_callback, is_eager=True,
+                                   help="Show version and exit"),
+    show_impl: bool = typer.Option(False, "--impl", callback=impl_callback, is_eager=True,
+                                    help="Show implementation (python/rust)"),
+):
+    """The Edge Agent - Lightweight State Graph Workflow Engine."""
+    # Handle legacy invocation: tea workflow.yaml (without subcommand)
+    if ctx.invoked_subcommand is None and len(sys.argv) > 1:
+        first_arg = sys.argv[1]
+        if not first_arg.startswith("-") and first_arg not in ["run", "resume", "validate", "inspect"]:
+            # Looks like legacy invocation
+            if first_arg.endswith((".yaml", ".yml")):
+                typer.echo("Warning: Direct file argument is deprecated. Use 'tea run workflow.yaml'", err=True)
+                # Rewrite args and invoke run command
+                sys.argv.insert(1, "run")
+                ctx.invoke(run)
+
+
+def main():
+    """Entry point for the tea CLI."""
+    app()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

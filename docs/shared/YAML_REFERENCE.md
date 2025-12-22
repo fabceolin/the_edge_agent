@@ -555,6 +555,100 @@ GitHub Actions-style sequential steps within a node:
         return {"final": f"Submitted: {state['intermediate']}"}
 ```
 
+#### Method 6: While-Loop (`type: while_loop`)
+
+Execute a loop body repeatedly until a condition becomes false or max iterations is reached:
+
+```yaml
+- name: refine_until_valid
+  type: while_loop
+  condition: "not state.get('is_valid', False)"  # Jinja2/Tera expression
+  max_iterations: 10                              # Required: 1-1000
+  body:
+    - name: generate
+      uses: llm.call
+      with:
+        model: gpt-4o
+        messages:
+          - role: user
+            content: "Generate valid JSON for: {{ state.prompt }}"
+      output: llm_response
+
+    - name: validate
+      run: |
+        import json
+        try:
+            parsed = json.loads(state.get('llm_response', {}).get('content', '{}'))
+            return {"parsed_result": parsed, "is_valid": True}
+        except:
+            return {"is_valid": False}
+```
+
+**Required fields:**
+- `condition`: Jinja2 (Python) or Tera (Rust) expression evaluated before each iteration
+- `max_iterations`: Safety guard (integer 1-1000) to prevent infinite loops
+- `body`: List of nodes to execute sequentially on each iteration
+
+**Behavior:**
+1. Evaluate `condition` before each iteration
+2. If `true`, execute all body nodes sequentially
+3. State from each iteration passes to the next
+4. Loop exits when condition is `false` or `max_iterations` reached
+5. Final state passes to downstream nodes
+
+**Safety guards:**
+- `max_iterations` is **required** — YAML parsing fails if missing
+- Range must be 1-1000 (validation error otherwise)
+- Nested while-loops are **NOT supported** (validation error if attempted)
+- Body execution errors propagate immediately (no automatic retry)
+
+**Events emitted:**
+
+| Event | Payload |
+|-------|---------|
+| `LoopStart` | `{node_name, max_iterations}` |
+| `LoopIteration` | `{node_name, iteration, condition_result}` |
+| `LoopEnd` | `{node_name, iterations_completed, exit_reason}` |
+
+`exit_reason` is either `"condition_false"` or `"max_iterations_reached"`.
+
+**Use cases:**
+- LLM refinement until output passes validation
+- Data extraction with retry until all fields populated
+- Research agents that continue until sufficient sources found
+
+**Cross-runtime parity:**
+The while-loop syntax works identically in both Python and Rust TEA implementations. The same YAML file produces identical results in both runtimes.
+
+**Simple counter example:**
+
+```yaml
+name: counter-demo
+nodes:
+  - name: count_loop
+    type: while_loop
+    condition: "state.count < 5"
+    max_iterations: 10
+    body:
+      - name: increment
+        run: |
+          -- lua
+          local count = state.count or 0
+          local sum = state.sum or 0
+          return { count = count + 1, sum = sum + count + 1 }
+
+edges:
+  - from: __start__
+    to: count_loop
+  - from: count_loop
+    to: __end__
+```
+
+**Result** with initial state `{count: 0, sum: 0}`:
+- Loop runs 5 iterations (count goes 0→1→2→3→4→5)
+- Final state: `{count: 5, sum: 15}`
+- Exit reason: `condition_false` (count is no longer < 5)
+
 ### Fan-In Nodes
 
 For collecting results from parallel flows:

@@ -26,9 +26,12 @@ setup(
         "jmespath>=1.0.0",
         "jsonschema>=4.20.0",
         "fsspec>=2023.1.0",
+        "typer>=0.9.0",  # TEA-CLI-004: CLI subcommand support
     ],
     entry_points={
         "console_scripts": [
+            "tea=the_edge_agent.cli:main",
+            # Legacy alias (deprecated, will be removed in v1.0)
             "tea-agent=the_edge_agent.cli:main",
         ],
     },

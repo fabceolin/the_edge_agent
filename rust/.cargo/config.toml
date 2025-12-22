@@ -1,0 +1,50 @@
+# Cargo configuration for cross-compilation and static linking
+# Story: TEA-RELEASE-001
+#
+# This file configures the Rust toolchain for building statically-linked
+# binaries on Linux (using musl) and optimized builds for all platforms.
+
+# Linux x86_64 with musl for static linking
+[target.x86_64-unknown-linux-musl]
+# Use the musl-gcc wrapper (installed via musl-tools package)
+linker = "musl-gcc"
+# Enable static linking for all native libraries
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Linux ARM64 with musl for static linking
+[target.aarch64-unknown-linux-musl]
+# On native ARM64 runners, musl-gcc handles ARM64 natively
+linker = "musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# macOS x86_64 (Intel)
+[target.x86_64-apple-darwin]
+# Use default linker, no special configuration needed
+
+# macOS ARM64 (Apple Silicon)
+[target.aarch64-apple-darwin]
+# Use default linker, no special configuration needed
+
+# Windows x86_64 (MSVC)
+[target.x86_64-pc-windows-msvc]
+# Use default MSVC linker
+# Static CRT linking for Windows
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Build configuration
+[build]
+# Number of parallel jobs (default: number of CPUs)
+# jobs = 4
+
+# Profile for release builds
+[profile.release]
+# Enable Link-Time Optimization for smaller binaries
+lto = true
+# Single codegen unit for maximum optimization
+codegen-units = 1
+# Strip symbols from binary
+strip = true
+# Optimize for size
+opt-level = "z"
+# Reduce panic code size
+panic = "abort"

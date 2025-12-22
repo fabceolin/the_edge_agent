@@ -8,6 +8,8 @@
 //!   tea resume checkpoint.bin --input '{"update": "value"}'
 //!   tea validate workflow.yaml
 //!   tea inspect workflow.yaml
+//!   tea --impl
+//!   tea --version --impl
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -23,13 +25,16 @@ use the_edge_agent::engine::executor::{ExecutionOptions, Executor};
 use the_edge_agent::engine::yaml::YamlEngine;
 use the_edge_agent::{TeaError, YamlConfig};
 
+/// Implementation identifier for CLI parity (TEA-CLI-004)
+const IMPLEMENTATION: &str = "rust";
+
 /// The Edge Agent - Lightweight State Graph Workflow Engine
 #[derive(Parser, Debug)]
 #[command(name = "tea")]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Increase verbosity (-v, -vv, -vvv)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
@@ -38,6 +43,10 @@ struct Cli {
     /// Suppress non-error output
     #[arg(short, long, global = true)]
     quiet: bool,
+
+    /// Show implementation (python/rust)
+    #[arg(long, global = true)]
+    r#impl: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -80,6 +89,18 @@ enum Commands {
         /// Nodes to interrupt after (comma-separated)
         #[arg(long)]
         interrupt_after: Option<String>,
+
+        /// Skip interactive prompts at interrupts
+        #[arg(long)]
+        auto_continue: bool,
+
+        /// [NOT IMPLEMENTED] Python module for actions (Python only)
+        #[arg(long, value_name = "MODULE")]
+        actions_module: Option<Vec<String>>,
+
+        /// [NOT IMPLEMENTED] Python file for actions (Python only)
+        #[arg(long, value_name = "FILE")]
+        actions_file: Option<Vec<String>>,
     },
 
     /// Resume execution from a checkpoint
@@ -112,6 +133,10 @@ enum Commands {
         /// Directory for checkpoint files (default: same as checkpoint)
         #[arg(short = 'c', long)]
         checkpoint_dir: Option<PathBuf>,
+
+        /// Skip interactive prompts at interrupts
+        #[arg(long)]
+        auto_continue: bool,
     },
 
     /// Validate a workflow without execution
@@ -138,6 +163,24 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Handle --impl flag (TEA-CLI-004)
+    if cli.r#impl {
+        println!("{}", IMPLEMENTATION);
+        return Ok(());
+    }
+
+    // If no subcommand is provided, show help
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => {
+            // Print help and exit
+            use clap::CommandFactory;
+            Cli::command().print_help()?;
+            println!();
+            return Ok(());
+        }
+    };
+
     // Setup logging
     let log_level = match (cli.quiet, cli.verbose) {
         (true, _) => tracing::Level::ERROR,
@@ -152,7 +195,7 @@ fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    match cli.command {
+    match command {
         Commands::Run {
             file,
             input,
@@ -163,17 +206,35 @@ fn main() -> Result<()> {
             config,
             interrupt_before,
             interrupt_after,
-        } => run_workflow(
-            file,
-            input,
-            secrets,
-            secrets_env,
-            stream,
-            checkpoint_dir,
-            config,
-            interrupt_before,
-            interrupt_after,
-        ),
+            auto_continue,
+            actions_module,
+            actions_file,
+        } => {
+            // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
+            if actions_module.is_some() {
+                eprintln!("Error: --actions-module is not implemented (Python only)");
+                eprintln!("Hint: Use the Python implementation for action plugins");
+                std::process::exit(1);
+            }
+            if actions_file.is_some() {
+                eprintln!("Error: --actions-file is not implemented (Python only)");
+                eprintln!("Hint: Use the Python implementation for action plugins");
+                std::process::exit(1);
+            }
+
+            run_workflow(
+                file,
+                input,
+                secrets,
+                secrets_env,
+                stream,
+                checkpoint_dir,
+                config,
+                interrupt_before,
+                interrupt_after,
+                auto_continue,
+            )
+        }
 
         Commands::Resume {
             checkpoint,
@@ -183,6 +244,7 @@ fn main() -> Result<()> {
             secrets_env,
             stream,
             checkpoint_dir,
+            auto_continue,
         } => resume_workflow(
             checkpoint,
             workflow,
@@ -191,6 +253,7 @@ fn main() -> Result<()> {
             secrets_env,
             stream,
             checkpoint_dir,
+            auto_continue,
         ),
 
         Commands::Validate { file, detailed } => validate_workflow(file, detailed),
@@ -211,6 +274,7 @@ fn run_workflow(
     _config: Option<String>,
     interrupt_before: Option<String>,
     interrupt_after: Option<String>,
+    _auto_continue: bool,
 ) -> Result<()> {
     // Load workflow
     let mut engine = YamlEngine::new();
@@ -286,6 +350,7 @@ fn run_workflow(
 }
 
 /// Resume from checkpoint
+#[allow(clippy::too_many_arguments)]
 fn resume_workflow(
     checkpoint_path: PathBuf,
     workflow_path: PathBuf,
@@ -294,6 +359,7 @@ fn resume_workflow(
     secrets_env: Option<String>,
     stream: bool,
     checkpoint_dir: Option<PathBuf>,
+    _auto_continue: bool,
 ) -> Result<()> {
     // Determine checkpoint directory
     let cp_dir = checkpoint_dir.unwrap_or_else(|| {

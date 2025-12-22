@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | High |
 | **Estimated Effort** | 8 points |
-| **Status** | Draft |
+| **Status** | Ready for Review |
 | **Parent Epic** | TEA-MONO-001 |
 | **Depends On** | TEA-CLI-004 (CLI Alignment - recommended), TEA-RUST-034 (External Imports - optional) |
 | **Files to Create** | `.github/workflows/release.yaml` |
@@ -402,33 +402,33 @@ linker = "aarch64-linux-musl-gcc"
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1**: Create `.github/workflows/release.yaml` (AC-1, AC-2, AC-3)
-  - [ ] Add Python build matrix
-  - [ ] Add Rust build matrix
-  - [ ] Add wheel build job
-  - [ ] Add release job with artifact collection
+- [x] **Task 1**: Create `.github/workflows/release.yaml` (AC-1, AC-2, AC-3)
+  - [x] Add Python build matrix
+  - [x] Add Rust build matrix
+  - [x] Add wheel build job
+  - [x] Add release job with artifact collection
 
-- [ ] **Task 2**: Configure PyInstaller (AC-5, AC-6, AC-7)
-  - [ ] Create `python/tea-agent.spec`
-  - [ ] Test onefile build locally
-  - [ ] Verify hidden imports are included
+- [x] **Task 2**: Configure PyInstaller (AC-5, AC-6, AC-7)
+  - [x] Create `python/tea-agent.spec`
+  - [x] Test onefile build locally
+  - [x] Verify hidden imports are included
 
-- [ ] **Task 3**: Configure Rust static linking (AC-10, AC-11)
-  - [ ] Add musl targets to workflow
-  - [ ] Update `.cargo/config.toml` for cross-linking
+- [x] **Task 3**: Configure Rust static linking (AC-10, AC-11)
+  - [x] Add musl targets to workflow
+  - [x] Update `.cargo/config.toml` for cross-linking
 
-- [ ] **Task 4**: Add smoke tests (AC-8, AC-13, AC-20, AC-21)
-  - [ ] Verify `--version` output
-  - [ ] Verify version matches tag
+- [x] **Task 4**: Add smoke tests (AC-8, AC-13, AC-20, AC-21)
+  - [x] Verify `--version` output
+  - [x] Verify version matches tag
 
-- [ ] **Task 5**: Configure release publishing (AC-15, AC-16, AC-17, AC-18)
-  - [ ] Generate SHA256SUMS.txt
-  - [ ] Enable auto-generated release notes
+- [x] **Task 5**: Configure release publishing (AC-15, AC-16, AC-17, AC-18)
+  - [x] Generate SHA256SUMS.txt
+  - [x] Enable auto-generated release notes
   - [ ] Test with `v0.0.0-test` tag
 
-- [ ] **Task 6**: Document release process in README
-  - [ ] Add download links section
-  - [ ] Add verification instructions
+- [x] **Task 6**: Document release process in README
+  - [x] Add download links section
+  - [x] Add verification instructions
 
 ## Dev Notes
 
@@ -469,3 +469,37 @@ Where:
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
 | 2025-12-21 | 1.0 | Initial story creation | Sarah (PO Agent) |
+
+---
+
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### Debug Log References
+N/A - No blocking issues encountered during implementation.
+
+### Completion Notes
+1. Created comprehensive `.github/workflows/release.yaml` with 5-platform build matrix for both Python (PyInstaller) and Rust binaries
+2. Created `python/tea-agent.spec` for reproducible PyInstaller builds with all required hidden imports
+3. Created `rust/.cargo/config.toml` for musl static linking on Linux and optimized release builds
+4. Added smoke tests in workflow: `--version` and `--impl` checks, version tag matching, binary size verification
+5. Configured SHA256SUMS.txt generation and auto-release notes in release job
+6. Updated README.md with download section including binary table, quick install, and verification instructions
+7. Fixed `python/tests/test_cli.py` - rewrote for new Typer-based CLI (47 tests, all passing)
+8. Note: Task 5 subtask "Test with v0.0.0-test tag" left unchecked - requires actual tag push to test
+
+### Pre-existing Issue Noted
+- `actions::memory::tests::test_memory_namespace_isolation_via_prefix` test failure in Rust is pre-existing and unrelated to this story
+
+### File List
+
+| Action | File |
+|--------|------|
+| Modified | `.github/workflows/release.yaml` |
+| Created | `python/tea-agent.spec` |
+| Created | `rust/.cargo/config.toml` |
+| Modified | `README.md` |
+| Modified | `python/tests/test_cli.py` |
+| Modified | `docs/stories/TEA-RELEASE-001-multi-platform-binaries.md` |
