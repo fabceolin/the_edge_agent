@@ -1,9 +1,8 @@
-use std::process::Command;
-
 fn main() {
     // Only add rpath for prolog feature
     #[cfg(feature = "prolog")]
     {
+        use std::process::Command;
         // Get SWI-Prolog library directory dynamically
         if let Ok(output) = Command::new("swipl")
             .arg("--dump-runtime-variables")

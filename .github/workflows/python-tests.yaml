@@ -27,10 +27,17 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install libgraphviz-dev graphviz -y
+        # Install graphviz for pygraphviz
+        sudo apt-get install -y libgraphviz-dev graphviz
+        # Install SWI-Prolog 9.x from official PPA for janus-swi
+        sudo apt-add-repository -y ppa:swi-prolog/stable
+        sudo apt-get update
+        sudo apt-get install -y swi-prolog
+    - name: Install Python dependencies
+      run: |
         python -m pip install --upgrade pip
         cd python && pip install -e .[dev,rag-chroma,graph-kuzu,tools]
     - name: Run tests with pytest

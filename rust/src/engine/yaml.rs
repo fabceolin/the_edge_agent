@@ -381,7 +381,7 @@ impl YamlEngine {
             node.lua_code = Some(run.clone());
 
             // Determine language: explicit > auto-detect > default (lua)
-            node.language = config.language.clone().or_else(|| {
+            node.language = config.language.clone().or({
                 // Auto-detect Prolog code patterns
                 #[cfg(feature = "prolog")]
                 {
