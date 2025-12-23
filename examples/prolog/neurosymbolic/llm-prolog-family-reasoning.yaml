@@ -1,4 +1,4 @@
-# LLM + Prolog Family Reasoning Agent (Temporal Reasoning)
+# LLM + Prolog Family Reasoning Agent
 #
 # Demonstrates neurosymbolic AI with TEMPORAL INFERENCE.
 #
@@ -21,30 +21,26 @@
 #   Text says: "Camilla had Thomas" + "affair began in early 1970s" + "Thomas born 1974"
 #   LLM extracts: mother(camilla, thomas), affair(camilla, charles, 1970, 1995), birth_date(thomas, 1974)
 #   Prolog derives: child_of_affair(thomas, charles) because 1974 is in [1970, 1995]
+#
+# Uses correct YAML syntax: 'uses' for actions, 'with' for params
 
-name: llm-prolog-family-reasoning-temporal
+name: llm-prolog-family-reasoning
 description: |
   Neurosymbolic agent using temporal reasoning to derive family relationships.
   LLM extracts facts with dates; Prolog infers uncertain parentage from date ranges.
 
 state_schema:
-  # Input
   text: str
   query_person: str
-  query_type: str  # "siblings", "half_siblings", "parents", "children", "potential_fathers"
-  premise: str     # e.g., "exclusive relationship"
-
-  # LLM extraction output
-  entities: list        # List of {name, birth_date, death_date}
-  relationships: list   # List of {type, subject, object, start_date, end_date}
-
-  # Prolog reasoning output
+  query_type: str
+  premise: str
+  entities: list
+  relationships: list
+  llm_response: str
   prolog_facts: str
-  derived_facts: list   # Facts derived by Prolog (for transparency)
   query_result: list
+  derived_facts: list
   reasoning_chain: str
-
-  # Final answer
   answer: str
 
 nodes:
@@ -60,107 +56,115 @@ nodes:
   #   - Uncertain parentage
   # ============================================================
   - name: extract_facts
-    action: llm_generate
-    config:
-      model: "{{ secrets.llm_model | default('gpt-4o-mini') }}"
-      system_prompt: |
-        You are a fact extraction expert. Extract ONLY OBSERVABLE FACTS from text.
+    uses: llm.call
+    with:
+      model: gpt-4o
+      messages:
+        - role: system
+          content: |
+            You are a fact extraction expert. Extract ONLY OBSERVABLE FACTS from text.
 
-        CRITICAL: Do NOT use external knowledge. Extract ONLY from the provided text.
-        CRITICAL: Do NOT infer uncertain relationships. Only extract what is explicit.
+            CRITICAL: Do NOT use external knowledge. Extract ONLY from the provided text.
+            CRITICAL: Do NOT infer uncertain relationships. Only extract what is explicit.
 
-        ═══════════════════════════════════════════════════════════════════════
-        EXTRACTION SCHEMA
-        ═══════════════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════════════
+            EXTRACTION SCHEMA
+            ═══════════════════════════════════════════════════════════════════════
 
-        OUTPUT FORMAT (JSON):
-        {
-          "entities": [
+            OUTPUT FORMAT (JSON only, no markdown):
             {
-              "name": "Full Name (canonical)",
-              "aliases": ["Alt Name"],
-              "birth_date": "YYYY-MM-DD or null",
-              "death_date": "YYYY-MM-DD or null"
+              "entities": [{"name": "Full Name", "birth_date": "YYYY-MM-DD or null"}],
+              "relationships": [
+                {"type": "mother|father|married|affair", "subject": "Name", "object": "Name",
+                 "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null"}
+              ]
             }
-          ],
-          "relationships": [
-            {
-              "type": "mother | father | parent | married | affair",
-              "subject": "Person Name",
-              "object": "Person Name",
-              "start_date": "YYYY-MM-DD or null",
-              "end_date": "YYYY-MM-DD or null",
-              "evidence": "Quote from text"
-            }
-          ]
-        }
 
-        ═══════════════════════════════════════════════════════════════════════
-        RELATIONSHIP TYPES (Extract these)
-        ═══════════════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════════════
+            RELATIONSHIP TYPES (Extract these)
+            ═══════════════════════════════════════════════════════════════════════
 
-        │ Type    │ Subject      │ Object   │ Temporal │ Extract When                    │
-        ├─────────┼──────────────┼──────────┼──────────┼─────────────────────────────────┤
-        │ mother  │ Mother       │ Child    │ No       │ "X had children", "mother of"   │
-        │ father  │ Father       │ Child    │ No       │ "X's sons", explicitly stated   │
-        │ parent  │ Parent       │ Child    │ No       │ Gender unknown                  │
-        │ married │ Spouse       │ Spouse   │ Yes      │ "married to", wedding date      │
-        │ affair  │ Person       │ Partner  │ Yes      │ "affair with", "mistress"       │
+            │ Type    │ Subject      │ Object   │ Temporal │ Extract When                    │
+            ├─────────┼──────────────┼──────────┼──────────┼─────────────────────────────────┤
+            │ mother  │ Mother       │ Child    │ No       │ "X had children", "mother of"   │
+            │ father  │ Father       │ Child    │ No       │ "X's sons", explicitly stated   │
+            │ parent  │ Parent       │ Child    │ No       │ Gender unknown                  │
+            │ married │ Spouse       │ Spouse   │ Yes      │ "married to", wedding date      │
+            │ affair  │ Person       │ Partner  │ Yes      │ "affair with", "mistress"       │
 
-        ═══════════════════════════════════════════════════════════════════════
-        DATE EXTRACTION RULES
-        ═══════════════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════════════
+            DATE EXTRACTION RULES
+            ═══════════════════════════════════════════════════════════════════════
 
-        • Use ISO 8601: YYYY-MM-DD
-        • "born November 14, 1948" → "1948-11-14"
-        • "early 1970s" → "1970-01-01"
-        • "mid 1980s" → "1985-07-01"
-        • "late 1990s" → "1999-12-31"
-        • If only year known → "YYYY-01-01"
-        • If date unknown → null
+            • Use ISO 8601: YYYY-MM-DD
+            • "born November 14, 1948" → "1948-11-14"
+            • "early 1970s" → "1970-01-01"
+            • "mid 1980s" → "1985-07-01"
+            • "late 1990s" → "1999-12-31"
+            • If only year known → "YYYY-01-01"
+            • If date unknown → null
 
-        ═══════════════════════════════════════════════════════════════════════
-        IMPORTANT: DO NOT EXTRACT
-        ═══════════════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════════════
+            IMPORTANT: DO NOT EXTRACT
+            ═══════════════════════════════════════════════════════════════════════
 
-        • child_of_affair - This will be DERIVED by Prolog from dates
-        • Uncertain parentage - Let Prolog infer from temporal overlap
-        • Any relationship not explicitly stated in text
+            • child_of_affair - This will be DERIVED by Prolog from dates
+            • Uncertain parentage - Let Prolog infer from temporal overlap
+            • Any relationship not explicitly stated in text
 
-        ═══════════════════════════════════════════════════════════════════════
+            ═══════════════════════════════════════════════════════════════════════
 
-      prompt: |
-        Extract all observable facts from this text:
+        - role: user
+          content: |
+            Extract all observable facts from this text:
 
-        ───────────────────────────────────────────────────────────────────────
-        {{ state.text }}
-        ───────────────────────────────────────────────────────────────────────
+            ───────────────────────────────────────────────────────────────────────
+            {{ state.text }}
+            ───────────────────────────────────────────────────────────────────────
 
-        Remember:
-        • Extract ONLY from the text above
-        • Include birth_date for every person if mentioned
-        • Include start_date/end_date for marriages and affairs
-        • Do NOT infer child_of_affair - Prolog will derive it
-      output_key: extracted_data
-      parse_json: true
+            Remember:
+            • Extract ONLY from the text above
+            • Include birth_date for every person if mentioned
+            • Include start_date/end_date for marriages and affairs
+            • Do NOT infer child_of_affair - Prolog will derive it
+
+            Return ONLY valid JSON.
+      temperature: 0.1
+    output: llm_response
 
   # ============================================================
   # STEP 2: Parse extracted data into entities and relationships
   # ============================================================
   - name: parse_extraction
     run: |
-      extracted = state.get("extracted_data", {})
+      import json
 
-      entities = extracted.get("entities", [])
-      relationships = extracted.get("relationships", [])
+      llm_response = state.get("llm_response", {})
+      content = llm_response.get("content", "") if isinstance(llm_response, dict) else str(llm_response)
 
-      return {
-        "entities": entities,
-        "relationships": relationships
-      }
+      try:
+        if "```json" in content:
+          content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+          content = content.split("```")[1].split("```")[0]
+
+        data = json.loads(content.strip())
+        entities = data.get("entities", [])
+        relationships = data.get("relationships", [])
+      except Exception as e:
+        entities = []
+        relationships = []
+
+      return {"entities": entities, "relationships": relationships}
 
   # ============================================================
-  # STEP 3: Generate Prolog facts from extracted data
+  # STEP 3: Convert JSON entities/relationships to Prolog facts
+  # ============================================================
+  # Generates Prolog-compatible fact assertions:
+  #   birth_date(person_name, 'YYYY-MM-DD').
+  #   mother(parent_name, child_name).
+  #   father(parent_name, child_name).
+  #   affair(person, partner, 'start_date', 'end_date').
   # ============================================================
   - name: generate_prolog_facts
     run: |
@@ -169,22 +173,15 @@ nodes:
 
       prolog_lines = []
 
-      # Helper to normalize names for Prolog
       def normalize(name):
-        return name.lower().replace(" ", "_").replace("-", "_").replace("'", "")
+        return name.lower().replace(" ", "_").replace("-", "_").replace("'", "").replace(".", "")
 
-      # Generate birth_date facts
       for entity in entities:
         name = normalize(entity.get("name", ""))
         birth = entity.get("birth_date")
-        death = entity.get("death_date")
-
-        if birth:
+        if name and birth:
           prolog_lines.append(f"birth_date({name}, '{birth}').")
-        if death:
-          prolog_lines.append(f"death_date({name}, '{death}').")
 
-      # Generate relationship facts
       for rel in relationships:
         rel_type = rel.get("type", "")
         subj = normalize(rel.get("subject", ""))
@@ -192,164 +189,131 @@ nodes:
         start = rel.get("start_date")
         end = rel.get("end_date")
 
-        if rel_type == "mother":
+        if rel_type == "mother" and subj and obj:
           prolog_lines.append(f"mother({subj}, {obj}).")
-        elif rel_type == "father":
+        elif rel_type == "father" and subj and obj:
           prolog_lines.append(f"father({subj}, {obj}).")
-        elif rel_type == "parent":
-          prolog_lines.append(f"parent({subj}, {obj}).")
-        elif rel_type == "married":
-          start_str = f"'{start}'" if start else "null"
-          end_str = f"'{end}'" if end else "null"
-          prolog_lines.append(f"married({subj}, {obj}, {start_str}, {end_str}).")
-        elif rel_type == "affair":
+        elif rel_type == "affair" and subj and obj:
           start_str = f"'{start}'" if start else "null"
           end_str = f"'{end}'" if end else "null"
           prolog_lines.append(f"affair({subj}, {obj}, {start_str}, {end_str}).")
 
-      prolog_facts = "\n".join(prolog_lines)
-      return {"prolog_facts": prolog_facts}
+      return {"prolog_facts": "\n".join(prolog_lines)}
 
   # ============================================================
-  # STEP 4: Prolog DERIVES relationships and answers query
+  # STEP 4: Prolog DERIVES relationships using temporal inference
   # ============================================================
-  # This is where the magic happens:
-  #   - child_of_affair is DERIVED from birth_date + affair period
-  #   - Premise application resolves uncertain parentage
-  #   - sibling/half_sibling queries use derived facts
+  # This is where the neurosymbolic magic happens:
+  #
+  # 1. Load LLM-extracted facts via tea_load_code/1
+  # 2. Define inference rules:
+  #    - child_of_affair(Child, Partner) ← birth during affair period
+  #    - apply_exclusive_premise ← if "one partner", affair child's father = affair partner
+  #    - sibling(X, Y) ← same mother AND same father
+  #    - half_sibling(X, Y) ← shares ONE parent, not both
+  #
+  # 3. Apply premise (if exclusive relationship assumed)
+  # 4. Query for siblings or half-siblings
+  #
+  # KEY INSIGHT: The LLM never had to guess parentage.
+  #              Prolog derives it from temporal facts.
   # ============================================================
   - name: prolog_reasoning
     language: prolog
     run: |
-      % ============================================
-      % DYNAMIC PREDICATES (for extracted facts)
-      % ============================================
       :- dynamic mother/2.
       :- dynamic father/2.
-      :- dynamic parent/2.
-      :- dynamic married/4.
       :- dynamic affair/4.
       :- dynamic birth_date/2.
-      :- dynamic death_date/2.
 
-      % ============================================
-      % DATE UTILITIES
-      % ============================================
-
+      % Rule definitions (must come before main goal)
       date_in_range(Date, Start, End) :-
           Date @>= Start,
           (End = null -> true ; Date @=< End).
 
-      % ============================================
-      % DERIVED RELATIONSHIPS (The key insight!)
-      % ============================================
-
-      %% child_of_affair(?Child, ?AffairPartner)
-      %  DERIVED: Child born during mother's affair period.
-      %  This is NOT extracted - it's inferred from dates!
       child_of_affair(Child, AffairPartner) :-
           mother(Mother, Child),
           birth_date(Child, BirthDate),
           affair(Mother, AffairPartner, StartDate, EndDate),
           date_in_range(BirthDate, StartDate, EndDate).
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(AffairPartner, Mother, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
 
-      %% potential_father(?Father, ?Child)
-      potential_father(F, C) :- father(F, C).
-      potential_father(F, C) :- child_of_affair(C, F).
-
-      % ============================================
-      % PREMISE APPLICATION
-      % ============================================
-
-      %% Apply exclusive relationship premise
-      %  If mother only had one partner, affair partner IS the father
       apply_exclusive_premise :-
           forall(
               child_of_affair(Child, AffairPartner),
               (father(AffairPartner, Child) -> true ; assertz(father(AffairPartner, Child)))
           ).
 
-      % ============================================
-      % SIBLING RELATIONSHIPS
-      % ============================================
-
       sibling(X, Y) :-
           mother(M, X), mother(M, Y),
           father(F, X), father(F, Y),
           X \= Y.
 
+      shares_parent(X, Y) :- mother(M, X), mother(M, Y), X \= Y.
+      shares_parent(X, Y) :- father(F, X), father(F, Y), X \= Y.
+      not_sibling(X, Y) :- \+ sibling(X, Y).
+
       half_sibling(X, Y) :-
-          X \= Y,
-          (
-              (mother(M, X), mother(M, Y)) ;
-              (father(F, X), father(F, Y))
-          ),
-          \+ sibling(X, Y).
+          shares_parent(X, Y),
+          not_sibling(X, Y).
 
-      any_sibling(X, Y) :- sibling(X, Y).
-      any_sibling(X, Y) :- half_sibling(X, Y).
+      % Normalize name: lowercase, replace spaces/hyphens with underscores, remove punctuation
+      %
+      % WORKAROUND (TEA-PROLOG-005): Using if-then-else instead of cuts.
+      % The cut operator (!) causes parsing failures in tea_load_code/1.
+      %
+      % Original code (FAILS):
+      %   normalize_char(32, 95) :- !.  % space -> underscore
+      %   normalize_char(45, 95) :- !.  % hyphen -> underscore
+      %   normalize_char(C, C).
+      %   valid_char(C) :- C >= 97, C =< 122.  % a-z
+      %   valid_char(95).  % underscore
+      %   valid_char(C) :- C >= 48, C =< 57.  % 0-9
+      %
+      % Workaround (WORKS): Use if-then-else (->; ) instead of multi-clause with cuts
+      normalize_char(X, Y) :- (X = 32 -> Y = 95 ; X = 45 -> Y = 95 ; Y = X).
+      valid_char(C) :- (C >= 97, C =< 122) ; C = 95 ; (C >= 48, C =< 57).
+      normalize_name(In, Out) :-
+          downcase_atom(In, Lower),
+          atom_codes(Lower, Codes),
+          maplist(normalize_char, Codes, NormCodes),
+          include(valid_char, NormCodes, FilteredCodes),
+          atom_codes(Out, FilteredCodes).
 
-      % ============================================
-      % UNIFIED PARENT ACCESSOR
-      % ============================================
-
-      parent_of(P, C) :- mother(P, C).
-      parent_of(P, C) :- father(P, C).
-      parent_of(P, C) :- parent(P, C).
-
-      % ============================================
-      % LOAD FACTS AND EXECUTE QUERY
-      % ============================================
-
-      % Get query parameters
+      % Main execution goal - load facts from state and run queries
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
       state(query_person, PersonAtom),
       state(query_type, QueryType),
       state(premise, Premise),
-
-      % Normalize person name
-      downcase_atom(PersonAtom, Person),
-
-      % Check if exclusive premise should be applied
+      normalize_name(PersonAtom, Person),
       (
         (sub_atom(Premise, _, _, _, 'exclusive') ;
-         sub_atom(Premise, _, _, _, 'one partner') ;
-         sub_atom(Premise, _, _, _, 'nunca se relacionou')) ->
-          apply_exclusive_premise
+         sub_atom(Premise, _, _, _, 'one partner')) ->
+            apply_exclusive_premise
         ; true
       ),
-
-      % First, find what was derived (for transparency)
       findall(derived(child_of_affair, C, P), child_of_affair(C, P), DerivedAffair),
-
-      % Execute appropriate query
       (
         QueryType = 'siblings' ->
           findall(S, sibling(Person, S), Results)
         ; QueryType = 'half_siblings' ->
           findall(H, half_sibling(Person, H), Results)
-        ; QueryType = 'all_siblings' ->
-          findall(S, any_sibling(Person, S), Results)
-        ; QueryType = 'parents' ->
-          findall(P, parent_of(P, Person), Results)
-        ; QueryType = 'children' ->
-          findall(C, parent_of(Person, C), Results)
-        ; QueryType = 'potential_fathers' ->
-          findall(F, potential_father(F, Person), Results)
         ; Results = []
       ),
-
-      % Build reasoning explanation
       length(Results, Count),
       length(DerivedAffair, DerivedCount),
-      format(atom(Chain), 'Prolog derived ~w child_of_affair facts from temporal overlap. Found ~w results for ~w query on ~w.',
-             [DerivedCount, Count, QueryType, Person]),
-
+      format(atom(Chain), 'Derived ~w child_of_affair. Found ~w ~w.', [DerivedCount, Count, QueryType]),
       return(query_result, Results),
       return(derived_facts, DerivedAffair),
       return(reasoning_chain, Chain).
 
   # ============================================================
-  # STEP 5: Format final answer with reasoning
+  # STEP 5: Format human-readable answer
   # ============================================================
   - name: format_answer
     run: |
@@ -359,48 +323,26 @@ nodes:
       derived = state.get("derived_facts", [])
       reasoning = state.get("reasoning_chain", "")
 
-      # Format names nicely
       def format_name(name):
         return name.replace("_", " ").title()
 
-      formatted_results = [format_name(r) for r in results]
-
-      # Build answer
-      lines = []
+      formatted = [format_name(r) for r in results]
 
       if not results:
-        lines.append(f"No {query_type.replace('_', ' ')} found for {query_person}.")
+        answer = f"No {query_type.replace('_', ' ')} found for {query_person}."
+      elif query_type == "half_siblings":
+        answer = f"**{query_person}'s half-siblings:** {', '.join(formatted)}"
+      elif query_type == "siblings":
+        answer = f"**{query_person}'s siblings:** {', '.join(formatted)}"
       else:
-        if query_type == "siblings":
-          lines.append(f"**{query_person}'s full siblings:** {', '.join(formatted_results)}")
-        elif query_type == "half_siblings":
-          lines.append(f"**{query_person}'s half-siblings:** {', '.join(formatted_results)}")
-        elif query_type == "all_siblings":
-          lines.append(f"**{query_person}'s siblings (full + half):** {', '.join(formatted_results)}")
-        else:
-          lines.append(f"**{query_type.replace('_', ' ').title()}:** {', '.join(formatted_results)}")
+        answer = f"**Results:** {', '.join(formatted)}"
 
-      # Add derivation transparency
       if derived:
-        lines.append("")
-        lines.append("**Derived by Prolog (from temporal reasoning):**")
-        for d in derived:
-          if isinstance(d, str) and d.startswith("derived("):
-            # Parse derived(child_of_affair, child, partner)
-            lines.append(f"  - child_of_affair inferred from birth date within affair period")
+        answer += f"\n\n**Derived:** {len(derived)} child_of_affair facts from temporal reasoning"
 
-      # Add reasoning chain
-      lines.append("")
-      lines.append(f"**Reasoning:** {reasoning}")
+      answer += f"\n\n**Reasoning:** {reasoning}"
+      answer += "\n\n---\n*Neurosymbolic AI: LLM extracted facts, Prolog derived relationships*"
 
-      # Add note about neurosymbolic approach
-      lines.append("")
-      lines.append("---")
-      lines.append("*This answer was derived using neurosymbolic AI:*")
-      lines.append("*LLM extracted observable facts (dates, explicit relationships)*")
-      lines.append("*Prolog derived uncertain relationships from temporal overlap*")
-
-      answer = "\n".join(lines)
       return {"answer": answer}
 
 edges:
@@ -421,38 +363,25 @@ edges:
 # EXAMPLE USAGE
 # ============================================================
 #
-# python -m the_edge_agent run llm-prolog-family-reasoning.yaml \
-#   --state '{
-#     "text": "King Charles III, born November 14, 1948, is married to Princess Diana... Charles maintained an extramarital relationship with Camilla, which began in the early 1970s. Camilla had two children named Thomas and Laura. Prince William was born June 21, 1982...",
-#     "query_person": "Thomas",
-#     "query_type": "half_siblings",
-#     "premise": "Camilla only had one partner at a time"
-#   }'
+# tea run llm-prolog-family-reasoning.yaml --input '{
+#   "text": "Camilla Shand was born in 1947 and married Andrew Parker Bowles in 1973. They had children named Thomas (born 1974) and Laura (born 1978). During her marriage, Camilla had an affair with Prince Charles from the early 1970s until 1999. Diana Spencer was born in 1961 and married Prince Charles in 1981. Diana and Charles had sons Prince William (born 1982) and Prince Harry (born 1984).",
+#   "query_person": "Thomas Parker Bowles",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'
 #
-# EXPECTED FLOW:
+# EXPECTED OUTPUT:
+#   **Thomas Parker Bowles's half-siblings:** Prince William, Prince Harry
 #
-# 1. LLM extracts:
-#    - entities: [{name: "Thomas", birth_date: "1974-01-01"}, ...]
-#    - relationships: [
-#        {type: "mother", subject: "Camilla", object: "Thomas"},
-#        {type: "affair", subject: "Camilla", object: "King Charles III",
-#         start_date: "1970-01-01", end_date: "1995-12-31"},
-#        ...
-#      ]
+#   **Derived:** 2 child_of_affair facts from temporal reasoning
 #
-# 2. Prolog receives facts:
-#    birth_date(thomas, '1974-01-01').
-#    mother(camilla, thomas).
-#    affair(camilla, king_charles_iii, '1970-01-01', '1995-12-31').
+#   **Reasoning:** Derived 2 child_of_affair. Found 2 half_siblings.
 #
-# 3. Prolog DERIVES:
-#    child_of_affair(thomas, king_charles_iii).
-#    % Because: birth_date 1974 is within affair period [1970, 1995]
-#
-# 4. Premise applied:
-#    father(king_charles_iii, thomas).  % Asserted from exclusive premise
-#
-# 5. Query result:
-#    half_sibling(thomas, X) → X = prince_william ; X = prince_harry
+# REASONING CHAIN:
+#   1. LLM extracted: mother(camilla, thomas), affair(camilla, charles, 1970, 1999)
+#   2. Prolog derived: child_of_affair(thomas, charles) because 1974 ∈ [1970, 1999]
+#   3. Premise applied: father(charles, thomas) (exclusive relationship)
+#   4. Query result: half_sibling(thomas, william), half_sibling(thomas, harry)
+#      (shares father Charles, different mothers)
 #
 # ============================================================

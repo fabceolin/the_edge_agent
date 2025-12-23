@@ -180,17 +180,17 @@ class PrologRuntime:
         tea_action_predicate('>=').
         tea_action_predicate('=<').
         tea_action_predicate('=:=').
-        tea_action_predicate('=\\=').
+        tea_action_predicate('=\\\\=').
         % Unification and comparison
         tea_action_predicate('=').
-        tea_action_predicate('\\=').
+        tea_action_predicate('\\\\=').
         tea_action_predicate('==').
-        tea_action_predicate('\\==').
+        tea_action_predicate('\\\\==').
         tea_action_predicate('@<').
         tea_action_predicate('@>').
         tea_action_predicate('@=<').
         tea_action_predicate('@>=').
-        tea_action_predicate('\\+').
+        tea_action_predicate('\\\\+').
         tea_action_predicate(is).
         % List predicates
         tea_action_predicate(findall).

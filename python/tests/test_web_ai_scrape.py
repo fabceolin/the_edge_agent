@@ -365,7 +365,10 @@ class TestWebAiScrapeSchemaMerging:
                     {"type": "object", "properties": {"overlay": {"type": "number"}}},
                 ]
 
-                with patch('the_edge_agent.schema.deep_merge.merge_all') as mock_merge:
+                # Use sys.modules to get the actual module (avoids namespace collision with function)
+                import importlib
+                dm_module = importlib.import_module('the_edge_agent.schema.deep_merge')
+                with patch.object(dm_module, 'merge_all') as mock_merge:
                     mock_merge.return_value = {
                         "type": "object",
                         "properties": {
@@ -404,7 +407,10 @@ class TestWebAiScrapeSchemaMerging:
                     {"type": "object", "properties": {"gcs_field": {"type": "integer"}}},
                 ]
 
-                with patch('the_edge_agent.schema.deep_merge.merge_all') as mock_merge:
+                # Use sys.modules to get the actual module (avoids namespace collision with function)
+                import importlib
+                dm_module = importlib.import_module('the_edge_agent.schema.deep_merge')
+                with patch.object(dm_module, 'merge_all') as mock_merge:
                     mock_merge.return_value = {
                         "type": "object",
                         "properties": {
@@ -447,7 +453,10 @@ class TestWebAiScrapeSchemaMerging:
                     "properties": {"name": {"type": "string"}}
                 }
 
-                with patch('the_edge_agent.schema.deep_merge.merge_all') as mock_merge:
+                # Use sys.modules to get the actual module (avoids namespace collision with function)
+                import importlib
+                dm_module = importlib.import_module('the_edge_agent.schema.deep_merge')
+                with patch.object(dm_module, 'merge_all') as mock_merge:
                     mock_client = Mock()
                     mock_client.smartscraper.return_value = {"name": "Test"}
                     mock_scrapegraph_module.Client.return_value = mock_client
