@@ -54,6 +54,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         """Get API key from environment variables."""
         return os.environ.get('LLAMAEXTRACT_API_KEY') or os.environ.get('LLAMAPARSE_API_KEY')
 
+    def _get_mime_type(file_path: str) -> str:
+        """Get MIME type from file extension."""
+        ext = Path(file_path).suffix.lower()
+        mime_types = {
+            '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc': 'application/msword',
+            '.txt': 'text/plain',
+            '.csv': 'text/csv',
+            '.json': 'application/json',
+            '.html': 'text/html',
+            '.htm': 'text/html',
+            '.md': 'text/markdown',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+        }
+        return mime_types.get(ext, 'application/octet-stream')
+
     def _prepare_file_content(file: str) -> Dict[str, Any]:
         """
         Prepare file content for REST API request.
@@ -62,20 +81,72 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             file: Document source - URL, base64 content, or local file path
 
         Returns:
-            Dict with either 'file_url' or 'file_base64' key
+            Dict with 'file' object containing 'data' and 'mime_type'
+            for base64/local files, or URL info for HTTP sources
 
         Raises:
             FileNotFoundError: If local file does not exist
         """
+        try:
+            import requests as http_requests
+        except ImportError:
+            http_requests = None
+
         if file.startswith(('http://', 'https://')):
-            return {"file_url": file}
+            # For URLs, we need to download and convert to base64
+            # since the API expects file.data and file.mime_type
+            if http_requests is None:
+                raise ImportError("requests package required for URL downloads")
+
+            try:
+                response = http_requests.get(file, timeout=60)
+                response.raise_for_status()
+            except http_requests.exceptions.HTTPError as e:
+                raise ValueError(f"Failed to download file from URL: {e}")
+            except http_requests.exceptions.ConnectionError as e:
+                raise ValueError(f"Connection error downloading file: {e}")
+            except http_requests.exceptions.Timeout as e:
+                raise ValueError(f"Timeout downloading file: {e}")
+
+            content = base64.b64encode(response.content).decode('utf-8')
+            mime_type = response.headers.get('Content-Type', _get_mime_type(file))
+            # Strip charset if present
+            if ';' in mime_type:
+                mime_type = mime_type.split(';')[0].strip()
+            return {
+                "file": {
+                    "data": content,
+                    "mime_type": mime_type
+                }
+            }
         elif file.startswith('data:') or ';base64,' in file:
-            # Base64 encoded content
-            if ';base64,' in file:
+            # Base64 encoded content with optional MIME type
+            if file.startswith('data:'):
+                # data:application/pdf;base64,<content>
+                parts = file.split(',', 1)
+                if len(parts) == 2:
+                    mime_part = parts[0]
+                    content = parts[1]
+                    # Extract mime type: data:application/pdf;base64
+                    if ';base64' in mime_part:
+                        mime_type = mime_part.replace('data:', '').replace(';base64', '')
+                    else:
+                        mime_type = 'application/octet-stream'
+                else:
+                    content = file
+                    mime_type = 'application/octet-stream'
+            elif ';base64,' in file:
                 content = file.split(';base64,')[1]
+                mime_type = 'application/octet-stream'
             else:
                 content = file
-            return {"file_base64": content}
+                mime_type = 'application/octet-stream'
+            return {
+                "file": {
+                    "data": content,
+                    "mime_type": mime_type
+                }
+            }
         else:
             # Local file path
             path = Path(file)
@@ -83,7 +154,138 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 raise FileNotFoundError(f"File not found: {file}")
             with open(path, 'rb') as f:
                 content = base64.b64encode(f.read()).decode('utf-8')
-            return {"file_base64": content}
+            return {
+                "file": {
+                    "data": content,
+                    "mime_type": _get_mime_type(file)
+                }
+            }
+
+    def _poll_job_status(
+        job_id: str,
+        headers: Dict[str, str],
+        timeout: int,
+        poll_interval: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Poll job status until completion or timeout.
+
+        Args:
+            job_id: The extraction job ID
+            headers: HTTP headers with authorization
+            timeout: Maximum time to wait for completion (seconds)
+            poll_interval: Time between polls (seconds)
+
+        Returns:
+            Dict with success status and extracted data or error info
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed",
+                "error_type": "dependency"
+            }
+
+        start_time = time.time()
+        status_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}"
+        result_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}/result"
+
+        while time.time() - start_time < timeout:
+            try:
+                # Check job status
+                response = requests.get(status_url, headers=headers, timeout=30)
+
+                if response.status_code != 200:
+                    return {
+                        "success": False,
+                        "error": f"Failed to check job status: {response.text}",
+                        "error_type": "api_error",
+                        "job_id": job_id
+                    }
+
+                job_data = response.json()
+                status = job_data.get("status", "UNKNOWN")
+
+                if status == "SUCCESS":
+                    # Get the result
+                    result_response = requests.get(result_url, headers=headers, timeout=30)
+                    if result_response.status_code == 200:
+                        result_data = result_response.json()
+                        return {
+                            "success": True,
+                            "data": result_data.get("data", result_data),
+                            "status": "completed",
+                            "job_id": job_id
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": f"Failed to get result: {result_response.text}",
+                            "error_type": "api_error",
+                            "job_id": job_id
+                        }
+
+                elif status == "ERROR":
+                    error_msg = job_data.get("error", "Extraction failed")
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                        "error_type": "extraction_error",
+                        "job_id": job_id
+                    }
+
+                elif status == "PARTIAL_SUCCESS":
+                    # Get partial result
+                    result_response = requests.get(result_url, headers=headers, timeout=30)
+                    if result_response.status_code == 200:
+                        result_data = result_response.json()
+                        return {
+                            "success": True,
+                            "data": result_data.get("data", result_data),
+                            "status": "partial",
+                            "job_id": job_id,
+                            "warning": "Some pages may have failed extraction"
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": "Failed to get partial result",
+                            "error_type": "api_error",
+                            "job_id": job_id
+                        }
+
+                elif status in ("PENDING", "RUNNING"):
+                    # Still processing, wait and retry
+                    time.sleep(poll_interval)
+                    continue
+
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Unknown job status: {status}",
+                        "error_type": "api_error",
+                        "job_id": job_id
+                    }
+
+            except requests.Timeout:
+                time.sleep(poll_interval)
+                continue
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Polling error: {str(e)}",
+                    "error_type": "api_error",
+                    "job_id": job_id
+                }
+
+        return {
+            "success": False,
+            "error": f"Job timed out after {timeout}s",
+            "error_type": "timeout",
+            "job_id": job_id
+        }
 
     def _execute_rest_with_retry(
         url: str,
@@ -94,12 +296,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     ) -> Dict[str, Any]:
         """
         Execute HTTP request with exponential backoff retry.
+        Handles job-based response by polling for completion.
 
         Args:
             url: Target URL
             payload: JSON payload
             headers: HTTP headers
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (also used for polling)
             max_retries: Maximum number of retry attempts
 
         Returns:
@@ -122,11 +325,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     url,
                     json=payload,
                     headers=headers,
-                    timeout=timeout
+                    timeout=min(timeout, 120)  # Initial request timeout
                 )
 
                 if response.status_code == 200:
                     data = response.json()
+
+                    # Check if this is a job-based response (has id and status=PENDING)
+                    if data.get("status") == "PENDING" and data.get("id"):
+                        job_id = data["id"]
+                        # Poll for job completion
+                        return _poll_job_status(job_id, headers, timeout)
+
+                    # Direct result
                     return {
                         "success": True,
                         "data": data.get("data", data),
@@ -180,6 +391,20 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         "error": f"Bad request: {error_msg}",
                         "error_type": "validation",
                         "status_code": 400
+                    }
+
+                elif response.status_code == 422:
+                    # Validation error - don't retry
+                    try:
+                        error_detail = response.json()
+                        error_msg = error_detail.get("detail", response.text)
+                    except Exception:
+                        error_msg = response.text
+                    return {
+                        "success": False,
+                        "error": f"Validation error: {error_msg}",
+                        "error_type": "validation",
+                        "status_code": 422
                     }
 
                 else:
@@ -271,6 +496,18 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "success": False,
                 "error": str(e),
                 "error_type": "file_not_found"
+            }
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "file_download_error"
+            }
+        except ImportError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "dependency"
             }
 
         # Build request payload

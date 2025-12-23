@@ -1,0 +1,125 @@
+# LlamaExtract Invoice Extraction Example
+#
+# This YAML agent demonstrates extracting structured data from invoices.
+#
+# Usage:
+#   export LLAMAEXTRACT_API_KEY=your-api-key
+#   tea run examples/llamaextract/extract-invoice.yaml --input '{"document_url": "https://example.com/invoice.pdf"}'
+#
+# TEA-BUILTIN-008.5: Direct REST API Integration
+
+name: invoice-extractor
+description: Extract structured data from invoices using LlamaExtract
+
+state_schema:
+  document_url: str
+  extraction_result: dict
+  invoice_number: str
+  vendor_name: str
+  total_amount: float
+  line_items: list
+
+nodes:
+  - name: extract_invoice
+    description: Extract structured invoice data
+    uses: llamaextract.extract
+    with:
+      file: "{{ state.document_url }}"
+      schema:
+        type: object
+        properties:
+          invoice_number:
+            type: string
+            description: The invoice number or ID
+          invoice_date:
+            type: string
+            description: The date of the invoice (YYYY-MM-DD format)
+          due_date:
+            type: string
+            description: Payment due date (YYYY-MM-DD format)
+          vendor:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Vendor/seller company name
+              address:
+                type: string
+                description: Vendor address
+              phone:
+                type: string
+                description: Vendor phone number
+              email:
+                type: string
+                description: Vendor email
+          customer:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Customer/buyer name
+              address:
+                type: string
+                description: Customer billing address
+          line_items:
+            type: array
+            items:
+              type: object
+              properties:
+                description:
+                  type: string
+                quantity:
+                  type: number
+                unit_price:
+                  type: number
+                total:
+                  type: number
+            description: List of items/services on the invoice
+          subtotal:
+            type: number
+            description: Subtotal before tax
+          tax_amount:
+            type: number
+            description: Total tax amount
+          total_amount:
+            type: number
+            description: Final total amount due
+          currency:
+            type: string
+            description: Currency code (e.g., USD, EUR)
+          payment_terms:
+            type: string
+            description: Payment terms or conditions
+      mode: BALANCED
+      timeout: 300
+      use_rest: true
+    output: extraction_result
+
+  - name: process_invoice
+    description: Process and validate extracted invoice data
+    run: |
+      result = state.get("extraction_result", {})
+      if result.get("success"):
+        data = result.get("data", {})
+        vendor = data.get("vendor", {})
+        return {
+          "invoice_number": data.get("invoice_number", "Unknown"),
+          "vendor_name": vendor.get("name", "Unknown Vendor"),
+          "total_amount": data.get("total_amount", 0.0),
+          "line_items": data.get("line_items", [])
+        }
+      else:
+        return {
+          "invoice_number": f"ERROR: {result.get('error', 'Unknown error')}",
+          "vendor_name": "",
+          "total_amount": 0.0,
+          "line_items": []
+        }
+
+edges:
+  - from: __start__
+    to: extract_invoice
+  - from: extract_invoice
+    to: process_invoice
+  - from: process_invoice
+    to: __end__

@@ -75,9 +75,10 @@ The Python implementation provides 20+ action modules organized by domain:
 
 | Action | Module | Description |
 |--------|--------|-------------|
-| `web.scrape` | `web_actions.py` | Scrape web page |
-| `web.crawl` | `web_actions.py` | Crawl multiple pages |
-| `web.search` | `web_actions.py` | Web search |
+| `web.scrape` | `web_actions.py` | Scrape web page (Firecrawl) |
+| `web.crawl` | `web_actions.py` | Crawl multiple pages (Firecrawl) |
+| `web.search` | `web_actions.py` | Web search (Perplexity) |
+| `web.ai_scrape` | `web_actions.py` | AI-powered structured extraction (ScrapeGraphAI) |
 
 ### Graph Actions
 

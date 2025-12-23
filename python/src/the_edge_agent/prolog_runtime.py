@@ -618,8 +618,10 @@ class PrologRuntime:
                 # This matches the Rust implementation for cross-runtime parity
                 code_with_period = code if code.strip().endswith('.') else f"{code.strip()}."
 
-                # Escape single quotes for Prolog atom (double them)
-                escaped_code = code_with_period.replace("'", "''")
+                # Escape backslashes first, then single quotes for Prolog atom
+                # Order matters: backslashes must be escaped before quotes to avoid
+                # double-escaping the backslashes used for quote escapes
+                escaped_code = code_with_period.replace("\\", "\\\\").replace("'", "''")
 
                 # Build the query with timeout
                 load_query = f"tea_load_code('{escaped_code}')"

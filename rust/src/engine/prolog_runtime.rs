@@ -1183,8 +1183,10 @@ impl PrologRuntime {
             format!("{}.", code.trim())
         };
 
-        // Escape single quotes for Prolog atom (double them, like Python's approach)
-        let escaped_code = code_with_period.replace('\'', "''");
+        // Escape backslashes first, then single quotes for Prolog atom
+        // Order matters: backslashes must be escaped before quotes to avoid
+        // double-escaping the backslashes used for quote escapes
+        let escaped_code = code_with_period.replace('\\', "\\\\").replace('\'', "''");
 
         // Build the query: call tea_load_code with escaped code
         let timeout_secs = self.timeout.as_secs_f64();

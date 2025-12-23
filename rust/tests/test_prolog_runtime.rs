@@ -1807,3 +1807,219 @@ fn test_prolog_side_parsing_arithmetic() {
         );
     }
 }
+
+// ============================================================================
+// TEA-PROLOG-004: Backslash Escape Bug Fix Tests
+// ============================================================================
+
+/// TEA-PROLOG-004 AC-2: Test \= (not unifiable) operator
+#[test]
+fn test_backslash_not_unifiable_operator() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        X = foo, Y = bar, X \= Y, return(result, yes).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "\\= operator should work with backslash escaping: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("yes")),
+            "\\= should succeed when terms are different"
+        );
+    }
+}
+
+/// TEA-PROLOG-004 AC-2: Test \= fails when terms are unifiable
+#[test]
+fn test_backslash_not_unifiable_fails() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        X = foo, Y = foo, X \= Y, return(result, yes).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(result.is_ok(), "Query should parse without error");
+
+    if let Ok(result_state) = result {
+        // Should fail (return empty) since foo \= foo is false
+        assert!(
+            result_state.get("result").is_none(),
+            "\\= should fail when terms are unifiable"
+        );
+    }
+}
+
+/// TEA-PROLOG-004 AC-3: Test \+ (negation as failure) operator
+#[test]
+fn test_backslash_negation_as_failure_operator() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        \+ fail, return(result, success).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "\\+ operator should work with backslash escaping: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("success")),
+            "\\+ fail should succeed"
+        );
+    }
+}
+
+/// TEA-PROLOG-004 AC-3: Test \+ succeeds when goal fails
+#[test]
+fn test_backslash_negation_member_not_found() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        \+ member(x, [a, b, c]), return(result, not_found).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "\\+ member should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("not_found")),
+            "\\+ member(x, [a,b,c]) should succeed"
+        );
+    }
+}
+
+/// TEA-PROLOG-004 AC-4: Test \== (not structurally equal) operator
+#[test]
+fn test_backslash_not_structurally_equal_operator() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        X = foo, Y = bar, X \== Y, return(result, different).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "\\== operator should work with backslash escaping: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("different")),
+            "\\== should succeed when terms are different"
+        );
+    }
+}
+
+/// TEA-PROLOG-004 AC-5: Test =\= (arithmetic not equal) operator
+#[test]
+fn test_backslash_arithmetic_not_equal_operator() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        X is 5, Y is 10, X =\= Y, return(result, not_equal).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "=\\= operator should work with backslash escaping: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("not_equal")),
+            "5 =\\= 10 should succeed"
+        );
+    }
+}
+
+/// TEA-PROLOG-004: Test knowledge-graph sibling rule with \= operator
+#[test]
+fn test_backslash_sibling_rule_with_not_unifiable() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        sibling(X, Y) :- parent(P, X), parent(P, Y), X \= Y.
+        parent(alice, bob).
+        parent(alice, carol).
+        findall(S, sibling(bob, S), R),
+        return(results, R).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Sibling rule with \\= should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("results"),
+            Some(&json!(["carol"])),
+            "Bob's sibling should be carol"
+        );
+    }
+}
+
+/// TEA-PROLOG-004: Test combined backslash operators
+#[test]
+fn test_backslash_combined_operators() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        X = foo, Y = bar,
+        X \= Y,
+        X \== Y,
+        \+ (X = Y),
+        return(result, all_passed).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Combined backslash operators should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!("all_passed")),
+            "All backslash operators should pass"
+        );
+    }
+}

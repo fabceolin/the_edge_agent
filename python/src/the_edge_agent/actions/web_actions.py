@@ -2,7 +2,8 @@
 Web Actions for YAMLEngine.
 
 This module provides web scraping, crawling, and search capabilities using
-external APIs (Firecrawl for scraping/crawling, Perplexity for search).
+external APIs (Firecrawl for scraping/crawling, Perplexity for search,
+ScrapeGraphAI for AI-powered schema-based extraction).
 
 This architecture enables TEA agents to run on Firebase Cloud Functions
 and other serverless environments without browser dependencies.
@@ -11,10 +12,12 @@ Actions:
     - web.scrape: Extract LLM-ready content from URLs via Firecrawl API
     - web.crawl: Recursively crawl websites via Firecrawl API
     - web.search: Perform web searches via Perplexity API
+    - web.ai_scrape: AI-powered structured extraction via ScrapeGraphAI (TEA-BUILTIN-008.4)
 
 Required Environment Variables:
     - FIRECRAWL_API_KEY: API key for Firecrawl (web.scrape, web.crawl)
     - PERPLEXITY_API_KEY: API key for Perplexity (web.search)
+    - SCRAPEGRAPH_API_KEY: API key for ScrapeGraphAI (web.ai_scrape)
 
 Example:
     >>> # Scrape a single page
@@ -42,6 +45,19 @@ Example:
     ... )
     >>> for r in result['results']:
     ...     print(r['title'], r['url'])
+
+    >>> # AI-powered structured extraction (TEA-BUILTIN-008.4)
+    >>> result = registry['web.ai_scrape'](
+    ...     state={},
+    ...     url="https://example.com/products",
+    ...     prompt="Extract product info",
+    ...     output_schema={
+    ...         "type": "object",
+    ...         "properties": {"name": {"type": "string"}, "price": {"type": "string"}}
+    ...     }
+    ... )
+    >>> if result['success']:
+    ...     print(result['data'])
 """
 
 import os
@@ -717,3 +733,361 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     registry['web.search'] = web_search
     registry['actions.web_search'] = web_search
+
+    # ============================================================
+    # web.ai_scrape - ScrapeGraphAI API (TEA-BUILTIN-008.4)
+    # ============================================================
+
+    def web_ai_scrape(
+        state,
+        url: str,
+        prompt: str,
+        output_schema: Optional[Dict[str, Any]] = None,
+        schema: Optional[Dict[str, Any]] = None,
+        timeout: int = 60,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Extract structured data from a URL using ScrapeGraphAI.
+
+        Uses AI-powered extraction to parse web pages and return data
+        matching a provided Pydantic/JSON schema.
+
+        Args:
+            state: Current workflow state
+            url: URL to scrape
+            prompt: Natural language prompt describing what to extract
+            output_schema: JSON Schema dict for structured output (inline)
+            schema: Schema configuration with optional `uses` for Git refs
+                   or fsspec URIs (s3://, gs://, az://, https://, file://)
+                   Supports merging via list of references.
+            timeout: Request timeout in seconds. Default: 60
+            max_retries: Maximum retry attempts for rate limits/server errors. Default: 3
+
+        Returns:
+            On success:
+            {
+                "success": True,
+                "data": {...},           # Extracted data matching schema
+                "url": str,
+                "schema_used": {...}     # Final merged schema
+            }
+
+            On failure:
+            {
+                "success": False,
+                "error": str,
+                "error_type": str  # configuration, api_error, schema_error,
+                                   # timeout, rate_limit, dependency, authentication
+            }
+
+        Schema Sources (via Story 008.2):
+            - Inline dict via output_schema parameter
+            - Git refs: "owner/repo@ref#path/to/schema.json"
+            - Git full URLs: "git+https://..." or "git+ssh://..."
+            - fsspec URIs: s3://, gs://, az://, https://, file://
+
+        Schema Merging (via Story 008.3):
+            When schema.uses is a list, schemas are merged with kubectl-style
+            semantics (last wins). First schema = lowest priority.
+
+        Example:
+            >>> result = web_ai_scrape(
+            ...     state={},
+            ...     url="https://example.com/products",
+            ...     prompt="Extract all products with prices",
+            ...     output_schema={
+            ...         "type": "object",
+            ...         "properties": {
+            ...             "products": {
+            ...                 "type": "array",
+            ...                 "items": {
+            ...                     "type": "object",
+            ...                     "properties": {
+            ...                         "name": {"type": "string"},
+            ...                         "price": {"type": "string"}
+            ...                     }
+            ...                 }
+            ...             }
+            ...         }
+            ...     }
+            ... )
+            >>> if result['success']:
+            ...     for product in result['data']['products']:
+            ...         print(f"{product['name']}: {product['price']}")
+        """
+        # Check for API key
+        api_key = os.environ.get('SCRAPEGRAPH_API_KEY')
+        if not api_key:
+            return {
+                "success": False,
+                "error": "SCRAPEGRAPH_API_KEY environment variable not set. "
+                        "Get your API key from https://scrapegraphai.com",
+                "error_type": "configuration"
+            }
+
+        # Try to import required packages
+        try:
+            from scrapegraph_py import Client
+        except ImportError:
+            return {
+                "success": False,
+                "error": "scrapegraph-py package not installed. "
+                        "Install with: pip install scrapegraph-py",
+                "error_type": "dependency"
+            }
+
+        try:
+            from pydantic import BaseModel, Field, create_model
+        except ImportError:
+            return {
+                "success": False,
+                "error": "pydantic package not installed. "
+                        "Install with: pip install pydantic",
+                "error_type": "dependency"
+            }
+
+        # Resolve schema (handles Git refs, fsspec URIs, caching, and merging)
+        try:
+            final_schema = _resolve_ai_scrape_schema(output_schema, schema)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Schema resolution failed: {str(e)}",
+                "error_type": "schema_error"
+            }
+
+        if final_schema is None:
+            return {
+                "success": False,
+                "error": "No schema provided. Use output_schema or schema.uses",
+                "error_type": "schema_error"
+            }
+
+        # Convert JSON Schema to Pydantic model
+        try:
+            pydantic_model = _json_schema_to_pydantic(final_schema)
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Invalid schema: {str(e)}",
+                "error_type": "schema_error"
+            }
+
+        # Call ScrapeGraphAI API with retry logic (pattern from 008.5)
+        client = Client(api_key=api_key)
+        return _call_scrapegraph_with_retry(
+            client=client,
+            url=url,
+            prompt=prompt,
+            pydantic_model=pydantic_model,
+            final_schema=final_schema,
+            max_retries=max_retries
+        )
+
+    def _resolve_ai_scrape_schema(
+        output_schema: Optional[Dict],
+        schema_config: Optional[Dict]
+    ) -> Optional[Dict]:
+        """
+        Resolve schema from inline dict, Git references, or fsspec URIs.
+
+        Uses unified schema loader from Story 008.2 which handles:
+        - Git short refs: owner/repo@ref#path
+        - Git full URLs: git+https://... or git+ssh://...
+        - fsspec URIs: s3://, gs://, az://, https://, file://
+        - Caching with 5-minute TTL
+
+        Priority:
+        1. output_schema (inline dict) - used directly
+        2. schema.uses (ref or list of refs) - loaded and merged
+        3. schema.inline (inline within config)
+        """
+        # Direct inline schema (highest priority, no loading needed)
+        if output_schema:
+            return output_schema
+
+        # Schema config with uses
+        if schema_config:
+            uses = schema_config.get('uses')
+            if uses:
+                # Import schema utilities from 008.2/008.3
+                try:
+                    from the_edge_agent.schema import fetch_schema
+                    from the_edge_agent.schema.deep_merge import merge_all
+                except ImportError as e:
+                    raise ImportError(
+                        f"Schema loading requires the schema module: {e}"
+                    )
+
+                # Normalize to list
+                refs = uses if isinstance(uses, list) else [uses]
+
+                # Load all schemas using unified loader (handles Git + fsspec + caching)
+                schemas = []
+                for ref in refs:
+                    loaded_schema = fetch_schema(ref)
+                    schemas.append(loaded_schema)
+
+                # Merge schemas (first = lowest priority, kubectl-style)
+                if len(schemas) == 1:
+                    return schemas[0]
+                return merge_all(schemas)
+
+            # Inline schema within config
+            if 'inline' in schema_config:
+                return schema_config['inline']
+
+        return None
+
+    def _json_schema_to_pydantic(schema: Dict[str, Any]):
+        """
+        Dynamically create Pydantic model from JSON Schema.
+
+        Handles common JSON Schema types:
+        - string -> str
+        - integer -> int
+        - number -> float
+        - boolean -> bool
+        - array -> List[...]
+        - object -> nested model
+        """
+        from pydantic import BaseModel, Field, create_model
+        from typing import List as TypingList, Optional as TypingOptional, Any as TypingAny
+
+        def get_python_type(prop: Dict) -> TypingAny:
+            """Convert JSON Schema type to Python type."""
+            schema_type = prop.get('type', 'string')
+
+            if schema_type == 'string':
+                return str
+            elif schema_type == 'integer':
+                return int
+            elif schema_type == 'number':
+                return float
+            elif schema_type == 'boolean':
+                return bool
+            elif schema_type == 'array':
+                items = prop.get('items', {})
+                item_type = get_python_type(items)
+                return TypingList[item_type]
+            elif schema_type == 'object':
+                # Recursive: create nested model
+                nested_props = prop.get('properties', {})
+                if nested_props:
+                    return _create_model_from_properties(nested_props)
+                return dict
+            else:
+                return TypingAny
+
+        def _create_model_from_properties(properties: Dict):
+            """Create Pydantic model from properties dict."""
+            fields = {}
+            for name, prop in properties.items():
+                python_type = get_python_type(prop)
+                description = prop.get('description', '')
+                default = prop.get('default', ...)
+                fields[name] = (python_type, Field(default=default, description=description))
+
+            return create_model('DynamicSchema', **fields)
+
+        # Root must be object type
+        if schema.get('type') != 'object':
+            schema = {'type': 'object', 'properties': schema}
+
+        properties = schema.get('properties', {})
+        return _create_model_from_properties(properties)
+
+    def _call_scrapegraph_with_retry(
+        client,
+        url: str,
+        prompt: str,
+        pydantic_model,
+        final_schema: Dict,
+        max_retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Call ScrapeGraphAI API with exponential backoff retry.
+
+        Follows retry pattern from TEA-BUILTIN-008.5 (LlamaExtract REST API).
+        """
+        for attempt in range(max_retries):
+            try:
+                response = client.smartscraper(
+                    website_url=url,
+                    user_prompt=prompt,
+                    output_schema=pydantic_model
+                )
+
+                # Response is already structured according to schema
+                # Handle both dict and Pydantic model responses
+                if isinstance(response, dict):
+                    data = response
+                elif hasattr(response, 'model_dump'):
+                    data = response.model_dump()
+                elif hasattr(response, 'dict'):
+                    data = response.dict()  # Pydantic v1 compatibility
+                else:
+                    data = dict(response) if response else {}
+
+                return {
+                    "success": True,
+                    "data": data,
+                    "url": url,
+                    "schema_used": final_schema
+                }
+
+            except Exception as e:
+                error_msg = str(e).lower()
+
+                # Retry on rate limit (429) or server errors (5xx)
+                if "rate limit" in error_msg or "429" in error_msg:
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                        continue
+                    return {
+                        "success": False,
+                        "error": "Rate limit exceeded after retries",
+                        "error_type": "rate_limit"
+                    }
+
+                if "500" in error_msg or "502" in error_msg or "503" in error_msg:
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return {
+                        "success": False,
+                        "error": f"Server error after retries: {str(e)}",
+                        "error_type": "api_error"
+                    }
+
+                # Non-retryable errors
+                if "timeout" in error_msg:
+                    return {
+                        "success": False,
+                        "error": f"Request timeout: {str(e)}",
+                        "error_type": "timeout"
+                    }
+                if "api key" in error_msg or "unauthorized" in error_msg or "401" in error_msg:
+                    return {
+                        "success": False,
+                        "error": f"Authentication failed: {str(e)}",
+                        "error_type": "authentication"
+                    }
+
+                # Generic API error - don't retry
+                return {
+                    "success": False,
+                    "error": f"ScrapeGraphAI error: {str(e)}",
+                    "error_type": "api_error"
+                }
+
+        return {
+            "success": False,
+            "error": "Max retries exceeded",
+            "error_type": "api_error"
+        }
+
+    registry['web.ai_scrape'] = web_ai_scrape
+    registry['actions.web_ai_scrape'] = web_ai_scrape

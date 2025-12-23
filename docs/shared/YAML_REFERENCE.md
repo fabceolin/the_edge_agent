@@ -2545,6 +2545,7 @@ Web scraping and search via external APIs.
 **Required environment variables:**
 - `FIRECRAWL_API_KEY` - For web.scrape and web.crawl
 - `PERPLEXITY_API_KEY` - For web.search
+- `SCRAPEGRAPH_API_KEY` - For web.ai_scrape (AI-powered extraction)
 
 #### `web.scrape`
 
@@ -2595,6 +2596,93 @@ Web search via Perplexity API:
 ```
 
 **Returns:** `{"success": true, "results": list, "query": str, "total_results": int, "answer": str}`
+
+#### `web.ai_scrape`
+
+AI-powered structured data extraction via ScrapeGraphAI API (TEA-BUILTIN-008.4).
+
+**Required:** `SCRAPEGRAPH_API_KEY` environment variable.
+
+**Optional package:** `pip install scrapegraph-py pydantic`
+
+```yaml
+# Basic usage with inline schema
+- name: extract_products
+  uses: web.ai_scrape
+  with:
+    url: "{{ state.target_url }}"         # Required
+    prompt: "Extract all products"        # Required
+    output_schema:                         # Schema (inline dict)
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              price: { type: string }
+    max_retries: 3                         # Optional (default: 3)
+  output: extracted_data
+```
+
+```yaml
+# Load schema from Git reference (Story 008.2)
+- name: extract_invoice
+  uses: web.ai_scrape
+  with:
+    url: "{{ state.invoice_url }}"
+    prompt: "Extract invoice data"
+    schema:
+      uses: company/schemas@v1.0.0#invoice/schema.json
+  output: invoice_data
+```
+
+```yaml
+# Merge schemas from multiple sources (Story 008.3)
+- name: extract_complex
+  uses: web.ai_scrape
+  with:
+    url: "{{ state.url }}"
+    prompt: "Extract all data"
+    schema:
+      uses:
+        - base/schemas@v1#common.json       # Git ref (lowest priority)
+        - s3://bucket/overlay.json           # S3 (fsspec)
+        - gs://shared/final.json             # GCS
+        - company/private@main#override.json # Git (highest priority)
+  output: merged_data
+```
+
+**Schema Sources (via Story 008.2):**
+- Inline dict via `output_schema` parameter
+- Git short refs: `owner/repo@ref#path/to/schema.json`
+- Git full URLs: `git+https://...` or `git+ssh://...`
+- fsspec URIs: `s3://`, `gs://`, `az://`, `https://`, `file://`
+
+**Schema Merging (via Story 008.3):**
+When `schema.uses` is a list, schemas are merged with kubectl-style semantics (last wins).
+
+**Returns:**
+```python
+# Success
+{
+    "success": True,
+    "data": {...},           # Extracted data matching schema
+    "url": str,
+    "schema_used": {...}     # Final merged schema
+}
+
+# Failure
+{
+    "success": False,
+    "error": str,
+    "error_type": str  # configuration, api_error, schema_error,
+                       # timeout, rate_limit, dependency, authentication
+}
+```
+
+**Retry Logic:** Automatically retries on rate limits (429) and server errors (5xx) with exponential backoff (1s, 2s, 4s...).
 
 All web actions are available via dual namespaces: `web.*` and `actions.web_*`.
 

@@ -66,6 +66,7 @@ setup(
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
         "llm": ["openai>=1.13.3"],
         "web": ["requests>=2.32.5"],
+        "web-ai-scrape": ["scrapegraph-py>=1.0.0", "pydantic>=2.0.0"],  # TEA-BUILTIN-008.4: ScrapeGraphAI
         "code": ["RestrictedPython>=8.0"],
         "graph": ["pycozo[embedded]>=0.7.0", "pandas>=2.0.0"],  # pandas required by pycozo
         "graph-kuzu": ["kuzu>=0.11.0"],
@@ -102,6 +103,8 @@ setup(
             "adlfs",
             "lupa>=2.0",
             "janus-swi>=0.1.0",  # Requires SWI-Prolog 9.1+
+            "scrapegraph-py>=1.0.0",  # TEA-BUILTIN-008.4: ScrapeGraphAI
+            "pydantic>=2.0.0",
         ],
     },
 )

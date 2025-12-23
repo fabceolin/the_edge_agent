@@ -1,0 +1,14 @@
+# Base Document Schema
+# Common fields for all document types
+
+type: object
+properties:
+  document_id:
+    type: string
+    description: Unique document identifier
+  document_date:
+    type: string
+    description: Document date (YYYY-MM-DD)
+  document_type:
+    type: string
+    description: Type of document
