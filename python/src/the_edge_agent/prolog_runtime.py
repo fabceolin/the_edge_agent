@@ -169,6 +169,30 @@ class PrologRuntime:
         % Action predicates - should be called, not asserted
         tea_action_predicate(return).
         tea_action_predicate(state).
+        % Structural operators - must be called, not asserted
+        tea_action_predicate(',').   % Conjunction
+        tea_action_predicate(';').   % Disjunction
+        tea_action_predicate('->').  % If-then
+        tea_action_predicate('*->').  % Soft cut if-then
+        % Arithmetic comparisons
+        tea_action_predicate('>').
+        tea_action_predicate('<').
+        tea_action_predicate('>=').
+        tea_action_predicate('=<').
+        tea_action_predicate('=:=').
+        tea_action_predicate('=\\=').
+        % Unification and comparison
+        tea_action_predicate('=').
+        tea_action_predicate('\\=').
+        tea_action_predicate('==').
+        tea_action_predicate('\\==').
+        tea_action_predicate('@<').
+        tea_action_predicate('@>').
+        tea_action_predicate('@=<').
+        tea_action_predicate('@>=').
+        tea_action_predicate('\\+').
+        tea_action_predicate(is).
+        % List predicates
         tea_action_predicate(findall).
         tea_action_predicate(bagof).
         tea_action_predicate(setof).
@@ -589,8 +613,13 @@ class PrologRuntime:
             try:
                 # Use Prolog-side parsing via tea_load_code/1
                 # This is the key architectural improvement: let Prolog parse Prolog!
+
+                # Ensure code ends with a period (required by read_term/3)
+                # This matches the Rust implementation for cross-runtime parity
+                code_with_period = code if code.strip().endswith('.') else f"{code.strip()}."
+
                 # Escape single quotes for Prolog atom (double them)
-                escaped_code = code.replace("'", "''")
+                escaped_code = code_with_period.replace("'", "''")
 
                 # Build the query with timeout
                 load_query = f"tea_load_code('{escaped_code}')"
