@@ -1310,24 +1310,35 @@ edges:
 /// This is a research test to verify if swipl-rs can load predicates from a .pl file.
 #[test]
 fn test_spike_consult_pl_file() {
-    use swipl::prelude::*;
     use std::path::PathBuf;
+    use swipl::prelude::*;
 
     // Get the path to our TEA predicates file
-    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/engine/tea_prolog_predicates.pl");
+    let pl_file =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/engine/tea_prolog_predicates.pl");
 
-    assert!(pl_file.exists(), "TEA predicates file should exist at {:?}", pl_file);
+    assert!(
+        pl_file.exists(),
+        "TEA predicates file should exist at {:?}",
+        pl_file
+    );
 
     let engine = Engine::new();
     let activation = engine.activate();
     let context: Context<_> = activation.into();
 
     // Try to consult the file
-    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    let consult_cmd = format!(
+        "consult('{}')",
+        pl_file.to_str().unwrap().replace("'", "\\'")
+    );
     let result = context.term_from_string(&consult_cmd);
 
-    assert!(result.is_ok(), "Should parse consult command: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should parse consult command: {:?}",
+        result.err()
+    );
 
     let term = result.unwrap();
     let call_result = context.call_term_once(&term);
@@ -1346,7 +1357,7 @@ fn test_spike_consult_pl_file() {
                     println!("SPIKE-PARTIAL: File loaded but predicate not available");
                 }
             }
-        },
+        }
         Err(e) => {
             println!("SPIKE-FAILED: consult/1 failed with: {:?}", e);
             println!("This may be due to sandbox blocking consult/1");
@@ -1360,11 +1371,11 @@ fn test_spike_consult_pl_file() {
 /// TEA-RUST-039 AC-1: Test if predicates loaded via consult are accessible
 #[test]
 fn test_spike_consult_predicates_accessible() {
-    use swipl::prelude::*;
     use std::path::PathBuf;
+    use swipl::prelude::*;
 
-    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/engine/tea_prolog_predicates.pl");
+    let pl_file =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/engine/tea_prolog_predicates.pl");
 
     if !pl_file.exists() {
         println!("SPIKE-SKIP: TEA predicates file not found");
@@ -1376,7 +1387,10 @@ fn test_spike_consult_predicates_accessible() {
     let context: Context<_> = activation.into();
 
     // Load the file
-    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    let consult_cmd = format!(
+        "consult('{}')",
+        pl_file.to_str().unwrap().replace("'", "\\'")
+    );
     if let Ok(term) = context.term_from_string(&consult_cmd) {
         if context.call_term_once(&term).is_ok() {
             // Test tea_load_code/1 is available
@@ -1395,7 +1409,7 @@ fn test_spike_consult_predicates_accessible() {
                                 println!("SPIKE-PARTIAL: tea_load_code ran but fact not queryable");
                             }
                         }
-                    },
+                    }
                     Err(e) => {
                         println!("SPIKE-FAILED: tea_load_code/1 failed with: {:?}", e);
                     }
@@ -1412,11 +1426,11 @@ fn test_spike_consult_predicates_accessible() {
 /// TEA-RUST-039 AC-1: Test tea_load_code with inline rules
 #[test]
 fn test_spike_tea_load_code_with_rules() {
-    use swipl::prelude::*;
     use std::path::PathBuf;
+    use swipl::prelude::*;
 
-    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/engine/tea_prolog_predicates.pl");
+    let pl_file =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/engine/tea_prolog_predicates.pl");
 
     if !pl_file.exists() {
         println!("SPIKE-SKIP: TEA predicates file not found");
@@ -1428,7 +1442,10 @@ fn test_spike_tea_load_code_with_rules() {
     let context: Context<_> = activation.into();
 
     // Load TEA predicates
-    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    let consult_cmd = format!(
+        "consult('{}')",
+        pl_file.to_str().unwrap().replace("'", "\\'")
+    );
     if let Ok(term) = context.term_from_string(&consult_cmd) {
         if context.call_term_once(&term).is_ok() {
             // Test loading a rule via tea_load_code
@@ -1447,7 +1464,7 @@ fn test_spike_tea_load_code_with_rules() {
                                 println!("SPIKE-SUCCESS: Rule is callable after loading!");
                             }
                         }
-                    },
+                    }
                     Err(e) => {
                         println!("SPIKE-FAILED: Rule loading failed: {:?}", e);
                     }
@@ -1463,11 +1480,11 @@ fn test_spike_tea_load_code_with_rules() {
 /// This is the specific edge case that motivated this story.
 #[test]
 fn test_spike_comma_in_quoted_string() {
-    use swipl::prelude::*;
     use std::path::PathBuf;
+    use swipl::prelude::*;
 
-    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src/engine/tea_prolog_predicates.pl");
+    let pl_file =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/engine/tea_prolog_predicates.pl");
 
     if !pl_file.exists() {
         println!("SPIKE-SKIP: TEA predicates file not found");
@@ -1479,7 +1496,10 @@ fn test_spike_comma_in_quoted_string() {
     let context: Context<_> = activation.into();
 
     // Load TEA predicates
-    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    let consult_cmd = format!(
+        "consult('{}')",
+        pl_file.to_str().unwrap().replace("'", "\\'")
+    );
     if let Ok(term) = context.term_from_string(&consult_cmd) {
         if context.call_term_once(&term).is_ok() {
             // Test the edge case: comma in quoted string
@@ -1499,7 +1519,7 @@ fn test_spike_comma_in_quoted_string() {
                                 println!("SPIKE-SUCCESS: Fact with comma in string is queryable!");
                             }
                         }
-                    },
+                    }
                     Err(e) => {
                         println!("SPIKE-FAILED: Comma in quoted string failed: {:?}", e);
                     }
@@ -1543,9 +1563,12 @@ fn test_spike_open_string_read_term() {
                         println!("SPIKE-SUCCESS: Fact asserted via open_string is queryable!");
                     }
                 }
-            },
+            }
             Err(e) => {
-                println!("SPIKE-FAILED: open_string/read_term pattern failed: {:?}", e);
+                println!(
+                    "SPIKE-FAILED: open_string/read_term pattern failed: {:?}",
+                    e
+                );
             }
         }
     }
@@ -1580,7 +1603,7 @@ fn test_spike_inline_predicate_definition() {
                         println!("SPIKE-PARTIAL: Predicate defined but call failed");
                     }
                 }
-            },
+            }
             Err(e) => {
                 println!("SPIKE-FAILED: Inline predicate definition failed: {:?}", e);
             }
@@ -1624,7 +1647,7 @@ fn test_spike_embedded_predicates() {
                         println!("SPIKE-SUCCESS: Embedded fact is queryable!");
                     }
                 }
-            },
+            }
             Err(e) => {
                 println!("SPIKE-ALTERNATIVE: load_files from string failed: {:?}", e);
                 println!("Will use file-based consult instead.");

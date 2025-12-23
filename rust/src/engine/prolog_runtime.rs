@@ -256,7 +256,6 @@ tea_cleanup_facts :-
     retractall(tea_user_fact(_)).
 "#;
 
-
 /// Prolog runtime for The Edge Agent (Rust implementation)
 ///
 /// Provides a sandboxed SWI-Prolog environment with timeout protection
@@ -415,10 +414,7 @@ impl PrologRuntime {
 
         if pl_file.exists() {
             // Use file-based consult (more reliable)
-            let escaped_path = pl_file
-                .to_str()
-                .unwrap_or("")
-                .replace('\'', "\\'");
+            let escaped_path = pl_file.to_str().unwrap_or("").replace('\'', "\\'");
             let consult_cmd = format!("consult('{}')", escaped_path);
 
             if let Ok(term) = context.term_from_string(&consult_cmd) {
@@ -1363,7 +1359,10 @@ impl PrologRuntime {
     /// - Queries: everything else (procedural code to execute)
     ///
     /// Returns: (directives, rules, facts, queries)
-    fn parse_prolog_code(&self, code: &str) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    fn parse_prolog_code(
+        &self,
+        code: &str,
+    ) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
         let mut directives = Vec::new();
         let mut rules = Vec::new();
         let mut facts = Vec::new();
@@ -1496,14 +1495,38 @@ impl PrologRuntime {
         // TEA predicates + common Prolog built-ins that are queries, not facts
         let query_predicates = [
             // TEA predicates
-            "return", "state",
+            "return",
+            "state",
             // List predicates
-            "findall", "bagof", "setof", "member", "memberchk", "append", "length", "nth0", "nth1",
-            "msort", "sort", "reverse", "last", "sumlist", "max_list", "min_list",
+            "findall",
+            "bagof",
+            "setof",
+            "member",
+            "memberchk",
+            "append",
+            "length",
+            "nth0",
+            "nth1",
+            "msort",
+            "sort",
+            "reverse",
+            "last",
+            "sumlist",
+            "max_list",
+            "min_list",
             // Control predicates
-            "forall", "aggregate_all", "aggregate", "call", "once",
+            "forall",
+            "aggregate_all",
+            "aggregate",
+            "call",
+            "once",
             // Arithmetic predicates (rarely facts, usually queries)
-            "succ", "plus", "abs", "sign", "max", "min",
+            "succ",
+            "plus",
+            "abs",
+            "sign",
+            "max",
+            "min",
         ];
         if query_predicates.contains(&predicate_name) {
             return false;
