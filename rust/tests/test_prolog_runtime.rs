@@ -1897,11 +1897,7 @@ fn test_backslash_negation_member_not_found() {
     "#;
 
     let result = runtime.execute_node_code(code, &state);
-    assert!(
-        result.is_ok(),
-        "\\+ member should work: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "\\+ member should work: {:?}", result.err());
 
     if let Ok(result_state) = result {
         assert_eq!(
