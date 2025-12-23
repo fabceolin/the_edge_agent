@@ -1,0 +1,52 @@
+# Cross-Runtime Parity Test: Type Coercion
+# Tests JSON type preservation through Prolog
+# Expected: Both runtimes handle type coercion identically
+
+name: parity-type-coercion
+description: Verify JSON types survive round-trip through Prolog
+
+state_schema:
+  integer_as_float: float
+  float_as_integer: int
+  string_to_atom: str
+  bool_string: str
+  number_string: str
+  test_results: dict
+
+nodes:
+  - name: test_coercion
+    language: prolog
+    run: |
+      % Test integer handling
+      state(integer_as_float, FloatVal),
+      FloatVal =:= 42.0,
+
+      % Test float handling
+      state(float_as_integer, IntVal),
+      IntVal =:= 42,
+
+      % Test string as atom
+      state(string_to_atom, StrVal),
+      atom_string(StrVal, "test_string"),
+
+      % Test boolean string representation
+      state(bool_string, BoolStr),
+      atom_string(BoolStr, "true"),
+
+      % Test numeric string
+      state(number_string, NumStr),
+      atom_string(NumStr, "123").
+
+edges:
+  - from: __start__
+    to: test_coercion
+  - from: test_coercion
+    to: __end__
+
+initial_state:
+  integer_as_float: 42.0
+  float_as_integer: 42
+  string_to_atom: "test_string"
+  bool_string: "true"
+  number_string: "123"
+  test_results: {}

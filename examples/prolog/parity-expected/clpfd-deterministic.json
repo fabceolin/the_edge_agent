@@ -1,0 +1,16 @@
+{
+  "query_success": true,
+  "description": "CLP(FD) solver finds unique solution X=1, Y=4, Z=10",
+  "constraints": {
+    "domain": "[1..10]",
+    "sum_constraint": "X + Y + Z = 15",
+    "ordering": "X < Y < Z",
+    "anchor": "X = 1"
+  },
+  "expected_solution": {
+    "X": 1,
+    "Y": 4,
+    "Z": 10
+  },
+  "notes": "Both runtimes pre-load library(clpfd). Solution is verified via assertion in the query."
+}

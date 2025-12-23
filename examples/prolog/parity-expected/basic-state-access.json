@@ -1,0 +1,18 @@
+{
+  "query_success": true,
+  "description": "State access query succeeds when all types can be read and verified",
+  "initial_state": {
+    "str_value": "hello world",
+    "int_value": 42,
+    "float_value": 3.14159,
+    "bool_value": true,
+    "null_value": null,
+    "list_value": [1, "two", 3.0, true, null],
+    "dict_value": {
+      "nested_key": "nested_value",
+      "nested_int": 123
+    },
+    "test_passed": false
+  },
+  "notes": "Both runtimes should: (1) successfully read all state values, (2) verify type constraints. The return/2 predicate differs between runtimes - see parity report."
+}

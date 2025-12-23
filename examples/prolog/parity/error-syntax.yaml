@@ -1,0 +1,26 @@
+# Cross-Runtime Parity Test: Syntax Error
+# Tests that both runtimes raise equivalent syntax errors
+# Expected: PrologRuntimeError (Python) / TeaError::Prolog (Rust)
+
+name: parity-error-syntax
+description: Verify syntax error handling parity
+
+state_schema:
+  input: str
+
+nodes:
+  - name: syntax_error_node
+    language: prolog
+    run: |
+      % Intentional syntax error: missing closing parenthesis
+      state(input, X,
+      X = test.
+
+edges:
+  - from: __start__
+    to: syntax_error_node
+  - from: syntax_error_node
+    to: __end__
+
+initial_state:
+  input: "test"

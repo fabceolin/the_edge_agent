@@ -1,0 +1,10 @@
+{
+  "query_success": false,
+  "error_type": "syntax",
+  "description": "Missing closing parenthesis causes parse error",
+  "expected_errors": {
+    "python": "PrologRuntimeError",
+    "rust": "TeaError::Prolog"
+  },
+  "notes": "Error messages may differ in wording, but both runtimes must reject the malformed query."
+}

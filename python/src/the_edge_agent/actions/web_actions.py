@@ -538,18 +538,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         state,
         query: str,
         num_results: int = 10,
+        model: str = "sonar",
+        timeout: int = 60,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Perform web search via Perplexity API.
 
-        Uses Perplexity's sonar model to search the web and return
+        Uses Perplexity's sonar model family to search the web and return
         structured results with citations.
 
         Args:
             state: Current workflow state
             query: Search query string
             num_results: Maximum number of results to return. Default: 10
+            model: Perplexity model to use. Options:
+                   - "sonar" (default): Fast, basic search
+                   - "sonar-pro": Enhanced search
+                   - "sonar-deep-research": Multi-step retrieval with reasoning
+            timeout: Request timeout in seconds. Default: 60 (increase for deep-research)
 
         Returns:
             On success:
@@ -600,8 +607,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             }
 
         # Build request payload for Perplexity chat completion API
+        # For deep-research, use larger max_tokens to accommodate comprehensive results
+        max_tokens = 4096 if model == "sonar-deep-research" else 1024
+
         payload = {
-            "model": "sonar",
+            "model": model,
             "messages": [
                 {
                     "role": "system",
@@ -612,7 +622,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "content": query
                 }
             ],
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "return_citations": True,
             "return_related_questions": False
         }
@@ -623,11 +633,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         }
 
         try:
+            # Use provided timeout (longer for deep-research which does multi-step retrieval)
+            request_timeout = timeout if model == "sonar-deep-research" else min(timeout, 30)
             response = requests.post(
                 "https://api.perplexity.ai/chat/completions",
                 json=payload,
                 headers=headers,
-                timeout=30
+                timeout=request_timeout
             )
 
             # Handle rate limiting
@@ -680,7 +692,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "results": results,
                 "query": query,
                 "total_results": len(results),
-                "answer": answer
+                "answer": answer,
+                "model": model
             }
 
         except requests.exceptions.Timeout:

@@ -35,6 +35,8 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
   - [Tools Bridge Actions](#tools-bridge-actions)
   - [Notification Actions](#notification-actions)
   - [Checkpoint Actions](#checkpoint-actions)
+  - [Schema Actions](#schema-actions)
+  - [LlamaExtract Actions](#llamaextract-actions)
   - [Custom Actions](#custom-actions)
 - [Checkpoint Persistence](#checkpoint-persistence)
 - [Complete Examples](#complete-examples)
@@ -2814,6 +2816,175 @@ Load checkpoint from file:
 
 ---
 
+### Schema Actions
+
+Schema manipulation actions for merging and loading JSON Schemas.
+
+#### `schema.merge`
+
+Deep merge multiple JSON Schemas using kubectl-style semantics:
+
+```yaml
+- name: merge_schemas
+  uses: schema.merge
+  with:
+    schemas:
+      - path: ./base-schema.json
+      - uses: company/schemas@v1.0.0#overlay.json
+      - inline:
+          properties:
+            custom_field:
+              type: string
+    validate: true  # Optional: validate output schema
+    output_key: merged  # Optional: default "merged_schema"
+  output: schema_result
+```
+
+**Merge Semantics:**
+- Objects: Recursively merged (overlay adds/overrides properties)
+- Arrays: Last-wins (overlay replaces base array)
+- Scalars: Last-wins
+- `null`: Explicit null removes the key
+
+**Schema Sources:**
+- `path`: Local file path
+- `uses`: Git reference (`owner/repo@ref#path`) or fsspec URI (`s3://bucket/path`)
+- `inline`: Inline JSON Schema object
+
+**Returns:**
+```python
+{
+  "merged_schema": dict,  # The merged schema
+  "success": true
+}
+```
+
+---
+
+### LlamaExtract Actions
+
+Document extraction using LlamaCloud's LlamaExtract service.
+
+**Requirements:**
+- `llama-cloud-services` package
+- `LLAMAEXTRACT_API_KEY` or `LLAMAPARSE_API_KEY` environment variable
+
+#### `llamaextract.extract`
+
+Extract structured data from documents:
+
+```yaml
+- name: extract_invoice
+  uses: llamaextract.extract
+  with:
+    file: https://example.com/invoice.pdf  # URL, local path, or base64
+    schema:
+      type: object
+      properties:
+        total: { type: number }
+        vendor: { type: string }
+    mode: BALANCED  # BALANCED, MULTIMODAL, PREMIUM, FAST
+    max_retries: 3  # Optional: default 3
+  output: extracted_data
+```
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `file` | string | Yes | URL, local file path, or base64-encoded content |
+| `schema` | dict | One of these | JSON Schema for extraction |
+| `agent_id` | string | One of these | Use existing LlamaExtract agent |
+| `mode` | string | No | Extraction mode (default: BALANCED) |
+| `max_retries` | int | No | Max retry attempts (default: 3) |
+
+**Extraction Modes:**
+- `BALANCED`: Good balance of speed and accuracy (default)
+- `MULTIMODAL`: Uses vision models for complex layouts
+- `PREMIUM`: Highest accuracy, slower processing
+- `FAST`: Fastest processing, may sacrifice accuracy
+
+**Returns:**
+```python
+{
+  "success": true,
+  "data": {...},  # Extracted data matching schema
+  "job_id": str
+}
+```
+
+#### `llamaextract.upload_agent`
+
+Create or update a LlamaExtract agent:
+
+```yaml
+- name: create_agent
+  uses: llamaextract.upload_agent
+  with:
+    name: invoice-extractor
+    schema:
+      type: object
+      properties:
+        total: { type: number }
+    mode: BALANCED
+    force: false  # Optional: update if exists
+  output: agent_result
+```
+
+**Returns:**
+```python
+{
+  "success": true,
+  "agent_id": str,
+  "agent_name": str
+}
+```
+
+#### `llamaextract.list_agents`
+
+List available extraction agents:
+
+```yaml
+- name: list_all
+  uses: llamaextract.list_agents
+  with:
+    name_filter: invoice  # Optional: filter by name
+  output: agents_list
+```
+
+**Returns:**
+```python
+{
+  "success": true,
+  "agents": [{"id": str, "name": str}, ...]
+}
+```
+
+#### `llamaextract.get_agent`
+
+Get details of a specific agent:
+
+```yaml
+- name: get_agent
+  uses: llamaextract.get_agent
+  with:
+    agent_id: abc123  # or agent_name
+  output: agent_info
+```
+
+#### `llamaextract.delete_agent`
+
+Delete an extraction agent:
+
+```yaml
+- name: remove_agent
+  uses: llamaextract.delete_agent
+  with:
+    agent_id: abc123  # or agent_name
+  output: delete_result
+```
+
+---
+
 ### Custom Actions
 
 Register custom actions in Python:
@@ -3219,6 +3390,70 @@ for event in engine.resume_from_checkpoint(
 
 **Issue**: Import module not found
 - **Solution**: Check path is relative to YAML file location, not working directory
+
+### Prolog Integration Issues
+
+**Issue**: "SWI-Prolog not found" or "janus-swi not found"
+- **Solution (Python)**: Install SWI-Prolog 9.1+ and janus-swi:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-add-repository ppa:swi-prolog/stable
+  sudo apt update && sudo apt install swi-prolog
+  pip install janus-swi
+  ```
+
+**Issue**: "Prolog feature not enabled" (Rust)
+- **Solution**: Build with Prolog feature:
+  ```bash
+  cargo build --features prolog
+  cargo run --features prolog -- run my-agent.yaml
+  ```
+
+**Issue**: "Arguments are not sufficiently instantiated"
+- **Solution**: Ensure variables are bound before arithmetic operations:
+  ```prolog
+  % Wrong
+  Result is X + 1.  % X not bound
+
+  % Correct
+  state(value, X),
+  Result is X + 1.
+  ```
+
+**Issue**: "Unknown procedure: predicate/N"
+- **Solution**: Define predicates before use, or use inline conditional logic:
+  ```prolog
+  % Instead of calling undefined helper/1
+  (X > 0 -> Result = positive ; Result = non_positive).
+  ```
+
+**Issue**: `return/2` not updating state (Rust only)
+- **Solution**: This is a known limitation in Rust TEA. Use Lua nodes for state updates:
+  ```yaml
+  - name: prolog_validate
+    language: prolog
+    run: |
+      state(value, V), V > 0.  % Just validate
+
+  - name: lua_update
+    language: lua
+    run: |
+      return { validated = true }  % Update state here
+  ```
+
+**Issue**: Prolog query timeout
+- **Solution**: Increase timeout for complex constraint solving:
+  ```python
+  engine = YAMLEngine(prolog_enabled=True, prolog_timeout=60.0)
+  ```
+
+**Issue**: CLP(FD) constraints not working
+- **Solution**: CLP(FD) is pre-loaded in both Python and Rust. Ensure you use proper CLP(FD) syntax:
+  ```prolog
+  X in 1..10,           % Domain declaration
+  X + Y #= 15,          % Constraint (use #= not =)
+  label([X, Y]).        % Find concrete values
+  ```
 
 ---
 

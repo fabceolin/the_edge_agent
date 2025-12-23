@@ -1,0 +1,48 @@
+# Cross-Runtime Parity Test: Empty Collections
+# Tests handling of empty arrays [] and objects {}
+# Expected: Both runtimes preserve empty collections (known difference: [] may become null)
+
+name: parity-empty-collections
+description: Verify empty collection handling parity
+
+state_schema:
+  empty_list: list
+  empty_dict: dict
+  list_with_empty: list
+  dict_with_empty: dict
+
+nodes:
+  - name: verify_empty_collections
+    language: prolog
+    run: |
+      % Verify empty list - NOTE: may be null in some runtimes
+      state(empty_list, EmptyList),
+      (EmptyList = [] ; EmptyList = null),
+
+      % Verify empty dict
+      state(empty_dict, EmptyDict),
+      (is_dict(EmptyDict) ; EmptyDict = _{}),
+
+      % Verify list containing empty values
+      state(list_with_empty, ListWithEmpty),
+      is_list(ListWithEmpty),
+      length(ListWithEmpty, 3),
+
+      % Verify dict containing empty values
+      state(dict_with_empty, DictWithEmpty),
+      is_dict(DictWithEmpty).
+
+edges:
+  - from: __start__
+    to: verify_empty_collections
+  - from: verify_empty_collections
+    to: __end__
+
+initial_state:
+  empty_list: []
+  empty_dict: {}
+  list_with_empty: [[], {}, null]
+  dict_with_empty:
+    empty_array: []
+    empty_object: {}
+    null_value: null

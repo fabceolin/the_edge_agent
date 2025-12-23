@@ -375,6 +375,9 @@ pub struct StateGraph {
     /// State schema (optional validation)
     state_schema: Option<serde_json::Value>,
 
+    /// Initial state from YAML (merged with CLI input)
+    initial_state: Option<serde_json::Value>,
+
     /// Global variables
     variables: HashMap<String, serde_json::Value>,
 
@@ -397,6 +400,7 @@ impl StateGraph {
             entry_point: None,
             finish_point: None,
             state_schema: None,
+            initial_state: None,
             variables: HashMap::new(),
             name: String::from("unnamed"),
             allow_cycles: false,
@@ -587,6 +591,16 @@ impl StateGraph {
     /// Get global variables
     pub fn variables(&self) -> &HashMap<String, serde_json::Value> {
         &self.variables
+    }
+
+    /// Set initial state (from YAML)
+    pub fn set_initial_state(&mut self, initial_state: serde_json::Value) {
+        self.initial_state = Some(initial_state);
+    }
+
+    /// Get initial state (from YAML)
+    pub fn initial_state(&self) -> Option<&serde_json::Value> {
+        self.initial_state.as_ref()
     }
 
     /// Get all node names in topological order
@@ -786,6 +800,11 @@ impl CompiledGraph {
     /// Get variables
     pub fn variables(&self) -> &HashMap<String, serde_json::Value> {
         self.graph.variables()
+    }
+
+    /// Get initial state (from YAML)
+    pub fn initial_state(&self) -> Option<&serde_json::Value> {
+        self.graph.initial_state()
     }
 
     /// Get graph name

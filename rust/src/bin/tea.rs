@@ -290,11 +290,22 @@ fn run_workflow(
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
 
-    // Parse initial state
-    let initial_state = parse_input(input)?;
-
     // Compile graph with interrupts
     let mut compiled = graph.compile()?;
+
+    // Merge initial state: YAML initial_state first, CLI input overlays (CLI takes precedence)
+    let cli_input = parse_input(input)?;
+    let initial_state = if let Some(yaml_state) = compiled.initial_state() {
+        let mut merged = yaml_state.clone();
+        if let (Some(merged_obj), Some(cli_obj)) = (merged.as_object_mut(), cli_input.as_object()) {
+            for (key, value) in cli_obj {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+        merged
+    } else {
+        cli_input
+    };
 
     if let Some(nodes) = interrupt_before {
         compiled = compiled

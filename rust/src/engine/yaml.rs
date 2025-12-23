@@ -28,6 +28,10 @@ pub struct YamlConfig {
     #[serde(default)]
     pub state_schema: Option<HashMap<String, String>>,
 
+    /// Initial state values (merged with CLI input, CLI takes precedence)
+    #[serde(default)]
+    pub initial_state: Option<JsonValue>,
+
     /// Global variables
     #[serde(default)]
     pub variables: HashMap<String, JsonValue>,
@@ -341,6 +345,11 @@ impl YamlEngine {
 
         // Set variables
         graph.set_variables(config.variables.clone());
+
+        // Set initial state (from YAML)
+        if let Some(ref initial_state) = config.initial_state {
+            graph.set_initial_state(initial_state.clone());
+        }
 
         // Add nodes
         for node_config in &config.nodes {

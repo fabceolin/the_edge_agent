@@ -1,0 +1,65 @@
+# Cross-Runtime Parity Test: Basic State Access
+# Tests state/2 predicate with all JSON types
+# Expected: Both Python and Rust TEA produce identical query results
+#
+# NOTE: This test verifies state ACCESS parity. Return value handling
+# differs between runtimes (see parity report for details).
+
+name: parity-basic-state-access
+description: Test state/2 access for all JSON types
+
+state_schema:
+  str_value: str
+  int_value: int
+  float_value: float
+  bool_value: bool
+  null_value: any
+  list_value: list
+  dict_value: dict
+  test_passed: bool
+
+nodes:
+  - name: verify_state_access
+    language: prolog
+    run: |
+      % Verify all state values can be accessed and have correct types
+      state(str_value, Str),
+      Str = 'hello world',
+
+      state(int_value, Int),
+      Int = 42,
+
+      state(float_value, Float),
+      Float > 3.14,
+      Float < 3.15,
+
+      state(bool_value, Bool),
+      Bool = true,
+
+      state(null_value, Null),
+      Null = null,
+
+      state(list_value, List),
+      length(List, 5),
+
+      state(dict_value, Dict),
+      is_dict(Dict).
+
+edges:
+  - from: __start__
+    to: verify_state_access
+  - from: verify_state_access
+    to: __end__
+
+# Initial state for parity test
+initial_state:
+  str_value: "hello world"
+  int_value: 42
+  float_value: 3.14159
+  bool_value: true
+  null_value: null
+  list_value: [1, "two", 3.0, true, null]
+  dict_value:
+    nested_key: "nested_value"
+    nested_int: 123
+  test_passed: false

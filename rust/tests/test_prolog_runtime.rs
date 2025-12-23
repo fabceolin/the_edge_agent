@@ -1089,6 +1089,196 @@ edges:
 // Backward Compatibility Tests
 // ============================================================================
 
+// ============================================================================
+// return/2 Predicate Tests (TEA-RUST-037)
+// ============================================================================
+
+/// Test that return/2 predicate updates state (single value)
+#[test]
+fn test_return_single_value() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let result = runtime.execute_node_code("return(result, 42)", &state);
+    assert!(result.is_ok(), "return/2 should succeed: {:?}", result);
+
+    // Check that the result contains the returned value
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!(42)),
+            "return/2 should set 'result' to 42"
+        );
+    }
+}
+
+/// Test that return/2 predicate updates state (multiple values)
+#[test]
+fn test_return_multiple_values() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let result = runtime.execute_node_code("return(a, 1), return(b, 2)", &state);
+    assert!(
+        result.is_ok(),
+        "Multiple return/2 should succeed: {:?}",
+        result
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("a"),
+            Some(&json!(1)),
+            "return/2 should set 'a' to 1"
+        );
+        assert_eq!(
+            result_state.get("b"),
+            Some(&json!(2)),
+            "return/2 should set 'b' to 2"
+        );
+    }
+}
+
+/// Test that return/2 works with string values
+#[test]
+fn test_return_string_value() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let result = runtime.execute_node_code("return(message, hello)", &state);
+    assert!(
+        result.is_ok(),
+        "return/2 with atom should succeed: {:?}",
+        result
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("message"),
+            Some(&json!("hello")),
+            "return/2 should set 'message' to 'hello'"
+        );
+    }
+}
+
+/// Test that return/2 works with computed values
+#[test]
+fn test_return_computed_value() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let result = runtime.execute_node_code("X is 2 + 3, return(result, X)", &state);
+    assert!(
+        result.is_ok(),
+        "return/2 with computed value should succeed: {:?}",
+        result
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!(5)),
+            "return/2 should set 'result' to 5"
+        );
+    }
+}
+
+/// Test that return/2 preserves input state
+#[test]
+fn test_return_preserves_input_state() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({"input": 10});
+
+    let result =
+        runtime.execute_node_code("state(input, X), Y is X * 2, return(output, Y)", &state);
+    assert!(
+        result.is_ok(),
+        "return/2 with state access should succeed: {:?}",
+        result
+    );
+
+    if let Ok(result_state) = result {
+        // Input should be preserved
+        assert_eq!(
+            result_state.get("input"),
+            Some(&json!(10)),
+            "Input state should be preserved"
+        );
+        // Output should be added
+        assert_eq!(
+            result_state.get("output"),
+            Some(&json!(20)),
+            "Output should be computed from input"
+        );
+    }
+}
+
+/// Test that last-write-wins for duplicate keys
+#[test]
+fn test_return_last_write_wins() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let result = runtime.execute_node_code("return(x, 1), return(x, 2), return(x, 3)", &state);
+    assert!(
+        result.is_ok(),
+        "Multiple returns for same key should succeed: {:?}",
+        result
+    );
+
+    if let Ok(result_state) = result {
+        // Last value should win
+        assert_eq!(
+            result_state.get("x"),
+            Some(&json!(3)),
+            "Last return/2 value should win"
+        );
+    }
+}
+
+/// Test YAML agent with return/2
+/// Note: This test verifies that return/2 works from a YAML agent context.
+/// It uses simple arithmetic that works with sandbox enabled.
+#[test]
+fn test_yaml_agent_with_return() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: return-test-agent
+nodes:
+  - name: compute
+    language: prolog
+    run: |
+      X is 10 + 20,
+      return(result, X)
+edges:
+  - from: __start__
+    to: compute
+  - from: compute
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({}));
+    assert!(
+        result.is_ok(),
+        "YAML agent with return/2 should succeed: {:?}",
+        result
+    );
+
+    if let Ok(state) = result {
+        assert_eq!(
+            state.get("result"),
+            Some(&json!(30)),
+            "YAML agent should have result = 30"
+        );
+    }
+}
+
 #[test]
 fn test_lua_nodes_still_work() {
     let yaml = r#"

@@ -1,0 +1,12 @@
+{
+  "query_success": false,
+  "error_type": "timeout",
+  "description": "Infinite recursion triggers timeout via call_with_time_limit/2",
+  "expected_errors": {
+    "python": "PrologTimeoutError",
+    "rust": "TeaError::PrologTimeout"
+  },
+  "timeout_mechanism": "SWI-Prolog call_with_time_limit/2",
+  "default_timeout_seconds": 30,
+  "notes": "Allow ±10% tolerance on timeout threshold. Both runtimes use the same SWI-Prolog timeout mechanism."
+}

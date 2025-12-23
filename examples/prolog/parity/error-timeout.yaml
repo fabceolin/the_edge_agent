@@ -1,0 +1,29 @@
+# Cross-Runtime Parity Test: Timeout Error
+# Tests that both runtimes enforce timeout limits
+# Expected: PrologTimeoutError (Python) / TeaError::PrologTimeout (Rust)
+#
+# NOTE: Both runtimes use SWI-Prolog's call_with_time_limit/2 predicate
+# with default 30 second timeout. This test uses infinite recursion.
+
+name: parity-error-timeout
+description: Verify timeout error handling parity
+
+state_schema:
+  start: bool
+
+nodes:
+  - name: infinite_recursion
+    language: prolog
+    run: |
+      % Infinite recursion that will trigger timeout
+      loop :- loop.
+      loop.
+
+edges:
+  - from: __start__
+    to: infinite_recursion
+  - from: infinite_recursion
+    to: __end__
+
+initial_state:
+  start: true

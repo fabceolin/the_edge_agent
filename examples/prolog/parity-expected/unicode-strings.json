@@ -1,0 +1,13 @@
+{
+  "query_success": true,
+  "description": "All Unicode strings preserved and accessible via state/2",
+  "test_strings": {
+    "ascii_string": "Hello, World!",
+    "emoji_string": "Hello 🌍🚀✨ World",
+    "cjk_string": "你好世界",
+    "rtl_string": "مرحبا بالعالم",
+    "mixed_string": "Hello 世界 🌍 مرحبا"
+  },
+  "encoding": "UTF-8",
+  "notes": "SWI-Prolog uses UTF-8 internally. Both runtimes should preserve all Unicode code points."
+}

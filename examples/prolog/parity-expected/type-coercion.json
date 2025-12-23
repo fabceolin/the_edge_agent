@@ -1,0 +1,11 @@
+{
+  "query_success": true,
+  "description": "Type coercion query succeeds when all conversions work correctly",
+  "tests": [
+    {"name": "integer_as_float", "input": 42.0, "expected_behavior": "Numeric comparison with 42.0 succeeds"},
+    {"name": "float_as_integer", "input": 42, "expected_behavior": "Numeric comparison with 42 succeeds"},
+    {"name": "string_to_atom", "input": "test_string", "expected_behavior": "atom_string/2 matches"},
+    {"name": "bool_string", "input": "true", "expected_behavior": "String 'true' (not boolean) matches"},
+    {"name": "number_string", "input": "123", "expected_behavior": "String '123' (not number) matches"}
+  ]
+}

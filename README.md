@@ -52,8 +52,10 @@ This is a **polyglot monorepo** with two implementations:
 
 | Implementation | Status | Best For |
 |----------------|--------|----------|
-| **[Python](docs/python/getting-started.md)** | Production-ready | Full feature set, rapid prototyping, 20+ built-in actions |
-| **[Rust](docs/rust/getting-started.md)** | Active development | Performance-critical deployments, embedded systems |
+| **[Python](docs/python/getting-started.md)** | Production-ready | Online edge computing, full feature set, 20+ built-in actions |
+| **[Rust](docs/rust/getting-started.md)** | Active development | Embedded offline systems, resource-constrained environments |
+
+The **Python implementation** is optimized for online edge computing scenarios where network connectivity enables access to external APIs, LLM services, and cloud resources. The **Rust implementation** is designed for embedded offline systems where minimal footprint, deterministic execution, and operation without network dependencies are critical.
 
 Both implementations share the same YAML agent syntax and can run the same agent configurations from the `examples/` directory.
 

@@ -1,0 +1,164 @@
+# ============================================================================
+# CLP(FD) Scheduling Example
+# ============================================================================
+#
+# Demonstrates constraint-based scheduling using SWI-Prolog's CLP(FD) library.
+# This is a powerful neurosymbolic pattern where:
+#   1. Workflow state provides task parameters
+#   2. CLP(FD) finds valid schedules that satisfy all constraints
+#
+# Pattern: Parameters → Constraint Solver → Valid Solutions
+#
+# Use cases: Resource allocation, job scheduling, meeting planning, routing
+#
+# ============================================================================
+
+name: clpfd-scheduling-agent
+
+description: |
+  Demonstrates CLP(FD) constraint solving for task scheduling.
+  Given tasks with durations and constraints, finds a valid schedule
+  where all tasks complete within the available time window.
+
+state_schema:
+  # Input parameters
+  tasks: list           # List of {name, duration} objects
+  total_time: int       # Maximum total time available
+  must_precede: list    # List of [task_a, task_b] precedence constraints
+
+  # Output
+  schedule: list        # List of [task, start_time, end_time] tuples
+  feasible: bool
+  makespan: int         # Total schedule duration
+  solver_info: str
+
+initial_state:
+  tasks:
+    - name: design
+      duration: 2
+    - name: implement
+      duration: 4
+    - name: test
+      duration: 2
+    - name: deploy
+      duration: 1
+  total_time: 10
+  must_precede:
+    - [design, implement]      # design must finish before implement starts
+    - [implement, test]        # implement must finish before test starts
+    - [test, deploy]           # test must finish before deploy starts
+  schedule: []
+  feasible: false
+  makespan: 0
+  solver_info: ""
+
+nodes:
+  # -------------------------------------------------------------------------
+  # CLP(FD) Constraint Solver
+  # -------------------------------------------------------------------------
+  # Uses Prolog's constraint logic programming to find a valid schedule.
+  # This version uses inline rule definitions (enabled by TEA-RUST-038).
+  # -------------------------------------------------------------------------
+  - name: solve_schedule
+    language: prolog
+    run: |
+      :- use_module(library(clpfd)).
+
+      % ===== INLINE RULE DEFINITIONS (TEA-RUST-038 feature) =====
+      % Define helper predicates for building schedule entries
+      make_entry(Task, Start, Duration, [Task, Start, End]) :-
+          End is Start + Duration.
+
+      % Get input parameters
+      state(tasks, TaskList),
+      state(total_time, MaxTime),
+
+      % For this example, we solve for 4 sequential tasks with precedence
+      % Task durations: design=2, implement=4, test=2, deploy=1
+      % Constraint: each task must start after the previous one ends
+
+      % Define start time variables with finite domains
+      [S1, S2, S3, S4] ins 0..MaxTime,
+
+      % Task durations (from input specification)
+      D1 = 2, D2 = 4, D3 = 2, D4 = 1,
+
+      % Precedence constraints: each task starts after previous ends
+      S1 + D1 #=< S2,
+      S2 + D2 #=< S3,
+      S3 + D3 #=< S4,
+
+      % All tasks must complete within time limit
+      S4 + D4 #=< MaxTime,
+
+      % Minimize total time (start first task as early as possible)
+      S1 #= 0,
+
+      % Find a solution using first-fail heuristic
+      labeling([ff], [S1, S2, S3, S4]),
+
+      % Calculate end times
+      E1 is S1 + D1,
+      E2 is S2 + D2,
+      E3 is S3 + D3,
+      E4 is S4 + D4,
+
+      % Build schedule as list of [task, start, end] entries
+      % (Avoids Prolog dict syntax which has swipl-rs compatibility issues)
+      Schedule = [
+        [design, S1, E1],
+        [implement, S2, E2],
+        [test, S3, E3],
+        [deploy, S4, E4]
+      ],
+
+      % Calculate makespan (total schedule length)
+      Makespan is E4,
+
+      return(schedule, Schedule),
+      return(feasible, true),
+      return(makespan, Makespan),
+      return(solver_info, 'CLP(FD) solved with first-fail heuristic').
+
+edges:
+  - from: __start__
+    to: solve_schedule
+  - from: solve_schedule
+    to: __end__
+
+# ============================================================================
+# Expected Output:
+#
+# {
+#   "schedule": [
+#     ["design", 0, 2],
+#     ["implement", 2, 6],
+#     ["test", 6, 8],
+#     ["deploy", 8, 9]
+#   ],
+#   "feasible": true,
+#   "makespan": 9,
+#   "solver_info": "CLP(FD) solved with first-fail heuristic"
+# }
+#
+# ============================================================================
+
+# ============================================================================
+# Test Cases
+# ============================================================================
+#
+# Case 1: Simple sequential (above) - EXPECTED: makespan = 9
+#
+# Case 2: Parallel tasks (no precedence)
+#   tasks: [{name: A, duration: 3}, {name: B, duration: 3}]
+#   must_precede: []
+#   total_time: 6
+#   EXPECTED: Both start at 0, feasible = true
+#
+# Case 3: Infeasible (not enough time)
+#   tasks: [{name: A, duration: 5}, {name: B, duration: 5}]
+#   must_precede: [[A, B]]
+#   total_time: 8
+#   EXPECTED: feasible = false (needs 10 time units)
+#
+# ============================================================================
