@@ -985,6 +985,92 @@ class TestBackslashOperators:
         assert result.get("result") == "all_passed"
 
 
+class TestCutOperator:
+    """Tests for Prolog cut operator in multi-clause predicates (TEA-PROLOG-005).
+
+    These tests verify that:
+    1. Multi-clause predicates with cuts are correctly asserted by tea_load_code/1
+    2. Facts with variables (like convert(X, X).) are asserted, not called as queries
+    3. Guard clause patterns work correctly
+    """
+
+    def test_multi_clause_with_cut(self):
+        """Test multi-clause predicate with cut works correctly (AC-1, AC-2)."""
+        runtime = PrologRuntime()
+        code = """
+            convert(32, 95) :- !.
+            convert(X, X).
+            maplist(convert, [97, 32, 98], Results),
+            return(results, Results).
+        """
+        result = runtime.execute_node_code(code, {})
+        # 97 unchanged, 32->95 (space->underscore), 98 unchanged
+        assert result.get("results") == [97, 95, 98]
+
+    def test_guard_clause_pattern(self):
+        """Test guard clause pattern with cut works correctly (AC-3)."""
+        runtime = PrologRuntime()
+        code = """
+            classify(X, negative) :- X < 0, !.
+            classify(0, zero) :- !.
+            classify(X, positive) :- X > 0.
+
+            classify(-5, R1), classify(0, R2), classify(10, R3),
+            return(r1, R1), return(r2, R2), return(r3, R3).
+        """
+        result = runtime.execute_node_code(code, {})
+        assert result.get("r1") == "negative"
+        assert result.get("r2") == "zero"
+        assert result.get("r3") == "positive"
+
+    def test_fact_with_variables_asserted(self):
+        """Test that facts with variables are asserted, not called as queries."""
+        runtime = PrologRuntime()
+        code = """
+            identity(X, X).
+            identity(5, Y),
+            return(result, Y).
+        """
+        result = runtime.execute_node_code(code, {})
+        assert result.get("result") == 5
+
+    def test_multiple_clauses_same_predicate(self):
+        """Test multiple clauses for same predicate are all asserted."""
+        runtime = PrologRuntime()
+        code = """
+            color(red).
+            color(green).
+            color(blue).
+            findall(C, color(C), Colors),
+            return(colors, Colors).
+        """
+        result = runtime.execute_node_code(code, {})
+        assert result.get("colors") == ["red", "green", "blue"]
+
+    def test_cut_prevents_backtracking(self):
+        """Test that cut actually prevents backtracking."""
+        runtime = PrologRuntime()
+        code = """
+            first_even(X) :- member(X, [1, 2, 3, 4, 5]), X mod 2 =:= 0, !.
+            first_even(X),
+            return(result, X).
+        """
+        result = runtime.execute_node_code(code, {})
+        # Should find only the first even number (2), not 4
+        assert result.get("result") == 2
+
+    def test_if_then_else_alternative(self):
+        """Test the if-then-else alternative (workaround) still works."""
+        runtime = PrologRuntime()
+        code = """
+            convert_alt(X, Y) :- (X = 32 -> Y = 95 ; Y = X).
+            maplist(convert_alt, [97, 32, 98], Results),
+            return(results, Results).
+        """
+        result = runtime.execute_node_code(code, {})
+        assert result.get("results") == [97, 95, 98]
+
+
 # Pytest markers for CI filtering
 @pytest.mark.prolog
 class TestPrologMarker:

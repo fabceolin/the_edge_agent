@@ -262,21 +262,12 @@ nodes:
           not_sibling(X, Y).
 
       % Normalize name: lowercase, replace spaces/hyphens with underscores, remove punctuation
-      %
-      % WORKAROUND (TEA-PROLOG-005): Using if-then-else instead of cuts.
-      % The cut operator (!) causes parsing failures in tea_load_code/1.
-      %
-      % Original code (FAILS):
-      %   normalize_char(32, 95) :- !.  % space -> underscore
-      %   normalize_char(45, 95) :- !.  % hyphen -> underscore
-      %   normalize_char(C, C).
-      %   valid_char(C) :- C >= 97, C =< 122.  % a-z
-      %   valid_char(95).  % underscore
-      %   valid_char(C) :- C >= 48, C =< 57.  % 0-9
-      %
-      % Workaround (WORKS): Use if-then-else (->; ) instead of multi-clause with cuts
-      normalize_char(X, Y) :- (X = 32 -> Y = 95 ; X = 45 -> Y = 95 ; Y = X).
-      valid_char(C) :- (C >= 97, C =< 122) ; C = 95 ; (C >= 48, C =< 57).
+      normalize_char(32, 95) :- !.  % space -> underscore
+      normalize_char(45, 95) :- !.  % hyphen -> underscore
+      normalize_char(C, C).         % default: keep char
+      valid_char(C) :- C >= 97, C =< 122, !.  % a-z
+      valid_char(95) :- !.                    % underscore
+      valid_char(C) :- C >= 48, C =< 57.      % 0-9
       normalize_name(In, Out) :-
           downcase_atom(In, Lower),
           atom_codes(Lower, Codes),

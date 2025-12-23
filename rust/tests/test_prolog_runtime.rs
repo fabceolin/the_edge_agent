@@ -2019,3 +2019,193 @@ fn test_backslash_combined_operators() {
         );
     }
 }
+
+// ============================================================================
+// TEA-PROLOG-005: Cut Operator Parsing Bug Fix Tests
+// ============================================================================
+
+/// TEA-PROLOG-005 AC-1, AC-2: Test multi-clause predicate with cut
+#[test]
+fn test_cut_multi_clause_with_cut() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        convert(32, 95) :- !.
+        convert(X, X).
+        maplist(convert, [97, 32, 98], Results),
+        return(results, Results).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Multi-clause with cut should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        // 97 unchanged, 32->95 (space->underscore), 98 unchanged
+        assert_eq!(
+            result_state.get("results"),
+            Some(&json!([97, 95, 98])),
+            "Cut should work: 32 converts to 95, others unchanged"
+        );
+    }
+}
+
+/// TEA-PROLOG-005 AC-3: Test guard clause pattern with cut
+#[test]
+fn test_cut_guard_clause_pattern() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        classify(X, negative) :- X < 0, !.
+        classify(0, zero) :- !.
+        classify(X, positive) :- X > 0.
+
+        classify(-5, R1), classify(0, R2), classify(10, R3),
+        return(r1, R1), return(r2, R2), return(r3, R3).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Guard clause pattern should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("r1"),
+            Some(&json!("negative")),
+            "-5 should classify as negative"
+        );
+        assert_eq!(
+            result_state.get("r2"),
+            Some(&json!("zero")),
+            "0 should classify as zero"
+        );
+        assert_eq!(
+            result_state.get("r3"),
+            Some(&json!("positive")),
+            "10 should classify as positive"
+        );
+    }
+}
+
+/// TEA-PROLOG-005: Test facts with variables are asserted, not called
+#[test]
+fn test_cut_fact_with_variables_asserted() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        identity(X, X).
+        identity(5, Y),
+        return(result, Y).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Fact with variables should be asserted: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!(5)),
+            "identity(5, Y) should unify Y with 5"
+        );
+    }
+}
+
+/// TEA-PROLOG-005: Test multiple clauses for same predicate
+#[test]
+fn test_cut_multiple_clauses_same_predicate() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        color(red).
+        color(green).
+        color(blue).
+        findall(C, color(C), Colors),
+        return(colors, Colors).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Multiple clauses should all be asserted: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("colors"),
+            Some(&json!(["red", "green", "blue"])),
+            "All three colors should be asserted"
+        );
+    }
+}
+
+/// TEA-PROLOG-005: Test cut actually prevents backtracking
+#[test]
+fn test_cut_prevents_backtracking() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        first_even(X) :- member(X, [1, 2, 3, 4, 5]), X mod 2 =:= 0, !.
+        first_even(X),
+        return(result, X).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Cut should prevent backtracking: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        // Should find only the first even number (2), not 4
+        assert_eq!(
+            result_state.get("result"),
+            Some(&json!(2)),
+            "Cut should stop at first even number (2)"
+        );
+    }
+}
+
+/// TEA-PROLOG-005: Test if-then-else alternative (workaround) still works
+#[test]
+fn test_cut_if_then_else_alternative() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        convert_alt(X, Y) :- (X = 32 -> Y = 95 ; Y = X).
+        maplist(convert_alt, [97, 32, 98], Results),
+        return(results, Results).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "If-then-else alternative should work: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("results"),
+            Some(&json!([97, 95, 98])),
+            "If-then-else should produce same result as cut version"
+        );
+    }
+}

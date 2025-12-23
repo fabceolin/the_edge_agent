@@ -77,9 +77,10 @@ tea_action_predicate(atom_codes).
 tea_action_predicate(atom_chars).
 
 % Determine if a term is a fact (should be asserted)
+% NOTE: We do NOT require ground(Term) because facts with variables
+% like convert(X, X). should still be asserted, not called as queries.
 tea_is_fact(Term) :-
     compound(Term),
-    ground(Term),
     functor(Term, F, _),
     atom(F),
     \+ tea_action_predicate(F).
