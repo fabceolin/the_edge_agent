@@ -1,6 +1,6 @@
 # TEA-OBS-001: Hybrid Observability Architecture
 
-## Status: Draft
+## Status: Ready
 
 ## Epic Goal
 
@@ -466,6 +466,8 @@ Story 5 depends on 4.
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2024-12-23 | 1.0 | Initial epic creation | Sarah (PO) |
+| 2024-12-23 | 1.1 | Added @observable decorator pattern, Rust #[instrument] pattern, action registry integration | Sarah (PO) |
+| 2024-12-23 | 1.2 | Status changed to Ready after addressing validation critical issues | Sarah (PO) |
 
 ---
 

@@ -1,6 +1,6 @@
 # TEA-OBS-001.2: Core ObservabilityContext Infrastructure (Rust)
 
-## Status: Draft
+## Status: Ready
 
 ## Story
 
@@ -828,3 +828,5 @@ cd rust && RUST_LOG=debug cargo test observability -- --nocapture
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2024-12-23 | 1.0 | Initial story creation | Sarah (PO) |
+| 2024-12-23 | 1.1 | Added full Rust implementation: LogEvent, EventStream, ObservabilityContext, FlowCollectorLayer, ObsConfig | Sarah (PO) |
+| 2024-12-23 | 1.2 | Status changed to Ready | Sarah (PO) |

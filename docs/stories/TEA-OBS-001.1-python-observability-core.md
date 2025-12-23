@@ -1,6 +1,6 @@
 # TEA-OBS-001.1: Core ObservabilityContext Infrastructure (Python)
 
-## Status: Draft
+## Status: Ready
 
 ## Story
 
@@ -729,3 +729,5 @@ cd python && pytest tests/test_observability_core.py --cov=the_edge_agent.observ
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2024-12-23 | 1.0 | Initial story creation | Sarah (PO) |
+| 2024-12-23 | 1.1 | Added full ObservabilityContext implementation, EventStream, handlers, parity output examples | Sarah (PO) |
+| 2024-12-23 | 1.2 | Status changed to Ready | Sarah (PO) |
