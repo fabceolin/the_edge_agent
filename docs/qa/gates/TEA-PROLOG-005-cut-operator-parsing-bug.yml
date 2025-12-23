@@ -1,0 +1,76 @@
+schema: 1
+story: 'TEA-PROLOG-005'
+story_title: 'Fix Cut Operator Parsing in tea_load_code'
+gate: PASS
+status_reason: 'Root cause correctly identified and fixed. Comprehensive test coverage added for both Python and Rust. All acceptance criteria met with no regressions.'
+reviewer: 'Quinn (Test Architect)'
+updated: '2025-12-23T12:00:00Z'
+
+top_issues: []
+
+waiver:
+  active: false
+
+quality_score: 100
+expires: '2026-01-06T12:00:00Z'
+
+evidence:
+  tests_reviewed: 12
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: 'No security implications - fix removes ground() check from Prolog term classification'
+  performance:
+    status: PASS
+    notes: 'Fix simplifies predicate logic by removing one check - no performance impact'
+  reliability:
+    status: PASS
+    notes: 'Fix corrects term handling for facts with variables. 12 new tests verify behavior.'
+  maintainability:
+    status: PASS
+    notes: 'Clear comments explain why ground() was removed. Consistent fix across Python and Rust.'
+
+requirements_traceability:
+  AC-1:
+    description: 'Multi-clause predicates with cuts are correctly asserted by tea_load_code/1'
+    tests:
+      - 'test_multi_clause_with_cut (Python)'
+      - 'test_cut_multi_clause_with_cut (Rust)'
+    status: COVERED
+  AC-2:
+    description: 'The cut operator (!) works correctly within clause bodies'
+    tests:
+      - 'test_cut_prevents_backtracking (Python)'
+      - 'test_cut_prevents_backtracking (Rust)'
+    status: COVERED
+  AC-3:
+    description: 'Guard clause patterns work'
+    tests:
+      - 'test_guard_clause_pattern (Python)'
+      - 'test_cut_guard_clause_pattern (Rust)'
+    status: COVERED
+  AC-4:
+    description: 'Existing tests continue to pass (no regression)'
+    tests:
+      - '81 Python tests pass'
+      - '106 Rust tests pass'
+    status: COVERED
+  AC-5:
+    description: 'Both Python and Rust implementations are fixed'
+    tests:
+      - '6 new Python tests'
+      - '6 new Rust tests'
+    status: COVERED
+
+recommendations:
+  immediate: []
+  future: []
+  completed:
+    - action: 'Updated llm-prolog-family-reasoning.yaml to use native cut syntax'
+      refs: ['examples/prolog/neurosymbolic/llm-prolog-family-reasoning.yaml']
+      status: 'Done - workaround replaced with native multi-clause cuts'
