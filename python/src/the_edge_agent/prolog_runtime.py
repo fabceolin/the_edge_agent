@@ -159,7 +159,103 @@ class PrologRuntime:
     _SETUP_CODE = """
         :- thread_local(state/2).
         :- thread_local(return_value/2).
+        :- thread_local(tea_user_fact/1).
         return(Key, Value) :- assertz(return_value(Key, Value)).
+    """
+
+    # Prolog-side term processing predicates
+    # This is the "thin runtime" architecture: let Prolog parse Prolog!
+    _TEA_PREDICATES = """
+        % Action predicates - should be called, not asserted
+        tea_action_predicate(return).
+        tea_action_predicate(state).
+        tea_action_predicate(findall).
+        tea_action_predicate(bagof).
+        tea_action_predicate(setof).
+        tea_action_predicate(member).
+        tea_action_predicate(memberchk).
+        tea_action_predicate(append).
+        tea_action_predicate(length).
+        tea_action_predicate(nth0).
+        tea_action_predicate(nth1).
+        tea_action_predicate(msort).
+        tea_action_predicate(sort).
+        tea_action_predicate(reverse).
+        tea_action_predicate(last).
+        tea_action_predicate(sumlist).
+        tea_action_predicate(max_list).
+        tea_action_predicate(min_list).
+        tea_action_predicate(forall).
+        tea_action_predicate(aggregate_all).
+        tea_action_predicate(aggregate).
+        tea_action_predicate(call).
+        tea_action_predicate(once).
+        tea_action_predicate(succ).
+        tea_action_predicate(plus).
+        tea_action_predicate(abs).
+        tea_action_predicate(sign).
+        tea_action_predicate(max).
+        tea_action_predicate(min).
+        tea_action_predicate(write).
+        tea_action_predicate(writeln).
+        tea_action_predicate(print).
+        tea_action_predicate(format).
+        tea_action_predicate(atom).
+        tea_action_predicate(number).
+        tea_action_predicate(integer).
+        tea_action_predicate(float).
+        tea_action_predicate(compound).
+        tea_action_predicate(is_list).
+        tea_action_predicate(ground).
+        tea_action_predicate(atom_string).
+        tea_action_predicate(atom_codes).
+        tea_action_predicate(atom_chars).
+
+        % Determine if a term is a fact (should be asserted)
+        tea_is_fact(Term) :-
+            compound(Term),
+            ground(Term),
+            functor(Term, F, _),
+            atom(F),
+            \\+ tea_action_predicate(F).
+
+        % Process a single term from user code
+        tea_process_term((:-Body)) :- !, call(Body).
+        tea_process_term((Head :- Body)) :- !, assertz((Head :- Body)).
+        tea_process_term(Term) :-
+            ( tea_is_fact(Term)
+            -> assertz(Term), assertz(tea_user_fact(Term))
+            ; call(Term)
+            ).
+
+        % Read and process terms from a stream
+        tea_load_terms(Stream) :-
+            catch(
+                read_term(Stream, Term, []),
+                Error,
+                throw(tea_syntax_error(Error))
+            ),
+            ( Term == end_of_file
+            -> true
+            ; tea_process_term(Term),
+              tea_load_terms(Stream)
+            ).
+
+        % Main entry point: load code from a string
+        tea_load_code(CodeAtom) :-
+            atom_string(CodeAtom, CodeString),
+            open_string(CodeString, Stream),
+            catch(
+                tea_load_terms(Stream),
+                Error,
+                ( close(Stream), throw(Error) )
+            ),
+            close(Stream).
+
+        % Clean up user-asserted facts
+        tea_cleanup_facts :-
+            forall(tea_user_fact(Fact), retract(Fact)),
+            retractall(tea_user_fact(_)).
     """
 
     def __init__(self, timeout: float = 30.0, sandbox: bool = True):
@@ -214,25 +310,27 @@ class PrologRuntime:
                 pass
 
     def _setup_state_predicates(self) -> None:
-        """Set up state/2 and return/2 predicates for state access."""
-        # Use consult() to properly handle directives
-        setup_code = """
-            :- thread_local(state/2).
-            :- thread_local(return_value/2).
-            return(Key, Value) :- assertz(return_value(Key, Value)).
-        """
+        """Set up state/2, return/2, and TEA predicates for Prolog-side parsing."""
+        # Combine setup code with TEA predicates
+        full_setup = self._SETUP_CODE + "\n" + self._TEA_PREDICATES
 
         try:
-            _janus.consult("user", setup_code)
+            _janus.consult("user", full_setup)
         except Exception:
             # Fallback: try without thread_local (older SWI-Prolog)
             fallback_code = """
                 :- dynamic(state/2).
                 :- dynamic(return_value/2).
+                :- dynamic(tea_user_fact/1).
                 return(Key, Value) :- assertz(return_value(Key, Value)).
             """
             try:
                 _janus.consult("user", fallback_code)
+                # Try to load TEA predicates separately
+                try:
+                    _janus.consult("user", self._TEA_PREDICATES)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -454,6 +552,9 @@ class PrologRuntime:
         """
         Execute inline Prolog code for a node.
 
+        This uses **Prolog-side parsing** via `tea_load_code/1` - letting SWI-Prolog's
+        own `read_term/3` parse the code instead of error-prone Python-side heuristics.
+
         The code should use state/2 to access state and return/2 to set return values.
 
         Handles:
@@ -461,6 +562,7 @@ class PrologRuntime:
         - Multiple queries (separated by commas or periods)
         - Module imports (:- use_module(...))
         - Rule definitions (head :- body)
+        - Fact definitions (parent(alice, bob).)
         - Directives (:- dynamic(...))
 
         Args:
@@ -485,17 +587,71 @@ class PrologRuntime:
             self._clear_returns()
 
             try:
+                # Use Prolog-side parsing via tea_load_code/1
+                # This is the key architectural improvement: let Prolog parse Prolog!
+                # Escape single quotes for Prolog atom (double them)
+                escaped_code = code.replace("'", "''")
+
+                # Build the query with timeout
+                load_query = f"tea_load_code('{escaped_code}')"
+                timed_query = f"call_with_time_limit({self.timeout}, ({load_query}))"
+
+                try:
+                    _janus.query_once(timed_query)
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'tea_syntax_error' in error_msg or 'syntax' in error_msg:
+                        raise PrologRuntimeError(f"Prolog syntax error: {e}") from e
+                    raise
+
+                # Get return values
+                results = self._get_returns()
+
+                # Clean up user-asserted facts
+                try:
+                    _janus.query_once("tea_cleanup_facts")
+                except Exception:
+                    pass
+
+                return results
+
+            except PrologTimeoutError:
+                raise
+            except PrologRuntimeError:
+                raise
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
+                    raise PrologTimeoutError("Prolog execution timeout") from e
+                raise PrologRuntimeError(str(e)) from e
+
+    def execute_node_code_legacy(self, code: str, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute inline Prolog code using Python-side parsing (legacy).
+
+        This is the old implementation kept for reference. The new `execute_node_code`
+        uses Prolog-side parsing which is more robust.
+
+        **Deprecated**: Use `execute_node_code` instead.
+        """
+        # Clean up code - remove leading/trailing whitespace
+        code = code.strip()
+
+        if not code:
+            return {}
+
+        with self._lock:
+            self._set_state(state)
+            self._clear_returns()
+
+            try:
                 # Parse the code into directives, rules, and queries
                 directives, rules, queries = self._parse_code(code)
 
-                # Use consult() for directives and rules - this is the key improvement!
-                # janus-swi's consult() properly handles :- directives
-                # IMPORTANT: janus.consult("user", ...) REPLACES module contents,
-                # so we must include _SETUP_CODE to preserve state/return predicates
+                # Use consult() for directives and rules
                 if directives or rules:
                     user_code = '\n'.join(directives + [f"{r}." for r in rules])
                     if user_code.strip():
-                        # Prepend setup code to preserve state/return predicates
                         consult_code = self._SETUP_CODE + '\n' + user_code
                         try:
                             _janus.consult("user", consult_code)

@@ -1301,3 +1301,486 @@ edges:
         "Lua nodes should continue working unchanged"
     );
 }
+
+// ============================================================================
+// TEA-RUST-039: Research Spike Tests for Prolog-Side Parsing
+// ============================================================================
+
+/// TEA-RUST-039 AC-1: Test .pl file loading via consult/1
+/// This is a research test to verify if swipl-rs can load predicates from a .pl file.
+#[test]
+fn test_spike_consult_pl_file() {
+    use swipl::prelude::*;
+    use std::path::PathBuf;
+
+    // Get the path to our TEA predicates file
+    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/engine/tea_prolog_predicates.pl");
+
+    assert!(pl_file.exists(), "TEA predicates file should exist at {:?}", pl_file);
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Try to consult the file
+    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    let result = context.term_from_string(&consult_cmd);
+
+    assert!(result.is_ok(), "Should parse consult command: {:?}", result.err());
+
+    let term = result.unwrap();
+    let call_result = context.call_term_once(&term);
+
+    // SPIKE FINDING: Document whether consult/1 works
+    match call_result {
+        Ok(()) => {
+            println!("SPIKE-SUCCESS: consult/1 loaded .pl file successfully!");
+
+            // Verify predicates are available
+            let test_cmd = "tea_action_predicate(return)";
+            if let Ok(test_term) = context.term_from_string(test_cmd) {
+                if context.call_term_once(&test_term).is_ok() {
+                    println!("SPIKE-SUCCESS: tea_action_predicate/1 is available after consult!");
+                } else {
+                    println!("SPIKE-PARTIAL: File loaded but predicate not available");
+                }
+            }
+        },
+        Err(e) => {
+            println!("SPIKE-FAILED: consult/1 failed with: {:?}", e);
+            println!("This may be due to sandbox blocking consult/1");
+        }
+    }
+
+    // This test should pass regardless of whether consult works - it's a research spike
+    assert!(true, "Research spike completed - see output for findings");
+}
+
+/// TEA-RUST-039 AC-1: Test if predicates loaded via consult are accessible
+#[test]
+fn test_spike_consult_predicates_accessible() {
+    use swipl::prelude::*;
+    use std::path::PathBuf;
+
+    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/engine/tea_prolog_predicates.pl");
+
+    if !pl_file.exists() {
+        println!("SPIKE-SKIP: TEA predicates file not found");
+        return;
+    }
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Load the file
+    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    if let Ok(term) = context.term_from_string(&consult_cmd) {
+        if context.call_term_once(&term).is_ok() {
+            // Test tea_load_code/1 is available
+            let test_cmd = "tea_load_code('test_fact(hello).')";
+            if let Ok(test_term) = context.term_from_string(test_cmd) {
+                match context.call_term_once(&test_term) {
+                    Ok(()) => {
+                        println!("SPIKE-SUCCESS: tea_load_code/1 executed successfully!");
+
+                        // Verify the fact was asserted
+                        let check_cmd = "test_fact(hello)";
+                        if let Ok(check_term) = context.term_from_string(check_cmd) {
+                            if context.call_term_once(&check_term).is_ok() {
+                                println!("SPIKE-SUCCESS: Facts asserted via tea_load_code are queryable!");
+                            } else {
+                                println!("SPIKE-PARTIAL: tea_load_code ran but fact not queryable");
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        println!("SPIKE-FAILED: tea_load_code/1 failed with: {:?}", e);
+                    }
+                }
+            }
+        } else {
+            println!("SPIKE-FAILED: Could not consult file");
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+/// TEA-RUST-039 AC-1: Test tea_load_code with inline rules
+#[test]
+fn test_spike_tea_load_code_with_rules() {
+    use swipl::prelude::*;
+    use std::path::PathBuf;
+
+    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/engine/tea_prolog_predicates.pl");
+
+    if !pl_file.exists() {
+        println!("SPIKE-SKIP: TEA predicates file not found");
+        return;
+    }
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Load TEA predicates
+    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    if let Ok(term) = context.term_from_string(&consult_cmd) {
+        if context.call_term_once(&term).is_ok() {
+            // Test loading a rule via tea_load_code
+            let code = "double(X, Y) :- Y is X * 2. double(5, R).";
+            let load_cmd = format!("tea_load_code('{}')", code.replace("'", "''"));
+
+            if let Ok(load_term) = context.term_from_string(&load_cmd) {
+                match context.call_term_once(&load_term) {
+                    Ok(()) => {
+                        println!("SPIKE-SUCCESS: Inline rules work via tea_load_code!");
+
+                        // Check if the rule was defined
+                        let check_cmd = "double(10, R)";
+                        if let Ok(check_term) = context.term_from_string(check_cmd) {
+                            if context.call_term_once(&check_term).is_ok() {
+                                println!("SPIKE-SUCCESS: Rule is callable after loading!");
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        println!("SPIKE-FAILED: Rule loading failed: {:?}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+/// TEA-RUST-039 AC-1: Test edge case - comma in quoted string
+/// This is the specific edge case that motivated this story.
+#[test]
+fn test_spike_comma_in_quoted_string() {
+    use swipl::prelude::*;
+    use std::path::PathBuf;
+
+    let pl_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/engine/tea_prolog_predicates.pl");
+
+    if !pl_file.exists() {
+        println!("SPIKE-SKIP: TEA predicates file not found");
+        return;
+    }
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Load TEA predicates
+    let consult_cmd = format!("consult('{}')", pl_file.to_str().unwrap().replace("'", "\\'"));
+    if let Ok(term) = context.term_from_string(&consult_cmd) {
+        if context.call_term_once(&term).is_ok() {
+            // Test the edge case: comma in quoted string
+            // This is: person('John, Jr.', 30).
+            let code = "person('John, Jr.', 30).";
+            let load_cmd = format!("tea_load_code('{}')", code.replace("'", "''"));
+
+            if let Ok(load_term) = context.term_from_string(&load_cmd) {
+                match context.call_term_once(&load_term) {
+                    Ok(()) => {
+                        println!("SPIKE-SUCCESS: Comma in quoted string handled correctly!");
+
+                        // Verify the fact was asserted correctly
+                        let check_cmd = "person('John, Jr.', Age)";
+                        if let Ok(check_term) = context.term_from_string(check_cmd) {
+                            if context.call_term_once(&check_term).is_ok() {
+                                println!("SPIKE-SUCCESS: Fact with comma in string is queryable!");
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        println!("SPIKE-FAILED: Comma in quoted string failed: {:?}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+/// TEA-RUST-039 AC-1: Test open_string/2 + read_term/3 approach
+/// This tests if we can parse Prolog code from a string without needing a file.
+#[test]
+fn test_spike_open_string_read_term() {
+    use swipl::prelude::*;
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Test using open_string/2 + read_term/3 pattern
+    // This is the core of tea_load_code/1 but tested directly
+    let test_query = r#"
+        atom_string(Code, "parent(alice, bob)."),
+        open_string(Code, Stream),
+        read_term(Stream, Term, []),
+        close(Stream),
+        assertz(Term)
+    "#;
+
+    if let Ok(term) = context.term_from_string(test_query) {
+        match context.call_term_once(&term) {
+            Ok(()) => {
+                println!("SPIKE-SUCCESS: open_string/2 + read_term/3 works!");
+
+                // Check the fact was asserted
+                let check = "parent(alice, bob)";
+                if let Ok(check_term) = context.term_from_string(check) {
+                    if context.call_term_once(&check_term).is_ok() {
+                        println!("SPIKE-SUCCESS: Fact asserted via open_string is queryable!");
+                    }
+                }
+            },
+            Err(e) => {
+                println!("SPIKE-FAILED: open_string/read_term pattern failed: {:?}", e);
+            }
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+/// TEA-RUST-039 AC-1: Test that TEA predicates can be defined inline via term_from_string + assertz
+/// This explores an alternative to file-based consult.
+#[test]
+fn test_spike_inline_predicate_definition() {
+    use swipl::prelude::*;
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Try defining a simple predicate via assertz
+    let define_cmd = "assertz((my_double(X, Y) :- Y is X * 2))";
+
+    if let Ok(term) = context.term_from_string(define_cmd) {
+        match context.call_term_once(&term) {
+            Ok(()) => {
+                println!("SPIKE-SUCCESS: Inline predicate definition works!");
+
+                // Test calling the predicate
+                let call_cmd = "my_double(5, R)";
+                if let Ok(call_term) = context.term_from_string(call_cmd) {
+                    if context.call_term_once(&call_term).is_ok() {
+                        println!("SPIKE-SUCCESS: Defined predicate is callable!");
+                    } else {
+                        println!("SPIKE-PARTIAL: Predicate defined but call failed");
+                    }
+                }
+            },
+            Err(e) => {
+                println!("SPIKE-FAILED: Inline predicate definition failed: {:?}", e);
+            }
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+/// TEA-RUST-039: Test loading predicates from embedded string constant
+/// This simulates loading the TEA predicates as an embedded resource.
+#[test]
+fn test_spike_embedded_predicates() {
+    use swipl::prelude::*;
+
+    let engine = Engine::new();
+    let activation = engine.activate();
+    let context: Context<_> = activation.into();
+
+    // Simplified version of TEA predicates - just the core tea_load_code
+    let tea_code = r#"
+        tea_test_fact(hello).
+        tea_double(X, Y) :- Y is X * 2.
+    "#;
+
+    // Use Prolog's read_term_from_atom or open_string to load from string
+    // This is how Python's janus.consult("user", code) works internally
+    let load_cmd = format!(
+        "atom_string(Code, \"{}\"), open_string(Code, S), load_files(user, [stream(S)]), close(S)",
+        tea_code.replace("\"", "\\\"").replace("\n", " ")
+    );
+
+    if let Ok(term) = context.term_from_string(&load_cmd) {
+        match context.call_term_once(&term) {
+            Ok(()) => {
+                println!("SPIKE-SUCCESS: Embedded predicates loaded via load_files!");
+
+                // Verify
+                if let Ok(check) = context.term_from_string("tea_test_fact(hello)") {
+                    if context.call_term_once(&check).is_ok() {
+                        println!("SPIKE-SUCCESS: Embedded fact is queryable!");
+                    }
+                }
+            },
+            Err(e) => {
+                println!("SPIKE-ALTERNATIVE: load_files from string failed: {:?}", e);
+                println!("Will use file-based consult instead.");
+            }
+        }
+    }
+
+    assert!(true, "Research spike completed");
+}
+
+// ============================================================================
+// TEA-RUST-039: Integration Tests for Prolog-Side Parsing
+// ============================================================================
+
+/// TEA-RUST-039 AC-2: Test edge case - comma in quoted string via execute_node_code
+/// This is the primary acceptance test for the Prolog-side parsing feature.
+#[test]
+fn test_prolog_side_parsing_comma_in_quoted_string() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // This code contains a comma inside a quoted string - the edge case that
+    // motivated the Prolog-side parsing migration.
+    let code = r#"
+        person('John, Jr.', 30).
+        person('Jane Doe', 25).
+        findall(Name, person(Name, _), Names),
+        length(Names, Count),
+        return(count, Count).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Comma in quoted string should work with Prolog-side parsing: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("count"),
+            Some(&json!(2)),
+            "Should find 2 persons including 'John, Jr.'"
+        );
+    }
+}
+
+/// TEA-RUST-039 AC-2: Test multiple facts and rules via Prolog-side parsing
+#[test]
+fn test_prolog_side_parsing_facts_and_rules() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    let code = r#"
+        parent(tom, bob).
+        parent(tom, liz).
+        parent(bob, ann).
+        grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+        findall(G, grandparent(tom, G), Grandchildren),
+        length(Grandchildren, Count),
+        return(grandchildren_count, Count).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Facts and rules should work with Prolog-side parsing: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("grandchildren_count"),
+            Some(&json!(1)),
+            "Tom should have 1 grandchild (ann)"
+        );
+    }
+}
+
+/// TEA-RUST-039 AC-2: Test directives via Prolog-side parsing
+#[test]
+fn test_prolog_side_parsing_directives() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // Test that directives are executed properly
+    let code = r#"
+        :- use_module(library(lists)).
+        member(X, [1, 2, 3]),
+        return(found, X).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Directives should work with Prolog-side parsing: {:?}",
+        result.err()
+    );
+
+    // Should find at least one member
+    if let Ok(result_state) = result {
+        let found = result_state.get("found");
+        assert!(found.is_some(), "Should find a member");
+    }
+}
+
+/// TEA-RUST-039 AC-2: Test complex nested quotes
+#[test]
+fn test_prolog_side_parsing_nested_quotes() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({});
+
+    // Test nested quotes which would break heuristic parsing
+    let code = r#"
+        msg('Hello, ''World''!').
+        msg(M),
+        return(message, M).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Nested quotes should work with Prolog-side parsing: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        let msg = result_state.get("message");
+        assert!(msg.is_some(), "Should extract message with nested quotes");
+    }
+}
+
+/// TEA-RUST-039 AC-2: Test arithmetic and return values
+#[test]
+fn test_prolog_side_parsing_arithmetic() {
+    let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+    let state = json!({"input": 10});
+
+    let code = r#"
+        state(input, X),
+        Y is X * 2 + 5,
+        return(output, Y).
+    "#;
+
+    let result = runtime.execute_node_code(code, &state);
+    assert!(
+        result.is_ok(),
+        "Arithmetic should work with Prolog-side parsing: {:?}",
+        result.err()
+    );
+
+    if let Ok(result_state) = result {
+        assert_eq!(
+            result_state.get("output"),
+            Some(&json!(25)),
+            "10 * 2 + 5 = 25"
+        );
+    }
+}

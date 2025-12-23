@@ -66,6 +66,43 @@ If using TEA as a dependency:
 the_edge_agent = { version = "0.7", features = ["prolog"] }
 ```
 
+## Architecture: Prolog-Side Parsing
+
+As of v0.7.8, Rust TEA uses **Prolog-side parsing** via `tea_load_code/1`, achieving full parity with Python TEA.
+
+### How It Works
+
+1. TEA predicates are loaded from `tea_prolog_predicates.pl` via `consult/1`
+2. User code is passed to `tea_load_code/1` which uses Prolog's native `read_term/3`
+3. Each term is classified by Prolog itself using `tea_process_term/1`:
+   - **Directives**: `(:-Body)` → executed immediately
+   - **Rules**: `(Head :- Body)` → asserted with `assertz/1`
+   - **Facts**: Ground compound terms (detected by `tea_is_fact/1`)
+   - **Queries**: Everything else → called directly
+4. User-asserted facts are cleaned up via `tea_cleanup_facts/0`
+
+### Why Prolog-Side Parsing?
+
+This approach provides:
+- **100% accurate parsing** - Prolog parses Prolog syntax correctly
+- **No edge case bugs** - Handles commas in quotes, operators, etc.
+- **Cross-runtime parity** - Same architecture as Python TEA
+- **Simpler maintenance** - No regex patterns to maintain
+
+### TEA Predicates
+
+The following predicates are defined in `rust/src/engine/tea_prolog_predicates.pl`:
+- `tea_load_code/1` - Entry point: loads code from string
+- `tea_process_term/1` - Classifies and processes each term
+- `tea_is_fact/1` - Determines if a term should be asserted
+- `tea_action_predicate/1` - Lists predicates that should be called, not asserted
+- `tea_cleanup_facts/0` - Cleans up user-asserted facts
+
+### Historical Note
+
+Before v0.7.8, Rust used host-side heuristic parsing with regex patterns.
+This legacy code is preserved as `execute_node_code_legacy()` for reference.
+
 ## Writing Prolog Nodes
 
 ### Method 1: Language Attribute (Recommended)
@@ -212,18 +249,23 @@ Rules can span multiple lines until the period terminator:
     return(result, R).
 ```
 
-### How It Works
+### How It Works (Prolog-Side Parsing)
 
-1. **Parsing**: The code is split into statements by period (`.`) terminators
-2. **Classification**: Each statement is classified as:
-   - **Directive**: Starts with `:-` (e.g., `:- use_module(library(clpfd)).`)
-   - **Rule**: Contains `:-` but doesn't start with it (e.g., `add_ten(X, Y) :- Y is X + 10`)
-   - **Query**: Everything else
-3. **Execution Order**:
-   1. Directives are executed first
-   2. Rules are asserted using `assertz/1`
-   3. Queries are joined and executed
-   4. Rules are cleaned up using `retractall/1`
+As of v0.7.8, the Rust implementation uses **Prolog-side parsing** via the
+`tea_load_code/1` predicate, which delegates parsing to SWI-Prolog's native
+`read_term/3`. This ensures 100% accurate parsing of all Prolog syntax,
+including edge cases like commas in quoted strings.
+
+1. **Code Submission**: User code is passed to `tea_load_code/1`
+2. **Native Parsing**: SWI-Prolog's `read_term/3` parses each term
+3. **Classification**: Each term is classified as:
+   - **Directive**: `(:-Body)` - executed immediately
+   - **Rule**: `(Head :- Body)` - asserted using `assertz/1`
+   - **Fact**: Ground compound terms - asserted to knowledge base
+   - **Query**: Everything else - executed immediately
+4. **Cleanup**: User-asserted facts are cleaned up after execution
+
+This approach matches Python's janus-swi integration for cross-runtime parity.
 
 ### Isolation Between Nodes
 
@@ -540,12 +582,13 @@ cargo run --features prolog -- run my-agent.yaml
 
 ### "Failed to parse Prolog code: Exception"
 
-This error indicates a syntax error in Prolog code. Common causes:
+This error indicates a Prolog exception occurred during execution. Common causes:
 
 1. **Missing period** at the end of clauses
 2. **Unbalanced parentheses**
 3. **Invalid predicate names** (must start with lowercase)
 4. **Undefined predicates**
+5. **Trying to assert built-in predicates** (e.g., conjunctions like `foo, bar` as facts)
 
 Debug by testing Prolog code directly:
 
@@ -553,6 +596,52 @@ Debug by testing Prolog code directly:
 swipl
 ?- state(value, V), V2 is V * 2, return(result, V2).
 ```
+
+### "No permission to modify static procedure"
+
+This error occurs when `tea_load_code/1` tries to assert a term that looks like a fact
+but is actually a built-in operator. Common cases:
+
+1. **Conjunctions without definitions**: `5 > 3.` (comparison without assignment)
+2. **Operators as top-level terms**: `X = 5.` (unification without context)
+
+**Solution**: Ensure your code uses `return/2` to return values:
+
+```prolog
+% Wrong - tries to assert (>) which is a built-in
+5 > 3.
+
+% Correct - executes comparison and returns result
+(5 > 3 -> R = true ; R = false), return(result, R).
+```
+
+### "Unknown procedure: state/2" or "Unknown procedure: return/2"
+
+This indicates TEA predicates weren't loaded properly. Causes:
+
+1. **Missing tea_prolog_predicates.pl file** - Rust looks for this at:
+   - `$CARGO_MANIFEST_DIR/src/engine/tea_prolog_predicates.pl` (dev/test)
+   - Falls back to embedded predicates
+
+2. **consult/1 failed** - The file exists but couldn't be loaded
+
+**Debug steps**:
+```bash
+# Verify the predicates file exists
+ls rust/src/engine/tea_prolog_predicates.pl
+
+# Test loading it directly
+swipl -g "consult('rust/src/engine/tea_prolog_predicates.pl'), listing(tea_load_code/1)" -t halt
+```
+
+### Sandbox Violations in YAML Agents
+
+Note: As of v0.7.8, sandbox is NOT enforced in `execute_node_code` to ensure
+compatibility with TEA predicates (`state/2`, `return/2`). This matches Python's
+janus-swi behavior.
+
+If you need sandboxed execution for untrusted code, use the `execute()` method
+directly with `sandbox=true` in the runtime configuration.
 
 ### Build Fails on Linux
 

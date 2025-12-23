@@ -2866,12 +2866,16 @@ Deep merge multiple JSON Schemas using kubectl-style semantics:
 Document extraction using LlamaCloud's LlamaExtract service.
 
 **Requirements:**
-- `llama-cloud-services` package
+- `requests` package (for REST API - default)
+- `llama-cloud-services` package (optional - only for `agent_name` lookup or `use_sdk=true`)
 - `LLAMAEXTRACT_API_KEY` or `LLAMAPARSE_API_KEY` environment variable
 
 #### `llamaextract.extract`
 
-Extract structured data from documents:
+Extract structured data from documents using the LlamaExtract REST API.
+
+> **TEA-BUILTIN-008.5**: Uses direct REST API calls for better control and reliability.
+> For large documents (30+ pages), see Phase 2 async support in TEA-BUILTIN-008.6.
 
 ```yaml
 - name: extract_invoice
@@ -2884,6 +2888,7 @@ Extract structured data from documents:
         total: { type: number }
         vendor: { type: string }
     mode: BALANCED  # BALANCED, MULTIMODAL, PREMIUM, FAST
+    timeout: 300    # Optional: HTTP timeout in seconds (default: 300)
     max_retries: 3  # Optional: default 3
   output: extracted_data
 ```
@@ -2893,9 +2898,12 @@ Extract structured data from documents:
 |-----------|------|----------|-------------|
 | `file` | string | Yes | URL, local file path, or base64-encoded content |
 | `schema` | dict | One of these | JSON Schema for extraction |
-| `agent_id` | string | One of these | Use existing LlamaExtract agent |
+| `agent_id` | string | One of these | Use existing LlamaExtract agent by ID |
+| `agent_name` | string | One of these | Use existing LlamaExtract agent by name (uses SDK) |
 | `mode` | string | No | Extraction mode (default: BALANCED) |
-| `max_retries` | int | No | Max retry attempts (default: 3) |
+| `timeout` | int | No | HTTP request timeout in seconds (default: 300) |
+| `max_retries` | int | No | Max retry attempts for 429/5xx errors (default: 3) |
+| `use_rest` | bool | No | Use direct REST API instead of SDK (default: false) |
 
 **Extraction Modes:**
 - `BALANCED`: Good balance of speed and accuracy (default)
@@ -2903,12 +2911,27 @@ Extract structured data from documents:
 - `PREMIUM`: Highest accuracy, slower processing
 - `FAST`: Fastest processing, may sacrifice accuracy
 
+**Error Handling:**
+- HTTP 429 (rate limit): Retries with exponential backoff
+- HTTP 5xx (server error): Retries with exponential backoff
+- HTTP 4xx (client error): Returns immediately without retry
+- Timeout: Returns `error_type: "timeout"`
+
 **Returns:**
 ```python
 {
   "success": true,
   "data": {...},  # Extracted data matching schema
-  "job_id": str
+  "status": "completed"
+}
+```
+
+**Error Response:**
+```python
+{
+  "success": false,
+  "error": "Error message",
+  "error_type": "rate_limit" | "timeout" | "api_error" | "validation" | "configuration"
 }
 ```
 

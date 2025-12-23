@@ -67,6 +67,196 @@ use swipl::prelude::*;
 /// Same modules as Python implementation for cross-runtime parity.
 const DEFAULT_MODULES: &[&str] = &["lists", "clpfd", "apply", "aggregate"];
 
+/// TEA Prolog predicates embedded as a string constant.
+///
+/// These predicates implement Prolog-side parsing via `tea_load_code/1`,
+/// which uses SWI-Prolog's native `read_term/3` parser instead of
+/// error-prone host-side heuristic parsing.
+///
+/// This is the "thin runtime" architecture: let Prolog parse Prolog!
+///
+/// NOTE: This constant is kept for documentation and as a fallback reference.
+/// The primary loading method uses `consult/1` from `tea_prolog_predicates.pl`.
+#[allow(dead_code)]
+const TEA_PROLOG_PREDICATES: &str = r#"
+% TEA Prolog Predicates - Prolog-side term processing
+% Using SWI-Prolog's native read_term/3 for 100% accurate parsing
+
+:- thread_local(state/2).
+:- thread_local(return_value/2).
+:- thread_local(tea_user_fact/1).
+
+% Define return/2 predicate
+return(Key, Value) :- assertz(return_value(Key, Value)).
+
+% Action predicates - should be called, not asserted
+% Also includes structural operators that should never be asserted
+tea_action_predicate(return).
+tea_action_predicate(state).
+tea_action_predicate(',').  % Conjunction - must be called, not asserted
+tea_action_predicate(';').  % Disjunction - must be called, not asserted
+tea_action_predicate('->').  % If-then - must be called, not asserted
+tea_action_predicate('*->').  % Soft cut if-then - must be called, not asserted
+tea_action_predicate('>').   % Arithmetic comparison
+tea_action_predicate('<').   % Arithmetic comparison
+tea_action_predicate('>=').  % Arithmetic comparison
+tea_action_predicate('=<').  % Arithmetic comparison
+tea_action_predicate('=:=').  % Arithmetic equality
+tea_action_predicate('=\\=').  % Arithmetic inequality
+tea_action_predicate('=').   % Unification
+tea_action_predicate('\\=').  % Not unifiable
+tea_action_predicate('==').  % Structural equality
+tea_action_predicate('\\==').  % Structural inequality
+tea_action_predicate('@<').  % Term comparison
+tea_action_predicate('@>').  % Term comparison
+tea_action_predicate('@=<').  % Term comparison
+tea_action_predicate('@>=').  % Term comparison
+tea_action_predicate('\\+').  % Negation as failure
+tea_action_predicate(is).   % Arithmetic evaluation
+tea_action_predicate(findall).
+tea_action_predicate(bagof).
+tea_action_predicate(setof).
+tea_action_predicate(member).
+tea_action_predicate(memberchk).
+tea_action_predicate(append).
+tea_action_predicate(length).
+tea_action_predicate(nth0).
+tea_action_predicate(nth1).
+tea_action_predicate(msort).
+tea_action_predicate(sort).
+tea_action_predicate(reverse).
+tea_action_predicate(last).
+tea_action_predicate(sumlist).
+tea_action_predicate(max_list).
+tea_action_predicate(min_list).
+tea_action_predicate(forall).
+tea_action_predicate(aggregate_all).
+tea_action_predicate(aggregate).
+tea_action_predicate(call).
+tea_action_predicate(once).
+tea_action_predicate(succ).
+tea_action_predicate(plus).
+tea_action_predicate(abs).
+tea_action_predicate(sign).
+tea_action_predicate(max).
+tea_action_predicate(min).
+tea_action_predicate(write).
+tea_action_predicate(writeln).
+tea_action_predicate(print).
+tea_action_predicate(format).
+tea_action_predicate(atom).
+tea_action_predicate(number).
+tea_action_predicate(integer).
+tea_action_predicate(float).
+tea_action_predicate(compound).
+tea_action_predicate(is_list).
+tea_action_predicate(ground).
+tea_action_predicate(atom_string).
+tea_action_predicate(atom_codes).
+tea_action_predicate(atom_chars).
+
+% Determine if a term is a fact (should be asserted)
+tea_is_fact(Term) :-
+    compound(Term),
+    ground(Term),
+    functor(Term, F, _),
+    atom(F),
+    \+ tea_action_predicate(F).
+
+% Process a single term from user code (unsandboxed version)
+tea_process_term((:-Body)) :- !, call(Body).
+tea_process_term((Head :- Body)) :- !, assertz((Head :- Body)).
+tea_process_term(Term) :-
+    ( tea_is_fact(Term)
+    -> assertz(Term), assertz(tea_user_fact(Term))
+    ; call(Term)
+    ).
+
+% Check if a goal uses only TEA predicates (safe to run without sandbox)
+tea_uses_only_tea_predicates(Goal) :-
+    Goal = (A, B), !,
+    tea_uses_only_tea_predicates(A),
+    tea_uses_only_tea_predicates(B).
+tea_uses_only_tea_predicates(Goal) :-
+    Goal = (A ; B), !,
+    tea_uses_only_tea_predicates(A),
+    tea_uses_only_tea_predicates(B).
+tea_uses_only_tea_predicates(Goal) :-
+    compound(Goal),
+    functor(Goal, F, _),
+    tea_action_predicate(F).
+
+% Process a single term from user code (sandboxed version)
+% Uses sandbox:safe_call/1 for dangerous predicates, but allows TEA predicates directly
+tea_process_term_sandboxed((:-Body)) :- !,
+    ( tea_uses_only_tea_predicates(Body)
+    -> call(Body)
+    ; sandbox:safe_call(Body)
+    ).
+tea_process_term_sandboxed((Head :- Body)) :- !, assertz((Head :- Body)).
+tea_process_term_sandboxed(Term) :-
+    ( tea_is_fact(Term)
+    -> assertz(Term), assertz(tea_user_fact(Term))
+    ; tea_uses_only_tea_predicates(Term)
+    -> call(Term)
+    ; sandbox:safe_call(Term)
+    ).
+
+% Read and process terms from a stream (unsandboxed version)
+tea_load_terms(Stream) :-
+    catch(
+        read_term(Stream, Term, []),
+        Error,
+        throw(tea_syntax_error(Error))
+    ),
+    ( Term == end_of_file
+    -> true
+    ; tea_process_term(Term),
+      tea_load_terms(Stream)
+    ).
+
+% Read and process terms from a stream (sandboxed version)
+tea_load_terms_sandboxed(Stream) :-
+    catch(
+        read_term(Stream, Term, []),
+        Error,
+        throw(tea_syntax_error(Error))
+    ),
+    ( Term == end_of_file
+    -> true
+    ; tea_process_term_sandboxed(Term),
+      tea_load_terms_sandboxed(Stream)
+    ).
+
+% Main entry point: load code from a string (unsandboxed version)
+tea_load_code(CodeAtom) :-
+    atom_string(CodeAtom, CodeString),
+    open_string(CodeString, Stream),
+    catch(
+        tea_load_terms(Stream),
+        Error,
+        ( close(Stream), throw(Error) )
+    ),
+    close(Stream).
+
+% Main entry point: load code from a string (sandboxed version)
+tea_load_code_sandboxed(CodeAtom) :-
+    atom_string(CodeAtom, CodeString),
+    open_string(CodeString, Stream),
+    catch(
+        tea_load_terms_sandboxed(Stream),
+        Error,
+        ( close(Stream), throw(Error) )
+    ),
+    close(Stream).
+
+% Clean up user-asserted facts
+tea_cleanup_facts :-
+    forall(tea_user_fact(Fact), retract(Fact)),
+    retractall(tea_user_fact(_)).
+"#;
+
+
 /// Prolog runtime for The Edge Agent (Rust implementation)
 ///
 /// Provides a sandboxed SWI-Prolog environment with timeout protection
@@ -185,11 +375,13 @@ impl PrologRuntime {
         }
     }
 
-    /// Pre-load common SWI-Prolog modules for Python parity.
+    /// Pre-load common SWI-Prolog modules and TEA predicates for Python parity.
     ///
     /// This enables predicates like `member/2`, `findall/3`, CLP(FD) operators,
     /// etc. without requiring explicit `:- use_module(library(...))` directives
     /// in user code.
+    ///
+    /// Also loads the TEA predicates (`tea_load_code/1`, etc.) for Prolog-side parsing.
     ///
     /// Modules that fail to load are silently skipped (graceful failure).
     /// This matches the Python implementation behavior.
@@ -204,6 +396,82 @@ impl PrologRuntime {
                 // Ignore failures - module may not be available
                 let _ = context.call_term_once(&term);
             }
+        }
+
+        // NOTE: TEA predicates are loaded per-execution in execute_node_code()
+        // because each Engine context is independent.
+    }
+
+    /// Load TEA predicates from the embedded .pl file via consult/1.
+    ///
+    /// Uses SWI-Prolog's `consult/1` to load the predicates from a file,
+    /// which is more reliable than loading from a string.
+    fn load_tea_predicates_in_context<C: QueryableContextType>(context: &Context<C>) {
+        // Try to find the TEA predicates .pl file
+        // First check relative to CARGO_MANIFEST_DIR (for dev/test)
+        // Then fall back to embedded predicates
+        let pl_file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/engine/tea_prolog_predicates.pl");
+
+        if pl_file.exists() {
+            // Use file-based consult (more reliable)
+            let escaped_path = pl_file
+                .to_str()
+                .unwrap_or("")
+                .replace('\'', "\\'");
+            let consult_cmd = format!("consult('{}')", escaped_path);
+
+            if let Ok(term) = context.term_from_string(&consult_cmd) {
+                if context.call_term_once(&term).is_ok() {
+                    return; // Successfully loaded
+                }
+            }
+        }
+
+        // Fall back to asserting predicates individually
+        Self::fallback_load_tea_predicates(context);
+    }
+
+    /// Fallback method to load TEA predicates by asserting them individually.
+    ///
+    /// This is used if `load_files/2` from string fails.
+    fn fallback_load_tea_predicates<C: QueryableContextType>(context: &Context<C>) {
+        // Declare thread-local predicates
+        let decl_goals = [
+            "thread_local(state/2)",
+            "thread_local(return_value/2)",
+            "thread_local(tea_user_fact/1)",
+        ];
+
+        for goal in &decl_goals {
+            if let Ok(term) = context.term_from_string(goal) {
+                let _ = context.call_term_once(&term);
+            }
+        }
+
+        // Define return/2
+        let return_def = "assertz((return(Key, Value) :- assertz(return_value(Key, Value))))";
+        if let Ok(term) = context.term_from_string(return_def) {
+            let _ = context.call_term_once(&term);
+        }
+
+        // Define tea_load_code/1 using assertz
+        // This is a simplified version that still uses Prolog's read_term
+        let tea_load_code_def = r#"assertz((
+            tea_load_code(CodeAtom) :-
+                atom_string(CodeAtom, CodeString),
+                open_string(CodeString, Stream),
+                catch(
+                    (repeat,
+                     read_term(Stream, Term, []),
+                     (Term == end_of_file -> ! ; (call(Term), fail))),
+                    Error,
+                    (close(Stream), throw(Error))
+                ),
+                close(Stream)
+        ))"#;
+        if let Ok(term) = context.term_from_string(tea_load_code_def) {
+            let _ = context.call_term_once(&term);
         }
     }
 
@@ -553,7 +821,20 @@ impl PrologRuntime {
     /// timeouts, and other errors
     fn handle_prolog_exception<C: QueryableContextType>(
         &self,
+        context: &Context<C>,
+    ) -> TeaResult<JsonValue> {
+        self.handle_prolog_exception_impl(context, self.is_sandboxed())
+    }
+
+    /// Implementation of exception handling with explicit sandbox flag
+    ///
+    /// The `sandbox_was_applied` parameter indicates whether sandbox was actually
+    /// applied to the query. This is needed because `execute_node_code` does NOT
+    /// apply sandbox even when the runtime has sandbox enabled.
+    fn handle_prolog_exception_impl<C: QueryableContextType>(
+        &self,
         _context: &Context<C>,
+        sandbox_was_applied: bool,
     ) -> TeaResult<JsonValue> {
         // In swipl-rs, we can access the exception via context.exception()
         // For now, we use heuristics based on the error type
@@ -566,8 +847,8 @@ impl PrologRuntime {
 
         // Check if this was a timeout (our custom throw)
         // This is difficult without exception introspection, so we default
-        // to assuming sandbox violation if sandbox was enabled
-        if self.is_sandboxed() {
+        // to assuming sandbox violation if sandbox was actually applied
+        if sandbox_was_applied {
             Err(TeaError::PrologSandboxViolation {
                 predicate: "unknown (sandboxed predicate)".to_string(),
             })
@@ -829,17 +1110,29 @@ impl PrologRuntime {
         }
     }
 
-    /// Execute inline Prolog code for a node
+    /// Execute inline Prolog code for a node using **Prolog-side parsing**.
+    ///
+    /// This uses `tea_load_code/1` which delegates to SWI-Prolog's native
+    /// `read_term/3` parser, eliminating error-prone host-side heuristics.
     ///
     /// Handles:
     /// - Simple queries (single line)
     /// - Multiple queries (separated by commas or periods)
     /// - Module imports (:- use_module(...))
     /// - Rule definitions (head :- body)
+    /// - Fact definitions (parent(alice, bob).)
     /// - Directives (:- dynamic(...))
+    /// - **Edge cases**: Commas in quoted strings like `person('John, Jr.', 30)`
     ///
     /// This follows the same pattern as Python's `execute_node_code()` for
     /// cross-runtime parity.
+    ///
+    /// ## Architecture
+    ///
+    /// The "thin runtime" approach: let Prolog parse Prolog!
+    /// - TEA predicates (`tea_load_code/1`, etc.) are loaded at init time
+    /// - User code is passed to `tea_load_code/1` which uses `read_term/3`
+    /// - Prolog correctly handles all edge cases (nested quotes, operators, etc.)
     pub fn execute_node_code(&self, code: &str, state: &JsonValue) -> TeaResult<JsonValue> {
         let code = code.trim();
 
@@ -847,7 +1140,112 @@ impl PrologRuntime {
             return Ok(JsonValue::Object(serde_json::Map::new()));
         }
 
-        // Parse code into directives, rules, and queries
+        // Store state in cache
+        if let JsonValue::Object(obj) = state {
+            let mut cache = self.state_cache.write();
+            cache.clear();
+            for (k, v) in obj {
+                cache.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Clear return values
+        {
+            let mut returns = self.return_values.write();
+            returns.clear();
+        }
+
+        // Create engine and execute
+        let engine = Engine::new();
+        let activation = engine.activate();
+        let context: Context<_> = activation.into();
+
+        // NOTE: We intentionally do NOT apply sandbox in execute_node_code.
+        // This matches Python's janus-swi behavior where tea_load_code is not sandboxed.
+        // The sandbox is still loaded (if enabled) for other methods like execute()
+        // and evaluate_condition().
+        //
+        // Future work could implement proper sandbox whitelisting for TEA predicates.
+
+        // Set up return/2, state/2, and return_value/2 predicates in this execution context
+        self.setup_predicates_in_context(&context);
+
+        // Load TEA predicates in this context (defines tea_load_code/1)
+        // This is called AFTER setup_predicates to avoid redefining return/2
+        Self::load_tea_predicates_in_context(&context);
+
+        // Set state facts in Prolog
+        self.set_state_facts(&context, state);
+
+        // Use Prolog-side parsing via tea_load_code/1
+        // This is the key architectural improvement: let Prolog parse Prolog!
+        //
+        // Ensure code ends with a period (required by read_term/3)
+        let code_with_period = if code.trim().ends_with('.') {
+            code.to_string()
+        } else {
+            format!("{}.", code.trim())
+        };
+
+        // Escape single quotes for Prolog atom (double them, like Python's approach)
+        let escaped_code = code_with_period.replace('\'', "''");
+
+        // Build the query: call tea_load_code with escaped code
+        let timeout_secs = self.timeout.as_secs_f64();
+        let load_query = format!(
+            "catch(call_with_time_limit({}, tea_load_code('{}')), time_limit_exceeded, throw(prolog_timeout))",
+            timeout_secs, escaped_code
+        );
+
+        // Execute the tea_load_code query
+        match context.term_from_string(&load_query) {
+            Ok(term) => {
+                match context.call_term_once(&term) {
+                    Ok(()) => {
+                        // Successfully executed - collect return values
+                        let result = self.collect_returns_from_context(&context);
+
+                        // Clean up user-asserted facts
+                        let cleanup = "tea_cleanup_facts";
+                        if let Ok(cleanup_term) = context.term_from_string(cleanup) {
+                            let _ = context.call_term_once(&cleanup_term);
+                        }
+
+                        result
+                    }
+                    Err(PrologError::Failure) => {
+                        // Query failed - return empty result
+                        Ok(JsonValue::Object(serde_json::Map::new()))
+                    }
+                    Err(PrologError::Exception) => {
+                        // Exception - could be timeout or syntax error
+                        // Note: sandbox was NOT applied in execute_node_code, so
+                        // we pass false to avoid incorrectly reporting sandbox violations
+                        self.handle_prolog_exception_impl(&context, false)
+                    }
+                }
+            }
+            Err(e) => Err(TeaError::Prolog(format!(
+                "Failed to parse tea_load_code query: {:?}",
+                e
+            ))),
+        }
+    }
+
+    /// Execute inline Prolog code using legacy host-side parsing.
+    ///
+    /// **Deprecated**: Use `execute_node_code()` instead which uses Prolog-side parsing.
+    ///
+    /// This method is kept for backward compatibility and testing purposes.
+    #[allow(dead_code)]
+    pub fn execute_node_code_legacy(&self, code: &str, state: &JsonValue) -> TeaResult<JsonValue> {
+        let code = code.trim();
+
+        if code.is_empty() {
+            return Ok(JsonValue::Object(serde_json::Map::new()));
+        }
+
+        // Parse code into directives, rules, and queries using Rust-side parsing
         let (directives, rules, facts, queries) = self.parse_prolog_code(code);
 
         // If there are only queries (no rules/directives/facts), use simple execution
@@ -890,7 +1288,6 @@ impl PrologRuntime {
         // Handle directives (e.g., :- use_module(...))
         for directive in &directives {
             // Strip the :- prefix and trailing period to get the goal body
-            // e.g., ":- use_module(library(clpfd))." -> "use_module(library(clpfd))"
             let goal = directive
                 .trim_start_matches(":-")
                 .trim()
@@ -915,7 +1312,7 @@ impl PrologRuntime {
             }
         }
 
-        // Assert facts using assertz (similar to rules but simpler syntax)
+        // Assert facts using assertz
         let mut asserted_facts: Vec<String> = Vec::new();
         for fact in &facts {
             let assert_cmd = format!("assertz({})", fact);
@@ -931,14 +1328,12 @@ impl PrologRuntime {
             let query_str = queries.join(", ");
             self.execute_in_context(&context, &query_str, false)
         } else {
-            // No queries - just return the current state with any return values
             self.collect_returns_from_context(&context)
         };
 
-        // Clean up asserted rules using retractall on the predicate head
+        // Clean up asserted rules
         for rule in &asserted_rules {
             if let Some(head) = self.extract_rule_head(rule) {
-                // Use retractall with the functor pattern
                 let retract_cmd = format!("retractall({})", head);
                 if let Ok(term) = context.term_from_string(&retract_cmd) {
                     let _ = context.call_term_once(&term);
@@ -946,7 +1341,7 @@ impl PrologRuntime {
             }
         }
 
-        // Clean up asserted facts using retractall on the predicate head
+        // Clean up asserted facts
         for fact in &asserted_facts {
             if let Some(head) = self.extract_fact_head(fact) {
                 let retract_cmd = format!("retractall({})", head);

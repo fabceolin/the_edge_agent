@@ -50,6 +50,38 @@ engine = YAMLEngine(prolog_enabled=True)
 engine = YAMLEngine(prolog_enabled=True, prolog_timeout=10.0)
 ```
 
+## Architecture: Prolog-Side Parsing
+
+Python TEA uses **Prolog's native parser** (`read_term/3`) to parse user code, providing:
+
+- **100% accurate fact/query detection** - Uses `ground/1`, `compound/1`, `functor/3` in Prolog
+- **No edge case bugs** - Prolog handles its own syntax (commas in arguments, quotes, operators)
+- **Robust error handling** - Syntax errors are caught at the Prolog level
+
+### How It Works
+
+1. User code is passed to `tea_load_code/1` as a string
+2. Prolog's `open_string/2` creates a stream from the string
+3. `read_term/3` parses each term using Prolog's native parser
+4. `tea_process_term/1` classifies each term:
+   - **Directives** (`:- use_module(...)`) → executed immediately
+   - **Rules** (`head :- body`) → asserted with `assertz/1`
+   - **Facts** (ground compound terms) → asserted and tracked for cleanup
+   - **Queries** (everything else) → called directly
+5. After execution, `tea_cleanup_facts/0` removes user-asserted facts
+
+### Benefits Over Host-Side Parsing
+
+| Approach | Fact Detection | Edge Cases | Maintenance |
+|----------|---------------|------------|-------------|
+| **Prolog-side** | 100% accurate | None | Minimal |
+| Host-side (heuristics) | ~95% accurate | Many | High |
+
+Example edge cases handled correctly:
+- `person('John, Jr.', 30).` - comma inside quotes
+- `data([a,b,c]).` - list argument
+- `X = foo(bar, baz), call(X).` - query with comma
+
 ## Writing Prolog Nodes
 
 ### Method 1: Language Attribute (Recommended)

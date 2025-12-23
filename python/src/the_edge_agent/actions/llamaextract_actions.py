@@ -5,9 +5,10 @@ This module provides document extraction capabilities using LlamaExtract's
 AI-powered extraction API.
 
 TEA-BUILTIN-008.1: Core LlamaExtract Actions
+TEA-BUILTIN-008.5: Direct REST API Integration
 
 Actions:
-    - llamaextract.extract: Extract structured data from documents
+    - llamaextract.extract: Extract structured data from documents (REST API)
     - llamaextract.upload_agent: Create or update extraction agent
     - llamaextract.list_agents: List available extraction agents
     - llamaextract.get_agent: Get agent details
@@ -26,6 +27,7 @@ Example:
 """
 
 import base64
+import json
 import os
 import time
 from pathlib import Path
@@ -34,6 +36,9 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 # Extraction mode enum values
 EXTRACTION_MODES = ["BALANCED", "MULTIMODAL", "PREMIUM", "FAST"]
+
+# LlamaExtract REST API base URL
+LLAMAEXTRACT_API_BASE = "https://api.cloud.llamaindex.ai"
 
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
@@ -48,6 +53,249 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     def _get_api_key() -> Optional[str]:
         """Get API key from environment variables."""
         return os.environ.get('LLAMAEXTRACT_API_KEY') or os.environ.get('LLAMAPARSE_API_KEY')
+
+    def _prepare_file_content(file: str) -> Dict[str, Any]:
+        """
+        Prepare file content for REST API request.
+
+        Args:
+            file: Document source - URL, base64 content, or local file path
+
+        Returns:
+            Dict with either 'file_url' or 'file_base64' key
+
+        Raises:
+            FileNotFoundError: If local file does not exist
+        """
+        if file.startswith(('http://', 'https://')):
+            return {"file_url": file}
+        elif file.startswith('data:') or ';base64,' in file:
+            # Base64 encoded content
+            if ';base64,' in file:
+                content = file.split(';base64,')[1]
+            else:
+                content = file
+            return {"file_base64": content}
+        else:
+            # Local file path
+            path = Path(file)
+            if not path.exists():
+                raise FileNotFoundError(f"File not found: {file}")
+            with open(path, 'rb') as f:
+                content = base64.b64encode(f.read()).decode('utf-8')
+            return {"file_base64": content}
+
+    def _execute_rest_with_retry(
+        url: str,
+        payload: Dict[str, Any],
+        headers: Dict[str, str],
+        timeout: int,
+        max_retries: int
+    ) -> Dict[str, Any]:
+        """
+        Execute HTTP request with exponential backoff retry.
+
+        Args:
+            url: Target URL
+            payload: JSON payload
+            headers: HTTP headers
+            timeout: Request timeout in seconds
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            Dict with success status and data or error info
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed. Install with: pip install requests",
+                "error_type": "dependency"
+            }
+
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "success": True,
+                        "data": data.get("data", data),
+                        "status": "completed"
+                    }
+
+                elif response.status_code == 429:
+                    # Rate limit - retry with backoff
+                    last_error = {
+                        "success": False,
+                        "error": "Rate limit exceeded",
+                        "error_type": "rate_limit",
+                        "status_code": 429
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return last_error
+
+                elif response.status_code >= 500:
+                    # Server error - retry with backoff
+                    last_error = {
+                        "success": False,
+                        "error": f"Server error: {response.status_code}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return last_error
+
+                elif response.status_code == 401:
+                    # Authentication error - don't retry
+                    return {
+                        "success": False,
+                        "error": "Authentication failed. Check API key.",
+                        "error_type": "configuration",
+                        "status_code": 401
+                    }
+
+                elif response.status_code == 400:
+                    # Bad request - don't retry
+                    try:
+                        error_detail = response.json()
+                        error_msg = error_detail.get("detail", response.text)
+                    except Exception:
+                        error_msg = response.text
+                    return {
+                        "success": False,
+                        "error": f"Bad request: {error_msg}",
+                        "error_type": "validation",
+                        "status_code": 400
+                    }
+
+                else:
+                    # Other client error - don't retry
+                    return {
+                        "success": False,
+                        "error": f"HTTP {response.status_code}: {response.text}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code
+                    }
+
+            except requests.Timeout:
+                return {
+                    "success": False,
+                    "error": f"Request timed out after {timeout}s",
+                    "error_type": "timeout"
+                }
+            except requests.ConnectionError as e:
+                last_error = {
+                    "success": False,
+                    "error": f"Connection error: {str(e)}",
+                    "error_type": "api_error"
+                }
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return last_error
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "error_type": "api_error"
+                }
+
+        # Should not reach here, but safety fallback
+        return last_error or {
+            "success": False,
+            "error": "Max retries exceeded",
+            "error_type": "api_error"
+        }
+
+    def _extract_via_rest(
+        file: str,
+        schema: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
+        mode: str = "BALANCED",
+        timeout: int = 300,
+        max_retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Extract structured data using LlamaExtract REST API directly.
+
+        Uses the sync endpoint: POST /api/v1/extraction/run
+
+        Args:
+            file: Document source - URL, base64 content, or local file path
+            schema: JSON Schema defining the structure to extract
+            agent_id: ID of existing extraction agent to use
+            mode: Extraction mode - BALANCED, MULTIMODAL, PREMIUM, or FAST
+            timeout: HTTP request timeout in seconds
+            max_retries: Maximum retry attempts for transient failures
+
+        Returns:
+            Dict with 'success', 'data', 'status', or error info
+        """
+        # Validate mode
+        mode_upper = mode.upper()
+        if mode_upper not in EXTRACTION_MODES:
+            return {
+                "success": False,
+                "error": f"Invalid extraction mode: {mode}. Valid modes: {EXTRACTION_MODES}",
+                "error_type": "validation"
+            }
+
+        # Get API key
+        api_key = _get_api_key()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY environment variable not set",
+                "error_type": "configuration"
+            }
+
+        # Prepare file content
+        try:
+            file_data = _prepare_file_content(file)
+        except FileNotFoundError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "file_not_found"
+            }
+
+        # Build request payload
+        payload = {
+            **file_data,
+            "config": {
+                "extraction_mode": mode_upper
+            }
+        }
+
+        # Add schema or agent_id
+        if agent_id:
+            payload["agent_id"] = agent_id
+        elif schema:
+            payload["data_schema"] = schema
+
+        # Build headers
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
+        # Execute request
+        url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/run"
+        return _execute_rest_with_retry(url, payload, headers, timeout, max_retries)
 
     def _get_client():
         """Get LlamaExtract client."""
@@ -134,11 +382,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         mode: str = "BALANCED",
+        timeout: int = 300,
         max_retries: int = 3,
+        use_rest: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Extract structured data from a document using LlamaExtract.
+
+        Uses SDK by default for client-side validation before sending to server.
+        Set use_rest=True for direct REST API calls (fewer dependencies).
 
         Args:
             state: Current workflow state
@@ -148,10 +401,12 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             agent_id: ID of existing extraction agent to use
             agent_name: Name of existing extraction agent to use
             mode: Extraction mode - BALANCED, MULTIMODAL, PREMIUM, or FAST
+            timeout: HTTP request timeout in seconds (default: 300)
             max_retries: Maximum retry attempts for transient failures
+            use_rest: If True, use direct REST API instead of SDK (default: False)
 
         Returns:
-            Dict with 'success', 'data' (extracted data), 'job_id', etc.
+            Dict with 'success', 'data' (extracted data), 'status', etc.
 
         Example:
             >>> result = llamaextract_extract(
@@ -164,7 +419,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             ...             "total": {"type": "number"}
             ...         }
             ...     },
-            ...     mode="PREMIUM"
+            ...     mode="PREMIUM",
+            ...     timeout=300
             ... )
         """
         # Validate inputs
@@ -182,6 +438,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "error_type": "validation"
             }
 
+        # TEA-BUILTIN-008.5: Use REST API when explicitly requested
+        # Note: REST API doesn't support agent_name lookup, only agent_id
+        if use_rest and not agent_name:
+            return _extract_via_rest(
+                file=file,
+                schema=schema,
+                agent_id=agent_id,
+                mode=mode,
+                timeout=timeout,
+                max_retries=max_retries
+            )
+
+        # SDK path (default) - provides client-side validation
         try:
             client = _get_client()
             extract_mode = _get_extract_mode(mode)

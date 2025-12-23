@@ -719,3 +719,4 @@ cargo run --features prolog -- run ../examples/prolog/neurosymbolic/classifier-r
 | 2025-12-23 | 0.7 | Fixed clpfd-scheduling.yaml: replaced dict syntax with lists, enabled CLP(FD) constraint solving in Rust | James (Dev) |
 | 2025-12-23 | 0.8 | Enhanced knowledge-graph.yaml: added inline rule definitions demonstrating TEA-RUST-038 (facts, recursive rules, findall) | James (Dev) |
 | 2025-12-23 | 0.9 | All 4 neurosymbolic examples verified working in Rust TEA with full test suite passing (80+ tests) | James (Dev) |
+| 2025-12-23 | 1.0 | Python implementation upgraded to Prolog-side parsing via `tea_load_code/1` for 100% accurate fact/query detection | James (Dev) |
