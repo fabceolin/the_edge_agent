@@ -589,7 +589,7 @@ impl YamlEngine {
         node_name: &str,
         goto: &Goto,
         node_names: &HashMap<String, usize>,
-        nodes: &[NodeConfig],
+        _nodes: &[NodeConfig],
         _current_idx: usize,
     ) -> TeaResult<()> {
         match goto {

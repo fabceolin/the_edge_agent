@@ -138,32 +138,27 @@ nodes:
       messages:
         - role: system
           content: |
-            You are answering a questionnaire. Answer EVERY question listed below.
+            Answer questions about a text. Return ONLY a JSON object.
 
-            CRITICAL RULES:
-            1. You MUST answer ALL questions - do not skip any
-            2. Use ONLY information explicitly stated in the text
-            3. If not explicitly stated, answer "UNKNOWN"
+            RULES:
+            1. Answer ALL questions
+            2. Use ONLY information from the text
+            3. If unknown, answer "UNKNOWN"
+            4. Return raw JSON - NO markdown, NO ```json blocks
 
-            For each question, provide:
-            - question_id: the exact ID from the question
-            - answer: the person's name OR "UNKNOWN"
-            - source: quote from text that supports your answer
-
-            Return ONLY valid JSON (no markdown, no code blocks):
-            {"answers": [{"question_id": "...", "answer": "...", "source": "..."}]}
+            EXAMPLE OUTPUT:
+            {"answers": [{"question_id": "mother_john", "answer": "Mary Smith", "source": "Mary had a son John"}]}
 
         - role: user
           content: |
-            TEXT:
-            {{ state.text }}
+            TEXT: {{ state.text }}
 
-            ANSWER ALL THESE QUESTIONS:
+            QUESTIONS:
             {% for q in state.child_questions %}
-            {{ loop.index }}. [{{ q.question_id }}] {{ q.question }}
+            - [{{ q.question_id }}] {{ q.question }}
             {% endfor %}
 
-            Return your answers as JSON with the EXACT question_ids shown above.
+            Respond with JSON only: {"answers": [...]}
       temperature: 0.1
     output: interview_response
 
@@ -269,13 +264,14 @@ nodes:
               entities.append({"name": father, "birth_date": None})
             relationships.append({"type": "father", "subject": father, "object": child_name})
 
-      # Parse affairs from text directly
+      # Helper to find full name from partial
       def find_full_name(partial, entities_list):
         partial_lower = partial.lower().strip()
         aliases = {
           "the king": ["king charles", "charles"],
           "charles": ["king charles", "prince charles"],
           "camilla": ["camilla shand", "camilla"],
+          "prince charles": ["prince charles", "charles"],
         }
         search_terms = [partial_lower]
         for alias, expansions in aliases.items():
@@ -289,34 +285,78 @@ nodes:
               return name
         return " ".join(w.capitalize() for w in partial.split())
 
-      if "affair" in text or "extramarital" in text or "mistress" in text:
-        affair_patterns = [
-          r"(\w+)\s+had\s+an?\s+affair\s+with\s+(\w+)",
-          r"affair\s+with\s+(?:prince\s+)?(\w+)",
-          r"mistress,?\s+(\w+)"
-        ]
-        for pattern in affair_patterns:
-          matches = re.findall(pattern, text)
-          for match in matches:
-            if isinstance(match, tuple) and len(match) >= 2:
-              p1, p2 = match[0], match[1]
-            else:
-              p2 = match if isinstance(match, str) else match[0]
-              p1 = "unknown"
-
-            p1_full = find_full_name(p1, entities)
-            p2_full = find_full_name(p2, entities)
-
-            existing = [r for r in relationships if r.get("type") == "affair"]
-            if not any(p2_full.lower() in str(r.get("subject", "")).lower() for r in existing):
-              relationships.append({
-                "type": "affair",
-                "subject": p2_full,
-                "object": p1_full,
-                "start_date": "1970-01-01",
-                "end_date": "1999-12-31"
-              })
+      # First try to parse affairs from LLM interview response
+      affair_answer = None
+      for ans in answers:
+        if isinstance(ans, dict):
+          qid = ans.get("question_id", "")
+          if qid == "affairs" or "affair" in qid.lower():
+            affair_answer = ans.get("answer", "")
             break
+
+      affair_parsed = False
+      if affair_answer:
+        # Handle list format: ["Camilla Shand and Prince Charles..."]
+        if isinstance(affair_answer, list):
+          affair_answer = affair_answer[0] if affair_answer else ""
+        affair_answer = str(affair_answer)
+
+        # Parse "X and Y (dates)" or "X and Y from dates"
+        affair_match = re.search(r"([A-Za-z\s]+?)\s+and\s+([A-Za-z\s]+?)(?:\s*[\(\[]|\s+from\s+|\s*$)", affair_answer)
+        if affair_match:
+          p1 = affair_match.group(1).strip()
+          p2 = affair_match.group(2).strip()
+          p1_full = find_full_name(p1, entities)
+          p2_full = find_full_name(p2, entities)
+
+          # Extract dates if present
+          date_match = re.search(r"(\d{4}|early\s+\d{4}s?).*?(?:until|to|-)\s*(\d{4})", affair_answer.lower())
+          if date_match:
+            start_year = re.search(r"\d{4}", date_match.group(1))
+            end_year = date_match.group(2)
+            start_date = (start_year.group(0) if start_year else "1970") + "-01-01"
+            end_date = end_year + "-12-31"
+          else:
+            start_date = "1970-01-01"
+            end_date = "1999-12-31"
+
+          relationships.append({
+            "type": "affair",
+            "subject": p1_full,
+            "object": p2_full,
+            "start_date": start_date,
+            "end_date": end_date
+          })
+          affair_parsed = True
+
+      # Fallback: parse affairs from raw text if LLM didn't provide
+      if not affair_parsed and ("affair" in text or "extramarital" in text or "mistress" in text):
+        # Stop words that shouldn't be part of names
+        stop_words = {"from", "until", "to", "in", "during", "the", "early", "late", "around"}
+
+        def clean_name(name):
+          words = name.strip().split()
+          cleaned = [w for w in words if w.lower() not in stop_words]
+          return " ".join(cleaned) if cleaned else name
+
+        # Pattern to capture "X had an affair with Y"
+        affair_match = re.search(r"(\w+)\s+had\s+an?\s+(?:affair|extramarital\s+relationship)\s+with\s+((?:prince\s+|king\s+)?[a-z]+(?:\s+[a-z]+)?)", text)
+        if affair_match:
+          p1 = clean_name(affair_match.group(1))
+          p2 = clean_name(affair_match.group(2))
+
+          p1_full = find_full_name(p1, entities)
+          p2_full = find_full_name(p2, entities)
+
+          existing = [r for r in relationships if r.get("type") == "affair"]
+          if not any(p1_full.lower() in str(r.get("subject", "")).lower() for r in existing):
+            relationships.append({
+              "type": "affair",
+              "subject": p1_full,
+              "object": p2_full,
+              "start_date": "1970-01-01",
+              "end_date": "1999-12-31"
+            })
 
       # Validation
       mother_rels = [r for r in relationships if r.get("type") == "mother"]
@@ -444,12 +484,19 @@ nodes:
           include(valid_char, NormCodes, FilteredCodes),
           atom_codes(Out, FilteredCodes).
 
+      % Find person by exact match or prefix match
+      find_person(Query, Person) :-
+          birth_date(Person, _),
+          (Person = Query ; sub_atom(Person, 0, _, _, Query)).
+
       state(prolog_facts, FactsAtom),
       (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
       state(query_person, PersonAtom),
       state(query_type, QueryType),
       state(premise, Premise),
-      normalize_name(PersonAtom, Person),
+      normalize_name(PersonAtom, QueryNorm),
+      % Find actual person (handles "thomas" matching "thomas_parker_bowles")
+      (find_person(QueryNorm, Person) -> true ; Person = QueryNorm),
       (
         (sub_atom(Premise, _, _, _, 'exclusive') ;
          sub_atom(Premise, _, _, _, 'one partner')) ->
