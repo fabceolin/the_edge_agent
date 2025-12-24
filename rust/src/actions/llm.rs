@@ -555,11 +555,7 @@ fn llm_stream(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
 fn convert_tool_to_openai_format(tool_def: &JsonValue) -> Option<Tool> {
     // Already in OpenAI format
     if tool_def.get("function").is_some() {
-        let name = tool_def
-            .get("function")?
-            .get("name")?
-            .as_str()?
-            .to_string();
+        let name = tool_def.get("function")?.get("name")?.as_str()?.to_string();
         let description = tool_def
             .get("function")
             .and_then(|f| f.get("description"))
@@ -597,7 +593,10 @@ fn convert_tool_to_openai_format(tool_def: &JsonValue) -> Option<Tool> {
                 let mut prop = serde_json::Map::new();
                 prop.insert(
                     "type".to_string(),
-                    json!(spec.get("type").and_then(|t| t.as_str()).unwrap_or("string")),
+                    json!(spec
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("string")),
                 );
                 if let Some(desc) = spec.get("description").and_then(|d| d.as_str()) {
                     prop.insert("description".to_string(), json!(desc));
@@ -607,7 +606,11 @@ fn convert_tool_to_openai_format(tool_def: &JsonValue) -> Option<Tool> {
                 }
                 properties.insert(param_name.clone(), JsonValue::Object(prop));
 
-                if spec.get("required").and_then(|r| r.as_bool()).unwrap_or(false) {
+                if spec
+                    .get("required")
+                    .and_then(|r| r.as_bool())
+                    .unwrap_or(false)
+                {
                     required.push(param_name.clone());
                 }
             } else if let Some(type_str) = param_spec.as_str() {
@@ -788,11 +791,7 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
             .ok_or_else(|| TeaError::Http("Empty response from LLM".to_string()))?;
 
         // Check for tool calls
-        if message
-            .tool_calls
-            .as_ref()
-            .is_none_or(|tc| tc.is_empty())
-        {
+        if message.tool_calls.as_ref().is_none_or(|tc| tc.is_empty()) {
             // No tool calls - return final content
             let content = message.content.clone().unwrap_or_default();
 
@@ -1601,10 +1600,7 @@ data: [DONE]
         assert_eq!(tool_call.id, "call_abc123");
         assert_eq!(tool_call.tool_type, "function");
         assert_eq!(tool_call.function.name, "get_weather");
-        assert_eq!(
-            tool_call.function.arguments,
-            "{\"location\": \"Boston\"}"
-        );
+        assert_eq!(tool_call.function.arguments, "{\"location\": \"Boston\"}");
     }
 
     #[test]
@@ -1813,7 +1809,10 @@ data: [DONE]
                 assert!(state.get("chunk_count").is_some());
                 let chunk_count = state["chunk_count"].as_u64().unwrap();
                 assert!(chunk_count > 0, "Expected at least one chunk");
-                println!("Streaming result: {} ({} chunks)", state["content"], chunk_count);
+                println!(
+                    "Streaming result: {} ({} chunks)",
+                    state["content"], chunk_count
+                );
             }
             Err(e) => {
                 // Ollama might not be running - skip gracefully
@@ -1850,7 +1849,10 @@ data: [DONE]
         assert_eq!(result["streamed"], json!(true));
         let chunk_count = result["chunk_count"].as_u64().unwrap();
         assert!(chunk_count > 0);
-        println!("OpenAI streaming: {} ({} chunks)", result["content"], chunk_count);
+        println!(
+            "OpenAI streaming: {} ({} chunks)",
+            result["content"], chunk_count
+        );
     }
 
     /// Test llm.tools with Ollama (requires mistral-nemo or qwen2.5 for tool support)
@@ -1959,7 +1961,10 @@ data: [DONE]
         let params: HashMap<String, JsonValue> = [
             ("provider".to_string(), json!("ollama")),
             ("model".to_string(), json!("phi4-mini")),
-            ("prompt".to_string(), json!("What is 1+1? Reply with just the number.")),
+            (
+                "prompt".to_string(),
+                json!("What is 1+1? Reply with just the number."),
+            ),
             ("temperature".to_string(), json!(0.0)),
             ("max_tokens".to_string(), json!(5)),
         ]
