@@ -729,6 +729,9 @@ class TestLuaIsolationStress(unittest.TestCase):
         This tests the scenario where YAMLEngine is created in worker threads
         (common in pytest-xdist) and verifies that _get_lua_runtime() still
         correctly identifies main vs worker threads.
+
+        Note: We store actual runtime references (not just IDs) to prevent
+        garbage collection from reusing memory addresses during the test.
         """
         results = []
         lock = threading.Lock()
@@ -738,14 +741,15 @@ class TestLuaIsolationStress(unittest.TestCase):
             engine = YAMLEngine(lua_enabled=True)
 
             # Now run parallel branches within this engine
-            inner_runtime_ids = {}
+            # Store actual runtime objects to prevent GC from reusing memory addresses
+            inner_runtimes = {}
             inner_lock = threading.Lock()
 
             def inner_worker(name):
                 rt = engine._get_lua_runtime()
                 with inner_lock:
-                    inner_runtime_ids[name] = id(rt)
-                return id(rt)
+                    inner_runtimes[name] = rt  # Store runtime, not id()
+                return rt
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [
@@ -754,15 +758,16 @@ class TestLuaIsolationStress(unittest.TestCase):
                 [f.result() for f in as_completed(futures)]
 
             # All inner workers should have different runtimes
-            unique_ids = set(inner_runtime_ids.values())
-            success = len(unique_ids) == len(inner_runtime_ids)
+            # Compare IDs now that all runtimes are held in memory
+            unique_ids = set(id(rt) for rt in inner_runtimes.values())
+            success = len(unique_ids) == len(inner_runtimes)
 
             with lock:
                 results.append(
                     {
                         "success": success,
                         "unique_count": len(unique_ids),
-                        "total_count": len(inner_runtime_ids),
+                        "total_count": len(inner_runtimes),
                     }
                 )
             return success
@@ -770,18 +775,12 @@ class TestLuaIsolationStress(unittest.TestCase):
         # Run engine creation in multiple threads
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(create_engine_and_test) for _ in range(20)]
-            [f.result() for f in as_completed(futures)]
+            all_success = all(f.result() for f in as_completed(futures))
 
-        # For stress tests, allow up to 10% failure rate due to race conditions
-        # in highly concurrent CI environments. Core isolation is tested elsewhere.
-        failure_count = sum(1 for r in results if not r["success"])
-        max_allowed_failures = 2  # 10% of 20 iterations
-
-        self.assertLessEqual(
-            failure_count,
-            max_allowed_failures,
-            f"Too many iterations failed isolation ({failure_count}/{len(results)}): "
-            f"{[r for r in results if not r['success']]}",
+        # With proper GC prevention, all iterations should pass
+        self.assertTrue(
+            all_success,
+            f"Some iterations failed isolation: {[r for r in results if not r['success']]}",
         )
 
 
