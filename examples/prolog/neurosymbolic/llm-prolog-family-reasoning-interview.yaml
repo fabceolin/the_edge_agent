@@ -188,7 +188,17 @@ nodes:
           content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
           content = content.split("```")[1].split("```")[0]
-        data = json.loads(content.strip())
+
+        # Clean up common model artifacts
+        content = re.sub(r'<[^>]+>', '', content)  # Remove tokens like <bos>
+        content = content.strip()
+
+        # Fix common typos in JSON keys
+        content = content.replace('"answeers"', '"answers"')
+        content = content.replace('"anwsers"', '"answers"')
+        content = content.replace('"asnwers"', '"answers"')
+
+        data = json.loads(content)
 
         # Handle both {"answers": [...]} and [...] formats
         if isinstance(data, list):
