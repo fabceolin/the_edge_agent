@@ -35,16 +35,30 @@ from .stategraph import StateGraph, START, END
 logger = logging.getLogger(__name__)
 
 from .memory import (
-    MemoryBackend, InMemoryBackend,
-    LongTermMemoryBackend, SQLiteBackend,
-    GraphBackend, COZO_AVAILABLE, KUZU_AVAILABLE,
+    MemoryBackend,
+    InMemoryBackend,
+    LongTermMemoryBackend,
+    SQLiteBackend,
+    GraphBackend,
+    COZO_AVAILABLE,
+    KUZU_AVAILABLE,
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
-    MetadataStore, create_metadata_store, FIRESTORE_AVAILABLE,
-    BlobStorage, create_blob_storage, GCS_AVAILABLE,
-    QueryEngine, create_query_engine, DUCKDB_AVAILABLE,
-    VectorIndex, create_vector_index, DUCKDB_VSS_AVAILABLE,
+    MetadataStore,
+    create_metadata_store,
+    FIRESTORE_AVAILABLE,
+    BlobStorage,
+    create_blob_storage,
+    GCS_AVAILABLE,
+    QueryEngine,
+    create_query_engine,
+    DUCKDB_AVAILABLE,
+    VectorIndex,
+    create_vector_index,
+    DUCKDB_VSS_AVAILABLE,
 )
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
+from .observability import ObservabilityContext, EventStream
+from .observability import ConsoleHandler, FileHandler, CallbackHandler
 from .actions import build_actions_registry
 
 
@@ -58,7 +72,9 @@ class DotDict(dict):
                 return DotDict(value)
             return value
         except KeyError:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}'")
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{key}'"
+            )
 
     def __setattr__(self, key, value):
         self[key] = value
@@ -248,12 +264,15 @@ class YAMLEngine:
             elif trace_exporter == "opik":
                 # Lazy-load OpikExporter with resolved config
                 from .exporters import OpikExporter
-                exporters.append(OpikExporter(
-                    api_key=self._opik_config.get("api_key"),
-                    project_name=self._opik_config.get("project_name"),
-                    workspace=self._opik_config.get("workspace"),
-                    url_override=self._opik_config.get("url")
-                ))
+
+                exporters.append(
+                    OpikExporter(
+                        api_key=self._opik_config.get("api_key"),
+                        project_name=self._opik_config.get("project_name"),
+                        workspace=self._opik_config.get("workspace"),
+                        url_override=self._opik_config.get("url"),
+                    )
+                )
             elif trace_exporter is None:
                 # No exporter configured, but tracing is enabled
                 # Spans will be collected but not exported
@@ -265,7 +284,9 @@ class YAMLEngine:
         self._auto_trace = False
 
         # Initialize memory backend (TEA-BUILTIN-001.1)
-        self._memory_backend: Any = memory_backend if memory_backend is not None else InMemoryBackend()
+        self._memory_backend: Any = (
+            memory_backend if memory_backend is not None else InMemoryBackend()
+        )
 
         # Initialize long-term memory backend (TEA-BUILTIN-001.4)
         self._ltm_backend: Optional[Any] = None
@@ -288,6 +309,7 @@ class YAMLEngine:
                 # Explicitly requested Kuzu/Bighorn backend
                 if KUZU_AVAILABLE:
                     from .memory import KuzuBackend
+
                     try:
                         self._graph_backend = KuzuBackend(graph_path or ":memory:")
                     except Exception:
@@ -296,6 +318,7 @@ class YAMLEngine:
                 # Explicitly requested CozoDB backend
                 if COZO_AVAILABLE:
                     from .memory import CozoBackend
+
                     try:
                         self._graph_backend = CozoBackend(graph_path or ":memory:")
                     except Exception:
@@ -304,12 +327,14 @@ class YAMLEngine:
                 # Auto-select: prefer CozoDB, fallback to Kuzu
                 if COZO_AVAILABLE:
                     from .memory import CozoBackend
+
                     try:
                         self._graph_backend = CozoBackend(graph_path or ":memory:")
                     except Exception:
                         pass
                 elif KUZU_AVAILABLE:
                     from .memory import KuzuBackend
+
                     try:
                         self._graph_backend = KuzuBackend(graph_path or ":memory:")
                     except Exception:
@@ -416,12 +441,17 @@ class YAMLEngine:
                 return value
 
         # Add custom filters
-        self._jinja_env.filters['fromjson'] = safe_fromjson
+        self._jinja_env.filters["fromjson"] = safe_fromjson
         # Map legacy filter names to Jinja2 equivalents
-        self._jinja_env.filters['json'] = lambda v: json.dumps(v)
+        self._jinja_env.filters["json"] = lambda v: json.dumps(v)
 
         # Template cache for performance (AC: 8)
         self._template_cache: Dict[str, Any] = {}
+
+        # TEA-OBS-001.1: Observability context (flow-scoped logging)
+        # Initialized in load_from_dict() when observability config is present
+        self._observability_context: Optional[ObservabilityContext] = None
+        self._enable_observability = False
 
     @property
     def memory_backend(self) -> Any:
@@ -550,9 +580,34 @@ class YAMLEngine:
         """
         return self._opik_config.copy()
 
+    @property
+    def observability_context(self) -> Optional[ObservabilityContext]:
+        """
+        Get the observability context instance (TEA-OBS-001.1).
+
+        The observability context provides flow-scoped logging with structured
+        events and configurable handlers. It wraps TraceContext to add:
+        - Flow-level event aggregation
+        - Ring buffer for bounded log retention
+        - Structured log schema for cross-runtime parity
+
+        Returns:
+            The current ObservabilityContext, or None if observability is disabled.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> graph = engine.load_from_dict({
+            ...     'observability': {'enabled': True, 'level': 'info'},
+            ...     'nodes': [...], 'edges': [...]
+            ... })
+            >>> if engine.observability_context:
+            ...     flow_log = engine.observability_context.get_flow_log()
+            ...     print(f"Events: {flow_log['metrics']['event_count']}")
+        """
+        return self._observability_context
+
     def _resolve_opik_config(
-        self,
-        yaml_settings: Optional[Dict[str, Any]] = None
+        self, yaml_settings: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Resolve Opik configuration with proper precedence hierarchy.
@@ -632,6 +687,7 @@ class YAMLEngine:
 
         # Check if OpikExporter already added (avoid duplicates)
         from .exporters import OpikExporter
+
         for exporter in self._trace_context.exporters:
             if isinstance(exporter, OpikExporter):
                 return
@@ -642,7 +698,7 @@ class YAMLEngine:
             api_key=config.get("api_key"),
             project_name=config.get("project_name"),
             workspace=config.get("workspace"),
-            url_override=config.get("url")
+            url_override=config.get("url"),
         )
         self._trace_context.exporters.append(exporter)
         logger.debug("OpikExporter added from resolved configuration")
@@ -676,45 +732,49 @@ class YAMLEngine:
                   dimensions: 1536
         """
         # Configure MetadataStore
-        metadata_config = config.get('metadata_store', {})
+        metadata_config = config.get("metadata_store", {})
         if metadata_config and self._metadata_store is None:
-            store_type = metadata_config.get('type', 'firestore')
+            store_type = metadata_config.get("type", "firestore")
             try:
                 # Remove 'type' from config before passing to factory
-                store_kwargs = {k: v for k, v in metadata_config.items() if k != 'type'}
+                store_kwargs = {k: v for k, v in metadata_config.items() if k != "type"}
                 self._metadata_store = create_metadata_store(store_type, **store_kwargs)
                 logger.info(f"Configured metadata store: {store_type}")
             except Exception as e:
-                logger.warning(f"Failed to configure metadata store '{store_type}': {e}")
+                logger.warning(
+                    f"Failed to configure metadata store '{store_type}': {e}"
+                )
 
         # Configure BlobStorage
-        blob_config = config.get('blob_storage', {})
+        blob_config = config.get("blob_storage", {})
         if blob_config and self._blob_storage is None:
-            storage_type = blob_config.get('type', 'gcs')
+            storage_type = blob_config.get("type", "gcs")
             try:
-                storage_kwargs = {k: v for k, v in blob_config.items() if k != 'type'}
+                storage_kwargs = {k: v for k, v in blob_config.items() if k != "type"}
                 self._blob_storage = create_blob_storage(storage_type, **storage_kwargs)
                 logger.info(f"Configured blob storage: {storage_type}")
             except Exception as e:
-                logger.warning(f"Failed to configure blob storage '{storage_type}': {e}")
+                logger.warning(
+                    f"Failed to configure blob storage '{storage_type}': {e}"
+                )
 
         # Configure QueryEngine
-        query_config = config.get('query_engine', {})
+        query_config = config.get("query_engine", {})
         if query_config and self._query_engine is None:
-            engine_type = query_config.get('type', 'duckdb')
+            engine_type = query_config.get("type", "duckdb")
             try:
-                engine_kwargs = {k: v for k, v in query_config.items() if k != 'type'}
+                engine_kwargs = {k: v for k, v in query_config.items() if k != "type"}
                 self._query_engine = create_query_engine(engine_type, **engine_kwargs)
                 logger.info(f"Configured query engine: {engine_type}")
             except Exception as e:
                 logger.warning(f"Failed to configure query engine '{engine_type}': {e}")
 
         # Configure VectorIndex
-        vector_config = config.get('vector_index', {})
+        vector_config = config.get("vector_index", {})
         if vector_config and self._vector_index is None:
-            index_type = vector_config.get('type', 'duckdb')
+            index_type = vector_config.get("type", "duckdb")
             try:
-                index_kwargs = {k: v for k, v in vector_config.items() if k != 'type'}
+                index_kwargs = {k: v for k, v in vector_config.items() if k != "type"}
                 self._vector_index = create_vector_index(index_type, **index_kwargs)
                 logger.info(f"Configured vector index: {index_type}")
             except Exception as e:
@@ -817,7 +877,7 @@ class YAMLEngine:
         self,
         yaml_path: str,
         checkpoint: Optional[str] = None,
-        checkpointer: Optional[Any] = None
+        checkpointer: Optional[Any] = None,
     ) -> StateGraph:
         """
         Load a StateGraph from a YAML file.
@@ -845,7 +905,7 @@ class YAMLEngine:
             >>> # Resume from checkpoint
             >>> graph = engine.load_from_file("agent.yaml", checkpoint="./chk/node.pkl")
         """
-        with open(yaml_path, 'r') as f:
+        with open(yaml_path, "r") as f:
             config = yaml.safe_load(f)
 
         # Get directory of YAML file for relative path resolution
@@ -860,7 +920,7 @@ class YAMLEngine:
         config: Dict[str, Any],
         checkpoint: Optional[str] = None,
         checkpointer: Optional[Any] = None,
-        yaml_dir: Optional[str] = None
+        yaml_dir: Optional[str] = None,
     ) -> StateGraph:
         """
         Load a StateGraph from a configuration dictionary.
@@ -896,19 +956,19 @@ class YAMLEngine:
             >>> graph = engine.load_from_dict(config, checkpointer=MemoryCheckpointer())
         """
         # Extract global variables
-        self.variables = config.get('variables', {})
+        self.variables = config.get("variables", {})
 
         # Load external action modules from imports section (TEA-BUILTIN: External Imports)
-        imports = config.get('imports', [])
+        imports = config.get("imports", [])
         if imports:
             self._load_imports(imports, yaml_dir)
 
         # Extract settings (YAML-level configuration)
-        settings = config.get('settings', {})
+        settings = config.get("settings", {})
 
         # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
         # Settings can be nested under 'opik' key or flat under 'settings'
-        opik_yaml_settings = settings.get('opik', {})
+        opik_yaml_settings = settings.get("opik", {})
         if not isinstance(opik_yaml_settings, dict):
             opik_yaml_settings = {}
 
@@ -916,59 +976,77 @@ class YAMLEngine:
         self._opik_config = self._resolve_opik_config(opik_yaml_settings)
 
         # Update llm_tracing flag from resolved config
-        if self._opik_config.get('llm_tracing', False):
+        if self._opik_config.get("llm_tracing", False):
             self._opik_llm_tracing = True
         # Also check flat setting for backwards compatibility
-        if settings.get('opik_llm_tracing', False):
+        if settings.get("opik_llm_tracing", False):
             self._opik_llm_tracing = True
 
         # Handle auto-trace from YAML settings
-        if settings.get('auto_trace', False) and self._enable_tracing:
+        if settings.get("auto_trace", False) and self._enable_tracing:
             self._auto_trace = True
             # Configure trace exporter from settings if not already set
             if self._trace_context is not None and not self._trace_context.exporters:
-                trace_exporter = settings.get('trace_exporter', 'console')
-                trace_file = settings.get('trace_file')
-                if trace_exporter == 'console':
+                trace_exporter = settings.get("trace_exporter", "console")
+                trace_file = settings.get("trace_file")
+                if trace_exporter == "console":
                     self._trace_context.exporters.append(ConsoleExporter(verbose=False))
-                elif trace_exporter == 'file' and trace_file:
+                elif trace_exporter == "file" and trace_file:
                     self._trace_context.exporters.append(FileExporter(trace_file))
-                elif trace_exporter == 'opik':
+                elif trace_exporter == "opik":
                     self._add_opik_exporter_from_config()
         else:
             self._auto_trace = False
 
         # TEA-BUILTIN-005.3: Add Opik exporter if trace_export is enabled in config
-        if (self._opik_config.get('trace_export', False) and
-            self._enable_tracing and
-            self._trace_context is not None):
+        if (
+            self._opik_config.get("trace_export", False)
+            and self._enable_tracing
+            and self._trace_context is not None
+        ):
             self._add_opik_exporter_from_config()
 
         # TEA-BUILTIN-006: Configure Firebase Agent Memory Infrastructure from YAML settings
-        memory_infra = settings.get('memory_infrastructure', {})
+        memory_infra = settings.get("memory_infrastructure", {})
         if memory_infra:
             self._configure_memory_infrastructure(memory_infra)
 
+        # TEA-OBS-001.1: Configure ObservabilityContext from YAML settings
+        observability_config = config.get("observability", {})
+        if observability_config.get("enabled", False):
+            self._enable_observability = True
+            import uuid
+
+            flow_id = str(uuid.uuid4())
+            self._observability_context = ObservabilityContext(
+                flow_id=flow_id,
+                config=observability_config,
+                trace_context=self._trace_context,
+            )
+        else:
+            self._enable_observability = False
+            self._observability_context = None
+
         # Create graph
-        compile_config = config.get('config', {})
+        compile_config = config.get("config", {})
         graph = StateGraph(
-            state_schema=config.get('state_schema', {}),
-            raise_exceptions=compile_config.get('raise_exceptions', False)
+            state_schema=config.get("state_schema", {}),
+            raise_exceptions=compile_config.get("raise_exceptions", False),
         )
 
         # Store reference for checkpoint actions
         self._current_graph = graph
 
         # Extract checkpoint configuration
-        checkpoint_dir = compile_config.get('checkpoint_dir')
+        checkpoint_dir = compile_config.get("checkpoint_dir")
         self._checkpoint_dir = checkpoint_dir
 
         # Add nodes
-        for node_config in config.get('nodes', []):
+        for node_config in config.get("nodes", []):
             self._add_node_from_config(graph, node_config)
 
         # Add edges
-        for edge_config in config.get('edges', []):
+        for edge_config in config.get("edges", []):
             self._add_edge_from_config(graph, edge_config)
 
         # Store checkpointer reference for resume
@@ -976,14 +1054,14 @@ class YAMLEngine:
 
         # Compile with checkpoint support
         compiled_graph = graph.compile(
-            interrupt_before=compile_config.get('interrupt_before', []),
-            interrupt_after=compile_config.get('interrupt_after', []),
+            interrupt_before=compile_config.get("interrupt_before", []),
+            interrupt_after=compile_config.get("interrupt_after", []),
             checkpoint_dir=checkpoint_dir,
-            checkpointer=checkpointer
+            checkpointer=checkpointer,
         )
 
         # Determine checkpoint path (parameter overrides config)
-        checkpoint_path = checkpoint or compile_config.get('checkpoint')
+        checkpoint_path = checkpoint or compile_config.get("checkpoint")
 
         if checkpoint_path:
             # Store checkpoint path for resume
@@ -995,7 +1073,7 @@ class YAMLEngine:
         self,
         yaml_path: str,
         checkpoint_path: str,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Load YAML config, create graph, and resume execution from checkpoint.
@@ -1031,29 +1109,56 @@ class YAMLEngine:
         # Resume from checkpoint
         yield from graph.resume_from_checkpoint(checkpoint_path, config)
 
-    def _add_node_from_config(self, graph: StateGraph, node_config: Dict[str, Any]) -> None:
+    def _add_node_from_config(
+        self, graph: StateGraph, node_config: Dict[str, Any]
+    ) -> None:
         """Add a node to the graph from configuration."""
-        node_name = node_config['name']
-        node_type = node_config.get('type')
+        node_name = node_config["name"]
+        node_type = node_config.get("type")
 
         # Handle while_loop node type (TEA-PY-003)
-        if node_type == 'while_loop':
+        if node_type == "while_loop":
             run_func = self._create_while_loop_function(node_config)
             # Wrap with auto-trace if enabled
-            if run_func is not None and self._auto_trace and self._trace_context is not None:
+            if (
+                run_func is not None
+                and self._auto_trace
+                and self._trace_context is not None
+            ):
                 run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+            # TEA-OBS-001.1: Wrap with observability if enabled
+            if (
+                run_func is not None
+                and self._enable_observability
+                and self._observability_context is not None
+            ):
+                run_func = self._wrap_with_observability(
+                    run_func, node_name, node_config
+                )
             graph.add_node(node_name, run=run_func)
             return
 
         # Determine if it's a fan-in node
-        is_fan_in = node_config.get('fan_in', False)
+        is_fan_in = node_config.get("fan_in", False)
 
         # Create the run function based on configuration
         run_func = self._create_run_function(node_config)
 
         # Wrap with auto-trace if enabled
-        if run_func is not None and self._auto_trace and self._trace_context is not None:
+        if (
+            run_func is not None
+            and self._auto_trace
+            and self._trace_context is not None
+        ):
             run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+
+        # TEA-OBS-001.1: Wrap with observability if enabled
+        if (
+            run_func is not None
+            and self._enable_observability
+            and self._observability_context is not None
+        ):
+            run_func = self._wrap_with_observability(run_func, node_name, node_config)
 
         # Add node to graph
         if is_fan_in:
@@ -1062,10 +1167,7 @@ class YAMLEngine:
             graph.add_node(node_name, run=run_func)
 
     def _wrap_with_auto_trace(
-        self,
-        func: Callable,
-        node_name: str,
-        node_config: Dict[str, Any]
+        self, func: Callable, node_name: str, node_config: Dict[str, Any]
     ) -> Callable:
         """
         Wrap a node function with automatic tracing.
@@ -1088,11 +1190,8 @@ class YAMLEngine:
 
         def traced_func(state, **kwargs):
             # Determine action type for metadata
-            action_type = node_config.get('uses', 'inline')
-            metadata = {
-                "node": node_name,
-                "action_type": action_type
-            }
+            action_type = node_config.get("uses", "inline")
+            metadata = {"node": node_name, "action_type": action_type}
 
             # Start span
             trace_context.start_span(name=node_name, metadata=metadata)
@@ -1108,16 +1207,20 @@ class YAMLEngine:
 
                 # Capture LLM token usage
                 if isinstance(result, dict):
-                    if 'usage' in result:
-                        usage = result['usage']
+                    if "usage" in result:
+                        usage = result["usage"]
                         if isinstance(usage, dict):
-                            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                            for key in (
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "total_tokens",
+                            ):
                                 if key in usage:
                                     metrics[key] = usage[key]
 
                     # Capture HTTP latency if present
-                    if action_type in ('http.get', 'http.post'):
-                        metrics['http_latency_ms'] = duration_ms
+                    if action_type in ("http.get", "http.post"):
+                        metrics["http_latency_ms"] = duration_ms
 
                 # Log metrics
                 trace_context.log_event(metrics=metrics)
@@ -1134,6 +1237,77 @@ class YAMLEngine:
 
         return traced_func
 
+    def _wrap_with_observability(
+        self, func: Callable, node_name: str, node_config: Dict[str, Any]
+    ) -> Callable:
+        """
+        Wrap a node function with observability (TEA-OBS-001.1).
+
+        Emits structured log events:
+        - Entry event when node starts
+        - Exit event with duration when node completes
+        - Error event if node fails
+
+        Also injects flow_id into state under '_observability.flow_id'.
+
+        Args:
+            func: The original run function
+            node_name: Name of the node
+            node_config: Node configuration dictionary
+
+        Returns:
+            Wrapped function with observability instrumentation
+        """
+        obs_context = self._observability_context
+
+        def observed_func(state, **kwargs):
+            # Inject flow_id into state for workflow access
+            if "_observability" not in state:
+                state["_observability"] = {}
+            state["_observability"]["flow_id"] = obs_context.flow_id
+            state["_observability"]["enabled"] = True
+
+            # Determine action type for metadata
+            action_type = node_config.get("uses", "inline")
+            metadata = {"node": node_name, "action_type": action_type}
+
+            # Start node span
+            obs_context.start_node_span(node_name, metadata=metadata)
+
+            try:
+                # Execute the original function
+                start_time = time.time()
+                result = func(state, **kwargs)
+                duration_ms = (time.time() - start_time) * 1000
+
+                # End node span successfully
+                obs_context.end_node_span(node_name, status="ok")
+
+                # Log additional metrics if present in result
+                if isinstance(result, dict):
+                    metrics = {}
+                    if "usage" in result:
+                        usage = result["usage"]
+                        if isinstance(usage, dict):
+                            for key in (
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "total_tokens",
+                            ):
+                                if key in usage:
+                                    metrics[key] = usage[key]
+                    if metrics:
+                        obs_context.log(node_name, "info", "metric", metrics=metrics)
+
+                return result
+
+            except Exception as e:
+                # End node span with error
+                obs_context.end_node_span(node_name, status="error", error=str(e))
+                raise
+
+        return observed_func
+
     def _create_run_function(self, node_config: Dict[str, Any]) -> Optional[Callable]:
         """
         Create a run function from node configuration.
@@ -1148,47 +1322,48 @@ class YAMLEngine:
         - script: inline Python code (GitLab CI style)
         """
         # Determine language from node config (can be overridden per-node)
-        language = node_config.get('language')
+        language = node_config.get("language")
 
         # Option 1: Explicit type in run config (dict with type + code)
-        if isinstance(node_config.get('run'), dict):
-            run_config = node_config['run']
-            run_type = run_config.get('type')
+        if isinstance(node_config.get("run"), dict):
+            run_config = node_config["run"]
+            run_type = run_config.get("type")
 
             # Handle type: prolog
-            if run_type == 'prolog':
-                code = run_config.get('code', '')
-                return self._create_inline_function(code, language='prolog')
+            if run_type == "prolog":
+                code = run_config.get("code", "")
+                return self._create_inline_function(code, language="prolog")
 
             # Handle type: lua
-            if run_type == 'lua':
-                code = run_config.get('code', '')
-                return self._create_inline_function(code, language='lua')
+            if run_type == "lua":
+                code = run_config.get("code", "")
+                return self._create_inline_function(code, language="lua")
 
             # Handle type: expression
-            if run_type == 'expression':
+            if run_type == "expression":
                 return self._create_expression_function(
-                    run_config['value'],
-                    run_config.get('output_key', 'result')
+                    run_config["value"], run_config.get("output_key", "result")
                 )
 
         # Option 2: Inline code (run or script) with optional language
-        if 'run' in node_config and isinstance(node_config['run'], str):
-            return self._create_inline_function(node_config['run'], language=language)
+        if "run" in node_config and isinstance(node_config["run"], str):
+            return self._create_inline_function(node_config["run"], language=language)
 
-        if 'script' in node_config:
-            return self._create_inline_function(node_config['script'], language=language)
+        if "script" in node_config:
+            return self._create_inline_function(
+                node_config["script"], language=language
+            )
 
         # Option 3: Built-in action
-        if 'uses' in node_config:
-            action_name = node_config['uses']
-            action_params = node_config.get('with', {})
-            output_key = node_config.get('output', node_config.get('output_key'))
+        if "uses" in node_config:
+            action_name = node_config["uses"]
+            action_params = node_config.get("with", {})
+            output_key = node_config.get("output", node_config.get("output_key"))
             return self._create_action_function(action_name, action_params, output_key)
 
         # Option 4: Multi-step execution
-        if 'steps' in node_config:
-            return self._create_steps_function(node_config['steps'])
+        if "steps" in node_config:
+            return self._create_steps_function(node_config["steps"])
 
         # No run function
         return None
@@ -1213,16 +1388,16 @@ class YAMLEngine:
         stripped = code.strip()
 
         # Explicit marker
-        if stripped.startswith('-- lua') or stripped.startswith('--lua'):
+        if stripped.startswith("-- lua") or stripped.startswith("--lua"):
             return True
 
         # Heuristic: Lua keywords not valid in Python
         lua_patterns = [
-            r'\blocal\b',      # local variable declaration
-            r'\bthen\b',       # if-then
-            r'\bend\b',        # block terminator
-            r'\belseif\b',     # Lua uses elseif, Python uses elif
-            r'\.\.+',          # string concatenation operator (.. or more dots)
+            r"\blocal\b",  # local variable declaration
+            r"\bthen\b",  # if-then
+            r"\bend\b",  # block terminator
+            r"\belseif\b",  # Lua uses elseif, Python uses elif
+            r"\.\.+",  # string concatenation operator (.. or more dots)
         ]
 
         return any(re.search(pattern, code) for pattern in lua_patterns)
@@ -1242,6 +1417,7 @@ class YAMLEngine:
             True if code appears to be Prolog
         """
         from .prolog_runtime import detect_prolog_code, PYSWIP_AVAILABLE
+
         if not PYSWIP_AVAILABLE:
             return False
         return detect_prolog_code(code)
@@ -1265,6 +1441,7 @@ class YAMLEngine:
             LuaRuntime: Isolated runtime for current execution context
         """
         from .lua_runtime import LuaRuntime, LUPA_AVAILABLE
+
         if not LUPA_AVAILABLE:
             raise ImportError(
                 "Lua runtime requires the 'lupa' package.\n"
@@ -1298,7 +1475,11 @@ class YAMLEngine:
         Returns:
             PrologRuntime: Shared runtime with thread-local state isolation
         """
-        from .prolog_runtime import PrologRuntime, PYSWIP_AVAILABLE, _get_install_instructions
+        from .prolog_runtime import (
+            PrologRuntime,
+            PYSWIP_AVAILABLE,
+            _get_install_instructions,
+        )
 
         if not PYSWIP_AVAILABLE:
             raise ImportError(_get_install_instructions())
@@ -1307,17 +1488,17 @@ class YAMLEngine:
         # Thread-local predicates handle isolation for parallel branches
         if self._prolog_runtime is None:
             self._prolog_runtime = PrologRuntime(
-                timeout=self._prolog_timeout,
-                sandbox=self._prolog_sandbox
+                timeout=self._prolog_timeout, sandbox=self._prolog_sandbox
             )
         return self._prolog_runtime
 
-    def _create_inline_function(self, code: str, language: Optional[str] = None) -> Callable:
+    def _create_inline_function(
+        self, code: str, language: Optional[str] = None
+    ) -> Callable:
         """Create a function that executes inline Python, Lua, or Prolog code."""
         # TEA-PROLOG: Check if this is Prolog code
-        is_prolog = (
-            language == 'prolog' or
-            (self._prolog_enabled and language is None and self._detect_prolog_code(code))
+        is_prolog = language == "prolog" or (
+            self._prolog_enabled and language is None and self._detect_prolog_code(code)
         )
 
         if is_prolog:
@@ -1325,15 +1506,14 @@ class YAMLEngine:
             def run_prolog(state, **kwargs):
                 prolog_runtime = self._get_prolog_runtime()
                 # Convert state to dict if it's a DotDict or other mapping
-                state_dict = dict(state) if hasattr(state, 'items') else state
+                state_dict = dict(state) if hasattr(state, "items") else state
                 return prolog_runtime.execute_node_code(code, state_dict)
 
             return run_prolog
 
         # TEA-LUA.P1: Check if this is Lua code and lua is enabled
-        is_lua = (
-            language == 'lua' or
-            (self._lua_enabled and language is None and self._detect_lua_code(code))
+        is_lua = language == "lua" or (
+            self._lua_enabled and language is None and self._detect_lua_code(code)
         )
 
         if is_lua:
@@ -1341,7 +1521,7 @@ class YAMLEngine:
             def run_lua(state, **kwargs):
                 lua_runtime = self._get_lua_runtime()
                 # Convert state to dict if it's a DotDict or other mapping
-                state_dict = dict(state) if hasattr(state, 'items') else state
+                state_dict = dict(state) if hasattr(state, "items") else state
                 return lua_runtime.execute_node_code(code, state_dict)
 
             return run_lua
@@ -1350,25 +1530,28 @@ class YAMLEngine:
         def run_inline(state, **kwargs):
             # Prepare execution context
             exec_globals = {
-                'state': state,
+                "state": state,
                 **kwargs,
                 # Common imports
-                'json': json,
-                'requests': None,  # Will be imported if used
-                'datetime': None,
+                "json": json,
+                "requests": None,  # Will be imported if used
+                "datetime": None,
             }
 
             # Try to import common modules if referenced
-            if 'requests' in code:
+            if "requests" in code:
                 import requests
-                exec_globals['requests'] = requests
-            if 'datetime' in code:
+
+                exec_globals["requests"] = requests
+            if "datetime" in code:
                 import datetime
-                exec_globals['datetime'] = datetime
-            if 'OpenAI' in code or 'openai' in code:
+
+                exec_globals["datetime"] = datetime
+            if "OpenAI" in code or "openai" in code:
                 try:
                     from openai import OpenAI
-                    exec_globals['OpenAI'] = OpenAI
+
+                    exec_globals["OpenAI"] = OpenAI
                 except ImportError:
                     pass
 
@@ -1376,28 +1559,29 @@ class YAMLEngine:
             code_processed = self._process_template(code, state)
 
             # If code contains return statements, wrap in a function
-            if 'return' in code_processed:
+            if "return" in code_processed:
                 # Indent the code for function body
-                indented_code = '\n'.join('    ' + line for line in code_processed.split('\n'))
-                wrapper_code = f"def __run_func__():\n{indented_code}\n__result__ = __run_func__()"
+                indented_code = "\n".join(
+                    "    " + line for line in code_processed.split("\n")
+                )
+                wrapper_code = (
+                    f"def __run_func__():\n{indented_code}\n__result__ = __run_func__()"
+                )
                 exec_locals = {}
                 exec(wrapper_code, exec_globals, exec_locals)
-                return exec_locals.get('__result__', {})
+                return exec_locals.get("__result__", {})
 
             # Execute code directly if no return
             exec_locals = {}
             exec(code_processed, exec_globals, exec_locals)
 
             # If no explicit return, look for updated values
-            return {k: v for k, v in exec_locals.items() if not k.startswith('_')}
+            return {k: v for k, v in exec_locals.items() if not k.startswith("_")}
 
         return run_inline
 
     def _create_action_function(
-        self,
-        action_name: str,
-        params: Dict[str, Any],
-        output_key: Optional[str] = None
+        self, action_name: str, params: Dict[str, Any], output_key: Optional[str] = None
     ) -> Callable:
         """Create a function that calls a built-in action."""
         # Capture engine reference for closure
@@ -1415,9 +1599,14 @@ class YAMLEngine:
 
             # Inject opik_trace for LLM actions if engine has it enabled (TEA-BUILTIN-005.2)
             # Only inject if not explicitly set in params
-            if action_name in ('llm.call', 'llm.stream', 'actions.llm_call', 'actions.llm_stream'):
-                if 'opik_trace' not in processed_params and engine_opik_llm_tracing:
-                    processed_params['opik_trace'] = True
+            if action_name in (
+                "llm.call",
+                "llm.stream",
+                "actions.llm_call",
+                "actions.llm_stream",
+            ):
+                if "opik_trace" not in processed_params and engine_opik_llm_tracing:
+                    processed_params["opik_trace"] = True
 
             # Call action
             result = action_func(state=state, **processed_params, **kwargs)
@@ -1428,18 +1617,19 @@ class YAMLEngine:
             elif isinstance(result, dict):
                 return result
             else:
-                return {'result': result}
+                return {"result": result}
 
         return run_action
 
     def _create_steps_function(self, steps: List[Dict[str, Any]]) -> Callable:
         """Create a function that executes multiple steps sequentially."""
+
         def run_steps(state, **kwargs):
             step_results = {}
             current_state = state.copy()
 
             for step in steps:
-                step_name = step.get('name', f'step_{len(step_results)}')
+                step_name = step.get("name", f"step_{len(step_results)}")
 
                 # Create function for this step
                 step_func = self._create_run_function(step)
@@ -1462,13 +1652,14 @@ class YAMLEngine:
 
     def _create_expression_function(self, expression: str, output_key: str) -> Callable:
         """Create a function that evaluates a Python expression."""
+
         def run_expression(state, **kwargs):
             # Process template variables
             expr_processed = self._process_template(expression, state)
 
             # Evaluate expression
             try:
-                result = eval(expr_processed, {'state': state, **kwargs})
+                result = eval(expr_processed, {"state": state, **kwargs})
             except Exception as e:
                 raise ValueError(f"Error evaluating expression '{expression}': {e}")
 
@@ -1496,10 +1687,10 @@ class YAMLEngine:
         Raises:
             ValueError: If configuration is invalid
         """
-        node_name = node_config['name']
-        condition = node_config.get('condition')
-        max_iterations = node_config.get('max_iterations')
-        body = node_config.get('body', [])
+        node_name = node_config["name"]
+        condition = node_config.get("condition")
+        max_iterations = node_config.get("max_iterations")
+        body = node_config.get("body", [])
 
         # Validate required fields (AC-8)
         if not condition:
@@ -1508,7 +1699,11 @@ class YAMLEngine:
             raise ValueError(f"while_loop node '{node_name}' requires 'max_iterations'")
 
         # Validate max_iterations range (AC-9)
-        if not isinstance(max_iterations, int) or max_iterations < 1 or max_iterations > 1000:
+        if (
+            not isinstance(max_iterations, int)
+            or max_iterations < 1
+            or max_iterations > 1000
+        ):
             raise ValueError(
                 f"while_loop node '{node_name}': max_iterations must be integer between 1-1000, "
                 f"got {max_iterations}"
@@ -1516,11 +1711,13 @@ class YAMLEngine:
 
         # Validate body exists
         if not body:
-            raise ValueError(f"while_loop node '{node_name}' requires 'body' with at least one node")
+            raise ValueError(
+                f"while_loop node '{node_name}' requires 'body' with at least one node"
+            )
 
         # Check for nested while-loops (AC-11)
         for body_node in body:
-            if body_node.get('type') == 'while_loop':
+            if body_node.get("type") == "while_loop":
                 raise ValueError(
                     f"Nested while-loops not supported: '{node_name}' contains "
                     f"nested while_loop '{body_node.get('name', 'unnamed')}'"
@@ -1529,7 +1726,7 @@ class YAMLEngine:
         # Pre-compile body node functions
         body_functions = []
         for body_node_config in body:
-            body_node_name = body_node_config.get('name', f'body_{len(body_functions)}')
+            body_node_name = body_node_config.get("name", f"body_{len(body_functions)}")
             body_func = self._create_run_function(body_node_config)
             if body_func:
                 body_functions.append((body_node_name, body_func))
@@ -1548,9 +1745,9 @@ class YAMLEngine:
             if enable_tracing and trace_context is not None:
                 trace_context.log_event(
                     event={
-                        'event_type': 'LoopStart',
-                        'node_name': node_name,
-                        'max_iterations': max_iterations
+                        "event_type": "LoopStart",
+                        "node_name": node_name,
+                        "max_iterations": max_iterations,
                     }
                 )
 
@@ -1562,10 +1759,10 @@ class YAMLEngine:
                 if enable_tracing and trace_context is not None:
                     trace_context.log_event(
                         event={
-                            'event_type': 'LoopIteration',
-                            'node_name': node_name,
-                            'iteration': iteration,
-                            'condition_result': condition_result
+                            "event_type": "LoopIteration",
+                            "node_name": node_name,
+                            "iteration": iteration,
+                            "condition_result": condition_result,
                         }
                     )
 
@@ -1592,18 +1789,18 @@ class YAMLEngine:
 
             # Determine exit reason (AC-5)
             if iteration >= max_iterations:
-                exit_reason = 'max_iterations_reached'
+                exit_reason = "max_iterations_reached"
             else:
-                exit_reason = 'condition_false'
+                exit_reason = "condition_false"
 
             # Emit LoopEnd event (AC-14)
             if enable_tracing and trace_context is not None:
                 trace_context.log_event(
                     event={
-                        'event_type': 'LoopEnd',
-                        'node_name': node_name,
-                        'iterations_completed': iteration,
-                        'exit_reason': exit_reason
+                        "event_type": "LoopEnd",
+                        "node_name": node_name,
+                        "iterations_completed": iteration,
+                        "exit_reason": exit_reason,
                     }
                 )
 
@@ -1612,79 +1809,85 @@ class YAMLEngine:
 
         return run_while_loop
 
-    def _add_edge_from_config(self, graph: StateGraph, edge_config: Dict[str, Any]) -> None:
+    def _add_edge_from_config(
+        self, graph: StateGraph, edge_config: Dict[str, Any]
+    ) -> None:
         """Add an edge to the graph from configuration."""
-        edge_type = edge_config.get('type', 'normal')
+        edge_type = edge_config.get("type", "normal")
         # For entry edges, default from_node to START if not specified
-        from_node = edge_config.get('from', START if edge_type == 'entry' else None)
+        from_node = edge_config.get("from", START if edge_type == "entry" else None)
         if from_node is None:
-            from_node = edge_config['from']  # Raise KeyError if missing for non-entry edges
-        to_node = edge_config['to']
+            from_node = edge_config[
+                "from"
+            ]  # Raise KeyError if missing for non-entry edges
+        to_node = edge_config["to"]
 
         # Handle special edge types
-        if from_node == START or edge_type == 'entry':
+        if from_node == START or edge_type == "entry":
             # Check if this is a conditional entry edge
-            if 'when' not in edge_config and 'condition' not in edge_config:
+            if "when" not in edge_config and "condition" not in edge_config:
                 graph.set_entry_point(to_node)
                 return
             # Fall through to conditional edge handling below
 
-        if to_node == END or edge_type == 'finish':
+        if to_node == END or edge_type == "finish":
             graph.set_finish_point(from_node)
             return
 
         # Parallel edge
-        if edge_type == 'parallel':
-            fan_in_node = edge_config['fan_in']
+        if edge_type == "parallel":
+            fan_in_node = edge_config["fan_in"]
             graph.add_parallel_edge(from_node, to_node, fan_in_node)
             return
 
         # Conditional edge
-        if 'condition' in edge_config:
-            cond_config = edge_config['condition']
-            when_value = edge_config.get('when', True)
+        if "condition" in edge_config:
+            cond_config = edge_config["condition"]
+            when_value = edge_config.get("when", True)
 
             # Create condition function using Jinja2 (TEA-YAML-001)
             if isinstance(cond_config, dict):
-                if cond_config.get('type') == 'expression':
-                    expr = cond_config['value']
+                if cond_config.get("type") == "expression":
+                    expr = cond_config["value"]
+
                     # Use a factory function to capture expr properly
                     def make_cond(e):
                         return lambda state, **kw: self._evaluate_condition(e, state)
+
                     cond_func = make_cond(expr)
                 else:
-                    raise ValueError(f"Unknown condition type: {cond_config.get('type')}")
+                    raise ValueError(
+                        f"Unknown condition type: {cond_config.get('type')}"
+                    )
             elif isinstance(cond_config, str):
                 # Simple expression
                 def make_cond(e):
                     return lambda state, **kw: self._evaluate_condition(e, state)
+
                 cond_func = make_cond(cond_config)
             else:
                 raise ValueError(f"Invalid condition configuration: {cond_config}")
 
             # Add conditional edge
-            graph.add_conditional_edges(
-                from_node,
-                cond_func,
-                {when_value: to_node}
-            )
+            graph.add_conditional_edges(from_node, cond_func, {when_value: to_node})
             return
 
         # Simple when clause (syntactic sugar for condition)
-        if 'when' in edge_config:
-            when_expr = edge_config['when']
+        if "when" in edge_config:
+            when_expr = edge_config["when"]
 
             # Convert simple boolean strings
             if isinstance(when_expr, str):
-                if when_expr.lower() == 'true':
+                if when_expr.lower() == "true":
                     when_result = True
-                elif when_expr.lower() == 'false':
+                elif when_expr.lower() == "false":
                     when_result = False
                 else:
                     # Expression like "!escalate", "has_results", or "{{ state.x > 5 }}"
                     # TEA-YAML-001: Use Jinja2 for condition evaluation
                     def make_cond(e):
                         return lambda state, **kw: self._evaluate_condition(e, state)
+
                     cond_func = make_cond(when_expr)
                     graph.add_conditional_edges(from_node, cond_func, {True: to_node})
                     return
@@ -1693,9 +1896,7 @@ class YAMLEngine:
 
             # Simple boolean condition
             graph.add_conditional_edges(
-                from_node,
-                lambda **kw: when_result,
-                {True: to_node}
+                from_node, lambda **kw: when_result, {True: to_node}
             )
             return
 
@@ -1731,13 +1932,15 @@ class YAMLEngine:
 
         # Build render context with checkpoint support (AC: 4)
         context = {
-            'state': DotDict(state),
-            'variables': DotDict(self.variables),
-            'secrets': DotDict(self.secrets),
-            'checkpoint': DotDict({
-                'dir': self._checkpoint_dir or '',
-                'last': self._last_checkpoint_path or ''
-            })
+            "state": DotDict(state),
+            "variables": DotDict(self.variables),
+            "secrets": DotDict(self.secrets),
+            "checkpoint": DotDict(
+                {
+                    "dir": self._checkpoint_dir or "",
+                    "last": self._last_checkpoint_path or "",
+                }
+            ),
         }
 
         text_stripped = text.strip()
@@ -1745,10 +1948,10 @@ class YAMLEngine:
         # Check if the entire string is a single template expression (AC: 5)
         # This allows returning actual objects instead of string representation
         # Pattern matches {{ expr }} without Jinja2 block tags
-        single_expr_pattern = r'^\{\{\s*(.+?)\s*\}\}$'
+        single_expr_pattern = r"^\{\{\s*(.+?)\s*\}\}$"
         single_match = re.match(single_expr_pattern, text_stripped)
 
-        if single_match and '{%' not in text_stripped:
+        if single_match and "{%" not in text_stripped:
             expr = single_match.group(1)
 
             try:
@@ -1756,19 +1959,23 @@ class YAMLEngine:
                 # Check cache first
                 cache_key = f"expr:{expr}"
                 if cache_key not in self._template_cache:
-                    self._template_cache[cache_key] = self._jinja_env.compile_expression(expr)
+                    self._template_cache[cache_key] = (
+                        self._jinja_env.compile_expression(expr)
+                    )
 
                 compiled = self._template_cache[cache_key]
                 return compiled(**context)
             except TemplateError as e:
                 # Re-raise with helpful context
-                raise ValueError(f"Template error in expression '{{{{ {expr} }}}}': {e}")
+                raise ValueError(
+                    f"Template error in expression '{{{{ {expr} }}}}': {e}"
+                )
             except Exception:
                 # Return original text if evaluation fails (backward compat)
                 return text
 
         # Check if this has any template syntax at all
-        if '{{' not in text and '{%' not in text and '${' not in text:
+        if "{{" not in text and "{%" not in text and "${" not in text:
             return text
 
         # Multi-expression or mixed content: render as string (AC: 1, 3)
@@ -1785,12 +1992,16 @@ class YAMLEngine:
             raise ValueError(f"Template error: {e}")
 
         # Also handle ${ } style (GitLab CI) for backward compatibility
-        pattern2 = r'\$\{([^}]+)\}'
-        result = re.sub(pattern2, lambda m: str(self.variables.get(m.group(1), m.group(0))), result)
+        pattern2 = r"\$\{([^}]+)\}"
+        result = re.sub(
+            pattern2, lambda m: str(self.variables.get(m.group(1), m.group(0))), result
+        )
 
         return result
 
-    def _process_params(self, params: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_params(
+        self, params: Dict[str, Any], state: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Recursively process parameters, replacing template variables."""
         processed = {}
 
@@ -1801,9 +2012,15 @@ class YAMLEngine:
                 processed[key] = self._process_params(value, state)
             elif isinstance(value, list):
                 processed[key] = [
-                    self._process_template(item, state) if isinstance(item, str)
-                    else self._process_params(item, state) if isinstance(item, dict)
-                    else item
+                    (
+                        self._process_template(item, state)
+                        if isinstance(item, str)
+                        else (
+                            self._process_params(item, state)
+                            if isinstance(item, dict)
+                            else item
+                        )
+                    )
                     for item in value
                 ]
             else:
@@ -1833,13 +2050,13 @@ class YAMLEngine:
         expr = expr.strip()
 
         # Handle Python boolean literals explicitly
-        if expr == 'True':
+        if expr == "True":
             return True
-        if expr == 'False':
+        if expr == "False":
             return False
 
         # Handle simple negation syntax: "!variable"
-        if expr.startswith('!') and not expr.startswith('{{'):
+        if expr.startswith("!") and not expr.startswith("{{"):
             var_name = expr[1:].strip()
             if var_name.isidentifier():
                 return not state.get(var_name, False)
@@ -1849,7 +2066,7 @@ class YAMLEngine:
             return bool(state.get(expr, False))
 
         # If already a Jinja2 template, process it
-        if '{{' in expr or '{%' in expr:
+        if "{{" in expr or "{%" in expr:
             result = self._process_template(expr, state)
             return bool(result)
 
@@ -1872,7 +2089,7 @@ class YAMLEngine:
         expr = expr.strip()
 
         # Handle negation
-        if expr.startswith('!'):
+        if expr.startswith("!"):
             var_name = expr[1:].strip()
             return f"not state.get('{var_name}', False)"
 
@@ -1884,9 +2101,7 @@ class YAMLEngine:
         return expr
 
     def _load_imports(
-        self,
-        imports: List[Dict[str, Any]],
-        yaml_dir: Optional[str] = None
+        self, imports: List[Dict[str, Any]], yaml_dir: Optional[str] = None
     ) -> None:
         """
         Load external action modules from the imports section.
@@ -1917,13 +2132,13 @@ class YAMLEngine:
         errors: List[str] = []
 
         for imp in imports:
-            namespace = imp.get('namespace', '')
+            namespace = imp.get("namespace", "")
 
             try:
-                if 'path' in imp:
-                    self._load_from_path(imp['path'], namespace, yaml_dir)
-                elif 'package' in imp:
-                    self._load_from_package(imp['package'], namespace)
+                if "path" in imp:
+                    self._load_from_path(imp["path"], namespace, yaml_dir)
+                elif "package" in imp:
+                    self._load_from_package(imp["package"], namespace)
                 else:
                     errors.append(
                         f"Invalid import: must specify 'path' or 'package'. Got: {imp}"
@@ -1937,10 +2152,7 @@ class YAMLEngine:
             )
 
     def _load_from_path(
-        self,
-        path: str,
-        namespace: str,
-        yaml_dir: Optional[str] = None
+        self, path: str, namespace: str, yaml_dir: Optional[str] = None
     ) -> None:
         """
         Load actions from a local Python file.
@@ -1982,7 +2194,7 @@ class YAMLEngine:
         spec.loader.exec_module(module)
 
         # Validate contract: module must have register_actions
-        if not hasattr(module, 'register_actions'):
+        if not hasattr(module, "register_actions"):
             raise ValueError(
                 f"Module {path} missing required 'register_actions(registry, engine)' function"
             )
@@ -2031,7 +2243,7 @@ class YAMLEngine:
             )
 
         # Validate contract: module must have register_actions
-        if not hasattr(module, 'register_actions'):
+        if not hasattr(module, "register_actions"):
             raise ValueError(
                 f"Package {package} missing required 'register_actions(registry, engine)' function"
             )
@@ -2054,12 +2266,7 @@ class YAMLEngine:
         # Mark as loaded
         self._loaded_modules.add(package)
 
-    def _log_module_metadata(
-        self,
-        module: Any,
-        source: str,
-        namespace: str
-    ) -> None:
+    def _log_module_metadata(self, module: Any, source: str, namespace: str) -> None:
         """
         Log optional __tea_actions__ metadata from an imported module.
 
@@ -2068,12 +2275,12 @@ class YAMLEngine:
             source: Source identifier (path or package name) for logging
             namespace: Namespace being used for this import
         """
-        if hasattr(module, '__tea_actions__'):
+        if hasattr(module, "__tea_actions__"):
             metadata = module.__tea_actions__
             if isinstance(metadata, dict):
-                version = metadata.get('version', 'unknown')
-                description = metadata.get('description', '')
-                declared_actions = metadata.get('actions', [])
+                version = metadata.get("version", "unknown")
+                description = metadata.get("description", "")
+                declared_actions = metadata.get("actions", [])
 
                 logger.info(
                     f"Loaded actions from {source} "
@@ -2085,10 +2292,7 @@ class YAMLEngine:
                     logger.debug(f"  Declared actions: {declared_actions}")
 
     def _merge_registry_with_namespace(
-        self,
-        local_registry: Dict[str, Callable],
-        namespace: str,
-        source: str
+        self, local_registry: Dict[str, Callable], namespace: str, source: str
     ) -> None:
         """
         Merge actions from local registry into main registry with namespace prefix.

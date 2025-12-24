@@ -28,6 +28,16 @@ from .tracing import (
     CallbackExporter,
 )
 
+# Observability (TEA-OBS-001.1)
+from .observability import (
+    ObservabilityContext,
+    EventStream,
+    EventStreamHandler,
+    ConsoleHandler,
+    FileHandler,
+    CallbackHandler,
+)
+
 # Memory (TEA-BUILTIN-001.1)
 from .memory import (
     MemoryBackend,
@@ -89,6 +99,13 @@ __all__ = [
     "ConsoleExporter",
     "FileExporter",
     "CallbackExporter",
+    # Observability (TEA-OBS-001.1)
+    "ObservabilityContext",
+    "EventStream",
+    "EventStreamHandler",
+    "ConsoleHandler",
+    "FileHandler",
+    "CallbackHandler",
     # Memory (TEA-BUILTIN-001.1)
     "MemoryBackend",
     "InMemoryBackend",

@@ -11,6 +11,7 @@ use std::sync::{Arc, RwLock};
 use tera::{Context, Tera};
 
 use crate::engine::graph::{ActionConfig, Edge, Node, RetryConfig, StateGraph};
+use crate::engine::observability::ObsConfig;
 use crate::error::{TeaError, TeaResult};
 use crate::{END, START};
 
@@ -50,6 +51,10 @@ pub struct YamlConfig {
     /// Global error policy
     #[serde(default)]
     pub error_policy: Option<ErrorPolicyConfig>,
+
+    /// Observability configuration (TEA-OBS-001.2)
+    #[serde(default)]
+    pub observability: ObsConfig,
 }
 
 /// Import configuration for external modules
@@ -218,6 +223,8 @@ pub struct YamlEngine {
     /// Path to most recent checkpoint for `{{ checkpoint.last }}` template access
     /// Uses `Arc<RwLock>` for sharing - allows Executor to update after saves
     last_checkpoint: Arc<RwLock<Option<String>>>,
+    /// Observability configuration from last loaded YAML (TEA-OBS-001.2)
+    observability_config: Arc<RwLock<Option<ObsConfig>>>,
 }
 
 impl Clone for YamlEngine {
@@ -228,6 +235,7 @@ impl Clone for YamlEngine {
             secrets: self.secrets.clone(),
             checkpoint_dir: self.checkpoint_dir.clone(),
             last_checkpoint: Arc::clone(&self.last_checkpoint),
+            observability_config: Arc::clone(&self.observability_config),
         }
     }
 }
@@ -241,6 +249,7 @@ impl YamlEngine {
             secrets: HashMap::new(),
             checkpoint_dir: None,
             last_checkpoint: Arc::new(RwLock::new(None)),
+            observability_config: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -326,6 +335,44 @@ impl YamlEngine {
         self.last_checkpoint.read().unwrap().clone()
     }
 
+    /// Get the observability configuration from the last loaded YAML (TEA-OBS-001.2)
+    ///
+    /// Returns `None` if no YAML has been loaded or if observability was not configured.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    /// use the_edge_agent::engine::executor::Executor;
+    ///
+    /// let engine = YamlEngine::new();
+    /// let graph = engine.load_from_file("workflow.yaml")?;
+    ///
+    /// // Create executor with observability if configured
+    /// let executor = if let Some(obs_config) = engine.observability_config() {
+    ///     if obs_config.enabled {
+    ///         Executor::with_observability(graph.compile()?, obs_config)?
+    ///     } else {
+    ///         Executor::new(graph.compile()?)?
+    ///     }
+    /// } else {
+    ///     Executor::new(graph.compile()?)?
+    /// };
+    /// ```
+    pub fn observability_config(&self) -> Option<ObsConfig> {
+        self.observability_config.read().unwrap().clone()
+    }
+
+    /// Check if observability is enabled in the loaded configuration (TEA-OBS-001.2)
+    pub fn is_observability_enabled(&self) -> bool {
+        self.observability_config
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.enabled)
+            .unwrap_or(false)
+    }
+
     /// Load a workflow from a YAML file
     pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> TeaResult<StateGraph> {
         let content = std::fs::read_to_string(path.as_ref()).map_err(TeaError::Io)?;
@@ -342,6 +389,9 @@ impl YamlEngine {
     /// Build a StateGraph from YamlConfig
     fn build_graph(&self, config: YamlConfig) -> TeaResult<StateGraph> {
         let mut graph = StateGraph::with_name(&config.name);
+
+        // Store observability config (TEA-OBS-001.2)
+        *self.observability_config.write().unwrap() = Some(config.observability.clone());
 
         // Set variables
         graph.set_variables(config.variables.clone());

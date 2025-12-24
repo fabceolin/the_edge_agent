@@ -55,7 +55,11 @@ nodes:
             • Do NOT use external knowledge - extract ONLY from the provided text
             • Use ONLY these relationship types: mother, father, married, affair
             • Do NOT use "parent" - always specify "mother" or "father"
+            • EVERY child needs BOTH a mother AND a father relationship
             • Include full names when mentioned (e.g., "Thomas Parker Bowles" not just "Thomas")
+            • "X had children" → X is the MOTHER
+            • "X and Y had children" → X is MOTHER, Y is FATHER (or vice versa based on gender)
+            • "X's sons/daughters" → X is the PARENT (use mother/father based on X's gender)
 
             OUTPUT FORMAT (JSON only, no markdown):
             {
@@ -135,8 +139,8 @@ nodes:
         if not mother_rels and not father_rels:
           errors.append("No mother or father relationships found - check if text mentions children")
 
-        # Check: if there are father rels but no mother rels, likely missing mother
-        if father_rels and not mother_rels:
+        # Warn if missing mother (but don't block - just refine once)
+        if father_rels and not mother_rels and state.get("refinement_count", 0) == 0:
           errors.append("Found father relationships but NO mother relationships - extract mother for each child")
 
         # Check date format
@@ -376,14 +380,14 @@ edges:
     to: extract_facts
   - from: extract_facts
     to: validate_extraction
-  # Conditional: if invalid AND refinements < 3, refine
+  # Conditional: if invalid AND refinements < 1, refine (single refinement for speed)
   - from: validate_extraction
     to: refine_extraction
-    condition: "not state.get('extraction_valid', False) and state.get('refinement_count', 0) < 3"
+    condition: "not state.get('extraction_valid', False) and state.get('refinement_count', 0) < 1"
   # If valid OR max refinements reached, continue
   - from: validate_extraction
     to: generate_prolog_facts
-    condition: "state.get('extraction_valid', False) or state.get('refinement_count', 0) >= 3"
+    condition: "state.get('extraction_valid', False) or state.get('refinement_count', 0) >= 1"
   - from: refine_extraction
     to: increment_refinement
   - from: increment_refinement

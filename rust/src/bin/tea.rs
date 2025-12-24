@@ -317,11 +317,15 @@ fn run_workflow(
             compiled.with_interrupt_after(nodes.split(',').map(|s| s.trim().to_string()).collect());
     }
 
-    // Setup executor with actions
+    // Setup executor with actions and observability (TEA-OBS-001.2)
     let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
     actions::register_defaults(&registry);
 
-    let executor = Executor::with_actions(compiled, registry)?;
+    let executor = if let Some(obs_config) = engine.observability_config() {
+        Executor::with_actions_and_observability(compiled, registry, obs_config)?
+    } else {
+        Executor::with_actions(compiled, registry)?
+    };
 
     // Setup checkpointer
     let checkpointer: Option<Arc<dyn Checkpointer>> = checkpoint_dir.map(|dir| {
@@ -414,11 +418,15 @@ fn resume_workflow(
     // Compile graph
     let compiled = graph.compile()?;
 
-    // Setup executor with actions
+    // Setup executor with actions and observability (TEA-OBS-001.2)
     let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
     actions::register_defaults(&registry);
 
-    let executor = Executor::with_actions(compiled, registry)?;
+    let executor = if let Some(obs_config) = engine.observability_config() {
+        Executor::with_actions_and_observability(compiled, registry, obs_config)?
+    } else {
+        Executor::with_actions(compiled, registry)?
+    };
 
     // Setup checkpointer for continued execution
     let checkpointer_arc: Arc<dyn Checkpointer> = Arc::new(checkpointer);
