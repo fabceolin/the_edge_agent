@@ -780,7 +780,19 @@ impl Executor {
                 .get(&action_config.uses)
                 .ok_or_else(|| TeaError::ActionNotFound(action_config.uses.clone()))?;
 
-            return handler(state, &processed_params);
+            let result = handler(state, &processed_params)?;
+
+            // If output key is specified, store result under that key in state
+            if let Some(ref output_key) = node.output {
+                let mut new_state = state.clone();
+                if let Some(obj) = new_state.as_object_mut() {
+                    obj.insert(output_key.clone(), result);
+                }
+                return Ok(new_state);
+            }
+
+            // Otherwise return the result as-is (merge behavior)
+            return Ok(result);
         }
 
         if let Some(ref code) = node.lua_code {
@@ -858,7 +870,19 @@ impl Executor {
                 .get(&action_config.uses)
                 .ok_or_else(|| TeaError::ActionNotFound(action_config.uses.clone()))?;
 
-            return handler(state, &processed_params);
+            let result = handler(state, &processed_params)?;
+
+            // If output key is specified, store result under that key in state
+            if let Some(ref output_key) = node.output {
+                let mut new_state = state.clone();
+                if let Some(obj) = new_state.as_object_mut() {
+                    obj.insert(output_key.clone(), result);
+                }
+                return Ok(new_state);
+            }
+
+            // Otherwise return the result as-is (merge behavior)
+            return Ok(result);
         }
 
         if let Some(ref code) = node.lua_code {

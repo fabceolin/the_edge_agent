@@ -1042,12 +1042,28 @@ class YAMLEngine:
         self._checkpoint_dir = checkpoint_dir
 
         # Add nodes
-        for node_config in config.get("nodes", []):
+        nodes_list = config.get("nodes", [])
+        for node_config in nodes_list:
             self._add_node_from_config(graph, node_config)
 
-        # Add edges
-        for edge_config in config.get("edges", []):
-            self._add_edge_from_config(graph, edge_config)
+        # TEA-YAML-002: Get edges list to determine which nodes are covered by legacy edges
+        edges_list = config.get("edges", [])
+
+        # TEA-YAML-002: Process goto and implicit chaining
+        # This implements the precedence: goto > edges > implicit chaining
+        # Only add implicit edges for nodes that don't have goto AND don't have edges
+        self._process_goto_and_implicit_edges(graph, nodes_list, edges_list)
+
+        # TEA-YAML-002: Add legacy edges (deprecated) with warning
+        if edges_list:
+            # Emit deprecation warning at INFO level (Phase 1: Soft Deprecation)
+            logger.info(
+                "DEPRECATION WARNING: The 'edges' section is deprecated and will be "
+                "removed in v2.0. Use 'goto' property on nodes or implicit chaining instead. "
+                "See: https://github.com/terminusdb-labs/the_edge_agent/docs/migration/edges-to-goto.md"
+            )
+            for edge_config in edges_list:
+                self._add_edge_from_config(graph, edge_config)
 
         # Store checkpointer reference for resume
         self._checkpointer = checkpointer
@@ -1809,13 +1825,270 @@ class YAMLEngine:
 
         return run_while_loop
 
+    def _process_goto_and_implicit_edges(
+        self,
+        graph: StateGraph,
+        nodes_list: List[Dict[str, Any]],
+        edges_list: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Process goto properties and implicit chaining for nodes.
+
+        TEA-YAML-002: Implements the new implicit graph navigation syntax.
+
+        This method:
+        1. Sets entry point to first node (if no __start__ edge in edges_list)
+        2. For each node, checks for goto property:
+           - If string: adds unconditional edge to target
+           - If list: adds conditional edges based on rules
+        3. For nodes without goto AND without legacy edges: adds implicit edge to next node
+        4. Sets finish point for last node (if no __end__ edge in edges_list)
+
+        Precedence:
+        - goto property on node (highest priority)
+        - edges section (legacy, deprecated)
+        - implicit chaining (lowest priority)
+
+        Args:
+            graph: The StateGraph to add edges to
+            nodes_list: List of node configurations from YAML
+            edges_list: List of edge configurations (for precedence check)
+        """
+        if not nodes_list:
+            return
+
+        # Build node name to index mapping for validation
+        node_names = {node["name"]: idx for idx, node in enumerate(nodes_list)}
+
+        # Collect node names that have edges defined in the edges section
+        # These nodes should use legacy edges, NOT implicit chaining
+        nodes_with_legacy_edges = set()
+        has_start_edge = False
+        nodes_with_end_edge = set()
+
+        for edge_config in edges_list:
+            from_node = edge_config.get("from")
+            to_node = edge_config.get("to")
+            if from_node:
+                if from_node == START:
+                    has_start_edge = True
+                else:
+                    nodes_with_legacy_edges.add(from_node)
+            if to_node == END:
+                nodes_with_end_edge.add(from_node)
+
+        # Collect node names that have goto definitions
+        # These nodes should NOT get edges from the legacy edges section
+        nodes_with_goto = set()
+
+        # Set entry point to first node (implicit __start__ -> first_node)
+        # Only if there's no __start__ edge in the legacy edges section
+        if not has_start_edge:
+            first_node = nodes_list[0]["name"]
+            graph.set_entry_point(first_node)
+
+        for idx, node_config in enumerate(nodes_list):
+            node_name = node_config["name"]
+            goto = node_config.get("goto")
+
+            if goto is not None:
+                # Node has goto - process it (highest priority)
+                nodes_with_goto.add(node_name)
+                self._process_node_goto(
+                    graph, node_name, goto, node_names, nodes_list, idx
+                )
+            elif node_name in nodes_with_legacy_edges:
+                # Node has legacy edges - don't add implicit chaining
+                # The edges will be added later in _add_edge_from_config
+                pass
+            else:
+                # Implicit chaining: add edge to next node or __end__
+                if idx < len(nodes_list) - 1:
+                    # Not the last node: chain to next
+                    next_node = nodes_list[idx + 1]["name"]
+                    graph.add_edge(node_name, next_node)
+                else:
+                    # Last node: implicit finish (unless it has legacy edge to __end__)
+                    if node_name not in nodes_with_end_edge:
+                        graph.set_finish_point(node_name)
+
+        # Store nodes with goto for precedence handling in legacy edges
+        self._nodes_with_goto = nodes_with_goto
+
+    def _process_node_goto(
+        self,
+        graph: StateGraph,
+        node_name: str,
+        goto: Union[str, List[Dict[str, Any]]],
+        node_names: Dict[str, int],
+        nodes_list: List[Dict[str, Any]],
+        current_idx: int,
+    ) -> None:
+        """
+        Process the goto property for a single node.
+
+        TEA-YAML-002: Handles both unconditional (string) and conditional (list) goto.
+
+        Args:
+            graph: The StateGraph to add edges to
+            node_name: Name of the current node
+            goto: The goto value (string or list of rules)
+            node_names: Mapping of node names to indices for validation
+            nodes_list: Full list of node configurations
+            current_idx: Index of current node in nodes_list
+
+        Raises:
+            ValueError: If goto target references a non-existent node
+        """
+        if isinstance(goto, str):
+            # Unconditional jump: goto: "target_node"
+            target = goto
+
+            # Validate target exists (AC-6: error at validation time)
+            if target != END and target not in node_names:
+                raise ValueError(
+                    f"Node '{node_name}' has goto to non-existent node '{target}'. "
+                    f"Available nodes: {list(node_names.keys())}"
+                )
+
+            if target == END:
+                graph.set_finish_point(node_name)
+            else:
+                graph.add_edge(node_name, target)
+
+        elif isinstance(goto, list):
+            # Conditional goto: list of {if: expr, to: target} rules
+            has_fallback = False
+
+            for rule in goto:
+                target = rule.get("to")
+                condition = rule.get("if")
+
+                if target is None:
+                    raise ValueError(
+                        f"Node '{node_name}' has goto rule without 'to' field: {rule}"
+                    )
+
+                # Validate target exists (AC-6: error at validation time)
+                if target != END and target not in node_names:
+                    raise ValueError(
+                        f"Node '{node_name}' has goto to non-existent node '{target}'. "
+                        f"Available nodes: {list(node_names.keys())}"
+                    )
+
+                if condition is None:
+                    # Fallback rule (no condition = always true)
+                    has_fallback = True
+                    if target == END:
+                        graph.set_finish_point(node_name)
+                    else:
+                        graph.add_edge(node_name, target)
+                else:
+                    # Conditional rule: add conditional edge
+                    # Create a condition function that evaluates the expression
+                    # The condition should have access to 'state' and 'result'
+                    def make_goto_condition(expr):
+                        def cond_func(state, result=None, **kwargs):
+                            # Build evaluation context with state and result
+                            return self._evaluate_goto_condition(expr, state, result)
+
+                        return cond_func
+
+                    cond_func = make_goto_condition(condition)
+
+                    if target == END:
+                        # Conditional finish
+                        graph.add_conditional_edges(node_name, cond_func, {True: END})
+                    else:
+                        graph.add_conditional_edges(
+                            node_name, cond_func, {True: target}
+                        )
+
+            # If no fallback rule, don't add implicit chaining
+            # When using conditional goto, the user must explicitly specify all branches
+            # including a fallback with `{to: next_node}` if they want one
+            # This prevents the implicit edge from conflicting with conditional edges
+        else:
+            raise ValueError(
+                f"Node '{node_name}' has invalid goto type: {type(goto)}. "
+                f"Expected string or list, got: {goto}"
+            )
+
+    def _evaluate_goto_condition(
+        self, expr: str, state: Dict[str, Any], result: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Evaluate a goto condition expression.
+
+        TEA-YAML-002: Provides access to both 'state' and 'result' in condition expressions.
+
+        Args:
+            expr: The condition expression (Jinja2 syntax)
+            state: The current agent state
+            result: The result returned by the current node's execution (optional)
+
+        Returns:
+            Boolean result of evaluating the expression
+
+        Example expressions:
+            - "result.status == 'error'"
+            - "state.retry_count < 3"
+            - "result.confidence < 0.7 and state.require_review"
+        """
+        # Build evaluation context with state and result
+        context = {
+            "state": DotDict(state) if state else DotDict({}),
+            "result": DotDict(result) if result else DotDict({}),
+            "variables": DotDict(self.variables),
+            "secrets": DotDict(self.secrets),
+        }
+
+        # Wrap expression in Jinja2 syntax if not already
+        if not expr.strip().startswith("{{") and not expr.strip().startswith("{%"):
+            template_expr = f"{{{{ {expr} }}}}"
+        else:
+            template_expr = expr
+
+        try:
+            # Use existing template processing
+            cache_key = f"goto_cond:{template_expr}"
+            if cache_key not in self._template_cache:
+                self._template_cache[cache_key] = self._jinja_env.from_string(
+                    template_expr
+                )
+
+            template = self._template_cache[cache_key]
+            rendered = template.render(**context).strip().lower()
+
+            # Convert rendered string to boolean
+            return rendered in ("true", "1", "yes")
+
+        except Exception as e:
+            # Log warning and return False on evaluation errors
+            logger.warning(
+                f"Failed to evaluate goto condition '{expr}': {e}. Returning False."
+            )
+            return False
+
     def _add_edge_from_config(
         self, graph: StateGraph, edge_config: Dict[str, Any]
     ) -> None:
-        """Add an edge to the graph from configuration."""
+        """Add an edge to the graph from configuration.
+
+        TEA-YAML-002: Now respects precedence - if a node has a goto property,
+        edges from that node in the legacy edges section are skipped (logged as warning).
+        """
         edge_type = edge_config.get("type", "normal")
         # For entry edges, default from_node to START if not specified
         from_node = edge_config.get("from", START if edge_type == "entry" else None)
+
+        # TEA-YAML-002: Precedence check - skip edges for nodes with goto
+        nodes_with_goto = getattr(self, "_nodes_with_goto", set())
+        if from_node in nodes_with_goto and from_node != START:
+            logger.debug(
+                f"Skipping legacy edge from '{from_node}' because node has 'goto' property (goto takes precedence)"
+            )
+            return
         if from_node is None:
             from_node = edge_config[
                 "from"

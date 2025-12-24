@@ -37,11 +37,7 @@ nodes:
       state(number_string, NumStr),
       atom_string(NumStr, "123").
 
-edges:
-  - from: __start__
-    to: test_coercion
-  - from: test_coercion
-    to: __end__
+# Implicit flow: test_coercion -> __end__
 
 initial_state:
   integer_as_float: 42.0

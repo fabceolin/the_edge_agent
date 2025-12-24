@@ -19,11 +19,7 @@ nodes:
       loop :- loop.
       loop.
 
-edges:
-  - from: __start__
-    to: infinite_recursion
-  - from: infinite_recursion
-    to: __end__
+# Implicit flow: infinite_recursion -> __end__
 
 initial_state:
   start: true

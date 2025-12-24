@@ -123,11 +123,7 @@ nodes:
       return(results, Results),
       return(inference_chain, Chain).
 
-edges:
-  - from: __start__
-    to: reason_over_kg
-  - from: reason_over_kg
-    to: __end__
+# Implicit flow: reason_over_kg -> __end__
 
 # ============================================================================
 # Expected Output (for query_person=alice, relationship_type=grandchildren):

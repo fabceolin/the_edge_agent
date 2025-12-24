@@ -336,19 +336,7 @@ nodes:
 
       return {"answer": answer}
 
-edges:
-  - from: __start__
-    to: extract_facts
-  - from: extract_facts
-    to: parse_extraction
-  - from: parse_extraction
-    to: generate_prolog_facts
-  - from: generate_prolog_facts
-    to: prolog_reasoning
-  - from: prolog_reasoning
-    to: format_answer
-  - from: format_answer
-    to: __end__
+# Implicit flow: extract_facts -> parse_extraction -> generate_prolog_facts -> prolog_reasoning -> format_answer -> __end__
 
 # ============================================================
 # EXAMPLE USAGE

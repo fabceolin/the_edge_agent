@@ -211,13 +211,7 @@ nodes:
       return(sla_hours, SLA),
       return(applied_rules, AppliedRules).
 
-edges:
-  - from: __start__
-    to: classify_input
-  - from: classify_input
-    to: apply_domain_rules
-  - from: apply_domain_rules
-    to: __end__
+# Implicit flow: classify_input -> apply_domain_rules -> __end__
 
 # ============================================================================
 # Expected Output for Initial State:

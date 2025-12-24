@@ -16,11 +16,7 @@ nodes:
       state(input, X,
       X = test.
 
-edges:
-  - from: __start__
-    to: syntax_error_node
-  - from: syntax_error_node
-    to: __end__
+# Implicit flow: syntax_error_node -> __end__
 
 initial_state:
   input: "test"

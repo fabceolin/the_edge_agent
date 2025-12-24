@@ -39,7 +39,8 @@ rayon = "1.10"
 crossbeam = "0.8"
 
 # HTTP client (blocking for simplicity)
-reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
+# NOTE: rustls-tls is needed for HTTPS; for local HTTP (e.g., Ollama), plain HTTP works
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }

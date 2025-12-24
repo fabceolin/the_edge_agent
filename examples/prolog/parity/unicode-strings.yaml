@@ -41,11 +41,7 @@ nodes:
       atom_length(Mixed, MixedLen),
       MixedLen > 0.
 
-edges:
-  - from: __start__
-    to: verify_unicode
-  - from: verify_unicode
-    to: __end__
+# Implicit flow: verify_unicode -> __end__
 
 initial_state:
   ascii_string: "Hello, World!"

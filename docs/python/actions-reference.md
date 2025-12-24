@@ -18,7 +18,7 @@ The Python implementation provides 20+ action modules organized by domain:
 
 #### LLM Provider Configuration
 
-The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Ollama**.
+The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, and **LiteLLM**.
 
 **Provider Detection Priority:**
 1. Explicit `provider` parameter (highest priority)
@@ -85,6 +85,56 @@ Tool calling with Ollama requires models that support it:
             type: string
             required: true
 ```
+
+#### LiteLLM Provider (TEA-LLM-003)
+
+LiteLLM provides access to 100+ LLM providers through a unified interface. Install with:
+
+```bash
+pip install the_edge_agent[litellm]
+```
+
+**LiteLLM Example:**
+
+```yaml
+# Use Anthropic Claude via LiteLLM
+- name: ask_claude
+  uses: llm.call
+  with:
+    provider: litellm
+    model: anthropic/claude-3-opus-20240229
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+
+# Use Google Gemini via LiteLLM
+- name: ask_gemini
+  uses: llm.call
+  with:
+    provider: litellm
+    model: gemini/gemini-pro
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+```
+
+**LiteLLM Model Format:** `provider/model-name`
+
+| Provider | Model Example |
+|----------|---------------|
+| Anthropic | `anthropic/claude-3-opus-20240229` |
+| AWS Bedrock | `bedrock/anthropic.claude-v2` |
+| Google Gemini | `gemini/gemini-pro` |
+| Cohere | `cohere/command-r-plus` |
+| Mistral | `mistral/mistral-large-latest` |
+
+**LiteLLM Features:**
+- Built-in cost tracking (`cost_usd` in response)
+- Opik observability integration (`opik_trace=True`)
+- Streaming support (`llm.stream`)
+- Tool calling support (`llm.tools`)
+
+See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete list.
 
 ### HTTP Actions
 

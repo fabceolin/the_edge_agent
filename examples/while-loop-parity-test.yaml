@@ -15,8 +15,4 @@ nodes:
           local sum = state.sum or 0
           return { count = count + 1, sum = sum + count + 1 }
 
-edges:
-  - from: __start__
-    to: counter_loop
-  - from: counter_loop
-    to: __end__
+# Implicit flow: counter_loop -> __end__

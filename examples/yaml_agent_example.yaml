@@ -29,6 +29,10 @@ nodes:
       type: expression
       value: len(state.get("search_results", [])) > 0
       output_key: has_results
+    goto:
+      - if: "state.has_results == True"
+        to: summarize
+      - to: handle_empty  # Fallback for no results
 
   # Node 3: Multi-step summarization (GitHub Actions style)
   - name: summarize
@@ -67,6 +71,7 @@ nodes:
     with:
       path: "{{ variables.output_dir }}/{{ state.query }}.md"
       content: "{{ state.formatted_output }}"
+    goto: __end__
 
   # Node 6: Empty results handler
   - name: handle_empty
@@ -74,39 +79,10 @@ nodes:
       return {
         "formatted_output": f"No results found for query: {state['query']}"
       }
+    goto: __end__
 
-edges:
-  - from: __start__
-    to: search
-
-  - from: search
-    to: validate_results
-
-  - from: validate_results
-    to: summarize
-    condition:
-      type: expression
-      value: state["has_results"]
-    when: true
-
-  - from: validate_results
-    to: handle_empty
-    condition:
-      type: expression
-      value: state["has_results"]
-    when: false
-
-  - from: summarize
-    to: format_output
-
-  - from: format_output
-    to: save_report
-
-  - from: handle_empty
-    to: __end__
-
-  - from: save_report
-    to: __end__
+# Implicit flow: search -> validate_results -> (goto) -> summarize -> format_output -> save_report -> __end__
+#                                           \-> handle_empty -> __end__
 
 config:
   raise_exceptions: true

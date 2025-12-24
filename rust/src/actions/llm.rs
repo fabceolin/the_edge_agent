@@ -288,18 +288,23 @@ fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult
     };
 
     // Make HTTP request
-    let client = reqwest::blocking::Client::new();
+    // Default timeout: 300 seconds (5 minutes) to accommodate slow models like local Ollama
+    let timeout_secs = params
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
+
     let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
 
     let mut http_req = client.post(&url).json(&request);
 
     if let Some(ref key) = api_key {
         http_req = http_req.header("Authorization", format!("Bearer {}", key));
-    }
-
-    // Get timeout
-    if let Some(timeout) = params.get("timeout").and_then(|v| v.as_u64()) {
-        http_req = http_req.timeout(std::time::Duration::from_secs(timeout));
     }
 
     let response = http_req.send().map_err(|e| TeaError::Http(e.to_string()))?;
@@ -494,18 +499,23 @@ fn llm_stream(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
     };
 
     // Make HTTP request
-    let client = reqwest::blocking::Client::new();
+    // Default timeout: 300 seconds (5 minutes) to accommodate slow models like local Ollama
+    let timeout_secs = params
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
+
     let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
 
     let mut http_req = client.post(&url).json(&request);
 
     if let Some(ref key) = api_key {
         http_req = http_req.header("Authorization", format!("Bearer {}", key));
-    }
-
-    // Get timeout
-    if let Some(timeout) = params.get("timeout").and_then(|v| v.as_u64()) {
-        http_req = http_req.timeout(std::time::Duration::from_secs(timeout));
     }
 
     let response = http_req.send().map_err(|e| TeaError::Http(e.to_string()))?;
@@ -731,7 +741,17 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
             });
         };
 
-    let client = reqwest::blocking::Client::new();
+    // Default timeout: 300 seconds (5 minutes) to accommodate slow models like local Ollama
+    let timeout_secs = params
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
+
     let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
 
     let mut all_tool_calls: Vec<JsonValue> = vec![];

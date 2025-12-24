@@ -121,11 +121,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         return round(prompt_cost + completion_cost, 6)
 
-    def llm_call(state, model, messages, temperature=0.7, max_retries=0,
-                 base_delay=1.0, max_delay=60.0, opik_trace=False,
-                 provider="auto", api_base=None, **kwargs):
+    def llm_call(
+        state,
+        model,
+        messages,
+        temperature=0.7,
+        max_retries=0,
+        base_delay=1.0,
+        max_delay=60.0,
+        opik_trace=False,
+        provider="auto",
+        api_base=None,
+        timeout=300,
+        **kwargs,
+    ):
         """
-        Call a language model (supports OpenAI, Azure OpenAI, and Ollama) with optional retry logic.
+        Call a language model (supports OpenAI, Azure OpenAI, Ollama, and LiteLLM) with optional retry logic.
 
         Provider Detection Priority:
         1. Explicit `provider` parameter (highest priority)
@@ -144,9 +155,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         - OLLAMA_API_BASE: Ollama API endpoint (default: http://localhost:11434/v1)
         - No API key required
 
+        For LiteLLM (TEA-LLM-003):
+        - Supports 100+ LLM providers via unified interface
+        - Model format: "provider/model-name" (e.g., "anthropic/claude-3-opus")
+        - Requires: pip install litellm
+        - Environment variables per provider (e.g., ANTHROPIC_API_KEY, etc.)
+
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "llama3.2", "mistral")
+            model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
             max_retries: Maximum retry attempts (default: 0, no retry)
@@ -155,9 +172,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry (model, tokens, latency). Requires opik SDK installed.
                        Default: False (opt-in feature).
-            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
             api_base: Custom API base URL (overrides defaults)
-            **kwargs: Additional parameters passed to OpenAI
+            timeout: Request timeout in seconds (default: 300 for slow local models like Ollama)
+            **kwargs: Additional parameters passed to OpenAI/LiteLLM
 
         Returns:
             When max_retries=0:
@@ -166,6 +184,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 {"content": str, "usage": dict, "attempts": int, "total_delay": float}
             When opik_trace=True:
                 Result dict also includes "cost_usd": float (estimated cost)
+            When provider=litellm:
+                Result dict also includes "cost_usd": float (from LiteLLM cost tracking)
             Or {"error": str, "success": False, "attempts": int} on failure
 
         Retry behavior:
@@ -174,11 +194,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             - Retries: HTTP 429, 5xx errors, timeouts, connection errors
             - Fails fast: HTTP 4xx (except 429)
         """
-        try:
-            import os
-            from openai import OpenAI, AzureOpenAI, APIError, APIConnectionError, RateLimitError, APITimeoutError
-        except ImportError:
-            raise ImportError("OpenAI library not installed. Install with: pip install openai")
+        import os
 
         # Determine provider based on priority:
         # 1. Explicit provider parameter
@@ -190,18 +206,183 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             # Check environment variables in priority order
             if os.getenv("OLLAMA_API_BASE"):
                 resolved_provider = "ollama"
-            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv(
+                "AZURE_OPENAI_ENDPOINT"
+            ):
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
+
+        # LiteLLM provider - uses separate code path (TEA-LLM-003)
+        if resolved_provider == "litellm":
+            try:
+                import litellm
+            except ImportError:
+                raise ImportError(
+                    "LiteLLM library not installed. Install with: pip install litellm"
+                )
+
+            # Set up Opik callback if requested
+            if opik_trace:
+                try:
+                    from opik.integrations.litellm import OpikLogger
+
+                    opik_logger = OpikLogger()
+                    litellm.callbacks = [opik_logger]
+                except ImportError:
+                    import warnings
+
+                    warnings.warn(
+                        "opik_trace=True but opik SDK not installed. "
+                        "Install with: pip install opik",
+                        RuntimeWarning,
+                    )
+
+            # Filter out internal parameters
+            filtered_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in (
+                    "state",
+                    "config",
+                    "node",
+                    "graph",
+                    "parallel_results",
+                    "max_retries",
+                    "base_delay",
+                    "max_delay",
+                    "opik_trace",
+                    "provider",
+                    "api_base",
+                )
+            }
+
+            # Add api_base if provided
+            if api_base:
+                filtered_kwargs["api_base"] = api_base
+
+            # Helper to make LiteLLM API call
+            def make_litellm_call():
+                return litellm.completion(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    **filtered_kwargs,
+                )
+
+            # Helper to build result from LiteLLM response
+            def build_litellm_result(response, extra_fields=None):
+                usage = {}
+                if hasattr(response, "usage") and response.usage:
+                    usage = (
+                        response.usage.model_dump()
+                        if hasattr(response.usage, "model_dump")
+                        else dict(response.usage)
+                    )
+
+                result = {
+                    "content": response.choices[0].message.content,
+                    "usage": usage,
+                }
+
+                # LiteLLM has built-in cost calculation
+                try:
+                    cost = litellm.completion_cost(completion_response=response)
+                    result["cost_usd"] = round(cost, 6)
+                except Exception:
+                    # Cost calculation may fail for some providers
+                    pass
+
+                if extra_fields:
+                    result.update(extra_fields)
+                return result
+
+            # No retry logic (max_retries=0)
+            if max_retries == 0:
+                try:
+                    response = make_litellm_call()
+                    return build_litellm_result(response)
+                except Exception as e:
+                    # Check for rate limit with Retry-After
+                    if hasattr(e, "response") and e.response is not None:
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                time.sleep(float(retry_after))
+                                response = make_litellm_call()
+                                return build_litellm_result(response)
+                            except Exception:
+                                raise
+                    raise
+
+            # Full retry logic (max_retries>0)
+            attempts = 0
+            total_delay = 0.0
+            last_error = None
+
+            while attempts <= max_retries:
+                try:
+                    response = make_litellm_call()
+                    return build_litellm_result(
+                        response, {"attempts": attempts + 1, "total_delay": total_delay}
+                    )
+                except Exception as e:
+                    last_error = e
+                    attempts += 1
+
+                    if attempts > max_retries:
+                        break
+
+                    # Check for Retry-After header
+                    retry_after = None
+                    if hasattr(e, "response") and e.response is not None:
+                        retry_after = e.response.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                retry_after = float(retry_after)
+                            except (ValueError, TypeError):
+                                retry_after = None
+
+                    if retry_after is not None:
+                        delay = min(retry_after, max_delay)
+                    else:
+                        delay = min(base_delay * (2 ** (attempts - 1)), max_delay)
+
+                    total_delay += delay
+                    time.sleep(delay)
+
+            return {
+                "error": f"Max retries ({max_retries}) exceeded. Last error: {str(last_error)}",
+                "success": False,
+                "attempts": attempts,
+                "total_delay": total_delay,
+            }
+
+        # OpenAI/Azure/Ollama providers - use OpenAI SDK
+        try:
+            from openai import (
+                OpenAI,
+                AzureOpenAI,
+                APIError,
+                APIConnectionError,
+                RateLimitError,
+                APITimeoutError,
+            )
+        except ImportError:
+            raise ImportError(
+                "OpenAI library not installed. Install with: pip install openai"
+            )
 
         # Initialize client based on resolved provider
         is_ollama = False
         if resolved_provider == "ollama":
             # Ollama: Use OpenAI-compatible API with no auth
-            ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+            ollama_base = api_base or os.getenv(
+                "OLLAMA_API_BASE", "http://localhost:11434/v1"
+            )
             # Ollama doesn't require API key but OpenAI SDK needs one, use dummy value
-            client = OpenAI(base_url=ollama_base, api_key="ollama")
+            client = OpenAI(base_url=ollama_base, api_key="ollama", timeout=timeout)
             deployment = model
             is_ollama = True
         elif resolved_provider == "azure":
@@ -211,21 +392,23 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             client = AzureOpenAI(
                 api_key=azure_api_key,
                 azure_endpoint=azure_endpoint,
-                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
+                timeout=timeout,
             )
             deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
         else:
             # Standard OpenAI
             if api_base:
-                client = OpenAI(base_url=api_base)
+                client = OpenAI(base_url=api_base, timeout=timeout)
             else:
-                client = OpenAI()
+                client = OpenAI(timeout=timeout)
             deployment = model
 
         # Apply Opik tracing wrapper if requested
         if opik_trace:
             try:
                 from opik.integrations.openai import track_openai
+
                 # Check if client is already wrapped (prevent double-wrapping)
                 client_id = id(client)
                 if client_id not in _opik_wrapped_clients:
@@ -233,26 +416,39 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     _opik_wrapped_clients.add(id(client))
             except ImportError:
                 import warnings
+
                 warnings.warn(
                     "opik_trace=True but opik SDK not installed. "
                     "Install with: pip install opik",
-                    RuntimeWarning
+                    RuntimeWarning,
                 )
 
         # Filter out The Edge Agent internal parameters and retry parameters
         filtered_kwargs = {
-            k: v for k, v in kwargs.items()
-            if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
-                         'max_retries', 'base_delay', 'max_delay', 'opik_trace',
-                         'provider', 'api_base')
+            k: v
+            for k, v in kwargs.items()
+            if k
+            not in (
+                "state",
+                "config",
+                "node",
+                "graph",
+                "parallel_results",
+                "max_retries",
+                "base_delay",
+                "max_delay",
+                "opik_trace",
+                "provider",
+                "api_base",
+            )
         }
 
         # Helper function to extract Retry-After header
         def extract_retry_after(error):
             """Extract Retry-After value from error response headers."""
             retry_after = None
-            if hasattr(error, 'response') and error.response is not None:
-                retry_after = error.response.headers.get('Retry-After')
+            if hasattr(error, "response") and error.response is not None:
+                retry_after = error.response.headers.get("Retry-After")
                 if retry_after:
                     try:
                         retry_after = float(retry_after)
@@ -267,20 +463,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 model=deployment,
                 messages=messages,
                 temperature=temperature,
-                **filtered_kwargs
+                **filtered_kwargs,
             )
 
         # Helper function to build result with optional cost
         def build_result(response, extra_fields=None):
             """Build result dict with optional cost calculation."""
-            usage = response.usage.model_dump() if hasattr(response.usage, 'model_dump') else {}
-            result = {
-                'content': response.choices[0].message.content,
-                'usage': usage
-            }
+            usage = (
+                response.usage.model_dump()
+                if hasattr(response.usage, "model_dump")
+                else {}
+            )
+            result = {"content": response.choices[0].message.content, "usage": usage}
             # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
             if opik_trace and usage and not is_ollama:
-                result['cost_usd'] = calculate_cost(model, usage)
+                result["cost_usd"] = calculate_cost(model, usage)
             if extra_fields:
                 result.update(extra_fields)
             return result
@@ -313,10 +510,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         while attempts <= max_retries:
             try:
                 response = make_api_call()
-                return build_result(response, {
-                    "attempts": attempts + 1,
-                    "total_delay": total_delay
-                })
+                return build_result(
+                    response, {"attempts": attempts + 1, "total_delay": total_delay}
+                )
 
             except RateLimitError as e:
                 # Rate limit - check for Retry-After header
@@ -352,7 +548,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             except APIError as e:
                 # Check if it's a 5xx error (retryable)
-                status_code = getattr(e, 'status_code', None)
+                status_code = getattr(e, "status_code", None)
 
                 if status_code is not None and 500 <= status_code < 600:
                     # Server error - retry
@@ -371,7 +567,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         "error": f"LLM API error (non-retryable): {str(e)}",
                         "success": False,
                         "attempts": attempts + 1,
-                        "status_code": status_code
+                        "status_code": status_code,
                     }
 
             except Exception as e:
@@ -379,7 +575,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 return {
                     "error": f"Unexpected error: {str(e)}",
                     "success": False,
-                    "attempts": attempts + 1
+                    "attempts": attempts + 1,
                 }
 
         # Max retries exceeded
@@ -387,14 +583,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             "error": f"Max retries ({max_retries}) exceeded. Last error: {str(last_error)}",
             "success": False,
             "attempts": attempts,
-            "total_delay": total_delay
+            "total_delay": total_delay,
         }
 
-    registry['llm.call'] = llm_call
-    registry['actions.llm_call'] = llm_call
+    registry["llm.call"] = llm_call
+    registry["actions.llm_call"] = llm_call
 
-    def llm_stream(state, model, messages, temperature=0.7, opik_trace=False,
-                   provider="auto", api_base=None, **kwargs):
+    def llm_stream(
+        state,
+        model,
+        messages,
+        temperature=0.7,
+        opik_trace=False,
+        provider="auto",
+        api_base=None,
+        **kwargs,
+    ):
         """
         Stream LLM responses token-by-token.
 
@@ -406,36 +610,36 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
         3. Default → OpenAI
 
+        For LiteLLM (TEA-LLM-003):
+        - Supports 100+ LLM providers via unified streaming interface
+        - Model format: "provider/model-name" (e.g., "anthropic/claude-3-opus")
+
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "llama3.2", "mistral")
+            model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry. Opik's wrapper handles streaming chunk aggregation.
+                       For LiteLLM, uses OpikLogger callback.
                        Default: False (opt-in feature).
-            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
             api_base: Custom API base URL (overrides defaults)
-            **kwargs: Additional parameters passed to OpenAI
+            **kwargs: Additional parameters passed to OpenAI/LiteLLM
 
         Returns:
             {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
             When opik_trace=True (and not Ollama):
                 Result dict also includes "cost_usd": float (estimated cost)
+            When provider=litellm:
+                Result dict also includes "cost_usd": float (from LiteLLM cost tracking)
             Or {"error": str, "success": False} on failure
 
         Example:
             result = llm_stream(state, "gpt-4", messages)
             print(result["content"])
         """
-        try:
-            import os
-            from openai import OpenAI, AzureOpenAI
-        except ImportError:
-            return {
-                "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
-                "success": False
-            }
+        import os
 
         try:
             # Determine provider based on priority (same as llm.call)
@@ -444,15 +648,127 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             if resolved_provider == "auto":
                 if os.getenv("OLLAMA_API_BASE"):
                     resolved_provider = "ollama"
-                elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+                elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv(
+                    "AZURE_OPENAI_ENDPOINT"
+                ):
                     resolved_provider = "azure"
                 else:
                     resolved_provider = "openai"
 
+            # LiteLLM provider - uses separate streaming code path (TEA-LLM-003)
+            if resolved_provider == "litellm":
+                try:
+                    import litellm
+                except ImportError:
+                    return {
+                        "error": "LiteLLM library not installed. Install with: pip install litellm",
+                        "success": False,
+                    }
+
+                # Set up Opik callback if requested
+                if opik_trace:
+                    try:
+                        from opik.integrations.litellm import OpikLogger
+
+                        opik_logger = OpikLogger()
+                        litellm.callbacks = [opik_logger]
+                    except ImportError:
+                        import warnings
+
+                        warnings.warn(
+                            "opik_trace=True but opik SDK not installed. "
+                            "Install with: pip install opik",
+                            RuntimeWarning,
+                        )
+
+                # Filter out internal parameters
+                filtered_kwargs = {
+                    k: v
+                    for k, v in kwargs.items()
+                    if k
+                    not in (
+                        "state",
+                        "config",
+                        "node",
+                        "graph",
+                        "parallel_results",
+                        "opik_trace",
+                        "provider",
+                        "api_base",
+                    )
+                }
+
+                if api_base:
+                    filtered_kwargs["api_base"] = api_base
+
+                # Use LiteLLM streaming
+                stream = litellm.completion(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    stream=True,
+                    **filtered_kwargs,
+                )
+
+                full_content = []
+                chunk_index = 0
+                usage_data = {}
+
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        full_content.append(content)
+                        chunk_index += 1
+
+                    # Capture usage if available
+                    if hasattr(chunk, "usage") and chunk.usage is not None:
+                        usage_data = (
+                            chunk.usage.model_dump()
+                            if hasattr(chunk.usage, "model_dump")
+                            else dict(chunk.usage)
+                        )
+
+                result = {
+                    "content": "".join(full_content),
+                    "usage": usage_data,
+                    "streamed": True,
+                    "chunk_count": chunk_index,
+                }
+
+                # LiteLLM cost calculation (if usage available)
+                if usage_data:
+                    try:
+                        # For streaming, we need to estimate cost from usage
+                        cost = litellm.cost_per_token(
+                            model=model,
+                            prompt_tokens=usage_data.get("prompt_tokens", 0),
+                            completion_tokens=usage_data.get("completion_tokens", 0),
+                        )
+                        if isinstance(cost, tuple):
+                            result["cost_usd"] = round(sum(cost), 6)
+                        else:
+                            result["cost_usd"] = round(cost, 6)
+                    except Exception:
+                        # Cost calculation may fail for some providers
+                        pass
+
+                return result
+
+            # OpenAI/Azure/Ollama providers - use OpenAI SDK
+            try:
+                from openai import OpenAI, AzureOpenAI
+            except ImportError:
+                return {
+                    "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
+                    "success": False,
+                }
+
             # Initialize client based on resolved provider
             is_ollama = False
             if resolved_provider == "ollama":
-                ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+                ollama_base = api_base or os.getenv(
+                    "OLLAMA_API_BASE", "http://localhost:11434/v1"
+                )
                 client = OpenAI(base_url=ollama_base, api_key="ollama")
                 deployment = model
                 is_ollama = True
@@ -462,7 +778,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 client = AzureOpenAI(
                     api_key=azure_api_key,
                     azure_endpoint=azure_endpoint,
-                    api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+                    api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
                 )
                 deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
             else:
@@ -476,23 +792,35 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             if opik_trace:
                 try:
                     from opik.integrations.openai import track_openai
+
                     client_id = id(client)
                     if client_id not in _opik_wrapped_clients:
                         client = track_openai(client)
                         _opik_wrapped_clients.add(id(client))
                 except ImportError:
                     import warnings
+
                     warnings.warn(
                         "opik_trace=True but opik SDK not installed. "
                         "Install with: pip install opik",
-                        RuntimeWarning
+                        RuntimeWarning,
                     )
 
             # Filter out internal parameters
             filtered_kwargs = {
-                k: v for k, v in kwargs.items()
-                if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
-                             'opik_trace', 'provider', 'api_base')
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in (
+                    "state",
+                    "config",
+                    "node",
+                    "graph",
+                    "parallel_results",
+                    "opik_trace",
+                    "provider",
+                    "api_base",
+                )
             }
 
             stream = client.chat.completions.create(
@@ -501,7 +829,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 temperature=temperature,
                 stream=True,
                 stream_options={"include_usage": True},
-                **filtered_kwargs
+                **filtered_kwargs,
             )
 
             # Collect full content for final result
@@ -516,33 +844,42 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     chunk_index += 1
 
                 # Capture usage if available (usually in final chunk)
-                if hasattr(chunk, 'usage') and chunk.usage is not None:
-                    usage_data = chunk.usage.model_dump() if hasattr(chunk.usage, 'model_dump') else {}
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    usage_data = (
+                        chunk.usage.model_dump()
+                        if hasattr(chunk.usage, "model_dump")
+                        else {}
+                    )
 
             result = {
                 "content": "".join(full_content),
                 "usage": usage_data,
                 "streamed": True,
-                "chunk_count": chunk_index
+                "chunk_count": chunk_index,
             }
 
             # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
             if opik_trace and usage_data and not is_ollama:
-                result['cost_usd'] = calculate_cost(model, usage_data)
+                result["cost_usd"] = calculate_cost(model, usage_data)
 
             return result
 
         except Exception as e:
-            return {
-                "error": f"LLM streaming failed: {str(e)}",
-                "success": False
-            }
+            return {"error": f"LLM streaming failed: {str(e)}", "success": False}
 
-    registry['llm.stream'] = llm_stream
-    registry['actions.llm_stream'] = llm_stream
+    registry["llm.stream"] = llm_stream
+    registry["actions.llm_stream"] = llm_stream
 
-    def llm_retry(state, model, messages, max_retries=3, base_delay=1.0,
-                  max_delay=60.0, temperature=0.7, **kwargs):
+    def llm_retry(
+        state,
+        model,
+        messages,
+        max_retries=3,
+        base_delay=1.0,
+        max_delay=60.0,
+        temperature=0.7,
+        **kwargs,
+    ):
         """
         DEPRECATED: Use llm.call with max_retries parameter instead.
 
@@ -575,27 +912,40 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             Or {"error": str, "success": False, "attempts": int} on failure
         """
         import warnings
+
         warnings.warn(
             "llm.retry is deprecated. Use llm.call with max_retries parameter instead. "
             "This action will be removed in v0.9.0.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
         return llm_call(
-            state, model, messages,
+            state,
+            model,
+            messages,
             max_retries=max_retries,
             base_delay=base_delay,
             max_delay=max_delay,
             temperature=temperature,
-            **kwargs
+            **kwargs,
         )
 
-    registry['llm.retry'] = llm_retry
-    registry['actions.llm_retry'] = llm_retry
+    registry["llm.retry"] = llm_retry
+    registry["actions.llm_retry"] = llm_retry
 
-    def llm_tools(state, model, messages, tools, tool_choice="auto",
-                  max_tool_rounds=10, temperature=0.7,
-                  provider="auto", api_base=None, **kwargs):
+    def llm_tools(
+        state,
+        model,
+        messages,
+        tools,
+        tool_choice="auto",
+        max_tool_rounds=10,
+        temperature=0.7,
+        opik_trace=False,
+        provider="auto",
+        api_base=None,
+        **kwargs,
+    ):
         """
         LLM call with tool/function calling support.
 
@@ -607,20 +957,28 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
         3. Default → OpenAI
 
+        For LiteLLM (TEA-LLM-003):
+        - Supports 100+ LLM providers with tool calling via unified interface
+        - Model format: "provider/model-name" (e.g., "anthropic/claude-3-opus")
+        - Tool calling support varies by provider/model
+
         Note: Tool calling with Ollama requires models that support it
         (e.g., llama3.1+, mistral-nemo, qwen2.5).
 
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "llama3.1", "mistral-nemo")
+            model: Model name (e.g., "gpt-4", "llama3.1", "anthropic/claude-3-opus")
             messages: List of message dicts with 'role' and 'content'
             tools: List of tool definitions (YAML-style or OpenAI-style)
             tool_choice: Tool selection mode - "auto", "none", or specific tool
             max_tool_rounds: Maximum tool call rounds (default: 10)
             temperature: Sampling temperature (default: 0.7)
-            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            opik_trace: If True, enable Opik tracing for LLM calls.
+                       For LiteLLM, uses OpikLogger callback.
+                       Default: False (opt-in feature).
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
             api_base: Custom API base URL (overrides defaults)
-            **kwargs: Additional parameters passed to OpenAI
+            **kwargs: Additional parameters passed to OpenAI/LiteLLM
 
         Tool definition YAML schema:
             tools:
@@ -642,14 +1000,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             }
             Or {"error": str, "success": False} on failure
         """
-        try:
-            import os
-            from openai import OpenAI, AzureOpenAI
-        except ImportError:
-            return {
-                "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
-                "success": False
-            }
+        import os
 
         # Convert YAML-style tools to OpenAI format
         def convert_tool_to_openai_format(tool_def):
@@ -671,7 +1022,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 if isinstance(param_spec, dict):
                     prop = {
                         "type": param_spec.get("type", "string"),
-                        "description": param_spec.get("description", "")
+                        "description": param_spec.get("description", ""),
                     }
                     if "enum" in param_spec:
                         prop["enum"] = param_spec["enum"]
@@ -691,9 +1042,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "parameters": {
                         "type": "object",
                         "properties": properties,
-                        "required": required
-                    }
-                }
+                        "required": required,
+                    },
+                },
             }
 
         # Validate tool definitions
@@ -743,10 +1094,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         for tool_def in tools:
             error = validate_tool_definition(tool_def)
             if error:
-                return {
-                    "error": f"Invalid tool definition: {error}",
-                    "success": False
-                }
+                return {"error": f"Invalid tool definition: {error}", "success": False}
             openai_tools.append(convert_tool_to_openai_format(tool_def))
 
         # Determine provider based on priority (same as llm.call)
@@ -755,14 +1103,169 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if resolved_provider == "auto":
             if os.getenv("OLLAMA_API_BASE"):
                 resolved_provider = "ollama"
-            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv(
+                "AZURE_OPENAI_ENDPOINT"
+            ):
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
 
+        # LiteLLM provider - uses separate tool calling code path (TEA-LLM-003)
+        if resolved_provider == "litellm":
+            try:
+                import litellm
+            except ImportError:
+                return {
+                    "error": "LiteLLM library not installed. Install with: pip install litellm",
+                    "success": False,
+                }
+
+            # Set up Opik callback if requested
+            if opik_trace:
+                try:
+                    from opik.integrations.litellm import OpikLogger
+
+                    opik_logger = OpikLogger()
+                    litellm.callbacks = [opik_logger]
+                except ImportError:
+                    import warnings
+
+                    warnings.warn(
+                        "opik_trace=True but opik SDK not installed. "
+                        "Install with: pip install opik",
+                        RuntimeWarning,
+                    )
+
+            # Filter out internal parameters
+            filtered_kwargs = {
+                k: v
+                for k, v in kwargs.items()
+                if k
+                not in (
+                    "state",
+                    "config",
+                    "node",
+                    "graph",
+                    "parallel_results",
+                    "tools",
+                    "tool_choice",
+                    "max_tool_rounds",
+                    "opik_trace",
+                    "provider",
+                    "api_base",
+                )
+            }
+
+            if api_base:
+                filtered_kwargs["api_base"] = api_base
+
+            current_messages = list(messages)
+            all_tool_calls = []
+            all_tool_results = []
+            rounds = 0
+
+            while rounds < max_tool_rounds:
+                try:
+                    response = litellm.completion(
+                        model=model,
+                        messages=current_messages,
+                        tools=openai_tools if openai_tools else None,
+                        tool_choice=tool_choice if openai_tools else None,
+                        temperature=temperature,
+                        **filtered_kwargs,
+                    )
+
+                    message = response.choices[0].message
+
+                    # Check if there are tool calls
+                    if not message.tool_calls:
+                        return {
+                            "content": message.content or "",
+                            "tool_calls": all_tool_calls,
+                            "tool_results": all_tool_results,
+                            "rounds": rounds,
+                        }
+
+                    # Process tool calls
+                    rounds += 1
+                    current_messages.append(message)
+
+                    for tool_call in message.tool_calls:
+                        tool_name = tool_call.function.name
+                        try:
+                            tool_args = json.loads(tool_call.function.arguments)
+                        except json.JSONDecodeError:
+                            tool_args = {}
+
+                        call_record = {
+                            "id": tool_call.id,
+                            "name": tool_name,
+                            "arguments": tool_args,
+                        }
+                        all_tool_calls.append(call_record)
+
+                        action_name = tool_action_map.get(tool_name)
+                        if action_name and action_name in engine.actions_registry:
+                            action_func = engine.actions_registry[action_name]
+                            try:
+                                result = action_func(state=state, **tool_args)
+                                result_str = json.dumps(result, default=str)
+                            except Exception as e:
+                                result_str = json.dumps({"error": str(e)})
+                        else:
+                            result_str = json.dumps(
+                                {
+                                    "note": f"Tool '{tool_name}' called but no action mapped",
+                                    "arguments": tool_args,
+                                }
+                            )
+
+                        result_record = {
+                            "tool_call_id": tool_call.id,
+                            "name": tool_name,
+                            "result": result_str,
+                        }
+                        all_tool_results.append(result_record)
+
+                        current_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": result_str,
+                            }
+                        )
+
+                except Exception as e:
+                    return {
+                        "error": f"LLM tool calling failed: {str(e)}",
+                        "success": False,
+                        "tool_calls": all_tool_calls,
+                        "tool_results": all_tool_results,
+                        "rounds": rounds,
+                    }
+
+            return {
+                "content": "",
+                "tool_calls": all_tool_calls,
+                "tool_results": all_tool_results,
+                "rounds": rounds,
+                "warning": f"Max tool rounds ({max_tool_rounds}) reached",
+            }
+
+        # OpenAI/Azure/Ollama providers - use OpenAI SDK
+        try:
+            from openai import OpenAI, AzureOpenAI
+        except ImportError:
+            return {
+                "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
+                "success": False,
+            }
+
         # Initialize client based on resolved provider
         if resolved_provider == "ollama":
-            ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+            ollama_base = api_base or os.getenv(
+                "OLLAMA_API_BASE", "http://localhost:11434/v1"
+            )
             client = OpenAI(base_url=ollama_base, api_key="ollama")
             deployment = model
         elif resolved_provider == "azure":
@@ -771,7 +1274,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             client = AzureOpenAI(
                 api_key=azure_api_key,
                 azure_endpoint=azure_endpoint,
-                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
             )
             deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
         else:
@@ -780,6 +1283,24 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             else:
                 client = OpenAI()
             deployment = model
+
+        # Apply Opik tracing wrapper if requested (for OpenAI/Azure/Ollama)
+        if opik_trace:
+            try:
+                from opik.integrations.openai import track_openai
+
+                client_id = id(client)
+                if client_id not in _opik_wrapped_clients:
+                    client = track_openai(client)
+                    _opik_wrapped_clients.add(id(client))
+            except ImportError:
+                import warnings
+
+                warnings.warn(
+                    "opik_trace=True but opik SDK not installed. "
+                    "Install with: pip install opik",
+                    RuntimeWarning,
+                )
 
         current_messages = list(messages)  # Copy messages
         all_tool_calls = []
@@ -794,9 +1315,20 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     tools=openai_tools if openai_tools else None,
                     tool_choice=tool_choice if openai_tools else None,
                     temperature=temperature,
-                    **{k: v for k, v in kwargs.items()
-                       if k not in ('state', 'tools', 'tool_choice', 'max_tool_rounds',
-                                    'provider', 'api_base')}
+                    **{
+                        k: v
+                        for k, v in kwargs.items()
+                        if k
+                        not in (
+                            "state",
+                            "tools",
+                            "tool_choice",
+                            "max_tool_rounds",
+                            "opik_trace",
+                            "provider",
+                            "api_base",
+                        )
+                    },
                 )
 
                 message = response.choices[0].message
@@ -808,7 +1340,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         "content": message.content or "",
                         "tool_calls": all_tool_calls,
                         "tool_results": all_tool_results,
-                        "rounds": rounds
+                        "rounds": rounds,
                     }
 
                 # Process tool calls
@@ -826,7 +1358,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     call_record = {
                         "id": tool_call.id,
                         "name": tool_name,
-                        "arguments": tool_args
+                        "arguments": tool_args,
                     }
                     all_tool_calls.append(call_record)
 
@@ -841,25 +1373,29 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                             result_str = json.dumps({"error": str(e)})
                     else:
                         # No action mapped - return tool call info for manual handling
-                        result_str = json.dumps({
-                            "note": f"Tool '{tool_name}' called but no action mapped",
-                            "arguments": tool_args
-                        })
+                        result_str = json.dumps(
+                            {
+                                "note": f"Tool '{tool_name}' called but no action mapped",
+                                "arguments": tool_args,
+                            }
+                        )
 
                     # Record result
                     result_record = {
                         "tool_call_id": tool_call.id,
                         "name": tool_name,
-                        "result": result_str
+                        "result": result_str,
                     }
                     all_tool_results.append(result_record)
 
                     # Add tool result to messages for next round
-                    current_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result_str
-                    })
+                    current_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": result_str,
+                        }
+                    )
 
             except Exception as e:
                 return {
@@ -867,7 +1403,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "success": False,
                     "tool_calls": all_tool_calls,
                     "tool_results": all_tool_results,
-                    "rounds": rounds
+                    "rounds": rounds,
                 }
 
         # Max rounds exceeded
@@ -876,8 +1412,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             "tool_calls": all_tool_calls,
             "tool_results": all_tool_results,
             "rounds": rounds,
-            "warning": f"Max tool rounds ({max_tool_rounds}) reached"
+            "warning": f"Max tool rounds ({max_tool_rounds}) reached",
         }
 
-    registry['llm.tools'] = llm_tools
-    registry['actions.llm_tools'] = llm_tools
+    registry["llm.tools"] = llm_tools
+    registry["actions.llm_tools"] = llm_tools

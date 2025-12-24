@@ -100,24 +100,7 @@ nodes:
       path: ./output/research_{{ state.user_query[:30] }}.md
       content: "{{ state.formatted_report }}"
 
-edges:
-  - from: __start__
-    to: refine_query
-
-  - from: refine_query
-    to: search_with_perplexity
-
-  - from: search_with_perplexity
-    to: format_report
-
-  - from: format_report
-    to: display_results
-
-  - from: display_results
-    to: save_to_file
-
-  - from: save_to_file
-    to: __end__
+# Implicit flow: refine_query -> search_with_perplexity -> format_report -> display_results -> save_to_file -> __end__
 
 config:
   raise_exceptions: true

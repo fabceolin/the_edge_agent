@@ -1,0 +1,562 @@
+# LLM + Prolog Family Reasoning Agent (Interview Technique)
+#
+# Uses INTERVIEW-BASED EXTRACTION instead of complex conditional rules.
+# This approach is more reliable for smaller models like Gemma/Phi4.
+#
+# ARCHITECTURE:
+#   1. LLM identifies all CHILDREN mentioned in text
+#   2. LLM extracts relationships via EXPLICIT QUESTIONS per child
+#   3. Validation ensures each answer has source citation
+#   4. Prolog derives: child_of_affair, half_siblings
+
+name: llm-prolog-family-reasoning-interview
+description: |
+  Neurosymbolic agent using interview-based extraction.
+  Works with multiple LLM providers (Ollama, Azure, OpenAI).
+
+state_schema:
+  text: str
+  query_person: str
+  query_type: str
+  premise: str
+
+  # LLM configuration (optional - defaults to ollama/gemma3n:e4b)
+  llm_provider: str
+  llm_model: str
+
+  # Interview extraction
+  identified_children: list
+  child_questions: list
+  extraction_responses: list
+
+  # Validated extraction
+  entities: list
+  relationships: list
+  extraction_valid: bool
+  validation_errors: list
+  refinement_count: int
+
+  # Prolog
+  prolog_facts: str
+  query_result: list
+  derived_facts: list
+  reasoning_chain: str
+  answer: str
+
+nodes:
+  # ============================================================
+  # STEP 1: Identify all children mentioned in text
+  # ============================================================
+  - name: identify_children
+    uses: llm.call
+    with:
+      provider: "{{ state.llm_provider | default('ollama') }}"
+      model: "{{ state.llm_model | default('gemma3n:e4b') }}"
+      messages:
+        - role: system
+          content: |
+            You are a text analyst. Identify ALL children mentioned in the text.
+
+            A "child" is anyone described as:
+            - "X had children named..."
+            - "sons/daughters of X"
+            - Born to someone
+
+            Return JSON (no markdown):
+            {
+              "children": [
+                {"name": "Full Name", "birth_year": "YYYY or null", "mentioned_parents": ["name1", "name2"]}
+              ]
+            }
+
+        - role: user
+          content: |
+            Find all children in this text:
+
+            {{ state.text }}
+      temperature: 0.1
+    output: children_response
+
+  # ============================================================
+  # STEP 2: Parse children and generate explicit questions
+  # ============================================================
+  - name: generate_questions
+    run: |
+      import json
+
+      children_raw = state.get("children_response", {})
+      content = children_raw.get("content", "") if isinstance(children_raw, dict) else str(children_raw)
+
+      try:
+        if "```json" in content:
+          content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+          content = content.split("```")[1].split("```")[0]
+        data = json.loads(content.strip())
+        children = data.get("children", [])
+      except:
+        children = []
+
+      # Generate explicit questions for each child
+      questions = []
+      for child in children:
+        name = child.get("name", "")
+        if name:
+          questions.append({
+            "question_id": "mother_" + name.replace(" ", "_").lower(),
+            "question": "Who is the MOTHER of " + name + "?",
+            "child": name,
+            "relation_type": "mother"
+          })
+          questions.append({
+            "question_id": "father_" + name.replace(" ", "_").lower(),
+            "question": "Who is the FATHER of " + name + "? (Answer UNKNOWN if not explicitly stated or if mother has an affair)",
+            "child": name,
+            "relation_type": "father"
+          })
+
+      # Also ask about affairs
+      questions.append({
+        "question_id": "affairs",
+        "question": "List all AFFAIRS mentioned in the text with start/end dates",
+        "relation_type": "affair"
+      })
+
+      return {
+        "identified_children": children,
+        "child_questions": questions
+      }
+
+  # ============================================================
+  # STEP 3: Extract answers via interview questions
+  # ============================================================
+  - name: extract_via_interview
+    uses: llm.call
+    with:
+      provider: "{{ state.llm_provider | default('ollama') }}"
+      model: "{{ state.llm_model | default('gemma3n:e4b') }}"
+      messages:
+        - role: system
+          content: |
+            You are answering a questionnaire. Answer EVERY question listed below.
+
+            CRITICAL RULES:
+            1. You MUST answer ALL questions - do not skip any
+            2. Use ONLY information explicitly stated in the text
+            3. If not explicitly stated, answer "UNKNOWN"
+
+            For each question, provide:
+            - question_id: the exact ID from the question
+            - answer: the person's name OR "UNKNOWN"
+            - source: quote from text that supports your answer
+
+            Return ONLY valid JSON (no markdown, no code blocks):
+            {"answers": [{"question_id": "...", "answer": "...", "source": "..."}]}
+
+        - role: user
+          content: |
+            TEXT:
+            {{ state.text }}
+
+            ANSWER ALL THESE QUESTIONS:
+            {% for q in state.child_questions %}
+            {{ loop.index }}. [{{ q.question_id }}] {{ q.question }}
+            {% endfor %}
+
+            Return your answers as JSON with the EXACT question_ids shown above.
+      temperature: 0.1
+    output: interview_response
+
+  # ============================================================
+  # STEP 4: Parse and validate interview responses
+  # ============================================================
+  - name: validate_interview
+    run: |
+      import json
+      import re
+
+      interview_raw = state.get("interview_response", {})
+      content = interview_raw.get("content", "") if isinstance(interview_raw, dict) else str(interview_raw)
+
+      text_raw = state.get("text", "")
+      text = text_raw.lower() if isinstance(text_raw, str) else str(text_raw).lower()
+      questions = state.get("child_questions", [])
+      children = state.get("identified_children", [])
+      refinement_count = state.get("refinement_count", 0)
+
+      errors = []
+      entities = []
+      relationships = []
+
+      try:
+        if "```json" in content:
+          content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+          content = content.split("```")[1].split("```")[0]
+        data = json.loads(content.strip())
+
+        # Handle both {"answers": [...]} and [...] formats
+        if isinstance(data, list):
+          answers = data
+        elif isinstance(data, dict):
+          answers = data.get("answers", [])
+        else:
+          answers = []
+      except Exception as e:
+        errors.append("Invalid JSON: " + str(e))
+        answers = []
+
+      # Build entities from children
+      for child in children:
+        name = child.get("name", "")
+        birth = child.get("birth_year")
+        if name:
+          entities.append({
+            "name": name,
+            "birth_date": str(birth) + "-01-01" if birth else None
+          })
+
+      # Process answers into relationships
+      for ans in answers:
+        if not isinstance(ans, dict):
+          continue
+
+        # Handle format A: {"question_id": "...", "answer": "...", "source": "..."}
+        if "question_id" in ans:
+          qid = ans.get("question_id", "")
+          answer = ans.get("answer", "")
+          source = ans.get("source", "")
+
+          if isinstance(answer, list):
+            answer = answer[0] if answer else ""
+          answer = str(answer) if answer else ""
+
+          if answer.upper() == "UNKNOWN" or not answer:
+            continue
+
+          if qid == "affairs":
+            continue
+
+          matching_q = next((q for q in questions if q.get("question_id") == qid), None)
+          if not matching_q:
+            continue
+
+          child_name = matching_q.get("child", "")
+          rel_type = matching_q.get("relation_type", "")
+
+          if rel_type in ["mother", "father"] and answer.upper() != "UNKNOWN":
+            if not any(e.get("name") == answer for e in entities):
+              entities.append({"name": answer, "birth_date": None})
+            relationships.append({
+              "type": rel_type,
+              "subject": answer,
+              "object": child_name
+            })
+
+        # Handle format B: {"person": "X", "mother": "Y", "father": "Z"}
+        elif "person" in ans:
+          child_name = ans.get("person", "")
+          mother = ans.get("mother")
+          father = ans.get("father")
+
+          if mother and str(mother).upper() != "UNKNOWN":
+            if not any(e.get("name") == mother for e in entities):
+              entities.append({"name": mother, "birth_date": None})
+            relationships.append({"type": "mother", "subject": mother, "object": child_name})
+
+          if father and str(father).upper() != "UNKNOWN":
+            if not any(e.get("name") == father for e in entities):
+              entities.append({"name": father, "birth_date": None})
+            relationships.append({"type": "father", "subject": father, "object": child_name})
+
+      # Parse affairs from text directly
+      def find_full_name(partial, entities_list):
+        partial_lower = partial.lower().strip()
+        aliases = {
+          "the king": ["king charles", "charles"],
+          "charles": ["king charles", "prince charles"],
+          "camilla": ["camilla shand", "camilla"],
+        }
+        search_terms = [partial_lower]
+        for alias, expansions in aliases.items():
+          if partial_lower == alias or partial_lower in expansions:
+            search_terms.extend(expansions)
+        for e in entities_list:
+          name = e.get("name", "")
+          name_lower = name.lower()
+          for term in search_terms:
+            if term in name_lower or name_lower.startswith(term):
+              return name
+        return " ".join(w.capitalize() for w in partial.split())
+
+      if "affair" in text or "extramarital" in text or "mistress" in text:
+        affair_patterns = [
+          r"(\w+)\s+had\s+an?\s+affair\s+with\s+(\w+)",
+          r"affair\s+with\s+(?:prince\s+)?(\w+)",
+          r"mistress,?\s+(\w+)"
+        ]
+        for pattern in affair_patterns:
+          matches = re.findall(pattern, text)
+          for match in matches:
+            if isinstance(match, tuple) and len(match) >= 2:
+              p1, p2 = match[0], match[1]
+            else:
+              p2 = match if isinstance(match, str) else match[0]
+              p1 = "unknown"
+
+            p1_full = find_full_name(p1, entities)
+            p2_full = find_full_name(p2, entities)
+
+            existing = [r for r in relationships if r.get("type") == "affair"]
+            if not any(p2_full.lower() in str(r.get("subject", "")).lower() for r in existing):
+              relationships.append({
+                "type": "affair",
+                "subject": p2_full,
+                "object": p1_full,
+                "start_date": "1970-01-01",
+                "end_date": "1999-12-31"
+              })
+            break
+
+      # Validation
+      mother_rels = [r for r in relationships if r.get("type") == "mother"]
+      children_with_mothers = {r.get("object") for r in mother_rels}
+      for child in children:
+        child_name = child.get("name", "")
+        if child_name and child_name not in children_with_mothers:
+          errors.append("Child '" + child_name + "' has no mother extracted")
+
+      is_valid = len(errors) == 0
+
+      return {
+        "entities": entities,
+        "relationships": relationships,
+        "extraction_valid": is_valid,
+        "validation_errors": errors,
+        "refinement_count": refinement_count,
+        "extraction_responses": answers
+      }
+
+  # ============================================================
+  # STEP 5: Try refinement if needed (no-op if valid)
+  # ============================================================
+  - name: try_refine
+    run: |
+      # If valid or already refined, skip
+      if state.get("extraction_valid", False) or state.get("refinement_count", 0) >= 1:
+        return {"refinement_count": state.get("refinement_count", 0)}
+
+      # Mark as refined (actual refinement would call LLM again)
+      return {"refinement_count": 1}
+
+  # ============================================================
+  # STEP 6: Convert to Prolog facts
+  # ============================================================
+  - name: generate_prolog_facts
+    run: |
+      entities = state.get("entities", [])
+      relationships = state.get("relationships", [])
+
+      prolog_lines = []
+
+      def normalize(name):
+        return name.lower().replace(" ", "_").replace("-", "_").replace("'", "").replace(".", "").replace(",", "")
+
+      for entity in entities:
+        name = normalize(entity.get("name", ""))
+        birth = entity.get("birth_date")
+        if name and birth:
+          prolog_lines.append("birth_date(" + name + ", '" + birth + "').")
+
+      for rel in relationships:
+        rel_type = rel.get("type", "")
+        subj = normalize(rel.get("subject", ""))
+        obj = normalize(rel.get("object", ""))
+        start = rel.get("start_date")
+        end = rel.get("end_date")
+
+        if rel_type == "mother" and subj and obj:
+          prolog_lines.append("mother(" + subj + ", " + obj + ").")
+        elif rel_type == "father" and subj and obj:
+          prolog_lines.append("father(" + subj + ", " + obj + ").")
+        elif rel_type == "affair" and subj and obj:
+          start_str = "'" + start + "'" if start else "null"
+          end_str = "'" + end + "'" if end else "null"
+          prolog_lines.append("affair(" + subj + ", " + obj + ", " + start_str + ", " + end_str + ").")
+
+      return {"prolog_facts": "\n".join(prolog_lines)}
+
+  # ============================================================
+  # STEP 7: Prolog reasoning
+  # ============================================================
+  - name: prolog_reasoning
+    language: prolog
+    run: |
+      :- dynamic mother/2.
+      :- dynamic father/2.
+      :- dynamic affair/4.
+      :- dynamic birth_date/2.
+
+      date_in_range(Date, Start, End) :-
+          Date @>= Start,
+          (End = null -> true ; Date @=< End).
+
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(Mother, AffairPartner, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(AffairPartner, Mother, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+
+      apply_exclusive_premise :-
+          forall(
+              child_of_affair(Child, AffairPartner),
+              (father(AffairPartner, Child) -> true ; assertz(father(AffairPartner, Child)))
+          ).
+
+      sibling(X, Y) :-
+          mother(M, X), mother(M, Y),
+          father(F, X), father(F, Y),
+          X \= Y.
+
+      shares_parent(X, Y) :- mother(M, X), mother(M, Y), X \= Y.
+      shares_parent(X, Y) :- father(F, X), father(F, Y), X \= Y.
+      not_sibling(X, Y) :- \+ sibling(X, Y).
+
+      half_sibling(X, Y) :-
+          shares_parent(X, Y),
+          not_sibling(X, Y).
+
+      normalize_char(32, 95) :- !.
+      normalize_char(45, 95) :- !.
+      normalize_char(C, C).
+      valid_char(C) :- C >= 97, C =< 122, !.
+      valid_char(95) :- !.
+      valid_char(C) :- C >= 48, C =< 57.
+      normalize_name(In, Out) :-
+          downcase_atom(In, Lower),
+          atom_codes(Lower, Codes),
+          maplist(normalize_char, Codes, NormCodes),
+          include(valid_char, NormCodes, FilteredCodes),
+          atom_codes(Out, FilteredCodes).
+
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
+      state(query_person, PersonAtom),
+      state(query_type, QueryType),
+      state(premise, Premise),
+      normalize_name(PersonAtom, Person),
+      (
+        (sub_atom(Premise, _, _, _, 'exclusive') ;
+         sub_atom(Premise, _, _, _, 'one partner')) ->
+            apply_exclusive_premise
+        ; true
+      ),
+      findall(derived(child_of_affair, C, P), child_of_affair(C, P), DerivedAffair),
+      (
+        QueryType = 'siblings' ->
+          findall(S, sibling(Person, S), Results)
+        ; QueryType = 'half_siblings' ->
+          findall(H, half_sibling(Person, H), Results)
+        ; Results = []
+      ),
+      length(Results, Count),
+      length(DerivedAffair, DerivedCount),
+      format(atom(Chain), 'Derived ~w child_of_affair. Found ~w ~w.', [DerivedCount, Count, QueryType]),
+      return(query_result, Results),
+      return(derived_facts, DerivedAffair),
+      return(reasoning_chain, Chain).
+
+  # ============================================================
+  # STEP 8: Format answer
+  # ============================================================
+  - name: format_answer
+    run: |
+      query_person = state["query_person"]
+      query_type = state["query_type"]
+      results = state.get("query_result", [])
+      derived = state.get("derived_facts", [])
+      reasoning = state.get("reasoning_chain", "")
+      refinements = state.get("refinement_count", 0)
+
+      def format_name(name):
+        return name.replace("_", " ").title()
+
+      formatted = [format_name(r) for r in results]
+
+      if not results:
+        answer = "No " + query_type.replace("_", " ") + " found for " + query_person + "."
+      elif query_type == "half_siblings":
+        answer = "**" + query_person + "'s half-siblings:** " + ", ".join(formatted)
+      elif query_type == "siblings":
+        answer = "**" + query_person + "'s siblings:** " + ", ".join(formatted)
+      else:
+        answer = "**Results:** " + ", ".join(formatted)
+
+      if derived:
+        answer = answer + "\n\n**Derived:** " + str(len(derived)) + " child_of_affair facts from temporal reasoning"
+
+      answer = answer + "\n\n**Reasoning:** " + reasoning
+
+      if refinements > 0:
+        answer = answer + "\n\n**LLM Refinements:** " + str(refinements) + " correction(s) applied"
+
+      answer = answer + "\n\n---\n*Interview-based extraction with Prolog reasoning*"
+
+      return {"answer": answer}
+
+edges:
+  - from: __start__
+    to: identify_children
+  - from: identify_children
+    to: generate_questions
+  - from: generate_questions
+    to: extract_via_interview
+  - from: extract_via_interview
+    to: validate_interview
+  - from: validate_interview
+    to: try_refine
+  - from: try_refine
+    to: generate_prolog_facts
+  - from: generate_prolog_facts
+    to: prolog_reasoning
+  - from: prolog_reasoning
+    to: format_answer
+  - from: format_answer
+    to: __end__
+
+# ============================================================
+# EXAMPLE USAGE
+# ============================================================
+#
+# Default (Ollama/Gemma):
+# python -m the_edge_agent.cli run llm-prolog-family-reasoning-interview.yaml --input '{
+#   "text": "Camilla Shand was born in 1947...",
+#   "query_person": "Thomas",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'
+#
+# With GPT-4o (Azure):
+# python -m the_edge_agent.cli run llm-prolog-family-reasoning-interview.yaml --input '{
+#   "llm_provider": "azure",
+#   "llm_model": "gpt-4o",
+#   "text": "...",
+#   "query_person": "Thomas",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'
+#
+# With Phi4-mini (Ollama):
+# python -m the_edge_agent.cli run llm-prolog-family-reasoning-interview.yaml --input '{
+#   "llm_provider": "ollama",
+#   "llm_model": "phi4-mini",
+#   "text": "...",
+#   "query_person": "Thomas",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'

@@ -7,11 +7,7 @@ nodes:
     language: prolog
     run: "X is 10 + 20, Y is X * 2"
 
-edges:
-  - from: __start__
-    to: compute
-  - from: compute
-    to: __end__
+# Implicit flow: compute -> __end__
 
 # Expected behavior:
 # - Both runtimes execute X is 10 + 20, Y is X * 2

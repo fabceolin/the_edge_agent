@@ -47,12 +47,4 @@ nodes:
       ; R >= 50 -> return(category, 'medium')
       ; return(category, 'small')).
 
-edges:
-  - from: __start__
-    to: double_value
-  - from: double_value
-    to: apply_rule
-  - from: apply_rule
-    to: categorize
-  - from: categorize
-    to: __end__
+# Implicit flow: double_value -> apply_rule -> categorize -> __end__

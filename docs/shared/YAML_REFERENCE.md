@@ -1,6 +1,6 @@
 # YAML Agent Reference
 
-Version: 0.7.9
+Version: 0.8.0
 
 Complete reference for declarative agent configuration in The Edge Agent using YAML files.
 
@@ -14,7 +14,12 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 - [Top-Level Keys](#top-level-keys)
   - [imports](#imports)
 - [Node Specification](#node-specification)
-- [Edge Specification](#edge-specification)
+- [Navigation and Flow Control](#navigation-and-flow-control)
+  - [Implicit Chaining (Default)](#implicit-chaining-default)
+  - [The `goto` Property](#the-goto-property)
+  - [Conditional `goto`](#conditional-goto)
+  - [Navigation Precedence](#navigation-precedence)
+- [Edge Specification](#edge-specification-deprecated) (sequential edges deprecated, parallel edges supported)
 - [Template Syntax](#template-syntax)
 - [Built-in Actions](#built-in-actions)
   - [LLM Actions](#llm-actions)
@@ -116,18 +121,16 @@ state_schema:
   result: str
   count: int
 
-# Define nodes (workflow steps)
+# Define nodes (workflow steps) - implicit flow: step1 -> step2 -> __end__
 nodes:
   - name: step1
     run: |
       return {"result": "processed"}
 
-# Define edges (transitions between nodes)
-edges:
-  - from: __start__
-    to: step1
-  - from: step1
-    to: __end__
+  - name: step2
+    run: |
+      return {"final": state["result"]}
+    # goto: __end__  # Optional: explicit termination
 
 # Configuration
 config:
@@ -135,6 +138,8 @@ config:
   interrupt_before: []
   interrupt_after: []
 ```
+
+> **Note:** The `edges` section is deprecated. Use implicit chaining (node order) and `goto` properties instead. See [Navigation and Flow Control](#navigation-and-flow-control).
 
 ---
 
@@ -215,9 +220,10 @@ state_schema:
 nodes:
   - name: string
     # ... node configuration
+    goto: string | array  # Optional: navigation control
 
-# Edge Definitions (required)
-edges:
+# Edge Definitions (deprecated - use goto on nodes instead)
+edges:  # Optional - legacy syntax
   - from: string
     to: string
     # ... edge configuration
@@ -332,8 +338,13 @@ Defines the expected structure of the state object. Types are Python type names 
 ### `nodes` (required)
 Array of node definitions. See [Node Specification](#node-specification).
 
-### `edges` (required)
-Array of edge definitions. See [Edge Specification](#edge-specification).
+### `edges` (deprecated)
+
+> ⚠️ **Deprecation Notice (v0.8.x):** Sequential edges are deprecated in favor of implicit chaining and `goto` properties on nodes. See [Navigation and Flow Control](#navigation-and-flow-control) for the new syntax.
+>
+> **Exception:** Parallel edges (`parallel: true`, `fan_in:`) are **not deprecated** and remain the only way to define fan-out/fan-in patterns.
+
+Array of edge definitions. See [Edge Specification](#edge-specification-deprecated).
 
 ### `config` (optional)
 ```yaml
@@ -358,6 +369,9 @@ nodes:
     script: string        # Alias for run (GitLab CI style)
     uses: string          # Built-in or custom action
     steps: array          # Multi-step execution
+
+    # Navigation (optional, replaces edges section):
+    goto: string | array  # Next node: string for unconditional, array for conditional
 
     # Additional options:
     fan_in: boolean       # Mark as fan-in node for parallel flows
@@ -924,7 +938,192 @@ For collecting results from parallel flows:
 
 ---
 
-## Edge Specification
+## Navigation and Flow Control
+
+TEA supports two navigation approaches: the modern **implicit/goto** syntax (recommended) and the legacy **edges** section (deprecated). This section covers the modern approach.
+
+### Implicit Chaining (Default)
+
+By default, nodes execute in the order they are defined. After a node completes:
+1. If the node has a `goto` property, use it
+2. Otherwise, proceed to the next node in the list
+3. If it's the last node, the workflow ends (`__end__`)
+
+```yaml
+name: implicit-flow
+nodes:
+  - name: step_a
+    run: |
+      return {"message": "Step A done"}
+
+  - name: step_b
+    run: |
+      return {"message": "Step B done"}
+
+  - name: step_c
+    run: |
+      return {"message": "Step C done"}
+
+# No edges needed - implicit flow: step_a -> step_b -> step_c -> __end__
+```
+
+### The `goto` Property
+
+The `goto` property on a node specifies the next node to execute. It can be:
+- **String**: Unconditional jump to a specific node
+- **Array**: Conditional jump with if/to rules
+
+#### Unconditional `goto`
+
+Jump directly to a named node:
+
+```yaml
+nodes:
+  - name: start
+    run: |
+      return {"initialized": True}
+    goto: validate  # Skip to validate, not next node
+
+  - name: skipped_node
+    run: |
+      return {"this": "is skipped"}
+
+  - name: validate
+    run: |
+      return {"validated": True}
+```
+
+#### Special `goto` Targets
+
+| Target | Description |
+|--------|-------------|
+| `"__end__"` | Terminate workflow immediately |
+| Node name | Jump to the named node |
+| (omitted) | Use implicit chaining (next in list) |
+
+### Conditional `goto`
+
+Use a list of rules for conditional branching. Each rule has:
+- `if` (optional): Boolean expression to evaluate
+- `to` (required): Target node if condition is true
+
+Rules are evaluated in order; the first matching rule wins.
+
+```yaml
+nodes:
+  - name: validate
+    run: |
+      score = check_quality(state["input"])
+      return {"score": score}
+    goto:
+      - if: "state.score > 0.9"
+        to: high_confidence
+      - if: "state.score > 0.5"
+        to: medium_confidence
+      - to: low_confidence  # Fallback (no condition = always true)
+
+  - name: high_confidence
+    run: |
+      return {"path": "high"}
+    goto: __end__  # Terminate early
+
+  - name: medium_confidence
+    run: |
+      return {"path": "medium"}
+
+  - name: low_confidence
+    run: |
+      return {"path": "low"}
+```
+
+#### Context Variables in Conditions
+
+| Variable | Description |
+|----------|-------------|
+| `state` | Global agent state (includes merged node results) |
+| `variables` | Template variables from YAML `variables:` section |
+| `secrets` | Secret values (if configured) |
+
+> **Note:** Node execution results are automatically merged into `state` before `goto` evaluation. Access returned values via `state.field_name` (e.g., if node returns `{"score": 90}`, use `state.score`).
+
+### Loops with `goto`
+
+Use conditional `goto` to create loops:
+
+```yaml
+nodes:
+  - name: retry_step
+    run: |
+      result = attempt_operation()
+      attempts = state.get("attempts", 0) + 1
+      return {"status": result.status, "attempts": attempts}
+    goto:
+      - if: "state.status == 'error' and state.attempts < 3"
+        to: retry_step  # Loop back
+      - if: "state.status == 'ok'"
+        to: success
+      - to: failure  # Max retries exceeded
+
+  - name: success
+    run: |
+      return {"final": "success"}
+    goto: __end__
+
+  - name: failure
+    run: |
+      return {"final": "failed"}
+    goto: __end__
+```
+
+### Navigation Precedence
+
+When multiple navigation methods are present, precedence is:
+
+1. **`goto` property on node** (highest priority)
+2. **`edges` section** (legacy, deprecated)
+3. **Implicit chaining** (next node in list)
+
+```yaml
+# Example: goto takes precedence over edges
+nodes:
+  - name: step_a
+    goto: step_c  # This wins
+  - name: step_b
+  - name: step_c
+edges:
+  - from: step_a
+    to: step_b  # Ignored because goto exists
+```
+
+### Migration from Edges
+
+To migrate from the legacy `edges` format:
+
+| Legacy Pattern | New Syntax |
+|----------------|------------|
+| Linear edges (A→B→C) | Remove edges, use implicit chaining |
+| `from: __start__` | Not needed, first node is entry point |
+| `to: __end__` | Not needed for last node, or use `goto: __end__` |
+| Conditional edges | Use `goto:` list with `if`/`to` rules |
+| Unconditional jump | Use `goto: target_node` |
+| **Parallel edges** | **Keep as-is** (not deprecated) |
+
+> **Note:** Parallel edges with `parallel: true` and `fan_in:` are not deprecated and should remain in the `edges` section. Only sequential navigation edges are being migrated to `goto`.
+
+See [TEA-YAML-002](../stories/TEA-YAML-002-implicit-graph-goto-syntax.md) for the full migration guide and LLM prompt.
+
+---
+
+## Edge Specification (Deprecated)
+
+> ⚠️ **Deprecation Notice:** Sequential edges are deprecated in favor of implicit chaining and `goto` properties. See [Navigation and Flow Control](#navigation-and-flow-control) for the modern syntax.
+>
+> **Exception:** Parallel edges (`parallel: true`, `fan_in:`) are **not deprecated**. They remain the only way to define fan-out/fan-in execution patterns and will continue to be supported.
+>
+> **Deprecation Roadmap (Sequential Edges Only):**
+> - **v0.8.x (Current)**: Sequential `edges` work normally, emit INFO-level warning
+> - **v1.0.x**: Sequential `edges` work, emit WARNING-level warning with migration link
+> - **v2.0.x**: Sequential `edges` rejected with error, must use `goto` or implicit
 
 ### Basic Structure
 
@@ -1202,7 +1401,7 @@ Call OpenAI-compatible LLM API:
 
 #### LLM Provider Configuration
 
-LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Ollama**.
+LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, and **LiteLLM**.
 
 **Provider Detection Priority:**
 1. Explicit `provider` parameter (highest priority)
@@ -1241,7 +1440,7 @@ LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Olla
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `provider` | Provider selection: `auto`, `openai`, `azure`, `ollama` | `auto` |
+| `provider` | Provider selection: `auto`, `openai`, `azure`, `ollama`, `litellm` | `auto` |
 | `api_base` | Custom API base URL | Provider default |
 
 **Environment Variables:**
@@ -1257,6 +1456,101 @@ LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Olla
 - No API key required (uses dummy value internally)
 - No cost calculation (local/free)
 - Tool calling requires compatible models: `llama3.1+`, `mistral-nemo`, `qwen2.5`
+
+#### LiteLLM Provider (TEA-LLM-003)
+
+LiteLLM provides access to 100+ LLM providers through a unified OpenAI-compatible interface. Install with:
+
+```bash
+pip install the_edge_agent[litellm]
+```
+
+**LiteLLM Example:**
+
+```yaml
+# Use Anthropic Claude via LiteLLM
+- name: ask_claude
+  uses: llm.call
+  with:
+    provider: litellm
+    model: anthropic/claude-3-opus-20240229
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+
+# Use Google Gemini via LiteLLM
+- name: ask_gemini
+  uses: llm.call
+  with:
+    provider: litellm
+    model: gemini/gemini-pro
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+
+# Use AWS Bedrock via LiteLLM
+- name: ask_bedrock
+  uses: llm.call
+  with:
+    provider: litellm
+    model: bedrock/anthropic.claude-v2
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+```
+
+**LiteLLM Model Format:**
+
+LiteLLM uses `provider/model-name` format:
+
+| Provider | Model Example |
+|----------|---------------|
+| Anthropic | `anthropic/claude-3-opus-20240229` |
+| AWS Bedrock | `bedrock/anthropic.claude-v2` |
+| Google Gemini | `gemini/gemini-pro` |
+| Azure OpenAI | `azure/gpt-4` |
+| Ollama (via LiteLLM) | `ollama/llama3.2` |
+| Cohere | `cohere/command-r-plus` |
+| Mistral | `mistral/mistral-large-latest` |
+
+**LiteLLM Environment Variables:**
+
+Each provider requires its own API key. Common examples:
+
+| Variable | Provider |
+|----------|----------|
+| `ANTHROPIC_API_KEY` | Anthropic Claude |
+| `GOOGLE_API_KEY` | Google Gemini |
+| `COHERE_API_KEY` | Cohere |
+| `MISTRAL_API_KEY` | Mistral AI |
+| `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | AWS Bedrock |
+
+See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete list.
+
+**LiteLLM Features:**
+- Built-in cost tracking via `cost_usd` in response
+- Automatic retry with exponential backoff (`max_retries` parameter)
+- Opik observability integration (`opik_trace=True`)
+- Streaming support (`llm.stream`)
+- Tool calling support (`llm.tools`) for compatible models
+
+**LiteLLM with Opik Tracing:**
+
+```yaml
+- name: traced_call
+  uses: llm.call
+  with:
+    provider: litellm
+    model: anthropic/claude-3-opus-20240229
+    opik_trace: true  # Enable Opik logging
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+```
 
 #### `llm.stream`
 

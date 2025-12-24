@@ -120,11 +120,7 @@ nodes:
       return(makespan, Makespan),
       return(solver_info, 'CLP(FD) solved with first-fail heuristic').
 
-edges:
-  - from: __start__
-    to: solve_schedule
-  - from: solve_schedule
-    to: __end__
+# Implicit flow: solve_schedule -> __end__
 
 # ============================================================================
 # Expected Output:

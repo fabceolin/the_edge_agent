@@ -40,11 +40,7 @@ nodes:
       get_dict(value, L5, DeepValue),
       DeepValue = 'deeply_nested_value'.
 
-edges:
-  - from: __start__
-    to: verify_nesting
-  - from: verify_nesting
-    to: __end__
+# Implicit flow: verify_nesting -> __end__
 
 initial_state:
   depth: 5

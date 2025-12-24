@@ -147,15 +147,7 @@ nodes:
       return(reasoning_trace, FinalTrace),
       return(final_diagnosis, MainCondition).
 
-edges:
-  - from: __start__
-    to: identify_conditions
-  - from: identify_conditions
-    to: assess_severity
-  - from: assess_severity
-    to: generate_recommendation
-  - from: generate_recommendation
-    to: __end__
+# Implicit flow: identify_conditions -> assess_severity -> generate_recommendation -> __end__
 
 # ============================================================================
 # Expected Output:

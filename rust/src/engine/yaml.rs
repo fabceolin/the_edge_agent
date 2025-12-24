@@ -116,6 +116,21 @@ pub struct NodeConfig {
     #[serde(default)]
     pub metadata: HashMap<String, JsonValue>,
 
+    /// Output key for storing action result in state
+    ///
+    /// When specified, the result from `uses:` action will be stored
+    /// in the state under this key name. For example:
+    /// ```yaml
+    /// - name: call_llm
+    ///   uses: llm.call
+    ///   with:
+    ///     model: gpt-4
+    ///   output: llm_response
+    /// ```
+    /// The LLM response will be stored as `state.llm_response`.
+    #[serde(default)]
+    pub output: Option<String>,
+
     /// TEA-RUST-033: Maximum iterations for while_loop nodes (required for while_loop)
     #[serde(default)]
     pub max_iterations: Option<usize>,
@@ -127,6 +142,50 @@ pub struct NodeConfig {
     /// TEA-RUST-033: Body nodes for while_loop (required for while_loop)
     #[serde(default)]
     pub body: Option<Vec<NodeConfig>>,
+
+    /// TEA-YAML-002: Navigation target after node execution
+    ///
+    /// Can be:
+    /// - A string for unconditional jump: `goto: "target_node"`
+    /// - A list of rules for conditional routing: `goto: [{if: "expr", to: "node"}, ...]`
+    ///
+    /// Precedence: goto > edges > implicit chaining (next node in list)
+    #[serde(default)]
+    pub goto: Option<Goto>,
+}
+
+/// TEA-YAML-002: Navigation target specification
+///
+/// Supports both unconditional jumps (string) and conditional routing (list of rules).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Goto {
+    /// Unconditional jump to a target node
+    Unconditional(String),
+    /// Conditional routing with multiple rules (first match wins)
+    Conditional(Vec<GotoRule>),
+}
+
+/// TEA-YAML-002: A single conditional goto rule
+///
+/// Each rule specifies a condition and target. Rules are evaluated in order,
+/// first matching rule determines the navigation target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GotoRule {
+    /// Condition expression (Jinja2/Tera syntax)
+    ///
+    /// If omitted or null, this rule acts as a fallback (always matches).
+    /// Available variables:
+    /// - `state`: Current agent state
+    /// - `result`: Output from the current node's execution
+    #[serde(rename = "if")]
+    pub condition: Option<String>,
+
+    /// Target node name to navigate to
+    ///
+    /// Special values:
+    /// - `__end__`: Terminate the workflow
+    pub to: String,
 }
 
 /// Edge configuration from YAML
@@ -407,15 +466,202 @@ impl YamlEngine {
             graph.add_node(node);
         }
 
-        // Add edges
-        for edge_config in &config.edges {
-            self.add_edge(&mut graph, edge_config)?;
+        // TEA-YAML-002: Process goto and implicit chaining BEFORE legacy edges
+        // This implements precedence: goto > edges > implicit chaining
+        let nodes_with_goto = self.process_goto_and_implicit_edges(&mut graph, &config)?;
+
+        // TEA-YAML-002: Add legacy edges (deprecated) with warning
+        if !config.edges.is_empty() {
+            // Emit deprecation warning at INFO level (Phase 1: Soft Deprecation)
+            // Note: Using eprintln for now as tracing may not be initialized in library context
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "TEA-YAML-002 DEPRECATION WARNING: The 'edges' section is deprecated and will be \
+                 removed in v2.0. Use 'goto' property on nodes or implicit chaining instead."
+            );
+
+            for edge_config in &config.edges {
+                // TEA-YAML-002: Skip edges for nodes that have goto (goto takes precedence)
+                if nodes_with_goto.contains(&edge_config.from) && edge_config.from != START {
+                    #[cfg(debug_assertions)]
+                    eprintln!(
+                        "TEA-YAML-002: Skipping legacy edge from '{}' because node has 'goto' property",
+                        edge_config.from
+                    );
+                    continue;
+                }
+                self.add_edge(&mut graph, edge_config)?;
+            }
         }
 
         // Infer entry/finish if not explicit
         self.infer_entry_finish(&mut graph, &config)?;
 
         Ok(graph)
+    }
+
+    /// TEA-YAML-002: Process goto properties and implicit chaining for nodes
+    ///
+    /// This method:
+    /// 1. Sets entry point to first node (if no __start__ edge in edges)
+    /// 2. For each node with goto, adds appropriate edges
+    /// 3. For nodes without goto AND without legacy edges, adds implicit chaining
+    ///
+    /// Returns the set of node names that have goto definitions (for precedence handling).
+    fn process_goto_and_implicit_edges(
+        &self,
+        graph: &mut StateGraph,
+        config: &YamlConfig,
+    ) -> TeaResult<std::collections::HashSet<String>> {
+        use std::collections::HashSet;
+
+        let mut nodes_with_goto: HashSet<String> = HashSet::new();
+        let nodes = &config.nodes;
+
+        if nodes.is_empty() {
+            return Ok(nodes_with_goto);
+        }
+
+        // Build node name to index mapping for validation
+        let node_names: HashMap<String, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.name.clone(), i))
+            .collect();
+
+        // Collect nodes with legacy edges (for implicit chaining logic)
+        let mut nodes_with_legacy_edges: HashSet<String> = HashSet::new();
+        let mut has_start_edge = false;
+        let mut nodes_with_end_edge: HashSet<String> = HashSet::new();
+
+        for edge in &config.edges {
+            if edge.from == START {
+                has_start_edge = true;
+            } else {
+                nodes_with_legacy_edges.insert(edge.from.clone());
+            }
+            if let Some(to) = &edge.to {
+                if to == END {
+                    nodes_with_end_edge.insert(edge.from.clone());
+                }
+            }
+        }
+
+        // Set entry point to first node (if no __start__ edge in legacy edges)
+        if !has_start_edge {
+            let first_node = &nodes[0].name;
+            graph.set_entry_point(first_node)?;
+        }
+
+        // Process each node
+        for (idx, node_config) in nodes.iter().enumerate() {
+            let node_name = &node_config.name;
+
+            if let Some(goto) = &node_config.goto {
+                // Node has goto - process it (highest priority)
+                nodes_with_goto.insert(node_name.clone());
+                self.process_node_goto(graph, node_name, goto, &node_names, nodes, idx)?;
+            } else if nodes_with_legacy_edges.contains(node_name) {
+                // Node has legacy edges - don't add implicit chaining
+                // Edges will be added later from config.edges
+            } else {
+                // Implicit chaining: add edge to next node or __end__
+                if idx < nodes.len() - 1 {
+                    // Not the last node: chain to next
+                    let next_node = &nodes[idx + 1].name;
+                    graph.add_edge(node_name, next_node, Edge::simple())?;
+                } else {
+                    // Last node: implicit finish (unless has legacy edge to __end__)
+                    if !nodes_with_end_edge.contains(node_name) {
+                        graph.set_finish_point(node_name)?;
+                    }
+                }
+            }
+        }
+
+        Ok(nodes_with_goto)
+    }
+
+    /// TEA-YAML-002: Process the goto property for a single node
+    fn process_node_goto(
+        &self,
+        graph: &mut StateGraph,
+        node_name: &str,
+        goto: &Goto,
+        node_names: &HashMap<String, usize>,
+        nodes: &[NodeConfig],
+        _current_idx: usize,
+    ) -> TeaResult<()> {
+        match goto {
+            Goto::Unconditional(target) => {
+                // Validate target exists (AC-6: error at validation time)
+                if target != END && !node_names.contains_key(target) {
+                    return Err(TeaError::InvalidConfig(format!(
+                        "Node '{}' has goto to non-existent node '{}'. Available nodes: {:?}",
+                        node_name,
+                        target,
+                        node_names.keys().collect::<Vec<_>>()
+                    )));
+                }
+
+                if target == END {
+                    graph.set_finish_point(node_name)?;
+                } else {
+                    graph.add_edge(node_name, target, Edge::simple())?;
+                }
+            }
+            Goto::Conditional(rules) => {
+                let mut has_fallback = false;
+
+                for rule in rules {
+                    let target = &rule.to;
+
+                    // Validate target exists (AC-6: error at validation time)
+                    if target != END && !node_names.contains_key(target) {
+                        return Err(TeaError::InvalidConfig(format!(
+                            "Node '{}' has goto to non-existent node '{}'. Available nodes: {:?}",
+                            node_name,
+                            target,
+                            node_names.keys().collect::<Vec<_>>()
+                        )));
+                    }
+
+                    if let Some(condition) = &rule.condition {
+                        // Conditional rule: add conditional edge
+                        // The condition is evaluated at runtime by the executor
+                        if target == END {
+                            graph.add_edge(
+                                node_name,
+                                END,
+                                Edge::conditional(condition.clone(), target.clone()),
+                            )?;
+                        } else {
+                            graph.add_edge(
+                                node_name,
+                                target,
+                                Edge::conditional(condition.clone(), target.clone()),
+                            )?;
+                        }
+                    } else {
+                        // Fallback rule (no condition = always true)
+                        has_fallback = true;
+                        if target == END {
+                            graph.set_finish_point(node_name)?;
+                        } else {
+                            graph.add_edge(node_name, target, Edge::simple())?;
+                        }
+                    }
+                }
+
+                // If no fallback rule, don't add implicit chaining
+                // When using conditional goto, the user must explicitly specify all branches
+                // including a fallback with `{to: next_node}` if they want one
+                // This prevents the implicit edge from conflicting with conditional edges
+                let _ = has_fallback; // Suppress unused variable warning
+            }
+        }
+
+        Ok(())
     }
 
     /// Build a Node from NodeConfig
@@ -469,6 +715,11 @@ impl YamlEngine {
 
         // Set metadata
         node.metadata = config.metadata.clone();
+
+        // Set output key for storing action result
+        if let Some(output) = &config.output {
+            node.output = Some(output.clone());
+        }
 
         Ok(node)
     }

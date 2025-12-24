@@ -32,11 +32,7 @@ nodes:
       state(dict_with_empty, DictWithEmpty),
       is_dict(DictWithEmpty).
 
-edges:
-  - from: __start__
-    to: verify_empty_collections
-  - from: verify_empty_collections
-    to: __end__
+# Implicit flow: verify_empty_collections -> __end__
 
 initial_state:
   empty_list: []

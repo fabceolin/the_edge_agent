@@ -42,11 +42,7 @@ nodes:
       % Verify the solution
       X = 1, Y = 4, Z = 10.
 
-edges:
-  - from: __start__
-    to: solve_constraints
-  - from: solve_constraints
-    to: __end__
+# Implicit flow: solve_constraints -> __end__
 
 # Initial state
 # Constraints: X + Y + Z = 15, X < Y < Z, X = 1

@@ -23,11 +23,7 @@ nodes:
       open('/etc/passwd', read, Stream),
       close(Stream).
 
-edges:
-  - from: __start__
-    to: file_access_attempt
-  - from: file_access_attempt
-    to: __end__
+# Implicit flow: file_access_attempt -> __end__
 
 initial_state:
   result: "not_run"

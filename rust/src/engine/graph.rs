@@ -92,6 +92,12 @@ pub struct Node {
 
     /// Node metadata
     pub metadata: HashMap<String, serde_json::Value>,
+
+    /// Output key for storing action result in state
+    ///
+    /// When specified, the result from `uses:` action will be stored
+    /// in the state under this key name instead of being merged.
+    pub output: Option<String>,
 }
 
 impl Node {
@@ -107,6 +113,7 @@ impl Node {
             retry: None,
             fallback: None,
             metadata: HashMap::new(),
+            output: None,
         }
     }
 
@@ -147,6 +154,7 @@ impl Node {
             retry: None,
             fallback: None,
             metadata: HashMap::new(),
+            output: None,
         }
     }
 

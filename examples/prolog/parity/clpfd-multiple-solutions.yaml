@@ -33,11 +33,7 @@ nodes:
       % Verify the first solution (X=1, Y=5 for sum=6, range 1..5)
       X = 1, Y = 5.
 
-edges:
-  - from: __start__
-    to: solve_first_solution
-  - from: solve_first_solution
-    to: __end__
+# Implicit flow: solve_first_solution -> __end__
 
 # Initial state
 # Multiple solutions exist: (1,5), (2,4), (3,3), (4,2), (5,1)

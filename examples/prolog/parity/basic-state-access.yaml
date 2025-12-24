@@ -45,11 +45,7 @@ nodes:
       state(dict_value, Dict),
       is_dict(Dict).
 
-edges:
-  - from: __start__
-    to: verify_state_access
-  - from: verify_state_access
-    to: __end__
+# Implicit flow: verify_state_access -> __end__
 
 # Initial state for parity test
 initial_state:
