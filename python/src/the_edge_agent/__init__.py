@@ -124,4 +124,4 @@ __all__ = [
     # Version
     "__version__",
 ]
-__version__ = "0.7.9"
+__version__ = "0.8.0"
