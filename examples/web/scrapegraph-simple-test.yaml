@@ -1,0 +1,89 @@
+# Simple ScrapeGraphAI Test Agent
+#
+# Quick production test for web.ai_scrape action (TEA-BUILTIN-008.4)
+#
+# USAGE:
+#   export SCRAPEGRAPH_API_KEY="your-api-key"
+#   cd python
+#   source .venv/bin/activate
+#
+#   # Default test (books.toscrape.com)
+#   python -m the_edge_agent.cli run ../examples/web/scrapegraph-simple-test.yaml
+#
+#   # Custom URL (Hacker News)
+#   python -m the_edge_agent.cli run ../examples/web/scrapegraph-simple-test.yaml \
+#     --input '{"url": "https://news.ycombinator.com", "prompt": "Extract the top 5 article titles with their scores"}'
+#
+#   # Custom URL (Any website)
+#   python -m the_edge_agent.cli run ../examples/web/scrapegraph-simple-test.yaml \
+#     --input '{"url": "https://example.com", "prompt": "Extract all headings and links"}'
+#
+name: scrapegraph-simple-test
+description: Quick production test for ScrapeGraphAI
+
+state_schema:
+  url: str
+  prompt: str
+  result: dict
+
+nodes:
+  - name: setup
+    run: |
+      url = state.get("url", "https://books.toscrape.com")
+      prompt = state.get("prompt", "Extract the first 5 book titles with their prices")
+
+      print(f"\n=== ScrapeGraphAI Test ===")
+      print(f"URL: {url}")
+      print(f"Prompt: {prompt}")
+      print(f"========================\n")
+
+      return {"url": url, "prompt": prompt}
+
+  - name: scrape
+    uses: web.ai_scrape
+    with:
+      url: "{{ state.url }}"
+      prompt: "{{ state.prompt }}"
+      output_schema:
+        type: object
+        properties:
+          items:
+            type: array
+            items:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: "Item title or name"
+                detail:
+                  type: string
+                  description: "Price, score, or other detail"
+    output: result
+
+  - name: report
+    run: |
+      import json
+      result = state.get("result", {})
+
+      print("\n=== Results ===")
+
+      if result.get("success"):
+          print("[SUCCESS] Extraction completed")
+          print(f"\nData:")
+          print(json.dumps(result.get("data", {}), indent=2))
+      else:
+          print(f"[ERROR] {result.get('error')}")
+          print(f"Type: {result.get('error_type')}")
+
+      print("===============\n")
+      return {}
+
+edges:
+  - from: __start__
+    to: setup
+  - from: setup
+    to: scrape
+  - from: scrape
+    to: report
+  - from: report
+    to: __end__

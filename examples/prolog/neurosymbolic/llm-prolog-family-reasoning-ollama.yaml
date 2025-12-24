@@ -1,0 +1,407 @@
+# LLM + Prolog Family Reasoning Agent (Ollama Version with Self-Correction)
+#
+# Demonstrates neurosymbolic AI with TEMPORAL INFERENCE and LLM SELF-CORRECTION.
+#
+# KEY FEATURES:
+#   1. LLM extracts OBSERVABLE FACTS from text
+#   2. LLM CRITIC validates and corrects the extraction (loop until valid)
+#   3. Prolog DERIVES uncertain relationships (child_of_affair, half_sibling)
+#
+# ARCHITECTURE:
+#   1. LLM extracts: birth_date, mother, father, married, affair (with dates)
+#   2. LLM critic validates format and completeness
+#   3. Loop: refine → validate until correct
+#   4. Prolog derives: child_of_affair (from birth_date + affair period)
+#   5. Prolog applies: exclusive relationship premise → father
+#   6. Prolog queries: sibling, half_sibling
+
+name: llm-prolog-family-reasoning-ollama
+description: |
+  Neurosymbolic agent with LLM self-correction loop.
+  LLM extracts and refines facts; Prolog infers relationships.
+
+state_schema:
+  text: str
+  query_person: str
+  query_type: str
+  premise: str
+  entities: list
+  relationships: list
+  llm_response: str
+  extraction_valid: bool
+  validation_errors: list
+  refinement_count: int
+  prolog_facts: str
+  query_result: list
+  derived_facts: list
+  reasoning_chain: str
+  answer: str
+
+nodes:
+  # ============================================================
+  # STEP 1: LLM extracts OBSERVABLE FACTS from text
+  # ============================================================
+  - name: extract_facts
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            You are a fact extraction expert. Extract ONLY OBSERVABLE FACTS from text.
+
+            CRITICAL RULES:
+            • Do NOT use external knowledge - extract ONLY from the provided text
+            • Use ONLY these relationship types: mother, father, married, affair
+            • Do NOT use "parent" - always specify "mother" or "father"
+            • Include full names when mentioned (e.g., "Thomas Parker Bowles" not just "Thomas")
+
+            OUTPUT FORMAT (JSON only, no markdown):
+            {
+              "entities": [{"name": "Full Name", "birth_date": "YYYY-MM-DD or null"}],
+              "relationships": [
+                {"type": "mother|father|married|affair", "subject": "Name", "object": "Name",
+                 "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null"}
+              ]
+            }
+
+            RELATIONSHIP TYPES:
+            • mother: Female parent → child (e.g., "X had children", "mother of Y")
+            • father: Male parent → child (e.g., "X's sons", explicitly stated)
+            • married: Spouse → spouse with dates
+            • affair: Person → partner with date range
+
+            DATE RULES:
+            • Use ISO 8601: YYYY-MM-DD
+            • "early 1970s" → "1970-01-01"
+            • "mid 1980s" → "1985-07-01"
+            • "late 1990s" → "1999-12-31"
+            • If only year known → "YYYY-01-01"
+
+            DO NOT EXTRACT: child_of_affair (Prolog will derive this)
+
+        - role: user
+          content: |
+            Extract all observable facts from this text:
+
+            {{ state.text }}
+
+            Return ONLY valid JSON with mother/father relationships (not "parent").
+      temperature: 0.1
+    output: llm_response
+
+  # ============================================================
+  # STEP 2: Parse and validate extraction
+  # ============================================================
+  - name: validate_extraction
+    run: |
+      import json
+
+      llm_response = state.get("llm_response", {})
+      content = llm_response.get("content", "") if isinstance(llm_response, dict) else str(llm_response)
+      refinement_count = state.get("refinement_count", 0)
+
+      errors = []
+      entities = []
+      relationships = []
+
+      try:
+        # Extract JSON from markdown if present
+        if "```json" in content:
+          content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+          content = content.split("```")[1].split("```")[0]
+
+        data = json.loads(content.strip())
+        entities = data.get("entities", [])
+        relationships = data.get("relationships", [])
+
+        # Validation checks
+        if not entities:
+          errors.append("No entities extracted")
+
+        if not relationships:
+          errors.append("No relationships extracted")
+
+        # Check for forbidden "parent" type
+        parent_rels = [r for r in relationships if r.get("type") == "parent"]
+        if parent_rels:
+          errors.append(f"Found {len(parent_rels)} 'parent' relationships - must use 'mother' or 'father'")
+
+        # Check for mother/father relationships
+        mother_rels = [r for r in relationships if r.get("type") == "mother"]
+        father_rels = [r for r in relationships if r.get("type") == "father"]
+        if not mother_rels and not father_rels:
+          errors.append("No mother or father relationships found - check if text mentions children")
+
+        # Check: if there are father rels but no mother rels, likely missing mother
+        if father_rels and not mother_rels:
+          errors.append("Found father relationships but NO mother relationships - extract mother for each child")
+
+        # Check date format
+        for rel in relationships:
+          for date_field in ["start_date", "end_date"]:
+            date_val = rel.get(date_field)
+            if date_val and not (date_val == "null" or (len(date_val) == 10 and date_val[4] == '-')):
+              errors.append(f"Invalid date format: {date_val} (expected YYYY-MM-DD)")
+
+      except json.JSONDecodeError as e:
+        errors.append(f"Invalid JSON: {str(e)}")
+      except Exception as e:
+        errors.append(f"Parse error: {str(e)}")
+
+      is_valid = len(errors) == 0
+
+      return {
+        "entities": entities,
+        "relationships": relationships,
+        "extraction_valid": is_valid,
+        "validation_errors": errors,
+        "refinement_count": refinement_count
+      }
+
+  # ============================================================
+  # STEP 3: LLM Critic - Refine extraction if invalid
+  # ============================================================
+  - name: refine_extraction
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            You are a fact extraction CRITIC. Your job is to FIX extraction errors.
+
+            RULES:
+            • Use ONLY: mother, father, married, affair (NEVER use "parent")
+            • Dates must be YYYY-MM-DD format
+            • Include all parent-child relationships from the text
+            • Mother = female parent, Father = male parent
+
+            Return corrected JSON only, no explanations.
+
+        - role: user
+          content: |
+            Original text:
+            {{ state.text }}
+
+            Current extraction has these ERRORS:
+            {% for error in state.validation_errors %}
+            - {{ error }}
+            {% endfor %}
+
+            Current extraction:
+            {
+              "entities": {{ state.entities | tojson }},
+              "relationships": {{ state.relationships | tojson }}
+            }
+
+            Fix ALL errors and return corrected JSON.
+            IMPORTANT: Replace any "parent" type with "mother" or "father" based on the person's gender.
+      temperature: 0.1
+    output: llm_response
+
+  # ============================================================
+  # STEP 4: Increment refinement counter
+  # ============================================================
+  - name: increment_refinement
+    run: |
+      count = state.get("refinement_count", 0) + 1
+      return {"refinement_count": count}
+
+  # ============================================================
+  # STEP 5: Convert JSON to Prolog facts
+  # ============================================================
+  - name: generate_prolog_facts
+    run: |
+      entities = state.get("entities", [])
+      relationships = state.get("relationships", [])
+
+      prolog_lines = []
+
+      def normalize(name):
+        return name.lower().replace(" ", "_").replace("-", "_").replace("'", "").replace(".", "")
+
+      for entity in entities:
+        name = normalize(entity.get("name", ""))
+        birth = entity.get("birth_date")
+        if name and birth:
+          prolog_lines.append(f"birth_date({name}, '{birth}').")
+
+      for rel in relationships:
+        rel_type = rel.get("type", "")
+        subj = normalize(rel.get("subject", ""))
+        obj = normalize(rel.get("object", ""))
+        start = rel.get("start_date")
+        end = rel.get("end_date")
+
+        if rel_type == "mother" and subj and obj:
+          prolog_lines.append(f"mother({subj}, {obj}).")
+        elif rel_type == "father" and subj and obj:
+          prolog_lines.append(f"father({subj}, {obj}).")
+        elif rel_type == "affair" and subj and obj:
+          start_str = f"'{start}'" if start else "null"
+          end_str = f"'{end}'" if end else "null"
+          prolog_lines.append(f"affair({subj}, {obj}, {start_str}, {end_str}).")
+
+      return {"prolog_facts": "\n".join(prolog_lines)}
+
+  # ============================================================
+  # STEP 6: Prolog temporal reasoning
+  # ============================================================
+  - name: prolog_reasoning
+    language: prolog
+    run: |
+      :- dynamic mother/2.
+      :- dynamic father/2.
+      :- dynamic affair/4.
+      :- dynamic birth_date/2.
+
+      date_in_range(Date, Start, End) :-
+          Date @>= Start,
+          (End = null -> true ; Date @=< End).
+
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(Mother, AffairPartner, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(AffairPartner, Mother, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+
+      apply_exclusive_premise :-
+          forall(
+              child_of_affair(Child, AffairPartner),
+              (father(AffairPartner, Child) -> true ; assertz(father(AffairPartner, Child)))
+          ).
+
+      sibling(X, Y) :-
+          mother(M, X), mother(M, Y),
+          father(F, X), father(F, Y),
+          X \= Y.
+
+      shares_parent(X, Y) :- mother(M, X), mother(M, Y), X \= Y.
+      shares_parent(X, Y) :- father(F, X), father(F, Y), X \= Y.
+      not_sibling(X, Y) :- \+ sibling(X, Y).
+
+      half_sibling(X, Y) :-
+          shares_parent(X, Y),
+          not_sibling(X, Y).
+
+      normalize_char(32, 95) :- !.
+      normalize_char(45, 95) :- !.
+      normalize_char(C, C).
+      valid_char(C) :- C >= 97, C =< 122, !.
+      valid_char(95) :- !.
+      valid_char(C) :- C >= 48, C =< 57.
+      normalize_name(In, Out) :-
+          downcase_atom(In, Lower),
+          atom_codes(Lower, Codes),
+          maplist(normalize_char, Codes, NormCodes),
+          include(valid_char, NormCodes, FilteredCodes),
+          atom_codes(Out, FilteredCodes).
+
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
+      state(query_person, PersonAtom),
+      state(query_type, QueryType),
+      state(premise, Premise),
+      normalize_name(PersonAtom, Person),
+      (
+        (sub_atom(Premise, _, _, _, 'exclusive') ;
+         sub_atom(Premise, _, _, _, 'one partner')) ->
+            apply_exclusive_premise
+        ; true
+      ),
+      findall(derived(child_of_affair, C, P), child_of_affair(C, P), DerivedAffair),
+      (
+        QueryType = 'siblings' ->
+          findall(S, sibling(Person, S), Results)
+        ; QueryType = 'half_siblings' ->
+          findall(H, half_sibling(Person, H), Results)
+        ; Results = []
+      ),
+      length(Results, Count),
+      length(DerivedAffair, DerivedCount),
+      format(atom(Chain), 'Derived ~w child_of_affair. Found ~w ~w.', [DerivedCount, Count, QueryType]),
+      return(query_result, Results),
+      return(derived_facts, DerivedAffair),
+      return(reasoning_chain, Chain).
+
+  # ============================================================
+  # STEP 7: Format answer
+  # ============================================================
+  - name: format_answer
+    run: |
+      query_person = state["query_person"]
+      query_type = state["query_type"]
+      results = state.get("query_result", [])
+      derived = state.get("derived_facts", [])
+      reasoning = state.get("reasoning_chain", "")
+      refinements = state.get("refinement_count", 0)
+
+      def format_name(name):
+        return name.replace("_", " ").title()
+
+      formatted = [format_name(r) for r in results]
+
+      if not results:
+        answer = f"No {query_type.replace('_', ' ')} found for {query_person}."
+      elif query_type == "half_siblings":
+        answer = f"**{query_person}'s half-siblings:** {', '.join(formatted)}"
+      elif query_type == "siblings":
+        answer = f"**{query_person}'s siblings:** {', '.join(formatted)}"
+      else:
+        answer = f"**Results:** {', '.join(formatted)}"
+
+      if derived:
+        answer += f"\n\n**Derived:** {len(derived)} child_of_affair facts from temporal reasoning"
+
+      answer += f"\n\n**Reasoning:** {reasoning}"
+
+      if refinements > 0:
+        answer += f"\n\n**LLM Refinements:** {refinements} correction(s) applied"
+
+      answer += "\n\n---\n*Neurosymbolic AI: LLM extracted facts (Ollama gemma3n), Prolog derived relationships*"
+
+      return {"answer": answer}
+
+edges:
+  - from: __start__
+    to: extract_facts
+  - from: extract_facts
+    to: validate_extraction
+  # Conditional: if invalid AND refinements < 3, refine
+  - from: validate_extraction
+    to: refine_extraction
+    condition: "not state.get('extraction_valid', False) and state.get('refinement_count', 0) < 3"
+  # If valid OR max refinements reached, continue
+  - from: validate_extraction
+    to: generate_prolog_facts
+    condition: "state.get('extraction_valid', False) or state.get('refinement_count', 0) >= 3"
+  - from: refine_extraction
+    to: increment_refinement
+  - from: increment_refinement
+    to: validate_extraction
+  - from: generate_prolog_facts
+    to: prolog_reasoning
+  - from: prolog_reasoning
+    to: format_answer
+  - from: format_answer
+    to: __end__
+
+# ============================================================
+# EXAMPLE USAGE
+# ============================================================
+#
+# tea run llm-prolog-family-reasoning-ollama.yaml --input '{
+#   "text": "Camilla Shand was born in 1947 and married Andrew Parker Bowles in 1973. They had children named Thomas (born 1974) and Laura (born 1978). During her marriage, Camilla had an affair with Prince Charles from the early 1970s until 1999. Diana Spencer was born in 1961 and married Prince Charles in 1981. Diana and Charles had sons Prince William (born 1982) and Prince Harry (born 1984).",
+#   "query_person": "Thomas",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'

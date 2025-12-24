@@ -1,0 +1,174 @@
+# Deep Research Crawler Agent
+#
+# Output: Structured law firm JSON profile
+#
+# USAGE:
+#   export SCRAPEGRAPH_API_KEY="your-key"
+#   cd python && source .venv/bin/activate
+#   python -m the_edge_agent.cli run ../examples/web/deep-research-crawler.yaml \
+#     --input '{"target_url": "https://www.scbadvogados.adv.br"}' \
+#     --secrets '{"SCRAPEGRAPH_API_KEY": "sgai-..."}'
+#
+name: deep-research-crawler
+description: Extract structured law firm profile from website
+
+variables:
+  sitemap_api: "https://api.scrapegraphai.com/v1/sitemap"
+  smartscraper_api: "https://api.scrapegraphai.com/v1/smartscraper"
+
+state_schema:
+  target_url: str
+  sitemap_result: dict
+  selected_pages: dict
+  extractions: list
+  firm_profile: dict
+
+nodes:
+  # Stage 1: Get Sitemap
+  - name: get_sitemap
+    uses: http.post
+    with:
+      url: "{{ variables.sitemap_api }}"
+      headers:
+        SGAI-APIKEY: "{{ secrets.SCRAPEGRAPH_API_KEY }}"
+        Content-Type: "application/json"
+      json:
+        website_url: "{{ state.target_url }}"
+    output: sitemap_result
+
+  # Stage 2: LLM selects pages to scrape
+  - name: select_pages
+    uses: llm.call
+    with:
+      model: "gpt-4o"
+      temperature: 0.2
+      messages:
+        - role: system
+          content: |
+            Select pages from a law firm sitemap for data extraction.
+            INCLUDE: Homepage, About, Team/Lawyers, Practice Areas, Contact, Offices
+            EXCLUDE: Blog, news, PDFs, external links, login, privacy policy
+            Return JSON: {"pages": ["url1", "url2", ...]}
+            Maximum 8 pages. ONLY valid JSON.
+        - role: user
+          content: "Sitemap: {{ state.sitemap_result | tojson }}"
+    output: selected_pages
+
+  # Stage 3: Scrape each selected page via ScrapeGraphAI API
+  - name: scrape_pages
+    run: |
+      import json
+      import requests as req
+
+      selection = state.get("selected_pages", {})
+      content = selection.get("content", selection)
+      if isinstance(content, str):
+          content = json.loads(content)
+      pages = content.get("pages", [])
+
+      api_key = "{{ secrets.SCRAPEGRAPH_API_KEY }}"
+      api_url = "{{ variables.smartscraper_api }}"
+
+      schema = {
+          "type": "object",
+          "properties": {
+              "firmName": {"type": "string", "description": "official registered name"},
+              "foundedYear": {"type": "string", "description": "YYYY or null"},
+              "website": {"type": "string"},
+              "linkedin": {"type": "string"},
+              "businessModel": {"type": "string", "description": "corporate-firm, boutique-firm, full-service, specialist, virtual, alternative-legal-provider"},
+              "description": {"type": "string", "description": "2-3 sentence description"},
+              "country": {"type": "string", "description": "ISO 3166-1 alpha-3 (BRA, USA)"},
+              "city": {"type": "string"},
+              "state": {"type": "string", "description": "ISO 3166-2 (BR-SP)"},
+              "totalLawyers": {"type": "integer"},
+              "totalPartners": {"type": "integer"},
+              "mainEmail": {"type": "string"},
+              "mainPhone": {"type": "string"},
+              "managingPartners": {"type": "array", "items": {"type": "object", "properties": {
+                  "title": {"type": "string"},
+                  "firstName": {"type": "string"},
+                  "surname": {"type": "string"},
+                  "email": {"type": "string"},
+                  "phone": {"type": "string"},
+                  "role": {"type": "string"},
+                  "isManagingPartner": {"type": "boolean"},
+                  "biography": {"type": "string"},
+                  "employmentStartDate": {"type": "string"}
+              }}},
+              "offices": {"type": "array", "items": {"type": "object", "properties": {
+                  "city": {"type": "string"},
+                  "state": {"type": "string"},
+                  "country": {"type": "string"},
+                  "address": {"type": "string"},
+                  "phone": {"type": "string"},
+                  "isHeadOffice": {"type": "boolean"}
+              }}},
+              "practiceAreas": {"type": "array", "items": {"type": "string"}},
+              "awards": {"type": "array", "items": {"type": "string"}}
+          }
+      }
+
+      extractions = []
+      for url in pages:
+          try:
+              resp = req.post(
+                  api_url,
+                  headers={"SGAI-APIKEY": api_key, "Content-Type": "application/json"},
+                  json={
+                      "website_url": url,
+                      "user_prompt": "Extract law firm data: firm name, founding year, description, contact info, managing partners with bios, offices with addresses, practice areas, awards.",
+                      "output_schema": schema
+                  },
+                  timeout=120
+              )
+              if resp.status_code == 200:
+                  data = resp.json()
+                  result = data.get("result", data)
+                  extractions.append({"url": url, "data": result})
+          except Exception as e:
+              pass
+
+      return {"extractions": extractions}
+
+  # Stage 4: Merge into final profile
+  - name: merge_results
+    uses: llm.call
+    with:
+      model: "gpt-4o"
+      temperature: 0.1
+      messages:
+        - role: system
+          content: |
+            Merge page extractions into one law firm profile.
+            Rules:
+            - Deduplicate managingPartners by firstName+surname
+            - Deduplicate offices by city
+            - Combine practiceAreas and awards (deduplicate)
+            - Use most complete/detailed values
+            - Prefer non-null values
+            - For isManagingPartner: true if role contains "Managing Partner" or "Managing Director"
+            - ISO codes: country=3-letter (BRA, USA), state=ISO 3166-2 (BR-SP, US-CA)
+            Return ONLY valid JSON matching the exact schema.
+        - role: user
+          content: |
+            Target URL: {{ state.target_url }}
+            Extractions: {{ state.extractions | tojson }}
+
+            Return merged profile with: firmName, foundedYear, website, linkedin, businessModel, description, country, city, state, totalLawyers, totalPartners, mainEmail, mainPhone, managingPartners[], offices[], practiceAreas[], awards[]
+    output: firm_profile
+
+edges:
+  - from: __start__
+    to: get_sitemap
+  - from: get_sitemap
+    to: select_pages
+  - from: select_pages
+    to: scrape_pages
+  - from: scrape_pages
+    to: merge_results
+  - from: merge_results
+    to: __end__
+
+config:
+  raise_exceptions: false

@@ -122,9 +122,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         return round(prompt_cost + completion_cost, 6)
 
     def llm_call(state, model, messages, temperature=0.7, max_retries=0,
-                 base_delay=1.0, max_delay=60.0, opik_trace=False, **kwargs):
+                 base_delay=1.0, max_delay=60.0, opik_trace=False,
+                 provider="auto", api_base=None, **kwargs):
         """
-        Call a language model (supports OpenAI and Azure OpenAI) with optional retry logic.
+        Call a language model (supports OpenAI, Azure OpenAI, and Ollama) with optional retry logic.
+
+        Provider Detection Priority:
+        1. Explicit `provider` parameter (highest priority)
+        2. Environment variable detection:
+           - OLLAMA_API_BASE → Ollama
+           - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT → Azure OpenAI
+        3. Default → OpenAI
 
         Automatically detects Azure OpenAI configuration via environment variables:
         - AZURE_OPENAI_API_KEY: Azure OpenAI API key
@@ -132,9 +140,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         - AZURE_OPENAI_DEPLOYMENT: Deployment name (defaults to model param)
         - OPENAI_API_VERSION: API version (defaults to 2024-02-15-preview)
 
+        For Ollama:
+        - OLLAMA_API_BASE: Ollama API endpoint (default: http://localhost:11434/v1)
+        - No API key required
+
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
+            model: Model name (e.g., "gpt-4", "llama3.2", "mistral")
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
             max_retries: Maximum retry attempts (default: 0, no retry)
@@ -143,6 +155,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry (model, tokens, latency). Requires opik SDK installed.
                        Default: False (opt-in feature).
+            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            api_base: Custom API base URL (overrides defaults)
             **kwargs: Additional parameters passed to OpenAI
 
         Returns:
@@ -166,25 +180,47 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         except ImportError:
             raise ImportError("OpenAI library not installed. Install with: pip install openai")
 
-        # Check for Azure OpenAI configuration
-        azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        # Determine provider based on priority:
+        # 1. Explicit provider parameter
+        # 2. Environment variable detection
+        # 3. Default to OpenAI
+        resolved_provider = provider.lower() if provider else "auto"
 
-        if azure_api_key and azure_endpoint:
-            # Use Azure OpenAI
+        if resolved_provider == "auto":
+            # Check environment variables in priority order
+            if os.getenv("OLLAMA_API_BASE"):
+                resolved_provider = "ollama"
+            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+                resolved_provider = "azure"
+            else:
+                resolved_provider = "openai"
+
+        # Initialize client based on resolved provider
+        is_ollama = False
+        if resolved_provider == "ollama":
+            # Ollama: Use OpenAI-compatible API with no auth
+            ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+            # Ollama doesn't require API key but OpenAI SDK needs one, use dummy value
+            client = OpenAI(base_url=ollama_base, api_key="ollama")
+            deployment = model
+            is_ollama = True
+        elif resolved_provider == "azure":
+            # Azure OpenAI
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_endpoint = api_base or os.getenv("AZURE_OPENAI_ENDPOINT")
             client = AzureOpenAI(
                 api_key=azure_api_key,
                 azure_endpoint=azure_endpoint,
                 api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
             )
-            # Azure uses deployment name, not model name
             deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
-            is_azure = True
         else:
-            # Use standard OpenAI
-            client = OpenAI()
+            # Standard OpenAI
+            if api_base:
+                client = OpenAI(base_url=api_base)
+            else:
+                client = OpenAI()
             deployment = model
-            is_azure = False
 
         # Apply Opik tracing wrapper if requested
         if opik_trace:
@@ -207,7 +243,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         filtered_kwargs = {
             k: v for k, v in kwargs.items()
             if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
-                         'max_retries', 'base_delay', 'max_delay', 'opik_trace')
+                         'max_retries', 'base_delay', 'max_delay', 'opik_trace',
+                         'provider', 'api_base')
         }
 
         # Helper function to extract Retry-After header
@@ -241,8 +278,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 'content': response.choices[0].message.content,
                 'usage': usage
             }
-            # Add cost estimation when opik_trace is enabled
-            if opik_trace and usage:
+            # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
+            if opik_trace and usage and not is_ollama:
                 result['cost_usd'] = calculate_cost(model, usage)
             if extra_fields:
                 result.update(extra_fields)
@@ -356,28 +393,34 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     registry['llm.call'] = llm_call
     registry['actions.llm_call'] = llm_call
 
-    def llm_stream(state, model, messages, temperature=0.7, opik_trace=False, **kwargs):
+    def llm_stream(state, model, messages, temperature=0.7, opik_trace=False,
+                   provider="auto", api_base=None, **kwargs):
         """
         Stream LLM responses token-by-token.
 
         Uses OpenAI streaming API to yield partial content chunks as they arrive.
         This action aggregates all chunks and returns the final result.
 
-        Automatically detects Azure OpenAI configuration (same as llm_call).
+        Provider detection follows same priority as llm.call:
+        1. Explicit `provider` parameter
+        2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
+        3. Default → OpenAI
 
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
+            model: Model name (e.g., "gpt-4", "llama3.2", "mistral")
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry. Opik's wrapper handles streaming chunk aggregation.
                        Default: False (opt-in feature).
+            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            api_base: Custom API base URL (overrides defaults)
             **kwargs: Additional parameters passed to OpenAI
 
         Returns:
             {"content": str, "usage": dict, "streamed": True, "chunk_count": int}
-            When opik_trace=True:
+            When opik_trace=True (and not Ollama):
                 Result dict also includes "cost_usd": float (estimated cost)
             Or {"error": str, "success": False} on failure
 
@@ -395,12 +438,27 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             }
 
         try:
-            # Check for Azure OpenAI configuration
-            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
-            azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+            # Determine provider based on priority (same as llm.call)
+            resolved_provider = provider.lower() if provider else "auto"
 
-            if azure_api_key and azure_endpoint:
-                # Use Azure OpenAI
+            if resolved_provider == "auto":
+                if os.getenv("OLLAMA_API_BASE"):
+                    resolved_provider = "ollama"
+                elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+                    resolved_provider = "azure"
+                else:
+                    resolved_provider = "openai"
+
+            # Initialize client based on resolved provider
+            is_ollama = False
+            if resolved_provider == "ollama":
+                ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+                client = OpenAI(base_url=ollama_base, api_key="ollama")
+                deployment = model
+                is_ollama = True
+            elif resolved_provider == "azure":
+                azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+                azure_endpoint = api_base or os.getenv("AZURE_OPENAI_ENDPOINT")
                 client = AzureOpenAI(
                     api_key=azure_api_key,
                     azure_endpoint=azure_endpoint,
@@ -408,8 +466,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 )
                 deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
             else:
-                # Use standard OpenAI
-                client = OpenAI()
+                if api_base:
+                    client = OpenAI(base_url=api_base)
+                else:
+                    client = OpenAI()
                 deployment = model
 
             # Apply Opik tracing wrapper if requested
@@ -431,7 +491,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             # Filter out internal parameters
             filtered_kwargs = {
                 k: v for k, v in kwargs.items()
-                if k not in ('state', 'config', 'node', 'graph', 'parallel_results', 'opik_trace')
+                if k not in ('state', 'config', 'node', 'graph', 'parallel_results',
+                             'opik_trace', 'provider', 'api_base')
             }
 
             stream = client.chat.completions.create(
@@ -465,8 +526,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "chunk_count": chunk_index
             }
 
-            # Add cost estimation when opik_trace is enabled
-            if opik_trace and usage_data:
+            # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
+            if opik_trace and usage_data and not is_ollama:
                 result['cost_usd'] = calculate_cost(model, usage_data)
 
             return result
@@ -533,21 +594,32 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     registry['actions.llm_retry'] = llm_retry
 
     def llm_tools(state, model, messages, tools, tool_choice="auto",
-                  max_tool_rounds=10, temperature=0.7, **kwargs):
+                  max_tool_rounds=10, temperature=0.7,
+                  provider="auto", api_base=None, **kwargs):
         """
         LLM call with tool/function calling support.
 
         Supports OpenAI function calling with automatic dispatch to registered
         actions. Handles multi-turn tool use (call -> result -> continue).
 
+        Provider detection follows same priority as llm.call:
+        1. Explicit `provider` parameter
+        2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
+        3. Default → OpenAI
+
+        Note: Tool calling with Ollama requires models that support it
+        (e.g., llama3.1+, mistral-nemo, qwen2.5).
+
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "gpt-3.5-turbo")
+            model: Model name (e.g., "gpt-4", "llama3.1", "mistral-nemo")
             messages: List of message dicts with 'role' and 'content'
             tools: List of tool definitions (YAML-style or OpenAI-style)
             tool_choice: Tool selection mode - "auto", "none", or specific tool
             max_tool_rounds: Maximum tool call rounds (default: 10)
             temperature: Sampling temperature (default: 0.7)
+            provider: LLM provider - "auto" (detect), "openai", "azure", or "ollama"
+            api_base: Custom API base URL (overrides defaults)
             **kwargs: Additional parameters passed to OpenAI
 
         Tool definition YAML schema:
@@ -571,7 +643,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             Or {"error": str, "success": False} on failure
         """
         try:
-            from openai import OpenAI
+            import os
+            from openai import OpenAI, AzureOpenAI
         except ImportError:
             return {
                 "error": "OpenAI library not installed. Install with: pip install openai>=1.0.0",
@@ -676,7 +749,38 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 }
             openai_tools.append(convert_tool_to_openai_format(tool_def))
 
-        client = OpenAI()
+        # Determine provider based on priority (same as llm.call)
+        resolved_provider = provider.lower() if provider else "auto"
+
+        if resolved_provider == "auto":
+            if os.getenv("OLLAMA_API_BASE"):
+                resolved_provider = "ollama"
+            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+                resolved_provider = "azure"
+            else:
+                resolved_provider = "openai"
+
+        # Initialize client based on resolved provider
+        if resolved_provider == "ollama":
+            ollama_base = api_base or os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
+            client = OpenAI(base_url=ollama_base, api_key="ollama")
+            deployment = model
+        elif resolved_provider == "azure":
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_endpoint = api_base or os.getenv("AZURE_OPENAI_ENDPOINT")
+            client = AzureOpenAI(
+                api_key=azure_api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+            )
+            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+        else:
+            if api_base:
+                client = OpenAI(base_url=api_base)
+            else:
+                client = OpenAI()
+            deployment = model
+
         current_messages = list(messages)  # Copy messages
         all_tool_calls = []
         all_tool_results = []
@@ -685,13 +789,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         while rounds < max_tool_rounds:
             try:
                 response = client.chat.completions.create(
-                    model=model,
+                    model=deployment,
                     messages=current_messages,
                     tools=openai_tools if openai_tools else None,
                     tool_choice=tool_choice if openai_tools else None,
                     temperature=temperature,
                     **{k: v for k, v in kwargs.items()
-                       if k not in ('state', 'tools', 'tool_choice', 'max_tool_rounds')}
+                       if k not in ('state', 'tools', 'tool_choice', 'max_tool_rounds',
+                                    'provider', 'api_base')}
                 )
 
                 message = response.choices[0].message

@@ -1,0 +1,269 @@
+# Test Agent: ScrapeGraphAI Production Validation (TEA-BUILTIN-008.4)
+#
+# PURPOSE: Validate web.ai_scrape action against real ScrapeGraphAI API
+#
+# PREREQUISITES:
+#   1. Set environment variable: export SCRAPEGRAPH_API_KEY="your-api-key"
+#   2. Install dependencies: pip install scrapegraph-py pydantic
+#
+# USAGE:
+#   cd python
+#   source .venv/bin/activate
+#
+#   # Test 1: Inline schema extraction (default)
+#   python -m the_edge_agent.cli run ../examples/web/test-scrapegraph-production.yaml \
+#     --input '{"target_url": "https://books.toscrape.com", "test_mode": "inline_schema"}'
+#
+#   # Test 2: Complex nested schema
+#   python -m the_edge_agent.cli run ../examples/web/test-scrapegraph-production.yaml \
+#     --input '{"target_url": "https://books.toscrape.com", "test_mode": "complex_schema"}'
+#
+#   # Test 3: Error handling (missing schema)
+#   python -m the_edge_agent.cli run ../examples/web/test-scrapegraph-production.yaml \
+#     --input '{"target_url": "https://books.toscrape.com", "test_mode": "error_handling"}'
+#
+#   Test modes:
+#     - inline_schema: Test inline schema extraction
+#     - complex_schema: Test nested objects and arrays
+#     - error_handling: Test with invalid inputs
+#
+name: test-scrapegraph-production
+description: Production validation of web.ai_scrape action (TEA-BUILTIN-008.4)
+
+variables:
+  default_url: "https://books.toscrape.com"
+  default_prompt: "Extract the first 5 book titles with their prices and ratings"
+
+state_schema:
+  target_url: str
+  test_mode: str
+  extraction_result: dict
+  test_results: list
+  final_summary: str
+
+nodes:
+  # ============================================================
+  # Node 1: Test Router - Select test based on mode
+  # ============================================================
+  - name: route_test
+    run: |
+      mode = state.get("test_mode", "inline_schema")
+      url = state.get("target_url", variables["default_url"])
+
+      print(f"\n{'='*60}")
+      print(f"ScrapeGraphAI Production Test")
+      print(f"{'='*60}")
+      print(f"Test Mode: {mode}")
+      print(f"Target URL: {url}")
+      print(f"{'='*60}\n")
+
+      return {
+          "target_url": url,
+          "test_mode": mode,
+          "test_results": []
+      }
+
+  # ============================================================
+  # Node 2a: Inline Schema Test
+  # Tests: AC1, AC2, AC5, AC7, AC8
+  # ============================================================
+  - name: test_inline_schema
+    uses: web.ai_scrape
+    with:
+      url: "{{ state.target_url }}"
+      prompt: "{{ variables.default_prompt }}"
+      output_schema:
+        type: object
+        properties:
+          books:
+            type: array
+            items:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: "Book title"
+                price:
+                  type: string
+                  description: "Book price (e.g., £51.77)"
+                rating:
+                  type: string
+                  description: "Star rating (e.g., One, Two, Three, Four, Five)"
+    output: extraction_result
+
+  # ============================================================
+  # Node 2b: Complex Nested Schema Test
+  # Tests: AC2 with nested objects and arrays
+  # ============================================================
+  - name: test_complex_schema
+    uses: web.ai_scrape
+    with:
+      url: "{{ state.target_url }}"
+      prompt: "Extract page metadata, categories, and book information with detailed structure"
+      output_schema:
+        type: object
+        properties:
+          page_info:
+            type: object
+            properties:
+              title:
+                type: string
+                description: "Page title"
+              book_count:
+                type: integer
+                description: "Number of books displayed"
+          categories:
+            type: array
+            items:
+              type: string
+              description: "Book category name"
+          featured_book:
+            type: object
+            properties:
+              title:
+                type: string
+              price:
+                type: string
+              availability:
+                type: string
+                description: "In stock or not"
+    output: extraction_result
+
+  # ============================================================
+  # Node 2c: Error Handling Test (missing schema)
+  # Tests: AC6 - error handling
+  # ============================================================
+  - name: test_error_handling
+    run: |
+      # Test without schema - should return error
+      from the_edge_agent.actions.web_actions import web_ai_scrape
+
+      result = web_ai_scrape(
+          state={},
+          url=state["target_url"],
+          prompt="Extract data"
+          # No schema provided - intentional error
+      )
+
+      if not result.get("success", True):
+          print(f"[PASS] Error handling works: {result.get('error_type')}")
+          return {"extraction_result": {"test": "error_handling", "passed": True, "error_type": result.get("error_type")}}
+      else:
+          print("[FAIL] Expected error but got success")
+          return {"extraction_result": {"test": "error_handling", "passed": False}}
+
+  # ============================================================
+  # Node 3: Validate and Report Results
+  # ============================================================
+  - name: validate_results
+    run: |
+      result = state.get("extraction_result", {})
+      mode = state.get("test_mode", "unknown")
+
+      print(f"\n{'='*60}")
+      print(f"Test Results: {mode}")
+      print(f"{'='*60}\n")
+
+      tests_passed = []
+      tests_failed = []
+
+      # Check extraction success
+      if result.get("success", False):
+          print("[PASS] API call successful")
+          tests_passed.append("api_call")
+
+          data = result.get("data", {})
+          print(f"\nExtracted Data Preview:")
+          print("-" * 40)
+
+          # Pretty print first few items
+          import json
+          print(json.dumps(data, indent=2)[:1000])
+          if len(json.dumps(data)) > 1000:
+              print("... (truncated)")
+
+          # Validate schema was used
+          schema_used = result.get("schema_used")
+          if schema_used:
+              print(f"\n[PASS] Schema was applied")
+              tests_passed.append("schema_applied")
+          else:
+              print(f"\n[WARN] No schema in response")
+
+          # Validate data structure based on test mode
+          if mode == "inline_schema":
+              if "books" in data:
+                  print(f"[PASS] 'books' array found with {len(data['books'])} items")
+                  tests_passed.append("books_array")
+              else:
+                  print("[FAIL] 'books' array not found")
+                  tests_failed.append("books_array")
+
+          elif mode == "complex_schema":
+              if "page_info" in data:
+                  print(f"[PASS] 'page_info' object found")
+                  tests_passed.append("page_info")
+              else:
+                  print("[FAIL] 'page_info' object not found")
+                  tests_failed.append("page_info")
+
+      elif result.get("test") == "error_handling":
+          # This is the error handling test - success means error was caught
+          if result.get("passed"):
+              print("[PASS] Error handling test passed")
+              tests_passed.append("error_handling")
+          else:
+              print("[FAIL] Error handling test failed")
+              tests_failed.append("error_handling")
+      else:
+          print(f"[FAIL] API call failed: {result.get('error')}")
+          print(f"       Error type: {result.get('error_type')}")
+          tests_failed.append("api_call")
+
+      # Summary
+      print(f"\n{'='*60}")
+      print(f"SUMMARY")
+      print(f"{'='*60}")
+      print(f"Tests Passed: {len(tests_passed)}")
+      print(f"Tests Failed: {len(tests_failed)}")
+      print(f"{'='*60}\n")
+
+      summary = f"Mode: {mode} | Passed: {len(tests_passed)} | Failed: {len(tests_failed)}"
+
+      return {
+          "test_results": tests_passed,
+          "final_summary": summary
+      }
+
+edges:
+  # Start -> Router
+  - from: __start__
+    to: route_test
+
+  # Router -> Conditional branch based on test_mode
+  - from: route_test
+    to:
+      - target: test_inline_schema
+        condition: state.get("test_mode", "inline_schema") == "inline_schema"
+      - target: test_complex_schema
+        condition: state.get("test_mode") == "complex_schema"
+      - target: test_error_handling
+        condition: state.get("test_mode") == "error_handling"
+      # Default fallback to inline test
+      - target: test_inline_schema
+        condition: "True"
+
+  # All test nodes -> Validate
+  - from: test_inline_schema
+    to: validate_results
+  - from: test_complex_schema
+    to: validate_results
+  - from: test_error_handling
+    to: validate_results
+
+  # Validate -> End
+  - from: validate_results
+    to: __end__
+
+config:
+  raise_exceptions: false

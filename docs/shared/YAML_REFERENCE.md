@@ -1200,6 +1200,64 @@ Call OpenAI-compatible LLM API:
 {"content": "LLM response text", "usage": {"prompt_tokens": N, "completion_tokens": N}}
 ```
 
+#### LLM Provider Configuration
+
+LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Ollama**.
+
+**Provider Detection Priority:**
+1. Explicit `provider` parameter (highest priority)
+2. Environment variable detection:
+   - `OLLAMA_API_BASE` → Ollama
+   - `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` → Azure OpenAI
+3. Default → OpenAI
+
+**Ollama Example (local LLMs):**
+
+```yaml
+# Explicit provider parameter
+- name: ask_local_llm
+  uses: llm.call
+  with:
+    provider: ollama                # Use local Ollama
+    model: llama3.2                 # Ollama model name
+    api_base: http://localhost:11434/v1  # Optional, this is the default
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+
+# Environment variable fallback (set OLLAMA_API_BASE)
+- name: ask_llm
+  uses: llm.call
+  with:
+    model: llama3.2
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+```
+
+**Provider Parameters:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `provider` | Provider selection: `auto`, `openai`, `azure`, `ollama` | `auto` |
+| `api_base` | Custom API base URL | Provider default |
+
+**Environment Variables:**
+
+| Variable | Provider | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI | OpenAI API key |
+| `AZURE_OPENAI_API_KEY` | Azure | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | Azure | Azure endpoint URL |
+| `OLLAMA_API_BASE` | Ollama | Ollama API URL (default: `http://localhost:11434/v1`) |
+
+**Ollama Notes:**
+- No API key required (uses dummy value internally)
+- No cost calculation (local/free)
+- Tool calling requires compatible models: `llama3.1+`, `mistral-nemo`, `qwen2.5`
+
 #### `llm.stream`
 
 Stream LLM responses with chunk aggregation:

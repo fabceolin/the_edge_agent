@@ -16,6 +16,76 @@ The Python implementation provides 20+ action modules organized by domain:
 | `llm.stream` | `llm_actions.py` | Stream LLM response |
 | `llm.tools` | `llm_actions.py` | LLM with tool calling |
 
+#### LLM Provider Configuration
+
+The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, and **Ollama**.
+
+**Provider Detection Priority:**
+1. Explicit `provider` parameter (highest priority)
+2. Environment variable detection:
+   - `OLLAMA_API_BASE` → Ollama
+   - `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` → Azure OpenAI
+3. Default → OpenAI
+
+**Ollama Example:**
+
+```yaml
+# Explicit provider parameter
+- name: ask_local_llm
+  uses: llm.call
+  with:
+    provider: ollama
+    model: llama3.2
+    api_base: http://localhost:11434/v1  # optional, this is the default
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+
+# Environment variable fallback (set OLLAMA_API_BASE)
+- name: ask_llm
+  uses: llm.call
+  with:
+    model: llama3.2
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+```
+
+**Environment Variables:**
+
+| Variable | Provider | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI | OpenAI API key |
+| `AZURE_OPENAI_API_KEY` | Azure | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | Azure | Azure endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure | Deployment name (optional) |
+| `OLLAMA_API_BASE` | Ollama | Ollama API URL (default: `http://localhost:11434/v1`) |
+
+**Ollama Tool Calling:**
+
+Tool calling with Ollama requires models that support it:
+- `llama3.1+`
+- `mistral-nemo`
+- `qwen2.5`
+
+```yaml
+- name: llm_with_tools
+  uses: llm.tools
+  with:
+    provider: ollama
+    model: mistral-nemo
+    messages:
+      - role: user
+        content: "What's the weather in London?"
+    tools:
+      - name: get_weather
+        description: Get weather for a location
+        parameters:
+          location:
+            type: string
+            required: true
+```
+
 ### HTTP Actions
 
 | Action | Module | Description |
