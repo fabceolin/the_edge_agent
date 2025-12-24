@@ -3,6 +3,7 @@ use reqwest;
 use serde_json::json;
 
 #[test]
+#[ignore] // Requires Ollama running locally - run with: cargo test -- --ignored
 fn test_http_ollama() {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
