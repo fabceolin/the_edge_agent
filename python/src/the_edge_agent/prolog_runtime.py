@@ -79,6 +79,7 @@ _janus = None
 
 try:
     import janus_swi as janus
+
     _janus = janus
     JANUS_AVAILABLE = True
     PYSWIP_AVAILABLE = True  # Alias for backward compatibility
@@ -88,11 +89,13 @@ except ImportError:
 
 class PrologRuntimeError(Exception):
     """Exception raised for Prolog syntax or runtime errors."""
+
     pass
 
 
 class PrologTimeoutError(Exception):
     """Exception raised when Prolog execution timeout is exceeded."""
+
     pass
 
 
@@ -107,15 +110,18 @@ def _get_install_instructions() -> str:
         "Install SWI-Prolog 9.1+:\n"
     )
 
-    if platform.startswith('linux'):
+    if platform.startswith("linux"):
         return base_msg + (
             "  Ubuntu/Debian: sudo apt install swi-prolog\n"
             "  Note: Ensure version 9.1+ is installed\n"
         )
-    elif platform == 'darwin':
+    elif platform == "darwin":
         return base_msg + "  macOS: brew install swi-prolog\n"
-    elif platform == 'win32':
-        return base_msg + "  Windows: Download from https://www.swi-prolog.org/download/stable\n"
+    elif platform == "win32":
+        return (
+            base_msg
+            + "  Windows: Download from https://www.swi-prolog.org/download/stable\n"
+        )
     else:
         return base_msg + (
             "  Ubuntu/Debian: sudo apt install swi-prolog\n"
@@ -152,7 +158,7 @@ class PrologRuntime:
     """
 
     # Common modules to pre-load for convenience
-    DEFAULT_MODULES = ['lists', 'clpfd', 'apply', 'aggregate']
+    DEFAULT_MODULES = ["lists", "clpfd", "apply", "aggregate"]
 
     # Setup code for state/return predicates - must be included in every consult
     # because janus.consult("user", ...) replaces module contents
@@ -447,7 +453,9 @@ class PrologRuntime:
         type_name = type(value).__name__
 
         # Handle janus-specific types
-        if hasattr(value, '__class__') and 'janus' in str(type(value).__module__ if hasattr(type(value), '__module__') else ''):
+        if hasattr(value, "__class__") and "janus" in str(
+            type(value).__module__ if hasattr(type(value), "__module__") else ""
+        ):
             return str(value)
 
         # Handle numbers
@@ -463,17 +471,17 @@ class PrologRuntime:
 
         # Handle strings/atoms
         if isinstance(value, str):
-            if value == 'null':
+            if value == "null":
                 return None
-            elif value == 'true':
+            elif value == "true":
                 return True
-            elif value == 'false':
+            elif value == "false":
                 return False
             return value
 
         # Handle bytes
         if isinstance(value, bytes):
-            return value.decode('utf-8', errors='replace')
+            return value.decode("utf-8", errors="replace")
 
         # Handle lists
         if isinstance(value, (list, tuple)):
@@ -508,8 +516,8 @@ class PrologRuntime:
         results = {}
         try:
             for sol in _janus.query("return_value(Key, Value)"):
-                key = self._prolog_to_python(sol.get('Key'))
-                value = self._prolog_to_python(sol.get('Value'))
+                key = self._prolog_to_python(sol.get("Key"))
+                value = self._prolog_to_python(sol.get("Value"))
                 if key is not None:
                     results[str(key)] = value
         except Exception:
@@ -524,10 +532,7 @@ class PrologRuntime:
             pass
 
     def execute_query(
-        self,
-        query: str,
-        state: Dict[str, Any],
-        first_only: bool = True
+        self, query: str, state: Dict[str, Any], first_only: bool = True
     ) -> Dict[str, Any]:
         """
         Execute a Prolog query with state access.
@@ -553,14 +558,16 @@ class PrologRuntime:
 
             try:
                 # Clean up query - ensure it doesn't end with period
-                clean_query = query.strip().rstrip('.')
+                clean_query = query.strip().rstrip(".")
 
                 # Wrap query with timeout using call_with_time_limit/2
                 timed_query = f"call_with_time_limit({self.timeout}, ({clean_query}))"
 
                 result = _janus.query_once(timed_query)
 
-                if result is None or (isinstance(result, dict) and result.get('truth') is False):
+                if result is None or (
+                    isinstance(result, dict) and result.get("truth") is False
+                ):
                     # Query failed - no solutions
                     return {}
 
@@ -569,7 +576,13 @@ class PrologRuntime:
 
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
+                if (
+                    "time_limit_exceeded" in error_msg
+                    or "time limit exceeded" in error_msg
+                    or "timeout" in error_msg
+                    or "stack limit" in error_msg
+                    or "infinite recursion" in error_msg
+                ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
 
@@ -617,7 +630,9 @@ class PrologRuntime:
 
                 # Ensure code ends with a period (required by read_term/3)
                 # This matches the Rust implementation for cross-runtime parity
-                code_with_period = code if code.strip().endswith('.') else f"{code.strip()}."
+                code_with_period = (
+                    code if code.strip().endswith(".") else f"{code.strip()}."
+                )
 
                 # Escape backslashes first, then single quotes for Prolog atom
                 # Order matters: backslashes must be escaped before quotes to avoid
@@ -632,7 +647,7 @@ class PrologRuntime:
                     _janus.query_once(timed_query)
                 except Exception as e:
                     error_msg = str(e).lower()
-                    if 'tea_syntax_error' in error_msg or 'syntax' in error_msg:
+                    if "tea_syntax_error" in error_msg or "syntax" in error_msg:
                         raise PrologRuntimeError(f"Prolog syntax error: {e}") from e
                     raise
 
@@ -653,11 +668,19 @@ class PrologRuntime:
                 raise
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
+                if (
+                    "time_limit_exceeded" in error_msg
+                    or "time limit exceeded" in error_msg
+                    or "timeout" in error_msg
+                    or "stack limit" in error_msg
+                    or "infinite recursion" in error_msg
+                ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
 
-    def execute_node_code_legacy(self, code: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_node_code_legacy(
+        self, code: str, state: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Execute inline Prolog code using Python-side parsing (legacy).
 
@@ -682,9 +705,9 @@ class PrologRuntime:
 
                 # Use consult() for directives and rules
                 if directives or rules:
-                    user_code = '\n'.join(directives + [f"{r}." for r in rules])
+                    user_code = "\n".join(directives + [f"{r}." for r in rules])
                     if user_code.strip():
-                        consult_code = self._SETUP_CODE + '\n' + user_code
+                        consult_code = self._SETUP_CODE + "\n" + user_code
                         try:
                             _janus.consult("user", consult_code)
                         except Exception as e:
@@ -692,7 +715,7 @@ class PrologRuntime:
 
                 # Execute queries with timeout
                 if queries:
-                    query_str = ', '.join(q.rstrip('.') for q in queries)
+                    query_str = ", ".join(q.rstrip(".") for q in queries)
                     timed_query = f"call_with_time_limit({self.timeout}, ({query_str}))"
                     _janus.query_once(timed_query)
 
@@ -705,7 +728,13 @@ class PrologRuntime:
                 raise
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
+                if (
+                    "time_limit_exceeded" in error_msg
+                    or "time limit exceeded" in error_msg
+                    or "timeout" in error_msg
+                    or "stack limit" in error_msg
+                    or "infinite recursion" in error_msg
+                ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
 
@@ -724,20 +753,20 @@ class PrologRuntime:
         queries = []
 
         # Split by lines and process
-        lines = code.split('\n')
+        lines = code.split("\n")
         current_statement = []
 
         for line in lines:
             stripped = line.strip()
 
             # Skip empty lines and pure comments
-            if not stripped or stripped.startswith('%'):
+            if not stripped or stripped.startswith("%"):
                 continue
 
             # Remove inline comments (but preserve % in strings)
-            comment_match = re.search(r'%.*$', stripped)
+            comment_match = re.search(r"%.*$", stripped)
             if comment_match and not self._in_string(stripped, comment_match.start()):
-                stripped = stripped[:comment_match.start()].strip()
+                stripped = stripped[: comment_match.start()].strip()
 
             if not stripped:
                 continue
@@ -745,15 +774,15 @@ class PrologRuntime:
             current_statement.append(stripped)
 
             # Check if statement is complete (ends with period)
-            joined = ' '.join(current_statement)
-            if joined.endswith('.'):
-                statement = joined.rstrip('.')
+            joined = " ".join(current_statement)
+            if joined.endswith("."):
+                statement = joined.rstrip(".")
 
                 # Categorize the statement
-                if statement.startswith(':-'):
+                if statement.startswith(":-"):
                     # Directive (e.g., :- use_module(...))
-                    directives.append(statement + '.')
-                elif ':-' in statement:
+                    directives.append(statement + ".")
+                elif ":-" in statement:
                     # Rule (head :- body)
                     rules.append(statement)
                 else:
@@ -764,10 +793,10 @@ class PrologRuntime:
 
         # Handle remaining content as query if no trailing period
         if current_statement:
-            remaining = ' '.join(current_statement)
-            if remaining.startswith(':-'):
-                directives.append(remaining + '.')
-            elif ':-' in remaining and not remaining.startswith(':-'):
+            remaining = " ".join(current_statement)
+            if remaining.startswith(":-"):
+                directives.append(remaining + ".")
+            elif ":-" in remaining and not remaining.startswith(":-"):
                 rules.append(remaining)
             else:
                 queries.append(remaining)
@@ -781,12 +810,12 @@ class PrologRuntime:
         i = 0
         while i < position:
             if text[i] == "'" and not in_double:
-                if i > 0 and text[i-1] == '\\':
+                if i > 0 and text[i - 1] == "\\":
                     pass  # Escaped quote
                 else:
                     in_single = not in_single
             elif text[i] == '"' and not in_single:
-                if i > 0 and text[i-1] == '\\':
+                if i > 0 and text[i - 1] == "\\":
                     pass  # Escaped quote
                 else:
                     in_double = not in_double
@@ -815,19 +844,21 @@ class PrologRuntime:
 
             try:
                 # Clean up expression
-                expr_clean = expression.strip().rstrip('.')
+                expr_clean = expression.strip().rstrip(".")
 
                 # Wrap with timeout
                 timed_query = f"call_with_time_limit({self.timeout}, ({expr_clean}))"
                 result = _janus.query_once(timed_query)
 
-                if result is None or (isinstance(result, dict) and result.get('truth') is False):
+                if result is None or (
+                    isinstance(result, dict) and result.get("truth") is False
+                ):
                     return None
 
                 # If query succeeded, check for Result binding
                 if isinstance(result, dict):
-                    if 'Result' in result:
-                        return str(self._prolog_to_python(result['Result']))
+                    if "Result" in result:
+                        return str(self._prolog_to_python(result["Result"]))
                     # Query succeeded without Result binding
                     return "true"
 
@@ -835,9 +866,15 @@ class PrologRuntime:
 
             except Exception as e:
                 error_msg = str(e).lower()
-                if 'time_limit_exceeded' in error_msg or 'time limit exceeded' in error_msg or 'timeout' in error_msg:
+                if (
+                    "time_limit_exceeded" in error_msg
+                    or "time limit exceeded" in error_msg
+                    or "timeout" in error_msg
+                    or "stack limit" in error_msg
+                    or "infinite recursion" in error_msg
+                ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
-                if 'fail' in error_msg:
+                if "fail" in error_msg:
                     return None
                 raise PrologRuntimeError(str(e)) from e
 
@@ -885,24 +922,24 @@ def detect_prolog_code(code: str) -> bool:
     stripped = code.strip()
 
     # Explicit marker
-    if stripped.startswith('% prolog') or stripped.startswith('%prolog'):
+    if stripped.startswith("% prolog") or stripped.startswith("%prolog"):
         return True
 
     # Heuristic patterns unique to Prolog
     prolog_patterns = [
-        r':-',                    # Rule operator or directive
-        r'\?-',                   # Query operator
-        r'\bstate\s*\(',          # state/2 predicate (TEA convention)
-        r'\breturn\s*\(',         # return/2 predicate (TEA convention)
-        r'\bassertz?\s*\(',       # assert predicates
-        r'\bretract\w*\s*\(',     # retract predicates
-        r'\bfindall\s*\(',        # findall predicate
-        r'\bforall\s*\(',         # forall predicate
-        r'\baggregate_all\s*\(',  # aggregate predicate
-        r'#=|#<|#>|#\\=|#=<|#>=', # CLP(FD) operators
-        r'\bin\b.*\.\.',          # CLP(FD) domain notation
-        r'\blabel\s*\(',          # CLP(FD) labeling
-        r'\buse_module\s*\(',     # Module loading
+        r":-",  # Rule operator or directive
+        r"\?-",  # Query operator
+        r"\bstate\s*\(",  # state/2 predicate (TEA convention)
+        r"\breturn\s*\(",  # return/2 predicate (TEA convention)
+        r"\bassertz?\s*\(",  # assert predicates
+        r"\bretract\w*\s*\(",  # retract predicates
+        r"\bfindall\s*\(",  # findall predicate
+        r"\bforall\s*\(",  # forall predicate
+        r"\baggregate_all\s*\(",  # aggregate predicate
+        r"#=|#<|#>|#\\=|#=<|#>=",  # CLP(FD) operators
+        r"\bin\b.*\.\.",  # CLP(FD) domain notation
+        r"\blabel\s*\(",  # CLP(FD) labeling
+        r"\buse_module\s*\(",  # Module loading
     ]
 
     return any(re.search(pattern, code) for pattern in prolog_patterns)
