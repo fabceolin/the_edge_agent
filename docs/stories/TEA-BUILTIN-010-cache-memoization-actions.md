@@ -80,8 +80,23 @@
 
 ## User Prerequisites
 
-- [ ] **Required**: LTM backend configured (SQLite by default)
+- [ ] **Required**: LTM backend configured (one of the following):
+  - `sqlite` - Local SQLite (default, no setup needed)
+  - `blob-sqlite` - SQLite on S3/GCS/Azure with fsspec (TEA-BUILTIN-001.5)
+  - `duckdb` - DuckDB with native httpfs cloud I/O (TEA-BUILTIN-001.6)
+  - `turso` - Turso/libSQL edge database (TEA-BUILTIN-001.5)
+  - `firestore` - Firebase Firestore (TEA-BUILTIN-001.5)
 - [ ] **Optional**: Cloud storage credentials for `storage.hash` with remote files
+
+### Recommended Backend by Use Case
+
+| Use Case | Backend | Why |
+|----------|---------|-----|
+| Local development | `sqlite` | Zero config, fast |
+| Low-concurrency serverless | `blob-sqlite` | Simple, SQLite compatible |
+| High-concurrency serverless | `duckdb` | Native httpfs, no locking |
+| Firebase stack | `firestore` | Native integration |
+| Edge computing | `turso` | Low latency, edge replicas |
 
 ## Architecture Overview
 
