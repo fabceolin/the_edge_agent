@@ -16,6 +16,7 @@ use std::sync::Arc;
 use crate::engine::checkpoint::{Checkpoint, Checkpointer};
 use crate::engine::graph::{CompiledGraph, EdgeType, Node, NodeType};
 use crate::engine::lua_runtime::LuaRuntime;
+use crate::engine::observability::{HandlerRegistry, ObsConfig, ObservabilityContext};
 use crate::engine::parallel::{ParallelConfig, ParallelExecutor, ParallelFlowResult};
 #[cfg(feature = "prolog")]
 use crate::engine::prolog_runtime::PrologRuntime;
@@ -137,6 +138,9 @@ pub struct ExecutionOptions {
 
     /// Parallel execution config
     pub parallel_config: ParallelConfig,
+
+    /// Observability configuration (TEA-OBS-001.2)
+    pub observability: Option<ObsConfig>,
 }
 
 impl std::fmt::Debug for ExecutionOptions {
@@ -146,7 +150,18 @@ impl std::fmt::Debug for ExecutionOptions {
             .field("has_checkpointer", &self.checkpointer.is_some())
             .field("resume_from", &self.resume_from)
             .field("parallel_config", &self.parallel_config)
+            .field("has_observability", &self.observability.is_some())
             .finish()
+    }
+}
+
+impl ExecutionOptions {
+    /// Create execution options with observability enabled
+    pub fn with_observability(config: ObsConfig) -> Self {
+        Self {
+            observability: Some(config),
+            ..Default::default()
+        }
     }
 }
 
@@ -180,6 +195,12 @@ pub struct Executor {
 
     /// Retry executor
     retry_executor: RetryExecutor,
+
+    /// Observability context (TEA-OBS-001.2)
+    observability_context: Option<ObservabilityContext>,
+
+    /// Handler registry for observability (TEA-OBS-001.2)
+    handler_registry: Option<Arc<HandlerRegistry>>,
 }
 
 /// Registry of available actions
@@ -245,6 +266,8 @@ impl Executor {
             actions: Arc::new(ActionRegistry::new()),
             parallel_executor: ParallelExecutor::new(),
             retry_executor: RetryExecutor::new(),
+            observability_context: None,
+            handler_registry: None,
         })
     }
 
@@ -259,7 +282,91 @@ impl Executor {
             actions,
             parallel_executor: ParallelExecutor::new(),
             retry_executor: RetryExecutor::new(),
+            observability_context: None,
+            handler_registry: None,
         })
+    }
+
+    /// Create executor with observability enabled (TEA-OBS-001.2)
+    pub fn with_observability(graph: CompiledGraph, config: ObsConfig) -> TeaResult<Self> {
+        let (ctx, registry) =
+            ObservabilityContext::with_handlers(uuid::Uuid::new_v4(), config.clone());
+
+        Ok(Self {
+            graph: Arc::new(graph),
+            lua: LuaRuntime::new()?,
+            #[cfg(feature = "prolog")]
+            prolog: PrologRuntime::new().ok(),
+            yaml_engine: YamlEngine::new(),
+            actions: Arc::new(ActionRegistry::new()),
+            parallel_executor: ParallelExecutor::new(),
+            retry_executor: RetryExecutor::new(),
+            observability_context: Some(ctx),
+            handler_registry: Some(registry),
+        })
+    }
+
+    /// Create executor with custom actions and observability enabled (TEA-OBS-001.2)
+    ///
+    /// This is the most complete constructor, combining custom action registry
+    /// with observability support. Use this when loading from YAML with
+    /// observability configuration.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    /// use the_edge_agent::engine::executor::Executor;
+    ///
+    /// let engine = YamlEngine::new();
+    /// let graph = engine.load_from_file("workflow.yaml")?;
+    /// let compiled = graph.compile()?;
+    ///
+    /// let registry = Arc::new(ActionRegistry::new());
+    /// actions::register_defaults(&registry);
+    ///
+    /// let executor = if let Some(obs_config) = engine.observability_config() {
+    ///     Executor::with_actions_and_observability(compiled, registry, obs_config)?
+    /// } else {
+    ///     Executor::with_actions(compiled, registry)?
+    /// };
+    /// ```
+    pub fn with_actions_and_observability(
+        graph: CompiledGraph,
+        actions: Arc<ActionRegistry>,
+        config: ObsConfig,
+    ) -> TeaResult<Self> {
+        let (ctx, registry) = if config.enabled {
+            let (c, r) = ObservabilityContext::with_handlers(uuid::Uuid::new_v4(), config);
+            (Some(c), Some(r))
+        } else {
+            (None, None)
+        };
+
+        Ok(Self {
+            graph: Arc::new(graph),
+            lua: LuaRuntime::new()?,
+            #[cfg(feature = "prolog")]
+            prolog: PrologRuntime::new().ok(),
+            yaml_engine: YamlEngine::new(),
+            actions,
+            parallel_executor: ParallelExecutor::new(),
+            retry_executor: RetryExecutor::new(),
+            observability_context: ctx,
+            handler_registry: registry,
+        })
+    }
+
+    /// Get the observability context (TEA-OBS-001.2)
+    pub fn observability_context(&self) -> Option<&ObservabilityContext> {
+        self.observability_context.as_ref()
+    }
+
+    /// Get the flow log if observability is enabled (TEA-OBS-001.2)
+    pub fn get_flow_log(&self) -> Option<crate::engine::observability::FlowTrace> {
+        self.observability_context
+            .as_ref()
+            .map(|ctx| ctx.get_flow_log())
     }
 
     /// Execute the graph with invoke() - returns final state
@@ -338,6 +445,21 @@ impl Executor {
         let mut state = initial_state;
         let mut current_node = START.to_string();
 
+        // TEA-OBS-001.2: Inject flow_id into state if observability is enabled
+        if let Some(ctx) = &self.observability_context {
+            if let Some(obj) = state.as_object_mut() {
+                let mut obs_metadata = serde_json::Map::new();
+                obs_metadata.insert(
+                    "flow_id".to_string(),
+                    serde_json::json!(ctx.flow_id_string()),
+                );
+                obj.insert(
+                    "_observability".to_string(),
+                    serde_json::Value::Object(obs_metadata),
+                );
+            }
+        }
+
         // Handle resume from checkpoint
         if let Some(checkpoint_path) = &options.resume_from {
             if let Some(checkpointer) = &options.checkpointer {
@@ -391,16 +513,52 @@ impl Executor {
                     EventType::Start,
                 ));
 
+                // TEA-OBS-001.2: Log entry event to observability context
+                let obs_span_id = if let Some(ctx) = &self.observability_context {
+                    let handler_ref = self.handler_registry.as_ref().map(|r| r.as_ref());
+                    Some(ctx.log_entry_with_handlers(&current_node, state.clone(), handler_ref))
+                } else {
+                    None
+                };
+
                 match self.execute_node(&current_node, &state) {
                     Ok(new_state) => {
                         state = new_state;
                         let duration = start_time.elapsed().as_secs_f64() * 1000.0;
+
+                        // TEA-OBS-001.2: Log exit event to observability context
+                        if let (Some(ctx), Some(span_id)) =
+                            (&self.observability_context, obs_span_id)
+                        {
+                            let handler_ref = self.handler_registry.as_ref().map(|r| r.as_ref());
+                            ctx.log_exit_with_handlers(
+                                &current_node,
+                                span_id,
+                                state.clone(),
+                                duration,
+                                handler_ref,
+                            );
+                        }
+
                         events.push(
                             ExecutionEvent::new(&current_node, state.clone(), EventType::Complete)
                                 .with_duration(duration),
                         );
                     }
                     Err(e) => {
+                        // TEA-OBS-001.2: Log error event to observability context
+                        if let (Some(ctx), Some(span_id)) =
+                            (&self.observability_context, obs_span_id)
+                        {
+                            let handler_ref = self.handler_registry.as_ref().map(|r| r.as_ref());
+                            ctx.log_error_with_handlers(
+                                &current_node,
+                                span_id,
+                                &e.to_string(),
+                                handler_ref,
+                            );
+                        }
+
                         // Try fallback if configured
                         if let Some(node) = self.graph.get_node(&current_node) {
                             if let Some(fallback) = &node.fallback {
@@ -622,7 +780,19 @@ impl Executor {
                 .get(&action_config.uses)
                 .ok_or_else(|| TeaError::ActionNotFound(action_config.uses.clone()))?;
 
-            return handler(state, &processed_params);
+            let result = handler(state, &processed_params)?;
+
+            // If output key is specified, store result under that key in state
+            if let Some(ref output_key) = node.output {
+                let mut new_state = state.clone();
+                if let Some(obj) = new_state.as_object_mut() {
+                    obj.insert(output_key.clone(), result);
+                }
+                return Ok(new_state);
+            }
+
+            // Otherwise return the result as-is (merge behavior)
+            return Ok(result);
         }
 
         if let Some(ref code) = node.lua_code {
@@ -700,7 +870,19 @@ impl Executor {
                 .get(&action_config.uses)
                 .ok_or_else(|| TeaError::ActionNotFound(action_config.uses.clone()))?;
 
-            return handler(state, &processed_params);
+            let result = handler(state, &processed_params)?;
+
+            // If output key is specified, store result under that key in state
+            if let Some(ref output_key) = node.output {
+                let mut new_state = state.clone();
+                if let Some(obj) = new_state.as_object_mut() {
+                    obj.insert(output_key.clone(), result);
+                }
+                return Ok(new_state);
+            }
+
+            // Otherwise return the result as-is (merge behavior)
+            return Ok(result);
         }
 
         if let Some(ref code) = node.lua_code {

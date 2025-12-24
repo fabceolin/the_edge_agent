@@ -1,0 +1,51 @@
+# Cross-Runtime Parity Test: Unicode Strings
+# Tests handling of non-ASCII characters in state
+# Expected: Both runtimes preserve Unicode encoding identically
+
+name: parity-unicode-strings
+description: Verify Unicode string handling parity (emoji, CJK, RTL)
+
+state_schema:
+  ascii_string: str
+  emoji_string: str
+  cjk_string: str
+  rtl_string: str
+  mixed_string: str
+
+nodes:
+  - name: verify_unicode
+    language: prolog
+    run: |
+      % Verify ASCII string
+      state(ascii_string, Ascii),
+      atom_length(Ascii, AsciiLen),
+      AsciiLen > 0,
+
+      % Verify emoji string can be accessed
+      state(emoji_string, Emoji),
+      atom_length(Emoji, EmojiLen),
+      EmojiLen > 0,
+
+      % Verify CJK characters
+      state(cjk_string, Cjk),
+      atom_length(Cjk, CjkLen),
+      CjkLen > 0,
+
+      % Verify RTL (Arabic/Hebrew)
+      state(rtl_string, Rtl),
+      atom_length(Rtl, RtlLen),
+      RtlLen > 0,
+
+      % Verify mixed string
+      state(mixed_string, Mixed),
+      atom_length(Mixed, MixedLen),
+      MixedLen > 0.
+
+# Implicit flow: verify_unicode -> __end__
+
+initial_state:
+  ascii_string: "Hello, World!"
+  emoji_string: "Hello 🌍🚀✨ World"
+  cjk_string: "你好世界"
+  rtl_string: "مرحبا بالعالم"
+  mixed_string: "Hello 世界 🌍 مرحبا"

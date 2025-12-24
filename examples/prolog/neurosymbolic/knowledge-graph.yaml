@@ -1,0 +1,169 @@
+# ============================================================================
+# Knowledge Graph Reasoning Example
+# ============================================================================
+#
+# Demonstrates Prolog-based inference over a knowledge graph.
+# This is a key neurosymbolic pattern where:
+#   1. Knowledge graph is represented as Prolog facts
+#   2. Inference rules derive new relationships
+#   3. Queries find paths and connections
+#
+# Pattern: Facts + Rules → Derived Knowledge
+#
+# Use cases: Relationship discovery, taxonomy queries, graph traversal
+#
+# ============================================================================
+
+name: knowledge-graph-agent
+
+description: |
+  Demonstrates Prolog-based knowledge graph reasoning.
+  Given a knowledge graph of family relationships, infers
+  derived relationships like grandparent, sibling, ancestor.
+
+state_schema:
+  # Query parameters
+  query_person: str
+  relationship_type: str    # children, grandchildren, siblings, ancestors
+
+  # Results
+  results: list
+  inference_chain: str
+
+initial_state:
+  query_person: alice
+  relationship_type: grandchildren
+  results: []
+  inference_chain: ""
+
+nodes:
+  # -------------------------------------------------------------------------
+  # Knowledge Graph Reasoning with Prolog
+  # -------------------------------------------------------------------------
+  # This example demonstrates Prolog-based inference over a family tree
+  # using INLINE RULE DEFINITIONS (TEA-RUST-038 feature).
+  #
+  # The knowledge graph facts and inference rules are defined inline,
+  # demonstrating the full power of Prolog integration.
+  # -------------------------------------------------------------------------
+  - name: reason_over_kg
+    language: prolog
+    run: |
+      % =========================================================
+      % KNOWLEDGE GRAPH FACTS (inline - TEA-RUST-038)
+      % =========================================================
+      %           alice
+      %          /     \
+      %        bob    carol
+      %       /   \      \
+      %    david  eve   frank
+
+      parent(alice, bob).
+      parent(alice, carol).
+      parent(bob, david).
+      parent(bob, eve).
+      parent(carol, frank).
+
+      % =========================================================
+      % INFERENCE RULES (inline - TEA-RUST-038)
+      % =========================================================
+
+      % Grandparent: X is grandparent of Z if X is parent of Y and Y is parent of Z
+      grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+
+      % Sibling: X and Y are siblings if they share a parent and are different
+      sibling(X, Y) :- parent(P, X), parent(P, Y), X \= Y.
+
+      % Ancestor: X is ancestor of Y if X is parent of Y (base case)
+      ancestor(X, Y) :- parent(X, Y).
+
+      % Ancestor: X is ancestor of Z if X is parent of Y and Y is ancestor of Z (recursive)
+      ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+
+      % Descendant: inverse of ancestor
+      descendant(X, Y) :- ancestor(Y, X).
+
+      % =========================================================
+      % QUERY EXECUTION
+      % =========================================================
+
+      % Get query parameters from state
+      state(query_person, Person),
+      state(relationship_type, RelType),
+
+      % Convert strings to atoms if needed
+      (atom(Person) -> QP = Person ; atom_string(QP, Person)),
+      (atom(RelType) -> QT = RelType ; atom_string(QT, RelType)),
+
+      % Execute query using findall/3 and the inline rules
+      (
+        QT = children ->
+          (findall(C, parent(QP, C), Results),
+           Chain = 'Rule: parent(Person, Child)')
+
+        ; QT = grandchildren ->
+          (findall(G, grandparent(QP, G), Results),
+           Chain = 'Rule: grandparent(X, Z) :- parent(X, Y), parent(Y, Z)')
+
+        ; QT = siblings ->
+          (findall(S, sibling(QP, S), Results),
+           Chain = 'Rule: sibling(X, Y) :- parent(P, X), parent(P, Y), X \\= Y')
+
+        ; QT = ancestors ->
+          (findall(A, ancestor(A, QP), Results),
+           Chain = 'Rule: ancestor(X, Y) :- parent(X, Y) ; parent(X, Z), ancestor(Z, Y)')
+
+        ; QT = descendants ->
+          (findall(D, descendant(D, QP), Results),
+           Chain = 'Rule: descendant(X, Y) :- ancestor(Y, X)')
+
+        ; (Results = [], Chain = 'Unknown relationship type')
+      ),
+
+      return(results, Results),
+      return(inference_chain, Chain).
+
+# Implicit flow: reason_over_kg -> __end__
+
+# ============================================================================
+# Expected Output (for query_person=alice, relationship_type=grandchildren):
+#
+# {
+#   "query_person": "alice",
+#   "relationship_type": "grandchildren",
+#   "results": ["david", "eve", "frank"],
+#   "inference_chain": "Grandparent inference: parent(X,Y), parent(Y,Z) => grandparent(X,Z)"
+# }
+#
+# ============================================================================
+
+# ============================================================================
+# Test Cases
+# ============================================================================
+#
+# Case 1: Alice's grandchildren
+#   query_person: alice
+#   relationship_type: grandchildren
+#   EXPECTED: [david, eve, frank]
+#
+# Case 2: Bob's children
+#   query_person: bob
+#   relationship_type: children
+#   EXPECTED: [david, eve]
+#
+# Case 3: David's siblings
+#   query_person: david
+#   relationship_type: siblings
+#   EXPECTED: [eve]
+#
+# Case 4: Grace's ancestors
+#   query_person: grace
+#   relationship_type: ancestors
+#   EXPECTED: [david, bob, alice]
+#
+# Case 5: Alice's descendants
+#   query_person: alice
+#   relationship_type: descendants
+#   EXPECTED: [bob, carol, david, eve, frank, grace]
+#
+# ============================================================================

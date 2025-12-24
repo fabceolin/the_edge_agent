@@ -67,10 +67,4 @@ nodes:
       is_valid = (x + y + z == target) and (x < y < z)
       return {"is_valid": is_valid}
 
-edges:
-  - from: __start__
-    to: solve_constraints
-  - from: solve_constraints
-    to: validate
-  - from: validate
-    to: __end__
+# Implicit flow: solve_constraints -> validate -> __end__

@@ -777,6 +777,78 @@ def inspect(
                 typer.echo(f"  {key}: {value}")
 
 
+# ============================================================
+# Schema Subcommands (TEA-BUILTIN-008.3)
+# ============================================================
+
+schema_app = typer.Typer(
+    name="schema",
+    help="Schema manipulation commands",
+    no_args_is_help=True,
+)
+app.add_typer(schema_app, name="schema")
+
+
+@schema_app.command("merge")
+def schema_merge(
+    files: List[Path] = typer.Argument(None, help="Schema files to merge (JSON or YAML)"),
+    uses: Optional[List[str]] = typer.Option(None, "--uses", "-u", help="Git refs or fsspec URIs to merge"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
+    validate_schema: bool = typer.Option(False, "--validate", help="Validate merged result against JSON Schema Draft 2020-12"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print to stdout without writing file"),
+):
+    """
+    Deep merge multiple JSON Schemas with kubectl-style semantics.
+
+    Schemas are merged in order (first = lowest priority, last = highest).
+
+    Examples:
+
+        tea schema merge base.json overlay.json -o merged.json
+
+        tea schema merge --uses owner/repo@v1#a.json --uses owner/repo@v1#b.json
+
+        tea schema merge *.json -o combined.json --validate
+
+        tea schema merge base.json overlay.json --dry-run
+    """
+    from the_edge_agent.actions.schema_actions import schema_merge_cli
+
+    file_list = [str(f) for f in files] if files else []
+    uses_list = list(uses) if uses else None
+
+    result = schema_merge_cli(
+        files=file_list,
+        uses=uses_list,
+        output=str(output) if output and not dry_run else None,
+        validate=validate_schema,
+        dry_run=dry_run,
+    )
+
+    if not result["success"]:
+        typer.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
+        if "errors" in result:
+            for err in result["errors"]:
+                typer.echo(f"  - {err}", err=True)
+        raise typer.Exit(1)
+
+    if dry_run or not output:
+        # Print merged schema to stdout
+        print(json.dumps(result["merged"], indent=2))
+
+    if validate_schema and "validation" in result:
+        validation = result["validation"]
+        if validation["valid"]:
+            typer.echo("✓ Merged schema is valid JSON Schema", err=True)
+        else:
+            typer.echo("✗ Merged schema is NOT valid:", err=True)
+            for err in validation.get("errors", []):
+                typer.echo(f"  - {err}", err=True)
+
+    if not dry_run and output and result["success"]:
+        typer.echo(f"✓ Merged schema written to {output}", err=True)
+
+
 def version_callback(value: bool):
     """Handle --version flag."""
     if value:
@@ -808,7 +880,7 @@ def main_callback(
     # Handle legacy invocation: tea workflow.yaml (without subcommand)
     if ctx.invoked_subcommand is None and len(sys.argv) > 1:
         first_arg = sys.argv[1]
-        if not first_arg.startswith("-") and first_arg not in ["run", "resume", "validate", "inspect"]:
+        if not first_arg.startswith("-") and first_arg not in ["run", "resume", "validate", "inspect", "schema"]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):
                 typer.echo("Warning: Direct file argument is deprecated. Use 'tea run workflow.yaml'", err=True)

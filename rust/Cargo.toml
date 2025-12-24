@@ -1,6 +1,6 @@
 [package]
 name = "the_edge_agent"
-version = "0.7.8"
+version = "0.7.9"
 edition = "2021"
 authors = ["The Edge Agent Contributors"]
 description = "Lightweight state graph workflow engine for edge computing"
@@ -39,7 +39,8 @@ rayon = "1.10"
 crossbeam = "0.8"
 
 # HTTP client (blocking for simplicity)
-reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
+# NOTE: rustls-tls is needed for HTTPS; for local HTTP (e.g., Ollama), plain HTTP works
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -54,9 +55,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Utilities
 parking_lot = "0.12"
-uuid = { version = "1.11", features = ["v4"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+regex = "1"
 
 # Data processing
 csv = "1.3"

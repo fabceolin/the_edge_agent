@@ -1,0 +1,192 @@
+# LLM + Prolog Flight Safety Agent (TEA Architecture)
+#
+# Solves the problem from slides 2, 3, and 4: Detects physical violations
+# in telemetry data using Provable Rules.
+#
+# LOGICAL FLOW:
+#   1. LLM (Perception): Extracts unstructured data from flight logs into a timeline.
+#   2. Prolog (Digital Twin): Models the aircraft's physical state sequentially.
+#   3. Prolog (Grounding Rules): Verifies energy/inertia conservation between T1 and T2.
+#   4. System: Emits "GENERAL FAILURE" if physics is violated.
+
+name: flight-safety-temporal-agent
+description: |
+  Analyzes log sequences to detect violations of physical laws over time.
+  LLM structures the timeline; Prolog validates consistency between states (T1 vs T2).
+
+state_schema:
+  raw_text: str
+  telemetry_timeline: list
+  prolog_facts: str
+  safety_report: str
+
+nodes:
+  # ============================================================
+  # STEP 1: Time Series Extraction (Multi-step)
+  # ============================================================
+  - name: parse_flight_log_sequence
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      timeout: 300  # 5 minutes for slow local models
+      messages:
+        - role: system
+          content: |
+            You are an aircraft black box analyzer.
+            Your function is to convert narrative text into a structured TIME SERIES.
+
+            INSTRUCTIONS:
+            1. Identify ALL time moments mentioned.
+            2. For each moment, extract: Time, Speed, and Autopilot State.
+            3. Sort events chronologically.
+
+            MANDATORY JSON OUTPUT:
+            {
+              "timeline": [
+                {
+                  "time_str": "HH:MM",
+                  "airspeed_kmh": int,
+                  "autopilot": "on|off",
+                  "context": "brief description"
+                }
+              ]
+            }
+        - role: user
+          content: |
+            Analyze the following incident report and generate the log sequence:
+
+            "{{ state.raw_text }}"
+      temperature: 0.0
+    output: telemetry_timeline
+    goto: temporal_mapping
+
+  # ============================================================
+  # STEP 2: Temporal Modeling in Prolog (Lua version for Rust)
+  # ============================================================
+  # NOTE: LLM returns JSON as a string with markdown markers.
+  # We parse it manually since Lua sandbox doesn't have json.decode.
+  - name: temporal_mapping
+    language: lua
+    run: |
+      -- Get the LLM response content
+      local llm_out = state.telemetry_timeline or {}
+      local content_str = ""
+
+      if type(llm_out) == "table" and llm_out.content then
+        content_str = tostring(llm_out.content)
+      elseif type(llm_out) == "string" then
+        content_str = llm_out
+      end
+
+      -- Clean markdown markers
+      content_str = content_str:gsub("```json", ""):gsub("```", "")
+
+      local facts = {}
+
+      -- Converts HH:MM to absolute minutes (e.g., 21:00 -> 1260)
+      local function parse_time(t_str)
+        if not t_str then return 0 end
+        local h, m = t_str:match("(%d+):(%d+)")
+        if h and m then
+          return tonumber(h) * 60 + tonumber(m)
+        end
+        return 0
+      end
+
+      -- Parse timeline entries from JSON string manually
+      -- Pattern: {"time_str": "HH:MM", "airspeed_kmh": N, "autopilot": "on|off", ...}
+      for entry_json in content_str:gmatch('%{[^}]+%}') do
+        -- Extract time_str
+        local time_str = entry_json:match('"time_str"%s*:%s*"([^"]+)"')
+        -- Extract airspeed_kmh
+        local airspeed = entry_json:match('"airspeed_kmh"%s*:%s*(%d+)')
+        -- Extract autopilot
+        local autopilot = entry_json:match('"autopilot"%s*:%s*"([^"]+)"')
+
+        if time_str and airspeed then
+          local t_abs = parse_time(time_str)
+          local spd = tonumber(airspeed) or 0
+          local ap = (autopilot or "off"):lower()
+          table.insert(facts, string.format("log_entry(%d, %d, '%s').", t_abs, spd, ap))
+        end
+      end
+
+      return {prolog_facts = table.concat(facts, "\n")}
+    goto: physics_engine
+
+  # ============================================================
+  # STEP 3: Physics Inference Engine (Grounding Rules)
+  # ============================================================
+  - name: physics_engine
+    language: prolog
+    run: |
+      :- dynamic log_entry/3.
+
+      % --- INERTIA RULE (Slide 3) ---
+      % Detects sudden velocity change impossible without reported collision
+      % Delta V / Delta T > Acceptable limit for civil flight
+      physics_violation(T1, V1, T2, V2, 'Impossible Deceleration') :-
+          log_entry(T1, V1, _),
+          log_entry(T2, V2, _),
+          T2 > T1,              % T2 is future relative to T1
+          DeltaT is T2 - T1,
+          DeltaT =< 2,          % Short interval (<= 2 min)
+          V1 > 800,             % High previous speed
+          V2 =< 50,             % Sudden stop
+          ImpactForce is (V1 - V2) / DeltaT,
+          ImpactForce > 200.    % Lethal/impossible G-Force for the structure
+
+      % --- SYSTEM LOGIC RULE (Slide 2) ---
+      % Autopilot cannot be active with zero speed in the air
+      logic_violation(T, V, AP, 'Hallucination: Stall with AP On') :-
+          log_entry(T, V, AP),
+          V < 100,              % Stall speed (falling)
+          AP = 'on'.            % Autopilot says everything is fine
+
+      % --- GENERAL DIAGNOSIS ---
+      diagnose_system(Status) :-
+          physics_violation(T1, V1, T2, V2, Reason),
+          format(atom(Status), 'CRITICAL FAILURE: ~w detected between min ~w (~w km/h) and min ~w (~w km/h). Physics laws broken.', [Reason, T1, V1, T2, V2]).
+
+      diagnose_system(Status) :-
+          logic_violation(T, V, AP, Reason),
+          format(atom(Status), 'SENSOR FAILURE: ~w at min ~w. Speed ~w km/h with Autopilot ~w.', [Reason, T, V, AP]).
+
+      % If no rule violated
+      diagnose_system('System Normal').
+
+      % Main execution goal - load facts from state and run queries
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
+
+      findall(S, diagnose_system(S), Reports),
+      % Prioritize failures over normal state
+      (member(R, Reports), sub_atom(R, _, _, _, 'FAILURE') -> Final = R ; Final = 'System Normal'),
+
+      return(safety_report, Final).
+    goto: __end__
+
+# ============================================================
+# EXAMPLE USAGE
+# ============================================================
+#
+# tea run examples/prolog/neurosymbolic/flight-safety-temporal-agent.yaml --input '{
+#   "raw_text": "At 9:00 PM, the system reported intelligent autopilot ON and airspeed at 930km/h. Suddenly, at 9:01 PM, the telemetry showed intelligent autopilot still ON, but airspeed dropped to 0km/h."
+# }'
+#
+# EXPECTED OUTPUT:
+#   safety_report: "CRITICAL FAILURE: Impossible Deceleration detected between min 1260 (930 km/h) and min 1261 (0 km/h). Physics laws broken."
+#
+# DETECTION RULES:
+#   1. Physics Violation (Impossible Deceleration):
+#      - Triggered when speed drops from >800 km/h to <50 km/h in <=2 minutes
+#      - Impact force > 200 (calculated as (V1-V2)/DeltaT)
+#      - Indicates sensor malfunction or data corruption
+#
+#   2. Logic Violation (Hallucination: Stall with AP On):
+#      - Triggered when autopilot reports "on" with speed <100 km/h
+#      - Physically impossible: autopilot disengages at stall
+#      - Indicates AI/sensor hallucination
+#
+# ============================================================

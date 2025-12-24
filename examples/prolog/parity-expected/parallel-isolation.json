@@ -1,0 +1,17 @@
+{
+  "query_success": true,
+  "description": "All three parallel branches execute independently with isolated state",
+  "parallel_branches": [
+    {"name": "branch_a", "computation": "value + 1 = 101"},
+    {"name": "branch_b", "computation": "value + 2 = 102"},
+    {"name": "branch_c", "computation": "value + 3 = 103"}
+  ],
+  "isolation_mechanism": {
+    "python": "thread_local(state/2) via janus-swi",
+    "rust": "state_cache per-engine via swipl-rs"
+  },
+  "expected_fan_in": {
+    "parallel_count": 3
+  },
+  "notes": "Thread-local predicates ensure each branch computes independently without race conditions."
+}

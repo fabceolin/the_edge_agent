@@ -58,26 +58,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             Or {"error": str, "success": False} if tracing is disabled
         """
         if not engine._enable_tracing or engine._trace_context is None:
-            return {
-                "success": False,
-                "error": "Tracing is not enabled"
-            }
+            return {"success": False, "error": "Tracing is not enabled"}
 
         span = engine._trace_context.start_span(
-            name=name,
-            metadata=metadata,
-            parent_id=parent_id
+            name=name, metadata=metadata, parent_id=parent_id
         )
 
         return {
             "span_id": span["span_id"],
             "name": span["name"],
             "parent_id": span["parent_id"],
-            "success": True
+            "success": True,
         }
 
-    registry['trace.start'] = trace_start
-    registry['actions.trace_start'] = trace_start
+    registry["trace.start"] = trace_start
+    registry["actions.trace_start"] = trace_start
 
     def trace_log(
         state,
@@ -86,7 +81,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         metrics=None,
         snapshot_state=False,
         sanitize_keys=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Log an event, metrics, or state snapshot to the current span.
@@ -104,10 +99,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             Or {"success": False, "error": str} if no active span or tracing disabled
         """
         if not engine._enable_tracing or engine._trace_context is None:
-            return {
-                "success": False,
-                "error": "Tracing is not enabled"
-            }
+            return {"success": False, "error": "Tracing is not enabled"}
 
         current = engine._trace_context.log_event(
             message=message,
@@ -115,25 +107,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             metrics=metrics,
             snapshot_state=snapshot_state,
             state=state,
-            sanitize_keys=sanitize_keys
+            sanitize_keys=sanitize_keys,
         )
 
         if current is None:
             return {
                 "success": False,
                 "error": "No active span to log to",
-                "logged": False
+                "logged": False,
             }
 
         return {
             "logged": True,
             "span_id": current["span_id"],
             "event_count": len(current["events"]),
-            "success": True
+            "success": True,
         }
 
-    registry['trace.log'] = trace_log
-    registry['actions.trace_log'] = trace_log
+    registry["trace.log"] = trace_log
+    registry["actions.trace_log"] = trace_log
 
     def trace_end(state, status="ok", error=None, **kwargs):
         """
@@ -149,28 +141,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             Or {"success": False, "error": str} if no active span or tracing disabled
         """
         if not engine._enable_tracing or engine._trace_context is None:
-            return {
-                "success": False,
-                "error": "Tracing is not enabled"
-            }
+            return {"success": False, "error": "Tracing is not enabled"}
 
         span = engine._trace_context.end_span(status=status, error=error)
 
         if span is None:
-            return {
-                "success": False,
-                "error": "No active span to end"
-            }
+            return {"success": False, "error": "No active span to end"}
 
         return {
             "span_id": span["span_id"],
             "duration_ms": span["duration_ms"],
             "status": span["status"],
-            "success": True
+            "success": True,
         }
 
-    registry['trace.end'] = trace_end
-    registry['actions.trace_end'] = trace_end
+    registry["trace.end"] = trace_end
+    registry["actions.trace_end"] = trace_end
 
     # TEA-BUILTIN-005.3: Opik healthcheck action
     def opik_healthcheck(state, timeout=5.0, **kwargs):
@@ -217,15 +203,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "success": False,
                 "error": "Opik SDK not installed",
                 "message": "Opik SDK not installed. Install with: pip install opik",
-                "install_command": "pip install opik"
+                "install_command": "pip install opik",
             }
 
         # Get resolved Opik config
-        config = getattr(engine, '_opik_config', {})
-        api_key = config.get('api_key')
-        workspace = config.get('workspace')
-        project_name = config.get('project_name', 'the-edge-agent')
-        url_override = config.get('url')
+        config = getattr(engine, "_opik_config", {})
+        api_key = config.get("api_key")
+        workspace = config.get("workspace")
+        project_name = config.get("project_name", "the-edge-agent")
+        url_override = config.get("url")
 
         try:
             start_time = time.time()
@@ -259,7 +245,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "latency_ms": latency_ms,
                 "workspace": effective_workspace,
                 "project": project_name,
-                "message": "Connected to Opik successfully"
+                "message": "Connected to Opik successfully",
             }
 
         except Exception as e:
@@ -283,17 +269,170 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         "Verify the URL and server status."
                     )
                 else:
-                    message = (
-                        "Cannot connect to Opik. Check network connectivity."
-                    )
+                    message = "Cannot connect to Opik. Check network connectivity."
             else:
                 message = f"Opik connection failed: {error_str}"
 
+            return {"success": False, "error": error_str, "message": message}
+
+    registry["opik.healthcheck"] = opik_healthcheck
+    registry["actions.opik_healthcheck"] = opik_healthcheck
+
+    # TEA-OBS-001.1: Flow observability actions
+    def obs_get_flow_log(state, **kwargs):
+        """
+        Get the complete flow log from ObservabilityContext (TEA-OBS-001.1).
+
+        Returns a structured trace containing all events, spans, and metrics
+        for the current flow execution. Requires observability to be enabled
+        via the 'observability' configuration in YAML.
+
+        Args:
+            state: Current state dictionary
+
+        Returns:
+            On success:
+                {
+                    "success": True,
+                    "flow_log": {
+                        "flow_id": str,
+                        "events": List[dict],
+                        "spans": List[dict],
+                        "metrics": {
+                            "total_duration_ms": float,
+                            "node_count": int,
+                            "error_count": int,
+                            "event_count": int
+                        },
+                        "timeline": List[dict]
+                    }
+                }
+            On failure:
+                {"success": False, "error": str}
+
+        Example:
+            >>> result = registry['obs.get_flow_log'](state={})
+            >>> if result['success']:
+            ...     print(f"Flow: {result['flow_log']['flow_id']}")
+            ...     print(f"Events: {result['flow_log']['metrics']['event_count']}")
+        """
+        if (
+            not hasattr(engine, "_observability_context")
+            or engine._observability_context is None
+        ):
             return {
                 "success": False,
-                "error": error_str,
-                "message": message
+                "error": "Observability is not enabled. Add 'observability: {enabled: true}' to YAML config.",
             }
 
-    registry['opik.healthcheck'] = opik_healthcheck
-    registry['actions.opik_healthcheck'] = opik_healthcheck
+        flow_log = engine._observability_context.get_flow_log()
+        return {"success": True, "flow_log": flow_log}
+
+    registry["obs.get_flow_log"] = obs_get_flow_log
+    registry["actions.obs_get_flow_log"] = obs_get_flow_log
+
+    def obs_log_event(
+        state,
+        node=None,
+        level="info",
+        event_type="metric",
+        message=None,
+        data=None,
+        metrics=None,
+        **kwargs,
+    ):
+        """
+        Log a custom event to the observability stream (TEA-OBS-001.1).
+
+        Allows workflows to emit custom log events that appear in the flow log.
+        Requires observability to be enabled.
+
+        Args:
+            state: Current state dictionary
+            node: Node name (optional, defaults to 'custom')
+            level: Log level - 'debug', 'info', 'warn', 'error' (default: 'info')
+            event_type: Event type - 'entry', 'exit', 'error', 'metric' (default: 'metric')
+            message: Optional message text
+            data: Optional data dictionary
+            metrics: Optional metrics dictionary
+
+        Returns:
+            {"success": True, "flow_id": str}
+            or {"success": False, "error": str}
+
+        Example:
+            >>> registry['obs.log_event'](
+            ...     state={},
+            ...     node="my_step",
+            ...     level="info",
+            ...     message="Processing complete",
+            ...     metrics={"items_processed": 42}
+            ... )
+        """
+        if (
+            not hasattr(engine, "_observability_context")
+            or engine._observability_context is None
+        ):
+            return {
+                "success": False,
+                "error": "Observability is not enabled. Add 'observability: {enabled: true}' to YAML config.",
+            }
+
+        obs_ctx = engine._observability_context
+        obs_ctx.log(
+            node=node or "custom",
+            level=level,
+            event_type=event_type,
+            message=message,
+            data=data,
+            metrics=metrics,
+        )
+
+        return {"success": True, "flow_id": obs_ctx.flow_id}
+
+    registry["obs.log_event"] = obs_log_event
+    registry["actions.obs_log_event"] = obs_log_event
+
+    def obs_query_events(state, filters=None, **kwargs):
+        """
+        Query events from the observability stream (TEA-OBS-001.1).
+
+        Filter events by node pattern, level, event type, or time range.
+        Requires observability to be enabled.
+
+        Args:
+            state: Current state dictionary
+            filters: Dictionary of filters:
+                - node: Glob pattern to match node name (e.g., "llm.*")
+                - level: Exact level match (debug, info, warn, error)
+                - event_type: Exact type match (entry, exit, error, metric)
+                - start_time: Minimum timestamp (Unix float)
+                - end_time: Maximum timestamp (Unix float)
+
+        Returns:
+            {"success": True, "events": List[dict], "count": int}
+            or {"success": False, "error": str}
+
+        Example:
+            >>> result = registry['obs.query_events'](
+            ...     state={},
+            ...     filters={"node": "llm.*", "level": "error"}
+            ... )
+            >>> print(f"Found {result['count']} error events")
+        """
+        if (
+            not hasattr(engine, "_observability_context")
+            or engine._observability_context is None
+        ):
+            return {
+                "success": False,
+                "error": "Observability is not enabled. Add 'observability: {enabled: true}' to YAML config.",
+            }
+
+        obs_ctx = engine._observability_context
+        events = obs_ctx.event_stream.query(filters or {})
+
+        return {"success": True, "events": events, "count": len(events)}
+
+    registry["obs.query_events"] = obs_query_events
+    registry["actions.obs_query_events"] = obs_query_events

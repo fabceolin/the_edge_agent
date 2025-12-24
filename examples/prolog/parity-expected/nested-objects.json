@@ -1,0 +1,21 @@
+{
+  "query_success": true,
+  "description": "5-level nested structure traversable via get_dict/3",
+  "nesting_depth": 5,
+  "structure": {
+    "level1": {
+      "level2": {
+        "level3": {
+          "level4": {
+            "level5": {
+              "value": "deeply_nested_value",
+              "array": [1, 2, 3]
+            }
+          }
+        }
+      }
+    }
+  },
+  "prolog_access": "get_dict(level1, Nested, L1), get_dict(level2, L1, L2), ...",
+  "notes": "Prolog dicts use _{} syntax. Both runtimes convert JSON objects to Prolog dicts identically."
+}

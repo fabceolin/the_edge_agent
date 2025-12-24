@@ -1,0 +1,29 @@
+# Invoice Overlay Schema
+# Invoice-specific fields to merge with base
+
+type: object
+properties:
+  invoice_number:
+    type: string
+    description: Invoice number
+  vendor:
+    type: object
+    properties:
+      name:
+        type: string
+      email:
+        type: string
+  line_items:
+    type: array
+    items:
+      type: object
+      properties:
+        description:
+          type: string
+        quantity:
+          type: number
+        total:
+          type: number
+  total_amount:
+    type: number
+    description: Final total

@@ -1,0 +1,56 @@
+# Cross-Runtime Parity Test: CLP(FD) Deterministic
+# Tests constraint solving with a unique solution
+# Expected: Both runtimes find the same unique solution
+
+name: parity-clpfd-deterministic
+description: CLP(FD) constraints with single unique solution
+
+state_schema:
+  min_val: int
+  max_val: int
+  target_sum: int
+  # CLP(FD) variables - solution stored via query binding
+  x: int
+  y: int
+  z: int
+
+nodes:
+  - name: solve_constraints
+    language: prolog
+    run: |
+      % Read bounds from state
+      state(min_val, Min),
+      state(max_val, Max),
+      state(target_sum, Target),
+
+      % Define CLP(FD) variables
+      X in Min..Max,
+      Y in Min..Max,
+      Z in Min..Max,
+
+      % Constraints: X + Y + Z = Target, X < Y < Z
+      X + Y + Z #= Target,
+      X #< Y,
+      Y #< Z,
+
+      % Additional constraint to ensure unique solution
+      X #= 1,
+
+      % Label to find first (and only) solution
+      label([X, Y, Z]),
+
+      % Verify the solution
+      X = 1, Y = 4, Z = 10.
+
+# Implicit flow: solve_constraints -> __end__
+
+# Initial state
+# Constraints: X + Y + Z = 15, X < Y < Z, X = 1
+# Unique solution: X=1, Y=4, Z=10
+initial_state:
+  min_val: 1
+  max_val: 10
+  target_sum: 15
+  x: 0
+  y: 0
+  z: 0

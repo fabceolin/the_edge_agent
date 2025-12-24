@@ -39,6 +39,14 @@ nodes:
           "confidence": confidence,
           "escalate": confidence < ${escalation_threshold}
       }
+    goto:
+      - if: "state.intent == 'billing'"
+        to: handle_billing
+      - if: "state.intent == 'technical'"
+        to: handle_technical
+      - if: "state.intent == 'retention'"
+        to: handle_retention
+      - to: handle_general  # Fallback
 
   # Stage 2a: Handle Billing
   - name: handle_billing
@@ -57,6 +65,10 @@ nodes:
             "response": f"Hi! I checked your account (ID: {state['customer_id']}). Your current balance is ${state['balance']}. How can I help with your billing question?",
             "ticket_id": f"BILL-{state['customer_id'][:8]}"
           }
+    goto:
+      - if: "state.escalate == True"
+        to: escalate_to_human
+      - to: send_response
 
   # Stage 2b: Handle Technical
   - name: handle_technical
@@ -67,6 +79,7 @@ nodes:
         "ticket_id": f"TECH-{state['customer_id'][:8]}",
         "escalate": True  # Technical issues often need escalation
       }
+    goto: escalate_to_human
 
   # Stage 2c: Handle Retention
   - name: handle_retention
@@ -77,6 +90,7 @@ nodes:
         "ticket_id": f"RET-{state['customer_id'][:8]}",
         "escalate": True
       }
+    goto: escalate_to_human
 
   # Stage 2d: Handle General
   - name: handle_general
@@ -86,6 +100,7 @@ nodes:
         "ticket_id": f"GEN-{state['customer_id'][:8]}",
         "escalate": False
       }
+    goto: send_response
 
   # Stage 3a: Send automated response
   - name: send_response
@@ -94,6 +109,7 @@ nodes:
       print(f"[EMAIL] Subject: Re: Support Ticket {state['ticket_id']}")
       print(f"[EMAIL] Body: {state['response']}")
       return {"sent": True}
+    goto: __end__
 
   # Stage 3b: Escalate to human
   - name: escalate_to_human
@@ -106,65 +122,9 @@ nodes:
         Intent: {{ state.intent }}
         Customer: {{ state.customer_id }}
         Confidence: {{ state.confidence }}
+    goto: __end__
 
-edges:
-  # Entry
-  - from: __start__
-    to: classify_intent
-
-  # Route based on intent
-  - from: classify_intent
-    to: handle_billing
-    condition:
-      type: expression
-      value: state["intent"] == "billing"
-    when: true
-
-  - from: classify_intent
-    to: handle_technical
-    condition:
-      type: expression
-      value: state["intent"] == "technical"
-    when: true
-
-  - from: classify_intent
-    to: handle_retention
-    condition:
-      type: expression
-      value: state["intent"] == "retention"
-    when: true
-
-  - from: classify_intent
-    to: handle_general
-    condition:
-      type: expression
-      value: state["intent"] == "general"
-    when: true
-
-  # Route to response or escalation
-  - from: handle_billing
-    to: send_response
-    when: "!escalate"
-
-  - from: handle_billing
-    to: escalate_to_human
-    when: "escalate"
-
-  - from: handle_technical
-    to: escalate_to_human
-
-  - from: handle_retention
-    to: escalate_to_human
-
-  - from: handle_general
-    to: send_response
-
-  # Exit
-  - from: send_response
-    to: __end__
-
-  - from: escalate_to_human
-    to: __end__
+# Flow: classify_intent -> (goto based on intent) -> handle_* -> (goto) -> send_response/escalate_to_human -> __end__
 
 config:
   raise_exceptions: true

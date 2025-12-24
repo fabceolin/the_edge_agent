@@ -7,11 +7,7 @@ nodes:
     language: prolog
     run: "X = 5, Y = 10, X < Y"
 
-edges:
-  - from: __start__
-    to: compare
-  - from: compare
-    to: __end__
+# Implicit flow: compare -> __end__
 
 # Expected behavior:
 # - Both runtimes unify X=5, Y=10

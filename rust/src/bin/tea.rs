@@ -290,11 +290,22 @@ fn run_workflow(
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
 
-    // Parse initial state
-    let initial_state = parse_input(input)?;
-
     // Compile graph with interrupts
     let mut compiled = graph.compile()?;
+
+    // Merge initial state: YAML initial_state first, CLI input overlays (CLI takes precedence)
+    let cli_input = parse_input(input)?;
+    let initial_state = if let Some(yaml_state) = compiled.initial_state() {
+        let mut merged = yaml_state.clone();
+        if let (Some(merged_obj), Some(cli_obj)) = (merged.as_object_mut(), cli_input.as_object()) {
+            for (key, value) in cli_obj {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+        merged
+    } else {
+        cli_input
+    };
 
     if let Some(nodes) = interrupt_before {
         compiled = compiled
@@ -306,11 +317,15 @@ fn run_workflow(
             compiled.with_interrupt_after(nodes.split(',').map(|s| s.trim().to_string()).collect());
     }
 
-    // Setup executor with actions
+    // Setup executor with actions and observability (TEA-OBS-001.2)
     let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
     actions::register_defaults(&registry);
 
-    let executor = Executor::with_actions(compiled, registry)?;
+    let executor = if let Some(obs_config) = engine.observability_config() {
+        Executor::with_actions_and_observability(compiled, registry, obs_config)?
+    } else {
+        Executor::with_actions(compiled, registry)?
+    };
 
     // Setup checkpointer
     let checkpointer: Option<Arc<dyn Checkpointer>> = checkpoint_dir.map(|dir| {
@@ -403,11 +418,15 @@ fn resume_workflow(
     // Compile graph
     let compiled = graph.compile()?;
 
-    // Setup executor with actions
+    // Setup executor with actions and observability (TEA-OBS-001.2)
     let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
     actions::register_defaults(&registry);
 
-    let executor = Executor::with_actions(compiled, registry)?;
+    let executor = if let Some(obs_config) = engine.observability_config() {
+        Executor::with_actions_and_observability(compiled, registry, obs_config)?
+    } else {
+        Executor::with_actions(compiled, registry)?
+    };
 
     // Setup checkpointer for continued execution
     let checkpointer_arc: Arc<dyn Checkpointer> = Arc::new(checkpointer);

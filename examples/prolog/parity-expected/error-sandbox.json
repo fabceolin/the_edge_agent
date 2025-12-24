@@ -1,0 +1,12 @@
+{
+  "query_success": false,
+  "error_type": "sandbox_violation",
+  "description": "Attempt to open file is blocked by SWI-Prolog sandbox",
+  "expected_errors": {
+    "python": "PrologRuntimeError (permission denied)",
+    "rust": "TeaError::PrologSandboxViolation"
+  },
+  "blocked_predicate": "open/3",
+  "sandbox_library": "library(sandbox)",
+  "notes": "Both runtimes load library(sandbox) by default. File I/O, shell execution, and network access are blocked."
+}

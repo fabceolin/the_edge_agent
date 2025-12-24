@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.7.8",
+    version="0.7.9",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -51,23 +51,32 @@ setup(
             "hypothesis",
             "parameterized==0.9.0",
             # Test dependencies for optional features
-            "openai>=1.13.3",       # For LLM/RAG tests (mocked but module must be importable)
-            "requests>=2.32.5",     # For web actions tests
+            "openai>=1.13.3",  # For LLM/RAG tests (mocked but module must be importable)
+            "litellm>=1.0.0",  # For LiteLLM provider tests (TEA-LLM-003)
+            "requests>=2.32.5",  # For web actions tests
             "RestrictedPython>=8.0",  # For code execution tests
-            "duckdb>=0.10.0",       # For tabular data tests (data_query, data_consolidate)
-            "opik>=1.9.0",          # For observability tests
-            "pygraphviz>=1.13",     # For graph visualization tests (requires libgraphviz-dev)
+            "duckdb>=0.10.0",  # For tabular data tests (data_query, data_consolidate)
+            "opik>=1.9.0",  # For observability tests
+            "pygraphviz>=1.13",  # For graph visualization tests (requires libgraphviz-dev)
             "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
-            "pandas>=2.0.0",        # Required by pycozo
-            "lupa>=2.0",            # For Lua runtime tests
-            "janus-swi>=0.1.0",     # For Prolog runtime tests (requires SWI-Prolog 9.1+)
+            "pandas>=2.0.0",  # Required by pycozo
+            "lupa>=2.0",  # For Lua runtime tests
+            "janus-swi>=0.1.0",  # For Prolog runtime tests (requires SWI-Prolog 9.1+)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
         "llm": ["openai>=1.13.3"],
+        "litellm": ["litellm>=1.0.0"],  # TEA-LLM-003: LiteLLM multi-provider support
         "web": ["requests>=2.32.5"],
+        "web-ai-scrape": [
+            "scrapegraph-py>=1.0.0",
+            "pydantic>=2.0.0",
+        ],  # TEA-BUILTIN-008.4: ScrapeGraphAI
         "code": ["RestrictedPython>=8.0"],
-        "graph": ["pycozo[embedded]>=0.7.0", "pandas>=2.0.0"],  # pandas required by pycozo
+        "graph": [
+            "pycozo[embedded]>=0.7.0",
+            "pandas>=2.0.0",
+        ],  # pandas required by pycozo
         "graph-kuzu": ["kuzu>=0.11.0"],
         # Note: graph-bighorn should be installed manually from GitHub:
         # pip install git+https://github.com/Kineviz/bighorn.git
@@ -91,6 +100,7 @@ setup(
         "storage-all": ["s3fs", "gcsfs", "adlfs"],
         "all": [
             "openai>=1.13.3",
+            "litellm>=1.0.0",  # TEA-LLM-003: LiteLLM multi-provider support
             "numpy>=2.1.0",
             "chromadb>=0.4.0",
             "requests>=2.32.5",
@@ -102,6 +112,8 @@ setup(
             "adlfs",
             "lupa>=2.0",
             "janus-swi>=0.1.0",  # Requires SWI-Prolog 9.1+
+            "scrapegraph-py>=1.0.0",  # TEA-BUILTIN-008.4: ScrapeGraphAI
+            "pydantic>=2.0.0",
         ],
     },
 )

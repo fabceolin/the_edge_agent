@@ -1,0 +1,74 @@
+# Cross-Runtime Parity Test: Parallel State Isolation
+# Tests that thread-local state/2 provides isolation in parallel branches
+# Expected: Each parallel branch sees its own state without interference
+#
+# Both runtimes declare state/2 as thread_local, ensuring isolation.
+#
+# NOTE: Parallel edges still require the edges section with type: parallel
+
+name: parity-parallel-isolation
+description: Verify thread-local state isolation in parallel Prolog branches
+
+state_schema:
+  branch_id: int
+  value: int
+  computed: int
+
+nodes:
+  - name: setup
+    run: |
+      return {"branch_id": 0, "value": 100, "computed": 0}
+
+  - name: branch_a
+    language: prolog
+    run: |
+      % Branch A reads value and computes A-specific result
+      state(value, V),
+      Result is V + 1,
+      Result = 101.
+
+  - name: branch_b
+    language: prolog
+    run: |
+      % Branch B reads value and computes B-specific result
+      state(value, V),
+      Result is V + 2,
+      Result = 102.
+
+  - name: branch_c
+    language: prolog
+    run: |
+      % Branch C reads value and computes C-specific result
+      state(value, V),
+      Result is V + 3,
+      Result = 103.
+
+  - name: fan_in
+    is_fan_in: true
+    run: |
+      # Collect results from parallel branches
+      results = parallel_results
+      return {"parallel_count": len(results)}
+
+# Parallel edges require explicit definition (cannot use implicit/goto)
+edges:
+  - from: setup
+    to: branch_a
+    parallel: true
+    fan_in: fan_in
+  - from: setup
+    to: branch_b
+    parallel: true
+    fan_in: fan_in
+  - from: setup
+    to: branch_c
+    parallel: true
+    fan_in: fan_in
+
+# Implicit flow: __start__ -> setup (via node order)
+# Implicit flow: fan_in -> __end__ (via last node)
+
+initial_state:
+  branch_id: 0
+  value: 100
+  computed: 0

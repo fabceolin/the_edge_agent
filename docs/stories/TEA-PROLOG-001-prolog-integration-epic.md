@@ -205,23 +205,31 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 
 ---
 
-### Story 3: TEA-PROLOG-002 - Cross-Runtime Parity Tests (Future)
+### Story 3: TEA-PROLOG-002 - Cross-Runtime Parity Tests
 
-**Status:** Blocked by TEA-PY-004, TEA-RUST-035, TEA-RUST-036
+**Status:** Complete (Ready for Review)
 
 **Description:** Create comprehensive parity tests ensuring the same Prolog YAML agents produce identical results in both Python and Rust runtimes.
 
 **Scope:**
-- Parity test fixtures in `examples/prolog/`
-- Cross-runtime test harness
-- CLP(FD) parity verification
-- Edge case documentation
+- Parity test fixtures in `examples/prolog/parity/` (12 fixtures)
+- Expected outputs in `examples/prolog/parity-expected/` (12 JSON files)
+- Cross-runtime test harness: `scripts/parity-test.sh`
+- Python tests: `python/tests/test_prolog_parity.py` (23 tests, all passing)
+- Rust tests: `rust/tests/test_prolog_parity.rs`
+- Parity report: `docs/shared/prolog-parity-report.md`
+
+**Known Parity Differences:**
+1. `return/2` predicate: Works in Python (janus-swi), not in Rust (swipl-rs limitation)
+2. Empty list `[]`: Preserved in Python, converted to `null` in Rust
+
+**Link:** [TEA-PROLOG-002-cross-runtime-parity-tests.md](TEA-PROLOG-002-cross-runtime-parity-tests.md)
 
 ---
 
-### Story 4: TEA-PROLOG-003 - Neurosymbolic Examples & Documentation (Future)
+### Story 4: TEA-PROLOG-003 - Neurosymbolic Examples & Documentation
 
-**Status:** Blocked by TEA-PY-004, TEA-RUST-035
+**Status:** Approved (SM Checklist Validated 2025-12-22)
 
 **Description:** Create reference implementations and documentation for neurosymbolic AI patterns using Prolog integration.
 
@@ -230,6 +238,10 @@ Unlike Lua (which creates fresh VM instances per parallel branch), Prolog uses S
 - Example: CLP(FD) constraint solving
 - Example: Knowledge graph reasoning
 - Tutorial documentation
+
+**Link:** [TEA-PROLOG-003-neurosymbolic-examples-docs.md](TEA-PROLOG-003-neurosymbolic-examples-docs.md)
+
+---
 
 ## YAML Syntax
 

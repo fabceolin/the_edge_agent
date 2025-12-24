@@ -1,0 +1,21 @@
+{
+  "query_success": true,
+  "description": "CLP(FD) solver returns first solution X=1, Y=5 using leftmost labeling",
+  "constraints": {
+    "domain": "[1..5]",
+    "sum_constraint": "X + Y = 6"
+  },
+  "labeling_strategy": "leftmost",
+  "all_solutions": [
+    {"X": 1, "Y": 5},
+    {"X": 2, "Y": 4},
+    {"X": 3, "Y": 3},
+    {"X": 4, "Y": 2},
+    {"X": 5, "Y": 1}
+  ],
+  "expected_first_solution": {
+    "X": 1,
+    "Y": 5
+  },
+  "notes": "Leftmost labeling ensures deterministic search order. Both runtimes must return the same first solution."
+}

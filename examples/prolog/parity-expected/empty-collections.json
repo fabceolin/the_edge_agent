@@ -1,0 +1,21 @@
+{
+  "query_success": true,
+  "description": "Empty collections handled consistently across runtimes",
+  "known_difference": {
+    "empty_list_[]": {
+      "python": "[]",
+      "rust": "null (converted from [])"
+    }
+  },
+  "test_values": {
+    "empty_list": [],
+    "empty_dict": {},
+    "list_with_empty": [[], {}, null],
+    "dict_with_empty": {
+      "empty_array": [],
+      "empty_object": {},
+      "null_value": null
+    }
+  },
+  "notes": "The Rust runtime converts [] to null (see prolog_to_json in prolog_runtime.rs:251). Tests accept either [] or null for empty lists."
+}

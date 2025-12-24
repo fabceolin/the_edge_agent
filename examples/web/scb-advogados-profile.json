@@ -1,0 +1,110 @@
+{
+  "firmName": "Sette Câmara, Corrêa e Bastos Advogados Associados",
+  "foundedYear": "1990",
+  "website": "https://www.scbadvogados.adv.br/",
+  "linkedin": "https://www.linkedin.com/company/sette-camara-correa-e-bastos-advogados-associados",
+  "businessModel": "full-service",
+  "description": "Sette Câmara, Corrêa e Bastos Advogados Associados is a full-service law firm that provides expert legal advice and services to its clients. The firm has a prominent position among the country's biggest law firms due to its excellence in providing legal services, covering the entire spectrum of practice areas. With over 3 decades of experience, the firm has a team of experienced lawyers and a staff of administrative professionals.",
+  "country": "BRA",
+  "city": "Belo Horizonte",
+  "state": "BR-MG",
+  "totalLawyers": 202,
+  "totalPartners": 0,
+  "mainEmail": null,
+  "mainPhone": "+55 (31) 2138.7000",
+  "managingPartners": [
+    {
+      "firstName": "Sérgio",
+      "surname": "Santos Sette Câmara",
+      "title": "Sócio",
+      "role": "Contencioso e Consultivo Comercial",
+      "isManagingPartner": true,
+      "email": null,
+      "phone": null,
+      "biography": "Sérgio Santos Sette Câmara is a partner at Sette Câmara Corrêa e Bastos, specializing in commercial and corporate law.",
+      "employmentStartDate": null
+    },
+    {
+      "firstName": "Roberta",
+      "surname": "Espinha Corrêa",
+      "title": "Sócio",
+      "role": "Consultivo e Contencioso Tributário",
+      "isManagingPartner": true,
+      "email": null,
+      "phone": null,
+      "biography": "Roberta Espinha Corrêa is a partner at Sette Câmara Corrêa e Bastos, specializing in tax law.",
+      "employmentStartDate": null
+    },
+    {
+      "firstName": "Luiz",
+      "surname": "Flávio Valle Bastos",
+      "title": "Sócio",
+      "role": "Consultivo e contencioso trabalhista",
+      "isManagingPartner": true,
+      "email": null,
+      "phone": null,
+      "biography": "Luiz Flávio Valle Bastos is a partner at Sette Câmara Corrêa e Bastos, specializing in labor law.",
+      "employmentStartDate": null
+    },
+    {
+      "firstName": "Felipe",
+      "surname": "Gazola Vieira Marques",
+      "title": "Sócio",
+      "role": "Consultivo e Contencioso Empresarial",
+      "isManagingPartner": true,
+      "email": null,
+      "phone": null,
+      "biography": "Felipe Gazola Vieira Marques is a partner at Sette Câmara Corrêa e Bastos, specializing in corporate law.",
+      "employmentStartDate": null
+    }
+  ],
+  "offices": [
+    {
+      "address": null,
+      "city": "Belo Horizonte",
+      "country": "BRA",
+      "state": "BR-MG",
+      "phone": "+55 (31) 2138.7000",
+      "isHeadOffice": true
+    },
+    {
+      "address": null,
+      "city": "São Paulo",
+      "country": "BRA",
+      "state": "BR-SP",
+      "phone": "+55 (11) 3434.7000",
+      "isHeadOffice": false
+    }
+  ],
+  "practiceAreas": [
+    "Tax Law",
+    "Consumer Relations",
+    "Labor",
+    "Infrastructure",
+    "Regulatory",
+    "Electricity",
+    "Telecommunications",
+    "Banking",
+    "Water and Sanitation",
+    "Transport and Logistics",
+    "Construction and Engineering",
+    "Retail Trade",
+    "Comercial",
+    "Tributário",
+    "Trabalhista",
+    "Empresarial",
+    "Cível",
+    "Consumidor",
+    "Administrativo",
+    "Marcas e Patentes",
+    "Propriedade Intelectual",
+    "Bancário",
+    "Telecomunicações"
+  ],
+  "awards": [
+    "GLOBAL LAW EXPERTS - Tax Law Firm of the Year in Brazil – 2019",
+    "ANÁLISE ADVOCACIA 500 - Most Admired in all editions as of 2011",
+    "CHAMBERS AND PARTNERS - DISPUTE RESOLUTION: SOUTH EAST: MINAS GERAIS AND ESPÍRITO SANTO — BRAZIL",
+    "LEADERS LEAGUE - Litigation & Arbitration Guide 2018"
+  ]
+}

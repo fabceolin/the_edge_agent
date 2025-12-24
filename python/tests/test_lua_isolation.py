@@ -39,7 +39,9 @@ class TestLuaRuntimeInstanceIndependence(unittest.TestCase):
 
         # Verify runtime2 does NOT see it
         result = runtime2.execute("return test_global", {})
-        self.assertIsNone(result, "Global from runtime1 should not be visible in runtime2")
+        self.assertIsNone(
+            result, "Global from runtime1 should not be visible in runtime2"
+        )
 
     def test_multiple_instances_fully_isolated(self):
         """Multiple instances are completely isolated from each other."""
@@ -65,29 +67,37 @@ class TestGlobalVariableIsolation(unittest.TestCase):
 
         runtime2 = LuaRuntime()  # Fresh instance
         result = runtime2.execute("return leaked_global", {})
-        self.assertIsNone(result, "leaked_global should not be visible in fresh runtime")
+        self.assertIsNone(
+            result, "leaked_global should not be visible in fresh runtime"
+        )
 
     def test_multiple_globals_do_not_leak(self):
         """Multiple globals in one runtime don't leak to another."""
         runtime1 = LuaRuntime()
-        runtime1.execute("""
+        runtime1.execute(
+            """
             var_a = "hello"
             var_b = 42
             var_c = true
-        """, {})
+        """,
+            {},
+        )
 
         runtime2 = LuaRuntime()
-        results = runtime2.execute("""
+        results = runtime2.execute(
+            """
             return {
                 a = var_a,
                 b = var_b,
                 c = var_c
             }
-        """, {})
+        """,
+            {},
+        )
 
-        self.assertIsNone(results.get('a'), "var_a should not leak")
-        self.assertIsNone(results.get('b'), "var_b should not leak")
-        self.assertIsNone(results.get('c'), "var_c should not leak")
+        self.assertIsNone(results.get("a"), "var_a should not leak")
+        self.assertIsNone(results.get("b"), "var_b should not leak")
+        self.assertIsNone(results.get("c"), "var_c should not leak")
 
 
 class TestFunctionDefinitionIsolation(unittest.TestCase):
@@ -106,12 +116,15 @@ class TestFunctionDefinitionIsolation(unittest.TestCase):
     def test_function_with_upvalues_does_not_leak(self):
         """Function with captured upvalues should not leak."""
         runtime1 = LuaRuntime()
-        runtime1.execute("""
+        runtime1.execute(
+            """
             local secret = "hidden"
             function reveal()
                 return secret
             end
-        """, {})
+        """,
+            {},
+        )
 
         # Verify it works in runtime1
         result1 = runtime1.execute("return reveal()", {})
@@ -176,8 +189,9 @@ class TestLuaRuntimeCreationOverhead(unittest.TestCase):
 
         avg_time = sum(times) / len(times)
         self.assertLess(
-            avg_time, 10,
-            f"Average creation time {avg_time:.2f}ms exceeds 10ms threshold"
+            avg_time,
+            10,
+            f"Average creation time {avg_time:.2f}ms exceeds 10ms threshold",
         )
 
 
@@ -200,18 +214,16 @@ class TestParallelBranchFreshRuntime(unittest.TestCase):
 
         # Run in parallel threads
         with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [
-                executor.submit(worker, f"thread_{i}")
-                for i in range(3)
-            ]
+            futures = [executor.submit(worker, f"thread_{i}") for i in range(3)]
             results = [f.result() for f in as_completed(futures)]
 
         # All thread runtimes should be different from main thread
         main_runtime = engine._get_lua_runtime()
         for thread_name, runtime_id in runtime_ids.items():
             self.assertNotEqual(
-                runtime_id, id(main_runtime),
-                f"{thread_name} should have different runtime than main thread"
+                runtime_id,
+                id(main_runtime),
+                f"{thread_name} should have different runtime than main thread",
             )
 
 
@@ -290,8 +302,9 @@ edges:
             marker = result["marker"]  # 'from_a' or 'from_b'
             expected = f"from_{branch}"
             self.assertEqual(
-                marker, expected,
-                f"Branch {branch} marker should be '{expected}', got '{marker}'"
+                marker,
+                expected,
+                f"Branch {branch} marker should be '{expected}', got '{marker}'",
             )
 
 
@@ -363,14 +376,11 @@ edges:
         results = final_state.get("results", [])
 
         # Find branch_b result
-        branch_b_result = next(
-            (r for r in results if r.get("branch") == "b"),
-            None
-        )
+        branch_b_result = next((r for r in results if r.get("branch") == "b"), None)
         self.assertIsNotNone(branch_b_result, "Should have branch_b result")
         self.assertFalse(
             branch_b_result.get("sees_a_func", True),
-            "Branch B should NOT see branch_a_func"
+            "Branch B should NOT see branch_a_func",
         )
 
 
@@ -447,8 +457,9 @@ edges:
         # Both branches should have seen the same initial value
         for result in results:
             self.assertEqual(
-                result["saw_value"], 42,
-                f"Branch {result['branch']} should see initial value 42"
+                result["saw_value"],
+                42,
+                f"Branch {result['branch']} should see initial value 42",
             )
 
 
@@ -564,24 +575,21 @@ edges:
         results = final_state.get("results", [])
 
         # Find branch_b result
-        branch_b_result = next(
-            (r for r in results if r.get("branch") == "b"),
-            None
-        )
+        branch_b_result = next((r for r in results if r.get("branch") == "b"), None)
         self.assertIsNotNone(branch_b_result, "Should have branch_b result")
 
         # Branch B should see no leaked items
         self.assertFalse(
             branch_b_result.get("var_leaked", True),
-            "leaked_var should not be visible to branch_b"
+            "leaked_var should not be visible to branch_b",
         )
         self.assertFalse(
             branch_b_result.get("func_leaked", True),
-            "leaked_func should not be visible to branch_b"
+            "leaked_func should not be visible to branch_b",
         )
         self.assertFalse(
             branch_b_result.get("table_leaked", True),
-            "leaked_table should not be visible to branch_b"
+            "leaked_table should not be visible to branch_b",
         )
 
 
@@ -643,7 +651,7 @@ class TestConcurrentThreadIsolation(unittest.TestCase):
                 results[worker_id] = {
                     "runtime_id": id(runtime),
                     "set_id": worker_id,
-                    "read_id": read_id
+                    "read_id": read_id,
                 }
 
             return read_id == worker_id
@@ -661,8 +669,9 @@ class TestConcurrentThreadIsolation(unittest.TestCase):
         # but each thread's runtime should be consistent
         for worker_id, data in results.items():
             self.assertEqual(
-                data["set_id"], data["read_id"],
-                f"Worker {worker_id} should read its own ID"
+                data["set_id"],
+                data["read_id"],
+                f"Worker {worker_id} should read its own ID",
             )
 
 
@@ -698,10 +707,7 @@ class TestLuaIsolationStress(unittest.TestCase):
 
             # Run in parallel threads
             with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = [
-                    executor.submit(worker, f"thread_{i}")
-                    for i in range(5)
-                ]
+                futures = [executor.submit(worker, f"thread_{i}") for i in range(5)]
                 [f.result() for f in as_completed(futures)]
 
             # Get main thread runtime (worker refs still held)
@@ -710,9 +716,10 @@ class TestLuaIsolationStress(unittest.TestCase):
             # All worker runtimes must be different objects from main thread
             for thread_name, worker_runtime in worker_runtimes.items():
                 self.assertIsNot(
-                    worker_runtime, main_runtime,
+                    worker_runtime,
+                    main_runtime,
                     f"Iteration {iteration}: {thread_name} got same runtime "
-                    f"object as main thread"
+                    f"object as main thread",
                 )
 
     def test_stress_concurrent_engine_creation(self):
@@ -722,6 +729,9 @@ class TestLuaIsolationStress(unittest.TestCase):
         This tests the scenario where YAMLEngine is created in worker threads
         (common in pytest-xdist) and verifies that _get_lua_runtime() still
         correctly identifies main vs worker threads.
+
+        Note: We store actual runtime references (not just IDs) to prevent
+        garbage collection from reusing memory addresses during the test.
         """
         results = []
         lock = threading.Lock()
@@ -731,32 +741,35 @@ class TestLuaIsolationStress(unittest.TestCase):
             engine = YAMLEngine(lua_enabled=True)
 
             # Now run parallel branches within this engine
-            inner_runtime_ids = {}
+            # Store actual runtime objects to prevent GC from reusing memory addresses
+            inner_runtimes = {}
             inner_lock = threading.Lock()
 
             def inner_worker(name):
                 rt = engine._get_lua_runtime()
                 with inner_lock:
-                    inner_runtime_ids[name] = id(rt)
-                return id(rt)
+                    inner_runtimes[name] = rt  # Store runtime, not id()
+                return rt
 
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = [
-                    executor.submit(inner_worker, f"inner_{i}")
-                    for i in range(3)
+                    executor.submit(inner_worker, f"inner_{i}") for i in range(3)
                 ]
                 [f.result() for f in as_completed(futures)]
 
             # All inner workers should have different runtimes
-            unique_ids = set(inner_runtime_ids.values())
-            success = len(unique_ids) == len(inner_runtime_ids)
+            # Compare IDs now that all runtimes are held in memory
+            unique_ids = set(id(rt) for rt in inner_runtimes.values())
+            success = len(unique_ids) == len(inner_runtimes)
 
             with lock:
-                results.append({
-                    "success": success,
-                    "unique_count": len(unique_ids),
-                    "total_count": len(inner_runtime_ids)
-                })
+                results.append(
+                    {
+                        "success": success,
+                        "unique_count": len(unique_ids),
+                        "total_count": len(inner_runtimes),
+                    }
+                )
             return success
 
         # Run engine creation in multiple threads
@@ -764,9 +777,10 @@ class TestLuaIsolationStress(unittest.TestCase):
             futures = [executor.submit(create_engine_and_test) for _ in range(20)]
             all_success = all(f.result() for f in as_completed(futures))
 
+        # With proper GC prevention, all iterations should pass
         self.assertTrue(
             all_success,
-            f"Some iterations failed isolation: {[r for r in results if not r['success']]}"
+            f"Some iterations failed isolation: {[r for r in results if not r['success']]}",
         )
 
 

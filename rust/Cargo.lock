@@ -3896,7 +3896,7 @@ dependencies = [
 
 [[package]]
 name = "the_edge_agent"
-version = "0.7.7"
+version = "0.7.9"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3916,6 +3916,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "rayon",
+ "regex",
  "reqwest",
  "rmp-serde",
  "serde",

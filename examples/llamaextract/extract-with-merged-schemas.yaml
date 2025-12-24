@@ -1,0 +1,77 @@
+# LlamaExtract with Multiple Merged Schemas
+#
+# This example demonstrates merging multiple schemas:
+# - Base document schema (common fields)
+# - Invoice overlay (invoice-specific fields)
+# - Inline customizations
+#
+# Usage:
+#   export LLAMAEXTRACT_API_KEY=your-api-key
+#   tea run examples/llamaextract/extract-with-merged-schemas.yaml \
+#     --input '{"document_url": "https://slicedinvoices.com/pdf/wordpress-pdf-invoice-plugin-sample.pdf"}'
+
+name: invoice-extractor-merged-schemas
+description: Extract invoices using merged schemas (base + overlay + inline)
+
+state_schema:
+  document_url: str
+  extraction_schema: dict
+  extraction_result: dict
+
+nodes:
+  # Step 1: Merge multiple schemas
+  - name: merge_schemas
+    description: Merge base schema + invoice overlay + inline customizations
+    uses: schema.merge
+    with:
+      schemas:
+        # 1. Base document schema (common fields)
+        - path: ../examples/llamaextract/schemas/base-document.yaml
+
+        # 2. Invoice-specific overlay
+        - path: ../examples/llamaextract/schemas/invoice-overlay.yaml
+
+        # 3. Inline customizations (adds/overrides fields)
+        - inline:
+            properties:
+              payment_status:
+                type: string
+                description: Payment status (paid, pending, overdue)
+              notes:
+                type: string
+                description: Additional notes or comments
+      validate: true
+      output_key: extraction_schema
+    output: schema_result
+
+  # Step 2: Extract using merged schema
+  - name: extract_document
+    description: Extract data using the merged schema
+    uses: llamaextract.extract
+    with:
+      file: "{{ state.document_url }}"
+      schema: "{{ state.schema_result.extraction_schema }}"
+      mode: BALANCED
+      timeout: 300
+      use_rest: true
+    output: extraction_result
+
+  # Step 3: Display results
+  - name: format_output
+    description: Format extraction results
+    run: |
+      result = state.get("extraction_result", {})
+      if result.get("success"):
+        return {"extracted_data": result.get("data", {})}
+      else:
+        return {"error": result.get("error")}
+
+edges:
+  - from: __start__
+    to: merge_schemas
+  - from: merge_schemas
+    to: extract_document
+  - from: extract_document
+    to: format_output
+  - from: format_output
+    to: __end__

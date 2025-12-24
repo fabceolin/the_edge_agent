@@ -1,0 +1,69 @@
+# LlamaExtract with External Schema
+#
+# This example shows how to load a schema from an external file
+# and use it with LlamaExtract.
+#
+# Usage:
+#   export LLAMAEXTRACT_API_KEY=your-api-key
+#   tea run examples/llamaextract/extract-invoice-external-schema.yaml \
+#     --input '{"document_url": "https://example.com/invoice.pdf"}'
+#
+# TEA-BUILTIN-008.5: Direct REST API Integration
+# TEA-BUILTIN-008.3: Schema Deep Merge
+
+name: invoice-extractor-external-schema
+description: Extract invoice data using an external schema file
+
+state_schema:
+  document_url: str
+  extraction_schema: dict
+  extraction_result: dict
+  invoice_data: dict
+
+nodes:
+  # Step 1: Load the external schema
+  - name: load_schema
+    description: Load invoice schema from external YAML file
+    uses: schema.merge
+    with:
+      schemas:
+        - path: examples/llamaextract/schemas/invoice-schema.yaml
+      output_key: extraction_schema
+    output: schema_result
+
+  # Step 2: Extract using the loaded schema
+  - name: extract_invoice
+    description: Extract structured invoice data
+    uses: llamaextract.extract
+    with:
+      file: "{{ state.document_url }}"
+      schema: "{{ state.extraction_schema }}"
+      mode: BALANCED
+      timeout: 300
+      use_rest: true
+    output: extraction_result
+
+  # Step 3: Process the result
+  - name: process_result
+    description: Format the extraction result
+    run: |
+      result = state.get("extraction_result", {})
+      if result.get("success"):
+        return {"invoice_data": result.get("data", {})}
+      else:
+        return {
+          "invoice_data": {
+            "error": result.get("error", "Unknown error"),
+            "error_type": result.get("error_type", "unknown")
+          }
+        }
+
+edges:
+  - from: __start__
+    to: load_schema
+  - from: load_schema
+    to: extract_invoice
+  - from: extract_invoice
+    to: process_result
+  - from: process_result
+    to: __end__

@@ -1,0 +1,29 @@
+# Cross-Runtime Parity Test: Sandbox Violation
+# Tests that both runtimes block file access in sandbox mode
+# Expected: PrologRuntimeError (Python) / TeaError::PrologSandboxViolation (Rust)
+#
+# Both runtimes enable sandbox by default via library(sandbox).
+# File I/O predicates (open/3, read/2, write/2) are blocked.
+#
+# NOTE: This test does NOT use state/2 or return/2 because those TEA predicates
+# require sandbox to be disabled. This tests raw sandbox functionality.
+
+name: parity-error-sandbox
+description: Verify sandbox violation handling parity
+
+state_schema:
+  result: str
+
+nodes:
+  - name: file_access_attempt
+    language: prolog
+    run: |
+      % Attempt to open a file - blocked by sandbox
+      % Using hardcoded path to avoid state/2 which disables sandbox
+      open('/etc/passwd', read, Stream),
+      close(Stream).
+
+# Implicit flow: file_access_attempt -> __end__
+
+initial_state:
+  result: "not_run"

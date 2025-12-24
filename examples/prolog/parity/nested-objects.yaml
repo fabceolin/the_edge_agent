@@ -1,0 +1,54 @@
+# Cross-Runtime Parity Test: Deeply Nested Objects
+# Tests handling of 5+ levels of JSON nesting
+# Expected: Both runtimes preserve structure identically
+
+name: parity-nested-objects
+description: Verify deeply nested object handling parity
+
+state_schema:
+  nested: dict
+  depth: int
+
+nodes:
+  - name: verify_nesting
+    language: prolog
+    run: |
+      % Access the deeply nested structure
+      state(nested, Nested),
+      is_dict(Nested),
+
+      % Verify we can access nested values using get_dict
+      % Level 1
+      get_dict(level1, Nested, L1),
+      is_dict(L1),
+
+      % Level 2
+      get_dict(level2, L1, L2),
+      is_dict(L2),
+
+      % Level 3
+      get_dict(level3, L2, L3),
+      is_dict(L3),
+
+      % Level 4
+      get_dict(level4, L3, L4),
+      is_dict(L4),
+
+      % Level 5 - final value
+      get_dict(level5, L4, L5),
+      is_dict(L5),
+      get_dict(value, L5, DeepValue),
+      DeepValue = 'deeply_nested_value'.
+
+# Implicit flow: verify_nesting -> __end__
+
+initial_state:
+  depth: 5
+  nested:
+    level1:
+      level2:
+        level3:
+          level4:
+            level5:
+              value: "deeply_nested_value"
+              array: [1, 2, 3]

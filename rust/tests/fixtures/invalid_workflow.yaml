@@ -2,11 +2,12 @@ name: invalid-workflow
 description: A workflow with validation errors
 
 nodes:
-  - name: orphan_node
+  - name: node_a
     run: |
-      return { result = "orphan" }
+      return { result = "a" }
+    # TEA-YAML-002: goto to non-existent node should fail validation
+    goto: non_existent_node
 
-edges:
-  # Missing edge from __start__ - this should fail validation
-  - from: orphan_node
-    to: __end__
+  - name: node_b
+    run: |
+      return { result = "b" }

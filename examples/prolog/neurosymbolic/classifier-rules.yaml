@@ -1,0 +1,254 @@
+# ============================================================================
+# Neural Classifier → Rule Engine Example
+# ============================================================================
+#
+# This example demonstrates the neurosymbolic pattern:
+#   1. Neural classifier analyzes input and produces classification
+#   2. Prolog rule engine applies domain rules to make final decision
+#
+# Pattern: Neural Perception → Symbolic Reasoning → Deterministic Decision
+#
+# Use case: Ticket routing, content moderation, alert prioritization
+#
+# ============================================================================
+
+name: classifier-rules-agent
+
+description: |
+  Demonstrates the neurosymbolic pattern where a neural classifier's output
+  feeds into a Prolog rule engine for deterministic decision making.
+
+  This solves the problem of inconsistent LLM decisions by:
+  1. Using neural networks for perception (classification)
+  2. Using symbolic logic for reasoning (rule application)
+
+state_schema:
+  # Input
+  input_text: str
+
+  # Classification output (from neural step)
+  classification: str
+  confidence: float
+  extracted_tags: list
+
+  # Rule engine output
+  decision: str
+  reason: str
+  sla_hours: int
+  applied_rules: list
+
+initial_state:
+  input_text: "URGENT: Our production database is down and we're losing customer orders!"
+  classification: ""
+  confidence: 0.0
+  extracted_tags: []
+  decision: ""
+  reason: ""
+  sla_hours: 0
+  applied_rules: []
+
+nodes:
+  # -------------------------------------------------------------------------
+  # Step 1: Neural Classification (Simulated)
+  # -------------------------------------------------------------------------
+  # In production, this would call an LLM or ML classifier.
+  # Here we simulate classification based on keywords for determinism.
+  # Uses Lua for cross-runtime parity (works in both Python and Rust TEA).
+  # -------------------------------------------------------------------------
+  - name: classify_input
+    language: lua
+    run: |
+      local text = string.lower(state.input_text)
+
+      -- Simulated neural classification logic
+      -- In production: use llm.call action
+
+      local tags = {}
+
+      -- Extract tags based on keywords (simulating NER)
+      if string.find(text, "urgent") or string.find(text, "asap") then
+          table.insert(tags, "urgent")
+      end
+      if string.find(text, "production") or string.find(text, "prod") then
+          table.insert(tags, "production")
+      end
+      if string.find(text, "database") or string.find(text, "db") then
+          table.insert(tags, "database")
+      end
+      if string.find(text, "down") or string.find(text, "outage") then
+          table.insert(tags, "outage")
+      end
+      if string.find(text, "security") or string.find(text, "breach") then
+          table.insert(tags, "security")
+      end
+      if string.find(text, "customer") then
+          table.insert(tags, "customer_impact")
+      end
+
+      -- Helper to check if tag exists
+      local function has_tag(tag_name)
+          for _, t in ipairs(tags) do
+              if t == tag_name then return true end
+          end
+          return false
+      end
+
+      -- Determine classification
+      local classification, confidence
+
+      if has_tag("outage") or has_tag("security") then
+          classification = "critical_incident"
+          confidence = 0.95
+      elseif has_tag("urgent") and (has_tag("production") or has_tag("customer_impact")) then
+          classification = "high_priority"
+          confidence = 0.88
+      elseif string.find(text, "question") or string.find(text, "how") or string.find(text, "help") then
+          classification = "support_request"
+          confidence = 0.82
+      elseif string.find(text, "feature") or string.find(text, "request") or string.find(text, "would like") then
+          classification = "feature_request"
+          confidence = 0.75
+      else
+          classification = "general_inquiry"
+          confidence = 0.65
+      end
+
+      return {
+          classification = classification,
+          confidence = confidence,
+          extracted_tags = tags
+      }
+
+  # -------------------------------------------------------------------------
+  # Step 2: Prolog Rule Engine
+  # -------------------------------------------------------------------------
+  # Apply domain rules to make deterministic routing decision.
+  # Rules are explicit, auditable, and consistent.
+  # -------------------------------------------------------------------------
+  - name: apply_domain_rules
+    language: prolog
+    run: |
+      % Get classification results from neural step
+      state(classification, Class),
+      state(confidence, Conf),
+      state(extracted_tags, Tags),
+
+      % ===== RULE 1: Critical incidents always escalate =====
+      (Class = 'critical_incident' ->
+        (
+          Decision = 'immediate_escalation',
+          Reason = 'Critical incident detected - requires immediate response',
+          SLA = 1,
+          AppliedRules = ['rule_critical_incident', 'rule_sla_critical']
+        )
+
+      % ===== RULE 2: High priority with production tag =====
+      ; (Class = 'high_priority', member('production', Tags)) ->
+        (
+          Decision = 'escalate_to_oncall',
+          Reason = 'High priority issue affecting production systems',
+          SLA = 4,
+          AppliedRules = ['rule_high_priority', 'rule_production_tag', 'rule_sla_high']
+        )
+
+      % ===== RULE 3: High priority general =====
+      ; Class = 'high_priority' ->
+        (
+          Decision = 'priority_queue',
+          Reason = 'High priority issue - expedited processing',
+          SLA = 8,
+          AppliedRules = ['rule_high_priority', 'rule_sla_high']
+        )
+
+      % ===== RULE 4: Low confidence requires human review =====
+      ; Conf < 0.7 ->
+        (
+          Decision = 'human_review',
+          Reason = 'Classification confidence too low - requires human verification',
+          SLA = 24,
+          AppliedRules = ['rule_low_confidence', 'rule_sla_review']
+        )
+
+      % ===== RULE 5: Support requests with customer impact =====
+      ; (Class = 'support_request', member('customer_impact', Tags)) ->
+        (
+          Decision = 'support_priority',
+          Reason = 'Support request with customer impact - prioritized',
+          SLA = 12,
+          AppliedRules = ['rule_support_request', 'rule_customer_impact']
+        )
+
+      % ===== RULE 6: Standard support request =====
+      ; Class = 'support_request' ->
+        (
+          Decision = 'support_queue',
+          Reason = 'Standard support request',
+          SLA = 24,
+          AppliedRules = ['rule_support_request', 'rule_sla_standard']
+        )
+
+      % ===== RULE 7: Feature requests =====
+      ; Class = 'feature_request' ->
+        (
+          Decision = 'product_backlog',
+          Reason = 'Feature request - routed to product team',
+          SLA = 72,
+          AppliedRules = ['rule_feature_request', 'rule_sla_backlog']
+        )
+
+      % ===== DEFAULT: General inquiry =====
+      ; (
+          Decision = 'general_queue',
+          Reason = 'General inquiry - standard processing',
+          SLA = 48,
+          AppliedRules = ['rule_default', 'rule_sla_default']
+        )
+      ),
+
+      % Return all decision components
+      return(decision, Decision),
+      return(reason, Reason),
+      return(sla_hours, SLA),
+      return(applied_rules, AppliedRules).
+
+# Implicit flow: classify_input -> apply_domain_rules -> __end__
+
+# ============================================================================
+# Expected Output for Initial State:
+#
+# {
+#   "input_text": "URGENT: Our production database is down...",
+#   "classification": "critical_incident",
+#   "confidence": 0.95,
+#   "extracted_tags": ["urgent", "production", "database", "outage", "customer_impact"],
+#   "decision": "immediate_escalation",
+#   "reason": "Critical incident detected - requires immediate response",
+#   "sla_hours": 1,
+#   "applied_rules": ["rule_critical_incident", "rule_sla_critical"]
+# }
+#
+# ============================================================================
+
+# ============================================================================
+# Test Cases (modify initial_state to test different paths)
+# ============================================================================
+#
+# Case 1: Critical incident (EXPECTED: immediate_escalation, SLA: 1h)
+#   input_text: "URGENT: Production database down"
+#
+# Case 2: High priority production (EXPECTED: escalate_to_oncall, SLA: 4h)
+#   input_text: "Urgent issue with production API latency"
+#
+# Case 3: Low confidence (EXPECTED: human_review, SLA: 24h)
+#   input_text: "Something seems wrong"
+#
+# Case 4: Support with customer impact (EXPECTED: support_priority, SLA: 12h)
+#   input_text: "Customer is unable to complete checkout"
+#
+# Case 5: Feature request (EXPECTED: product_backlog, SLA: 72h)
+#   input_text: "Feature request: Would like dark mode"
+#
+# Case 6: General inquiry (EXPECTED: general_queue, SLA: 48h)
+#   input_text: "What are your business hours?"
+#
+# ============================================================================

@@ -1,0 +1,192 @@
+# ============================================================================
+# Multi-Step Reasoning Chain Example
+# ============================================================================
+#
+# Demonstrates iterative Prolog queries with state accumulation.
+# This is a key neurosymbolic pattern where:
+#   1. Initial facts are provided
+#   2. Each step derives new facts from existing ones
+#   3. Conclusions build on intermediate results
+#
+# Pattern: Facts → Derivation → Derivation → ... → Conclusion
+#
+# Use cases: Medical diagnosis, legal reasoning, proof generation
+#
+# ============================================================================
+
+name: reasoning-chain-agent
+
+description: |
+  Demonstrates multi-step reasoning where each inference step
+  builds on previous conclusions. Simulates a medical symptom
+  checker that chains multiple inference rules.
+
+state_schema:
+  # Input symptoms
+  symptoms: list
+  patient_age: int
+
+  # Reasoning steps
+  step1_conditions: list
+  step2_severity: str
+  step3_recommendation: str
+
+  # Final output
+  reasoning_trace: list
+  final_diagnosis: str
+
+initial_state:
+  symptoms:
+    - fever
+    - cough
+    - fatigue
+  patient_age: 35
+  step1_conditions: []
+  step2_severity: ""
+  step3_recommendation: ""
+  reasoning_trace: []
+  final_diagnosis: ""
+
+nodes:
+  # -------------------------------------------------------------------------
+  # Step 1: Map symptoms to possible conditions
+  # -------------------------------------------------------------------------
+  - name: identify_conditions
+    language: prolog
+    run: |
+      state(symptoms, Symptoms),
+
+      % Check for flu pattern: fever + cough + fatigue
+      (member(fever, Symptoms), member(cough, Symptoms), member(fatigue, Symptoms) ->
+        Condition = flu
+      ;
+        % Check for cold pattern: cough + runny_nose
+        (member(cough, Symptoms), member(runny_nose, Symptoms) ->
+          Condition = common_cold
+        ;
+          % Check for allergy pattern: sneezing + itchy_eyes
+          (member(sneezing, Symptoms), member(itchy_eyes, Symptoms) ->
+            Condition = allergies
+          ;
+            % Check for viral infection: fever + headache
+            (member(fever, Symptoms), member(headache, Symptoms) ->
+              Condition = viral_infection
+            ;
+              % Default: unknown
+              Condition = unknown
+            )
+          )
+        )
+      ),
+
+      return(step1_conditions, [Condition]),
+      return(reasoning_trace, ['Step 1: Matched symptoms to conditions']).
+
+  # -------------------------------------------------------------------------
+  # Step 2: Assess severity based on conditions and age
+  # -------------------------------------------------------------------------
+  - name: assess_severity
+    language: prolog
+    run: |
+      state(step1_conditions, Conditions),
+      state(patient_age, Age),
+      state(reasoning_trace, PrevTrace),
+
+      % Severity rules based on conditions and demographics
+      (
+        % High risk: flu in elderly or very young
+        (member(flu, Conditions), (Age > 65 ; Age < 5)) ->
+          Severity = high
+        ;
+        % Medium risk: flu in adults
+        member(flu, Conditions) ->
+          Severity = medium
+        ;
+        % Low risk: cold or allergies
+        (member(common_cold, Conditions) ; member(allergies, Conditions)) ->
+          Severity = low
+        ;
+        % Unknown -> medium by default
+        Severity = medium
+      ),
+
+      append(PrevTrace, ['Step 2: Assessed severity based on age and conditions'], NewTrace),
+      return(step2_severity, Severity),
+      return(reasoning_trace, NewTrace).
+
+  # -------------------------------------------------------------------------
+  # Step 3: Generate recommendation based on severity
+  # -------------------------------------------------------------------------
+  - name: generate_recommendation
+    language: prolog
+    run: |
+      state(step1_conditions, Conditions),
+      state(step2_severity, Severity),
+      state(reasoning_trace, PrevTrace),
+
+      % Recommendation rules
+      (
+        Severity = high ->
+          Recommendation = 'Seek immediate medical attention'
+        ;
+        Severity = medium ->
+          Recommendation = 'Rest, hydrate, and monitor symptoms. See doctor if worsening.'
+        ;
+        Severity = low ->
+          Recommendation = 'Over-the-counter treatment and rest'
+        ;
+        Recommendation = 'Consult a healthcare provider for proper diagnosis'
+      ),
+
+      % Get first condition as main diagnosis
+      (Conditions = [C|_] -> MainCondition = C ; MainCondition = unknown),
+
+      append(PrevTrace, ['Step 3: Generated recommendation based on severity'], FinalTrace),
+
+      return(step3_recommendation, Recommendation),
+      return(reasoning_trace, FinalTrace),
+      return(final_diagnosis, MainCondition).
+
+# Implicit flow: identify_conditions -> assess_severity -> generate_recommendation -> __end__
+
+# ============================================================================
+# Expected Output:
+#
+# {
+#   "symptoms": ["fever", "cough", "fatigue"],
+#   "patient_age": 35,
+#   "step1_conditions": ["flu"],
+#   "step2_severity": "medium",
+#   "step3_recommendation": "Rest, hydrate, and monitor symptoms. See doctor if worsening.",
+#   "reasoning_trace": [
+#     "Step 1: Matched symptoms to conditions",
+#     "Step 2: Assessed severity based on age and conditions",
+#     "Step 3: Generated recommendation based on severity"
+#   ],
+#   "final_diagnosis": "flu"
+# }
+#
+# ============================================================================
+
+# ============================================================================
+# Test Cases
+# ============================================================================
+#
+# Case 1: Flu in adult (above) - EXPECTED: medium severity
+#
+# Case 2: Flu in elderly
+#   symptoms: [fever, cough, fatigue]
+#   patient_age: 70
+#   EXPECTED: high severity, "Seek immediate medical attention"
+#
+# Case 3: Common cold
+#   symptoms: [cough, runny_nose]
+#   patient_age: 25
+#   EXPECTED: low severity, "Over-the-counter treatment"
+#
+# Case 4: Unknown symptoms
+#   symptoms: [rash, dizziness]
+#   patient_age: 40
+#   EXPECTED: unknown condition, medium severity
+#
+# ============================================================================

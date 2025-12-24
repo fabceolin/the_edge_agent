@@ -1,0 +1,76 @@
+# LlamaExtract Real API Test
+#
+# This YAML agent tests the LlamaExtract REST API integration.
+# It extracts structured data from an arXiv paper.
+#
+# Usage:
+#   export LLAMAEXTRACT_API_KEY=your-api-key
+#   tea run examples/llamaextract/extract-arxiv-paper.yaml
+#
+# TEA-BUILTIN-008.5: Direct REST API Integration Test
+
+name: llamaextract-arxiv-test
+description: Extract structured data from an arXiv paper using LlamaExtract REST API
+
+state_schema:
+  pdf_url: str
+  extraction_result: dict
+  title: str
+  authors: list
+  abstract: str
+
+nodes:
+  - name: extract_paper
+    description: Extract structured data from the arXiv paper
+    uses: llamaextract.extract
+    with:
+      file: "{{ state.pdf_url }}"
+      schema:
+        type: object
+        properties:
+          title:
+            type: string
+            description: The title of the paper
+          authors:
+            type: array
+            items:
+              type: string
+            description: List of author names
+          abstract:
+            type: string
+            description: The abstract of the paper
+          keywords:
+            type: array
+            items:
+              type: string
+            description: Keywords or topics from the paper
+      mode: FAST
+      timeout: 300
+      use_rest: true
+    output: extraction_result
+
+  - name: process_result
+    description: Process the extraction result
+    run: |
+      result = state.get("extraction_result", {})
+      if result.get("success"):
+        data = result.get("data", {})
+        return {
+          "title": data.get("title", "Unknown"),
+          "authors": data.get("authors", []),
+          "abstract": data.get("abstract", "No abstract extracted")
+        }
+      else:
+        return {
+          "title": f"EXTRACTION FAILED: {result.get('error', 'Unknown error')}",
+          "authors": [],
+          "abstract": f"Error type: {result.get('error_type', 'unknown')}"
+        }
+
+edges:
+  - from: __start__
+    to: extract_paper
+  - from: extract_paper
+    to: process_result
+  - from: process_result
+    to: __end__
