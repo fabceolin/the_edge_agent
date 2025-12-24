@@ -59,7 +59,6 @@ nodes:
             "{{ state.raw_text }}"
       temperature: 0.0
     output: telemetry_timeline
-    goto: temporal_mapping
 
   # ============================================================
   # STEP 2: Temporal Modeling in Prolog (Lua version for Rust)
@@ -113,7 +112,6 @@ nodes:
       end
 
       return {prolog_facts = table.concat(facts, "\n")}
-    goto: physics_engine
 
   # ============================================================
   # STEP 3: Physics Inference Engine (Grounding Rules)

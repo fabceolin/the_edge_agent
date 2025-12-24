@@ -2,7 +2,44 @@
 
 ![The Edge Agent Logo](images/tea.jpg)
 
-The Edge Agent (tea) ☕ is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity, making it ideal for use with local standalone AI agents, including edge computing environments. Tea provides an easy-to-use framework for building state-driven LLM workflows, avoiding unnecessary features to efficiently support local, single-app operations.
+The Edge Agent (tea) ☕ is a lightweight state graph engine for building **neurosymbolic AI agents** that run **without external servers or databases**, making it ideal for serverless cloud functions, edge computing, and offline-first workflows.
+
+## Why TEA?
+
+Small and local LLMs are powerful but prone to hallucinations and reasoning errors. TEA solves this by combining LLMs with **symbolic reasoning**:
+
+| Challenge | TEA Solution |
+|-----------|--------------|
+| **Small LLMs make reasoning errors** | Prolog handles logic, math, and constraints while LLM handles language |
+| **LLMs hallucinate facts** | Knowledge graphs with verifiable inference chains |
+| **Complex agent frameworks** | Simple YAML syntax, learn in minutes |
+| **Need for external services** | Single binary, zero dependencies, runs offline |
+| **Cloud vendor lock-in** | Portable agents run on any platform |
+| **Building everything from scratch** | 20+ built-in actions for LLM, RAG, memory, and storage |
+| **No visibility into agent behavior** | Built-in observability with distributed tracing |
+
+### Neurosymbolic AI for the Edge
+
+TEA enables **neurosymbolic workflows** where:
+- **LLMs** handle natural language understanding, text generation, and entity extraction
+- **Prolog** handles logical inference, constraint solving, and knowledge graph reasoning
+- **Lua** provides lightweight scripting that runs identically in Python and Rust runtimes
+
+This hybrid approach is especially effective with **small/local models** (Llama, Mistral, Phi, Ollama) where symbolic reasoning compensates for limited model capacity.
+
+### Dual Runtime Implementation
+
+TEA is implemented in both **Python** and **Rust**, sharing the same YAML agent syntax. Write once, run on any platform from cloud functions to embedded devices.
+
+### Batteries Included
+
+TEA provides 20+ built-in actions so you can focus on agent logic, not infrastructure:
+
+- **LLM**: OpenAI, Azure, Ollama, and 100+ providers via LiteLLM
+- **RAG**: Vector search, embeddings, document retrieval
+- **Memory**: Short-term, long-term, and cloud-synced memory
+- **Web**: Scraping, crawling, and AI-powered extraction (Firecrawl, ScrapeGraphAI)
+- **Observability**: Distributed tracing for debugging and monitoring
 
 ## Download Pre-built Binaries
 
