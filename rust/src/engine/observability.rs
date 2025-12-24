@@ -211,7 +211,7 @@ impl EventStream {
         event_type: Option<EventType>,
     ) -> Vec<LogEvent> {
         self.filter(|e| {
-            let node_match = node_pattern.map_or(true, |pattern| {
+            let node_match = node_pattern.is_none_or(|pattern| {
                 // Support glob patterns like "llm.*"
                 if pattern.contains('*') {
                     glob_match(pattern, &e.node)
@@ -219,8 +219,8 @@ impl EventStream {
                     e.node == pattern
                 }
             });
-            let level_match = level.map_or(true, |l| e.level == l);
-            let type_match = event_type.map_or(true, |t| e.event_type == t);
+            let level_match = level.is_none_or(|l| e.level == l);
+            let type_match = event_type.is_none_or(|t| e.event_type == t);
             node_match && level_match && type_match
         })
     }
