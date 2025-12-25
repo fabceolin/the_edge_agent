@@ -253,7 +253,16 @@ class TestCatalogRegistry(unittest.TestCase):
         # Access private registry to clear it
         from the_edge_agent.memory import catalog
 
+        # Save original registry state
+        self._original_backends = catalog._catalog_backends.copy()
         catalog._catalog_backends.clear()
+
+    def tearDown(self):
+        """Restore original registry state."""
+        from the_edge_agent.memory import catalog
+
+        catalog._catalog_backends.clear()
+        catalog._catalog_backends.update(self._original_backends)
 
     def test_register_backend(self):
         """Backend can be registered."""
@@ -277,8 +286,17 @@ class TestCatalogFactory(unittest.TestCase):
         """Register mock backend."""
         from the_edge_agent.memory import catalog
 
+        # Save original registry state
+        self._original_backends = catalog._catalog_backends.copy()
         catalog._catalog_backends.clear()
         register_catalog_backend("mock", MockCatalogBackend)
+
+    def tearDown(self):
+        """Restore original registry state."""
+        from the_edge_agent.memory import catalog
+
+        catalog._catalog_backends.clear()
+        catalog._catalog_backends.update(self._original_backends)
 
     def test_create_backend(self):
         """AC-27: Factory creates backend instance."""

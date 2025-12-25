@@ -1,6 +1,6 @@
 # TEA-OBS-001.1: Core ObservabilityContext Infrastructure (Python)
 
-## Status: Ready
+## Status: Done
 
 ## Story
 
@@ -112,78 +112,78 @@ This story creates a new `ObservabilityContext` layer that wraps and extends the
 
 ### Task 1: Create ObservabilityContext Core Infrastructure (AC1, AC2)
 
-- [ ] Create file: `python/src/the_edge_agent/observability.py`
-- [ ] Import dependencies: `collections.deque`, `threading`, `uuid`, `time`, `typing`
-- [ ] Implement `EventStream` class:
-  - [ ] Constructor: `__init__(max_size=1000, handlers=None)`
-  - [ ] Instance variables: `_buffer: deque`, `_handlers: list`, `_lock: threading.Lock`
-  - [ ] Method: `append(event: dict) -> None`
-  - [ ] Method: `get_all() -> List[dict]`
-  - [ ] Method: `query(filters: dict) -> List[dict]`
-  - [ ] Method: `clear() -> None`
-- [ ] Implement `ObservabilityContext` class:
-  - [ ] Constructor: `__init__(flow_id: str, config: dict, trace_context: TraceContext = None)`
-  - [ ] Auto-create `TraceContext` if not provided
-  - [ ] Method: `log(node, level, event_type, message=None, data=None, metrics=None)`
-  - [ ] Method: `start_node_span(node, metadata=None) -> span_id`
-  - [ ] Method: `end_node_span(node, status="ok", error=None) -> completed_span`
-  - [ ] Method: `get_flow_log() -> dict`
+- [x] Create file: `python/src/the_edge_agent/observability.py`
+- [x] Import dependencies: `collections.deque`, `threading`, `uuid`, `time`, `typing`
+- [x] Implement `EventStream` class:
+  - [x] Constructor: `__init__(max_size=1000, handlers=None)`
+  - [x] Instance variables: `_buffer: deque`, `_handlers: list`, `_lock: threading.Lock`
+  - [x] Method: `append(event: dict) -> None`
+  - [x] Method: `get_all() -> List[dict]`
+  - [x] Method: `query(filters: dict) -> List[dict]`
+  - [x] Method: `clear() -> None`
+- [x] Implement `ObservabilityContext` class:
+  - [x] Constructor: `__init__(flow_id: str, config: dict, trace_context: TraceContext = None)`
+  - [x] Auto-create `TraceContext` if not provided
+  - [x] Method: `log(node, level, event_type, message=None, data=None, metrics=None)`
+  - [x] Method: `start_node_span(node, metadata=None) -> span_id`
+  - [x] Method: `end_node_span(node, status="ok", error=None) -> completed_span`
+  - [x] Method: `get_flow_log() -> dict`
 
 ### Task 2: Create Handler Adapters (AC3)
 
-- [ ] Define `EventStreamHandler` protocol in `observability.py`
-- [ ] Implement `ConsoleHandler`:
-  - [ ] Wraps `ConsoleExporter` from `tracing.py`
-  - [ ] Constructor: `__init__(verbose: bool = False)`
-  - [ ] Method: `handle(event: dict)` formats and prints event
-- [ ] Implement `FileHandler`:
-  - [ ] Constructor: `__init__(path: str)`
-  - [ ] Method: `handle(event: dict)` writes JSON line to file
-  - [ ] Thread-safe file writes
-- [ ] Implement `CallbackHandler`:
-  - [ ] Constructor: `__init__(callback: Callable[[dict], None])`
-  - [ ] Method: `handle(event: dict)` calls user callback
-  - [ ] Swallow exceptions to prevent workflow crashes
+- [x] Define `EventStreamHandler` protocol in `observability.py`
+- [x] Implement `ConsoleHandler`:
+  - [x] Wraps `ConsoleExporter` from `tracing.py`
+  - [x] Constructor: `__init__(verbose: bool = False)`
+  - [x] Method: `handle(event: dict)` formats and prints event
+- [x] Implement `FileHandler`:
+  - [x] Constructor: `__init__(path: str)`
+  - [x] Method: `handle(event: dict)` writes JSON line to file
+  - [x] Thread-safe file writes
+- [x] Implement `CallbackHandler`:
+  - [x] Constructor: `__init__(callback: Callable[[dict], None])`
+  - [x] Method: `handle(event: dict)` calls user callback
+  - [x] Swallow exceptions to prevent workflow crashes
 
 ### Task 3: Integrate with YAMLEngine (AC4, AC5)
 
-- [ ] In `yaml_engine.py`, add `observability` parameter to `__init__()`
-- [ ] Parse config structure (enabled, level, buffer_size, handlers)
-- [ ] Create handler instances from config
-- [ ] Generate unique `flow_id` for this execution (UUID)
-- [ ] Create `ObservabilityContext` instance if enabled
-- [ ] Store in `self._observability_context`
-- [ ] Inject flow_id into workflow state:
+- [x] In `yaml_engine.py`, add `observability` parameter to `__init__()`
+- [x] Parse config structure (enabled, level, buffer_size, handlers)
+- [x] Create handler instances from config
+- [x] Generate unique `flow_id` for this execution (UUID)
+- [x] Create `ObservabilityContext` instance if enabled
+- [x] Store in `self._observability_context`
+- [x] Inject flow_id into workflow state:
   ```python
   state['_observability'] = {
     'flow_id': self._observability_context.flow_id,
     'enabled': True
   }
   ```
-- [ ] Modify `_execute_node()` to use observability:
-  - [ ] Before node: `start_node_span(node_name)`
-  - [ ] After node: `end_node_span(node_name, status="ok")`
-  - [ ] On error: `end_node_span(node_name, status="error", error=str(e))`
+- [x] Modify `_execute_node()` to use observability:
+  - [x] Before node: `start_node_span(node_name)`
+  - [x] After node: `end_node_span(node_name, status="ok")`
+  - [x] On error: `end_node_span(node_name, status="error", error=str(e))`
 
 ### Task 4: Implement get_flow_log API (AC6)
 
-- [ ] In `ObservabilityContext.get_flow_log()`:
-  - [ ] Retrieve all events from `_event_stream.get_all()`
-  - [ ] Retrieve completed spans from `_trace_context.completed_spans`
-  - [ ] Merge into unified timeline (sort by timestamp)
-  - [ ] Calculate aggregate metrics
-  - [ ] Return structured dict
-- [ ] Add `obs.get_flow_log` action in `observability_actions.py`:
-  - [ ] Register as `registry['obs.get_flow_log']`
+- [x] In `ObservabilityContext.get_flow_log()`:
+  - [x] Retrieve all events from `_event_stream.get_all()`
+  - [x] Retrieve completed spans from `_trace_context.completed_spans`
+  - [x] Merge into unified timeline (sort by timestamp)
+  - [x] Calculate aggregate metrics
+  - [x] Return structured dict
+- [x] Add `obs.get_flow_log` action in `observability_actions.py`:
+  - [x] Register as `registry['obs.get_flow_log']`
 
 ### Task 5: Export in Package API (AC4)
 
-- [ ] In `__init__.py`, add imports:
+- [x] In `__init__.py`, add imports:
   ```python
   from .observability import ObservabilityContext, EventStream
   from .observability import ConsoleHandler, FileHandler, CallbackHandler
   ```
-- [ ] Add to `__all__`
+- [x] Add to `__all__`
 
 ## Dev Notes
 
@@ -704,16 +704,16 @@ cd python && pytest tests/test_observability_core.py --cov=the_edge_agent.observ
 
 ## Definition of Done
 
-- [ ] All acceptance criteria (AC1-AC6) implemented and verified
-- [ ] All tasks (1-5) and subtasks completed
-- [ ] 20 new tests written and passing
-- [ ] All existing tracing tests pass unchanged
-- [ ] Code coverage > 90%
-- [ ] Classes exported in `__init__.py`
-- [ ] `obs.get_flow_log` action registered
-- [ ] Shared log schema enforced
-- [ ] No breaking changes to existing `TraceContext` API
-- [ ] Performance: < 1ms overhead when disabled
+- [x] All acceptance criteria (AC1-AC6) implemented and verified
+- [x] All tasks (1-5) and subtasks completed
+- [x] 20 new tests written and passing (36 tests total)
+- [x] All existing tracing tests pass unchanged
+- [x] Code coverage > 90%
+- [x] Classes exported in `__init__.py`
+- [x] `obs.get_flow_log` action registered
+- [x] Shared log schema enforced
+- [x] No breaking changes to existing `TraceContext` API
+- [x] Performance: < 1ms overhead when disabled
 
 ## Dependencies
 
@@ -731,3 +731,53 @@ cd python && pytest tests/test_observability_core.py --cov=the_edge_agent.observ
 | 2024-12-23 | 1.0 | Initial story creation | Sarah (PO) |
 | 2024-12-23 | 1.1 | Added full ObservabilityContext implementation, EventStream, handlers, parity output examples | Sarah (PO) |
 | 2024-12-23 | 1.2 | Status changed to Ready | Sarah (PO) |
+| 2025-12-25 | 1.3 | Test design assessment completed | Quinn (QA) |
+
+## QA Results
+
+### Test Design Assessment
+
+**Date:** 2025-12-25
+**Reviewer:** Quinn (Test Architect)
+**Assessment:** `docs/qa/assessments/TEA-OBS-001.1-test-design-20251225.md`
+
+#### Summary
+
+| Metric | Value |
+|--------|-------|
+| Total Scenarios | 48 |
+| Unit Tests | 28 (58%) |
+| Integration Tests | 16 (33%) |
+| E2E Tests | 4 (8%) |
+| P0 (Critical) | 18 |
+| P1 (High) | 20 |
+| P2 (Medium) | 10 |
+
+#### Coverage by Acceptance Criteria
+
+| AC | Description | Test Count | Coverage |
+|----|-------------|------------|----------|
+| AC1 | ObservabilityContext Class | 10 | Complete |
+| AC2 | EventStream Ring Buffer | 14 | Complete |
+| AC3 | Handlers (Console/File/Callback) | 8 | Complete |
+| AC4 | TraceContext Integration | 6 | Complete |
+| AC5 | YAML Configuration | 10 | Complete |
+| AC6 | get_flow_log API | 8 | Complete |
+
+#### Key Risk Mitigations
+
+| Risk | Tests | Status |
+|------|-------|--------|
+| Thread safety race conditions | 4 | Covered |
+| TraceContext backward compatibility | 4 | Covered |
+| Handler error resilience | 1 | Covered |
+| YAML config parsing | 4 | Covered |
+
+#### Test Design Verdict: READY FOR DEVELOPMENT
+
+Story has comprehensive test design with:
+- 100% AC coverage (all 6 acceptance criteria have tests)
+- Risk-appropriate priority distribution (18 P0 tests for critical paths)
+- Thread safety explicitly addressed
+- Backward compatibility verification planned
+- No coverage gaps identified
