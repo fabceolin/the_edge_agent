@@ -55,11 +55,15 @@ from .memory import (
     VectorIndex,
     create_vector_index,
     DUCKDB_VSS_AVAILABLE,
+    # TEA-BUILTIN-001.6.4: LTM Backend Configuration
+    expand_env_vars,
+    create_ltm_backend,
+    parse_backend_config,
 )
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 from .observability import ObservabilityContext, EventStream
 from .observability import ConsoleHandler, FileHandler, CallbackHandler
-from .actions import build_actions_registry
+from .actions import build_actions_registry, register_cache_jinja_filters
 
 
 class DotDict(dict):
@@ -117,6 +121,8 @@ class YAMLEngine:
         ltm_backend: Optional[Any] = None,
         enable_ltm: bool = True,
         ltm_path: Optional[str] = None,
+        ltm_backend_type: str = "sqlite",
+        ltm_config: Optional[Dict[str, Any]] = None,
         graph_backend: Optional[Any] = None,
         enable_graph: bool = True,
         graph_path: Optional[str] = None,
@@ -168,10 +174,21 @@ class YAMLEngine:
                                   Default: False (SECURITY: disabled by default).
                                   Only enable for trusted code patterns.
             ltm_backend: Optional custom LongTermMemoryBackend implementation.
-                        If None and enable_ltm=True, uses SQLiteBackend.
+                        If None and enable_ltm=True, uses backend based on ltm_backend_type.
             enable_ltm: Enable long-term memory actions (default: True).
-            ltm_path: Path to SQLite database for ltm.* actions.
+            ltm_path: Path to SQLite database for ltm.* actions (SQLite backend only).
                      If None, uses in-memory SQLite.
+            ltm_backend_type: Type of LTM backend: "sqlite" (default) or "duckdb".
+                             DuckDB backend provides optimized batch operations for
+                             serverless environments (TEA-BUILTIN-001.6.3).
+            ltm_config: Configuration dict for LTM backend. For DuckDB backend:
+                       - catalog_config: Catalog backend configuration
+                         - type: "sqlite" | "postgres" | "firestore"
+                         - path: Database path (SQLite)
+                         - connection_string: Connection string (Postgres)
+                         - lazy: Enable lazy initialization
+                       - storage_uri: Cloud storage path for large objects
+                       - lazy: Enable lazy initialization (default: True for serverless)
             graph_backend: Optional custom GraphBackend implementation.
                           If None and enable_graph=True, uses backend based on graph_backend_type.
             enable_graph: Enable graph database actions (default: True).
@@ -288,14 +305,42 @@ class YAMLEngine:
             memory_backend if memory_backend is not None else InMemoryBackend()
         )
 
-        # Initialize long-term memory backend (TEA-BUILTIN-001.4)
+        # Initialize long-term memory backend (TEA-BUILTIN-001.4, TEA-BUILTIN-001.6.3)
         self._ltm_backend: Optional[Any] = None
         self._enable_ltm = enable_ltm
+        self._ltm_backend_type = ltm_backend_type
+        self._ltm_config = ltm_config or {}
         if enable_ltm:
             if ltm_backend is not None:
                 self._ltm_backend = ltm_backend
+            elif ltm_backend_type == "duckdb":
+                # DuckDB LTM backend with lazy initialization (TEA-BUILTIN-001.6.3)
+                try:
+                    from .memory.duckdb_ltm import DuckDBLTMBackend
+
+                    # Get configuration with defaults for serverless optimization
+                    catalog_config = self._ltm_config.get(
+                        "catalog_config",
+                        {
+                            "type": "sqlite",
+                            "path": ltm_path or ":memory:",
+                            "lazy": True,
+                        },
+                    )
+                    storage_uri = self._ltm_config.get("storage_uri", "./ltm_data/")
+                    lazy = self._ltm_config.get("lazy", True)
+
+                    self._ltm_backend = DuckDBLTMBackend(
+                        catalog_config=catalog_config,
+                        storage_uri=storage_uri,
+                        lazy=lazy,
+                        enable_fts=self._ltm_config.get("enable_fts", True),
+                    )
+                except ImportError:
+                    # Fallback to SQLite if DuckDB not available
+                    self._ltm_backend = SQLiteBackend(ltm_path or ":memory:")
             else:
-                # Use SQLiteBackend with specified path or in-memory
+                # Default: Use SQLiteBackend with specified path or in-memory
                 self._ltm_backend = SQLiteBackend(ltm_path or ":memory:")
 
         # Initialize graph backend (TEA-BUILTIN-001.4)
@@ -444,6 +489,9 @@ class YAMLEngine:
         self._jinja_env.filters["fromjson"] = safe_fromjson
         # Map legacy filter names to Jinja2 equivalents
         self._jinja_env.filters["json"] = lambda v: json.dumps(v)
+
+        # TEA-BUILTIN-010: Register cache-related Jinja filters (sha256)
+        register_cache_jinja_filters(self._jinja_env)
 
         # Template cache for performance (AC: 8)
         self._template_cache: Dict[str, Any] = {}
@@ -1010,6 +1058,28 @@ class YAMLEngine:
         memory_infra = settings.get("memory_infrastructure", {})
         if memory_infra:
             self._configure_memory_infrastructure(memory_infra)
+
+        # TEA-BUILTIN-001.6.4: Configure LTM backend from YAML settings
+        ltm_settings = settings.get("ltm", {})
+        if ltm_settings and self._enable_ltm:
+            # Expand environment variables in LTM config
+            ltm_settings = expand_env_vars(ltm_settings)
+            backend_type = ltm_settings.get("backend")
+            if backend_type:
+                try:
+                    # Close existing backend if different type requested
+                    if self._ltm_backend is not None:
+                        self._ltm_backend.close()
+                    # Parse config using standard config parser
+                    _, kwargs = parse_backend_config(
+                        {"ltm_backend": backend_type, **ltm_settings}
+                    )
+                    # Create new backend from parsed YAML settings
+                    self._ltm_backend = create_ltm_backend(backend_type, **kwargs)
+                    self._ltm_backend_type = backend_type
+                    logger.debug(f"Configured LTM backend from YAML: {backend_type}")
+                except Exception as e:
+                    logger.warning(f"Failed to configure LTM backend from YAML: {e}")
 
         # TEA-OBS-001.1: Configure ObservabilityContext from YAML settings
         observability_config = config.get("observability", {})

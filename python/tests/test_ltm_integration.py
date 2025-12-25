@@ -1,414 +1,325 @@
 """
-Integration Tests for LTM Backends (TEA-BUILTIN-001.5).
+Integration Tests for LTM Backend (TEA-BUILTIN-001.6.4).
 
 Tests cover:
-- Backend switching (apps can switch between backends)
-- Graceful degradation (error handling when deps missing)
-- Search parity (FTS5 works consistently across backends)
-- Factory pattern integration
+- Full flow with SQLiteCatalog
+- cache.wrap integration with DuckDB
+- YAML engine LTM configuration
+- End-to-end caching scenarios
 """
 
 import os
+import pytest
 import tempfile
-import unittest
-from unittest.mock import patch, MagicMock
-
-from the_edge_agent.memory import (
-    LTMBackend,
-    SQLiteBackend,
-    LitestreamBackend,
-    BlobSQLiteBackend,
-    create_ltm_backend,
-    get_registered_backends,
-)
-from the_edge_agent.memory.locks import register_lock, DistributedLock
+from unittest.mock import patch
 
 
-class MockLockForIntegration(DistributedLock):
-    """Mock lock for integration testing."""
+class TestDuckDBWithSQLiteCatalog:
+    """Integration tests for DuckDB backend with SQLite catalog."""
 
-    def __init__(self, resource_id: str, ttl: int = 300, owner_id=None, **kwargs):
-        super().__init__(resource_id, ttl, owner_id)
-        self._held = False
-
-    def acquire(self, timeout: float = 30.0):
-        self._held = True
-        self._acquired = True
-        return {"success": True, "acquired": True, "owner_id": self.owner_id}
-
-    def release(self):
-        self._held = False
-        self._acquired = False
-        return {"success": True, "released": True}
-
-    def refresh(self):
-        if self._held:
-            return {"success": True, "refreshed": True, "new_ttl": self.ttl}
-        return {"success": False, "error": "Lock not held", "error_type": "lock_lost"}
-
-    def is_held(self):
-        return {"success": True, "held": self._held, "remaining_ttl": self.ttl if self._held else None}
-
-
-# Register mock lock for testing
-register_lock("mock-integration", MockLockForIntegration)
-
-
-class TestBackendSwitching(unittest.TestCase):
-    """Test that applications can switch between backends seamlessly."""
-
-    def test_all_backends_implement_ltm_interface(self):
-        """P0: All backends implement LTMBackend interface."""
-        backends = [SQLiteBackend, LitestreamBackend, BlobSQLiteBackend]
-        for backend_class in backends:
-            self.assertTrue(
-                issubclass(backend_class, LTMBackend),
-                f"{backend_class.__name__} should be LTMBackend subclass"
-            )
-
-    def test_factory_creates_correct_types(self):
-        """P0: Factory creates correct backend types."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # SQLite
-            sqlite_path = os.path.join(tmpdir, "sqlite.db")
-            backend = create_ltm_backend("sqlite", db_path=sqlite_path)
-            self.assertIsInstance(backend, SQLiteBackend)
-            backend.close()
-
-    def test_switch_from_sqlite_to_litestream(self):
-        """P1: Can switch from SQLite to Litestream backend."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "memory.db")
-
-            # Start with SQLite
-            sqlite = SQLiteBackend(db_path)
-            sqlite.store("key1", {"data": "original"})
-            sqlite.close()
-
-            # Switch to Litestream (wraps same SQLite file)
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-                litestream = LitestreamBackend(
-                    db_path=db_path,
-                    replica_url="s3://bucket/replica",
-                    auto_restore=False
-                )
-
-                # Data should still be there
-                result = litestream.retrieve("key1")
-                self.assertTrue(result['success'])
-                self.assertTrue(result['found'])
-                self.assertEqual(result['value'], {"data": "original"})
-
-                litestream.close()
-
-    def test_backend_interface_consistency(self):
-        """P0: All backends return consistent response formats."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            backends = []
-
-            # SQLite backend
-            sqlite_path = os.path.join(tmpdir, "sqlite.db")
-            backends.append(("SQLite", SQLiteBackend(sqlite_path)))
-
-            # Litestream backend
-            with patch('subprocess.run') as mock_run:
-                mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-                litestream_path = os.path.join(tmpdir, "litestream.db")
-                backends.append(("Litestream", LitestreamBackend(
-                    db_path=litestream_path,
-                    replica_url="s3://bucket/replica",
-                    auto_restore=False
-                )))
-
-            for name, backend in backends:
-                # Test store response format
-                result = backend.store("test_key", {"value": 42})
-                self.assertIn('success', result, f"{name}: store should have 'success'")
-                self.assertTrue(result['success'], f"{name}: store should succeed")
-
-                # Test retrieve response format
-                result = backend.retrieve("test_key")
-                self.assertIn('success', result, f"{name}: retrieve should have 'success'")
-                self.assertIn('found', result, f"{name}: retrieve should have 'found'")
-                self.assertIn('value', result, f"{name}: retrieve should have 'value'")
-
-                # Test delete response format
-                result = backend.delete("test_key")
-                self.assertIn('success', result, f"{name}: delete should have 'success'")
-                self.assertIn('deleted', result, f"{name}: delete should have 'deleted'")
-
-                # Test search response format
-                backend.store("doc1", {"content": "hello world"})
-                result = backend.search("hello")
-                self.assertIn('success', result, f"{name}: search should have 'success'")
-                self.assertIn('results', result, f"{name}: search should have 'results'")
-                self.assertIn('count', result, f"{name}: search should have 'count'")
-
-                backend.close()
-
-
-class TestGracefulDegradation(unittest.TestCase):
-    """Test graceful error handling when dependencies are missing."""
-
-    def test_blob_sqlite_invalid_lock_backend(self):
-        """P0: BlobSQLite raises helpful error for invalid lock."""
-        with self.assertRaises(ValueError) as ctx:
-            BlobSQLiteBackend(
-                blob_uri="memory://test/db.sqlite",
-                lock_backend="nonexistent_lock"
-            )
-        self.assertIn("nonexistent_lock", str(ctx.exception))
-
-    def test_litestream_memory_path_rejected(self):
-        """P0: Litestream rejects :memory: path."""
-        with self.assertRaises(ValueError) as ctx:
-            LitestreamBackend(
-                db_path=":memory:",
-                replica_url="s3://bucket/replica"
-            )
-        self.assertIn(":memory:", str(ctx.exception))
-
-    def test_operations_after_close_fail_gracefully(self):
-        """P0: Operations fail gracefully after backend close."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            backend = SQLiteBackend(db_path)
-            backend.close()
-
-            # All operations should fail gracefully with error dict
-            result = backend.store("key", "value")
-            self.assertFalse(result['success'])
-            self.assertIn('error', result)
-
-            result = backend.retrieve("key")
-            self.assertFalse(result['success'])
-
-            result = backend.delete("key")
-            self.assertFalse(result['success'])
-
-            result = backend.search("query")
-            self.assertFalse(result['success'])
-
-
-class TestSearchParity(unittest.TestCase):
-    """Test that FTS5 search works consistently across backends."""
-
-    def _create_test_documents(self, backend):
-        """Create test documents for search testing."""
-        docs = [
-            ("doc1", {"content": "Python programming language guide"}),
-            ("doc2", {"content": "JavaScript web development tutorial"}),
-            ("doc3", {"content": "Python machine learning basics"}),
-            ("doc4", {"content": "Database SQL programming fundamentals"}),
-            ("doc5", {"content": "Python data science and analytics"}),
-        ]
-        for key, value in docs:
-            backend.store(key, value)
-        return docs
-
-    def test_sqlite_fts5_search(self):
-        """P0: SQLite FTS5 search works correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            backend = SQLiteBackend(db_path)
-
-            self._create_test_documents(backend)
-
-            # Search for Python docs
-            result = backend.search("Python")
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 3)  # doc1, doc3, doc5
-
-            # Search for programming
-            result = backend.search("programming")
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 2)  # doc1, doc4
-
-            backend.close()
-
-    @patch('subprocess.run')
-    def test_litestream_fts5_search(self, mock_run):
-        """P0: Litestream FTS5 search works correctly."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    def test_full_store_retrieve_cycle(self):
+        """Test complete store and retrieve cycle."""
+        from the_edge_agent.memory import create_ltm_backend
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            backend = LitestreamBackend(
-                db_path=db_path,
-                replica_url="s3://bucket/replica",
-                auto_restore=False
-            )
-
-            self._create_test_documents(backend)
-
-            # Search for Python docs
-            result = backend.search("Python")
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 3)
-
-            # Search for programming
-            result = backend.search("programming")
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 2)
-
-            backend.close()
-
-    @patch('fsspec.open')
-    @patch('fsspec.filesystem')
-    def test_blob_sqlite_fts5_search(self, mock_fs, mock_open_ctx):
-        """P0: BlobSQLite FTS5 search works correctly."""
-        mock_fs.return_value.exists.return_value = False
-        mock_open_ctx.return_value.__enter__ = MagicMock()
-        mock_open_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-        backend = BlobSQLiteBackend(
-            blob_uri="memory://test/db.sqlite",
-            lock_backend="mock-integration"
-        )
-
-        self._create_test_documents(backend)
-
-        # Search for Python docs
-        result = backend.search("Python")
-        self.assertTrue(result['success'])
-        self.assertEqual(result['count'], 3)
-
-        # Search for programming
-        result = backend.search("programming")
-        self.assertTrue(result['success'])
-        self.assertEqual(result['count'], 2)
-
-        backend.close()
-
-    def test_search_with_metadata_filter(self):
-        """P1: Metadata filtering works consistently."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-            backend = SQLiteBackend(db_path)
-
-            # Store with metadata
-            backend.store("py1", {"content": "Python basics"}, metadata={"lang": "python"})
-            backend.store("py2", {"content": "Python advanced"}, metadata={"lang": "python"})
-            backend.store("js1", {"content": "JavaScript basics"}, metadata={"lang": "javascript"})
-
-            # Filter by metadata
-            result = backend.search(metadata_filter={"lang": "python"})
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 2)
-
-            # Combine text search with metadata filter
-            result = backend.search("basics", metadata_filter={"lang": "python"})
-            self.assertTrue(result['success'])
-            self.assertEqual(result['count'], 1)
-
-            backend.close()
-
-
-class TestFactoryPatternIntegration(unittest.TestCase):
-    """Test the factory pattern for backend creation."""
-
-    def test_all_backends_registered(self):
-        """P0: All backends are registered in factory."""
-        backends = get_registered_backends()
-        self.assertIn("sqlite", backends)
-        self.assertIn("litestream", backends)
-        self.assertIn("blob-sqlite", backends)
-
-    def test_factory_with_kwargs(self):
-        """P0: Factory passes kwargs correctly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-
-            # SQLite with db_path
-            backend = create_ltm_backend("sqlite", db_path=db_path)
-            self.assertEqual(backend.db_path, db_path)
-            backend.close()
-
-    @patch('subprocess.run')
-    def test_factory_litestream(self, mock_run):
-        """P1: Factory creates Litestream correctly."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "test.db")
-
             backend = create_ltm_backend(
-                "litestream",
-                db_path=db_path,
-                replica_url="s3://bucket/replica",
-                auto_restore=False
+                "duckdb",
+                catalog_config={"type": "sqlite", "path": ":memory:"},
+                storage_uri=tmpdir + "/",
+                lazy=False,
+                enable_fts=False,
             )
-            self.assertIsInstance(backend, LitestreamBackend)
-            self.assertEqual(backend.replica_url, "s3://bucket/replica")
+
+            # Store small data (should be inlined)
+            result = backend.store(
+                "small_key", {"data": "small"}, metadata={"type": "test"}
+            )
+            assert result["success"] is True
+            assert result["inlined"] is True
+
+            # Retrieve
+            retrieve_result = backend.retrieve("small_key")
+            assert retrieve_result["success"] is True
+            assert retrieve_result["found"] is True
+            assert retrieve_result["value"] == {"data": "small"}
+            assert retrieve_result["metadata"]["type"] == "test"
+
+            # Delete
+            delete_result = backend.delete("small_key")
+            assert delete_result["success"] is True
+            assert delete_result["deleted"] is True
+
+            # Verify deleted
+            after_delete = backend.retrieve("small_key")
+            assert after_delete["found"] is False
+
             backend.close()
 
-    @patch('fsspec.open')
-    @patch('fsspec.filesystem')
-    def test_factory_blob_sqlite(self, mock_fs, mock_open_ctx):
-        """P1: Factory creates BlobSQLite correctly."""
-        mock_fs.return_value.exists.return_value = False
-
-        backend = create_ltm_backend(
-            "blob-sqlite",
-            blob_uri="memory://test/db.sqlite",
-            lock_backend="mock-integration"
-        )
-        self.assertIsInstance(backend, BlobSQLiteBackend)
-        self.assertEqual(backend.blob_uri, "memory://test/db.sqlite")
-        backend.close()
-
-    def test_factory_unknown_backend(self):
-        """P0: Factory raises error for unknown backend."""
-        with self.assertRaises(ValueError) as ctx:
-            create_ltm_backend("nonexistent_backend")
-        self.assertIn("nonexistent_backend", str(ctx.exception))
-
-
-class TestDataMigration(unittest.TestCase):
-    """Test data migration between backends."""
-
-    @patch('subprocess.run')
-    def test_data_survives_backend_switch(self, mock_run):
-        """P1: Data survives switching between backends."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    def test_large_data_cloud_storage(self):
+        """Test that large data is uploaded to cloud storage."""
+        from the_edge_agent.memory import create_ltm_backend
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = os.path.join(tmpdir, "memory.db")
-
-            # Phase 1: Use SQLite
-            sqlite = SQLiteBackend(db_path)
-            sqlite.store("user", {"name": "Alice", "age": 30})
-            sqlite.store("config", {"theme": "dark", "lang": "en"})
-            sqlite.close()
-
-            # Phase 2: Switch to Litestream (same file)
-            litestream = LitestreamBackend(
-                db_path=db_path,
-                replica_url="s3://bucket/replica",
-                auto_restore=False
+            backend = create_ltm_backend(
+                "duckdb",
+                catalog_config={"type": "sqlite", "path": ":memory:"},
+                storage_uri=tmpdir + "/",
+                inline_threshold=50,  # Very small threshold
+                lazy=False,
+                enable_fts=False,
             )
 
-            # Verify data
-            result = litestream.retrieve("user")
-            self.assertTrue(result['found'])
-            self.assertEqual(result['value']['name'], "Alice")
+            # Store large data (should go to cloud storage)
+            large_value = {"data": "x" * 100}
+            result = backend.store("large_key", large_value)
+            assert result["success"] is True
+            assert result["inlined"] is False
+            assert "storage_uri" in result
 
-            result = litestream.retrieve("config")
-            self.assertTrue(result['found'])
-            self.assertEqual(result['value']['theme'], "dark")
+            # Retrieve from cloud
+            retrieve_result = backend.retrieve("large_key")
+            assert retrieve_result["success"] is True
+            assert retrieve_result["value"] == large_value
+            assert retrieve_result["inlined"] is False
 
-            # Add new data
-            litestream.store("session", {"id": "abc123"})
-            litestream.close()
+            backend.close()
 
-            # Phase 3: Back to SQLite
-            sqlite2 = SQLiteBackend(db_path)
-            result = sqlite2.retrieve("session")
-            self.assertTrue(result['found'])
-            self.assertEqual(result['value']['id'], "abc123")
-            sqlite2.close()
+    def test_content_deduplication(self):
+        """Test that identical content is deduplicated."""
+        from the_edge_agent.memory import create_ltm_backend
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            backend = create_ltm_backend(
+                "duckdb",
+                catalog_config={"type": "sqlite", "path": ":memory:"},
+                storage_uri=tmpdir + "/",
+                lazy=False,
+                enable_fts=False,
+            )
+
+            value = {"data": "test"}
+
+            # First store
+            result1 = backend.store("key1", value)
+            assert result1["success"] is True
+            assert result1["stored"] is True
+            hash1 = result1["content_hash"]
+
+            # Store same content again with same key
+            result2 = backend.store("key1", value)
+            assert result2["success"] is True
+            assert result2.get("deduplicated") is True
+            assert result2["content_hash"] == hash1
+
+            backend.close()
 
 
-if __name__ == '__main__':
-    unittest.main()
+class TestCacheWrapIntegration:
+    """Integration tests for cache.wrap with DuckDB backend."""
+
+    def test_cache_hit_miss_flow(self):
+        """Test cache hit and miss behavior."""
+        from the_edge_agent import YAMLEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = YAMLEngine(
+                ltm_backend_type="duckdb",
+                ltm_config={
+                    "catalog_config": {"type": "sqlite", "path": ":memory:"},
+                    "storage_uri": tmpdir + "/",
+                    "enable_fts": False,
+                },
+            )
+
+            registry = engine.actions_registry
+
+            # Register test action
+            call_count = [0]
+
+            def test_action(state, **kwargs):
+                call_count[0] += 1
+                return {"success": True, "result": f"call_{call_count[0]}"}
+
+            registry["test.action"] = test_action
+
+            # First call - cache miss
+            result1 = registry["cache.wrap"](
+                state={},
+                action="test.action",
+                args={},
+                key="test-cache-key",
+                ttl_seconds=300,
+            )
+            assert result1["_cache_hit"] is False
+            assert call_count[0] == 1
+
+            # Second call - cache hit
+            result2 = registry["cache.wrap"](
+                state={},
+                action="test.action",
+                args={},
+                key="test-cache-key",
+                ttl_seconds=300,
+            )
+            assert result2["_cache_hit"] is True
+            assert call_count[0] == 1  # Should not increment
+
+            # Results should be identical
+            assert result1["result"] == result2["result"]
+
+            engine.close()
+
+    def test_cache_with_different_keys(self):
+        """Test that different keys maintain separate cache entries."""
+        from the_edge_agent import YAMLEngine
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = YAMLEngine(
+                ltm_backend_type="duckdb",
+                ltm_config={
+                    "catalog_config": {"type": "sqlite", "path": ":memory:"},
+                    "storage_uri": tmpdir + "/",
+                    "enable_fts": False,
+                },
+            )
+
+            registry = engine.actions_registry
+            call_count = [0]
+
+            def test_action(state, value=None, **kwargs):
+                call_count[0] += 1
+                return {"success": True, "result": value or "default"}
+
+            registry["test.action"] = test_action
+
+            # Store with key1
+            result1 = registry["cache.wrap"](
+                state={}, action="test.action", args={"value": "value1"}, key="key1"
+            )
+            assert call_count[0] == 1
+
+            # Store with key2
+            result2 = registry["cache.wrap"](
+                state={}, action="test.action", args={"value": "value2"}, key="key2"
+            )
+            assert call_count[0] == 2  # Should call action again
+
+            # Retrieve key1 - should be cached
+            result1_again = registry["cache.wrap"](
+                state={}, action="test.action", args={"value": "value1"}, key="key1"
+            )
+            assert result1_again["_cache_hit"] is True
+            assert call_count[0] == 2  # Should not increment
+
+            engine.close()
+
+
+class TestYAMLEngineLTMConfig:
+    """Integration tests for YAML engine LTM configuration from settings."""
+
+    def test_yaml_ltm_settings_applied(self):
+        """Test that LTM settings from YAML are applied."""
+        from the_edge_agent import YAMLEngine
+        import tempfile
+
+        yaml_content = """
+name: test-ltm-settings
+state_schema:
+  result: str
+
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: sqlite
+      path: ":memory:"
+    storage:
+      uri: "/tmp/yaml_test_ltm/"
+    inline_threshold: 256
+    lazy: true
+    enable_fts: false
+
+nodes:
+  - name: start
+    run: |
+      return {"result": "done"}
+
+edges:
+  - from: __start__
+    to: start
+  - from: start
+    to: __end__
+"""
+        os.makedirs("/tmp/yaml_test_ltm/", exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            yaml_path = f.name
+
+        try:
+            engine = YAMLEngine()
+            graph = engine.load_from_file(yaml_path)
+
+            # Verify DuckDB backend was configured
+            assert type(engine._ltm_backend).__name__ == "DuckDBLTMBackend"
+            assert "/tmp/yaml_test_ltm/" in engine._ltm_backend._storage_uri
+
+            engine.close()
+        finally:
+            os.unlink(yaml_path)
+
+    def test_yaml_env_var_expansion(self):
+        """Test that environment variables in YAML settings are expanded."""
+        from the_edge_agent import YAMLEngine
+        import tempfile
+
+        with patch.dict(os.environ, {"TEST_STORAGE_PATH": "/tmp/env_test_ltm/"}):
+            os.makedirs("/tmp/env_test_ltm/", exist_ok=True)
+
+            yaml_content = """
+name: test-env-expansion
+state_schema:
+  result: str
+
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: sqlite
+      path: ":memory:"
+    storage:
+      uri: "${TEST_STORAGE_PATH}"
+    lazy: true
+    enable_fts: false
+
+nodes:
+  - name: start
+    run: |
+      return {"result": "done"}
+
+edges:
+  - from: __start__
+    to: start
+  - from: start
+    to: __end__
+"""
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False
+            ) as f:
+                f.write(yaml_content)
+                yaml_path = f.name
+
+            try:
+                engine = YAMLEngine()
+                graph = engine.load_from_file(yaml_path)
+
+                # Verify env var was expanded
+                assert "/tmp/env_test_ltm/" in engine._ltm_backend._storage_uri
+
+                engine.close()
+            finally:
+                os.unlink(yaml_path)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

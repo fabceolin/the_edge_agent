@@ -1,8 +1,10 @@
 # Story TEA-BUILTIN-008.7: ScrapeGraphAI Result Caching
 
-## Status: Blocked (Ready When Unblocked) ✅
+## Status: Done ✅
 
-**Blocked By**: [TEA-BUILTIN-010](TEA-BUILTIN-010-cache-memoization-actions.md) - Cache and Memoization Actions
+**Unblocked**: [TEA-BUILTIN-010](TEA-BUILTIN-010-cache-memoization-actions.md) - Cache and Memoization Actions is now **Done** (2025-12-25)
+**Implemented**: 2025-12-25 by James (Dev)
+**QA Reviewed**: 2025-12-25 by Quinn (Test Architect) - **PASS**
 
 **Checklist Validation:** PASS (2024-12-24)
 - Story Clarity Score: 8/10
@@ -27,7 +29,7 @@
 
 **Dependencies:**
 - **TEA-BUILTIN-008.4**: ScrapeGraphAI Integration (Complete ✅)
-- **TEA-BUILTIN-010**: Cache and Memoization Actions (Blocked)
+- **TEA-BUILTIN-010**: Cache and Memoization Actions (Complete ✅)
 
 ## Acceptance Criteria
 
@@ -161,15 +163,15 @@ def web_ai_scrape(state, url, schema=None, prompt=None, cache=None, **kwargs):
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1**: Wait for TEA-BUILTIN-010 completion (provides LTM cache patterns)
-- [ ] **Task 2**: Add `cache` parameter to `web_ai_scrape` function signature
-- [ ] **Task 3**: Implement cache key generation for each strategy
-- [ ] **Task 4**: Implement cache lookup and hit logic
-- [ ] **Task 5**: Implement cache store after successful scrape
-- [ ] **Task 6**: Add `_cache_hit`, `_cache_key`, `_cache_created_at` to response
-- [ ] **Task 7**: Write unit tests for cache behavior
-- [ ] **Task 8**: Verify existing tests still pass
-- [ ] **Task 9**: Update documentation
+- [x] **Task 1**: Wait for TEA-BUILTIN-010 completion (provides LTM cache patterns) ✅ Done 2025-12-25
+- [x] **Task 2**: Add `cache` parameter to `web_ai_scrape` function signature ✅
+- [x] **Task 3**: Implement cache key generation for each strategy ✅
+- [x] **Task 4**: Implement cache lookup and hit logic ✅
+- [x] **Task 5**: Implement cache store after successful scrape ✅
+- [x] **Task 6**: Add `_cache_hit`, `_cache_key`, `_cache_created_at` to response ✅
+- [x] **Task 7**: Write unit tests for cache behavior ✅
+- [x] **Task 8**: Verify existing tests still pass ✅
+- [x] **Task 9**: Update documentation ✅
 
 ## Dev Notes
 
@@ -210,13 +212,36 @@ While agents could use `cache.wrap` externally, built-in cache support provides:
 
 ## Definition of Done
 
-- [ ] TEA-BUILTIN-010 is complete
-- [ ] `cache` parameter implemented in `web_ai_scrape`
-- [ ] All cache key strategies working
-- [ ] Cache hit/miss verified
-- [ ] All existing 008.4 tests pass
-- [ ] New cache-specific tests added
-- [ ] Documentation updated
+- [x] TEA-BUILTIN-010 is complete ✅
+- [x] `cache` parameter implemented in `web_ai_scrape` ✅
+- [x] All cache key strategies working ✅
+- [x] Cache hit/miss verified ✅
+- [x] All existing 008.4 tests pass ✅
+- [x] New cache-specific tests added (12 tests) ✅
+- [x] Documentation updated ✅
+
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/actions/web_actions.py` | Modified | Added cache parameter, cache helpers, cache lookup/store logic |
+| `python/tests/test_web_ai_scrape.py` | Modified | Added 12 cache behavior tests (TestWebAiScrapeCaching class) |
+| `docs/shared/YAML_REFERENCE.md` | Modified | Added cache documentation with examples and parameter table |
+
+### Debug Log References
+None - implementation completed successfully on first attempt.
+
+### Completion Notes
+1. Implemented 4 cache key strategies: `url`, `url+schema`, `url+prompt`, `url+prompt+schema`
+2. Added graceful LTM failure handling (cache failures don't fail scrape)
+3. All 39 web_ai_scrape tests pass (27 existing + 12 new cache tests)
+4. All 92 web+cache tests pass
+5. Backward compatible - caching disabled by default
 
 ## Example Usage
 
@@ -325,9 +350,93 @@ nodes:
 **Dependencies:**
 - **BLOCKED BY:** TEA-BUILTIN-010 (Cache and Memoization Actions)
 
+---
+
+### Implementation Review (2025-12-25)
+
+**Reviewer:** Quinn (Test Architect)
+
+### Code Quality Assessment
+
+Implementation is well-structured and follows existing patterns in `web_actions.py`. The cache functionality is cleanly separated into 5 helper functions:
+- `_compute_ai_scrape_cache_key()` - 4 key strategies with SHA256 hashing
+- `_is_cache_expired()` - ISO timestamp parsing with timezone handling
+- `_compute_cache_ttl_seconds()` - TTL priority: seconds > hours > days
+- `_try_cache_lookup()` - Graceful LTM failure handling
+- `_store_in_cache()` - Graceful store failure handling
+
+Key strengths:
+- Graceful degradation when LTM backend unavailable or fails
+- Clean separation of cache logic from core scrape functionality
+- Consistent metadata format with `_cache_hit`, `_cache_key`, `_cache_created_at`
+- Backward compatible (caching disabled by default)
+
+### Refactoring Performed
+
+None required - implementation is clean and follows established patterns.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows existing web_actions.py patterns
+- Project Structure: ✓ All files in correct locations
+- Testing Strategy: ✓ 12 new tests covering all cache scenarios
+- All ACs Met: ✓ See AC mapping below
+
+### Acceptance Criteria Traceability
+
+| AC | Description | Test Coverage | Status |
+|----|-------------|---------------|--------|
+| AC-1 | Cache Parameter | `test_cache_enabled_returns_metadata` | ✓ PASS |
+| AC-2 | Cache Enabled | `test_cache_disabled_by_default` | ✓ PASS |
+| AC-3 | Cache TTL | `test_cache_ttl_seconds_priority` | ✓ PASS |
+| AC-4 | Key Strategy | `test_cache_key_strategy_url`, `test_cache_key_strategy_url_prompt_schema` | ✓ PASS |
+| AC-5 | Skip Cache | `test_cache_skip_ignores_cached_data` | ✓ PASS |
+| AC-6 | Cache Hit | `test_cache_hit_returns_cached_data` | ✓ PASS |
+| AC-7 | Cache Miss | `test_cache_miss_stores_result` | ✓ PASS |
+| AC-8 | Cache Indicators | `test_cache_enabled_returns_metadata`, `test_cache_hit_returns_cached_data` | ✓ PASS |
+| AC-9 | Default Off | `test_cache_disabled_by_default` | ✓ PASS |
+| AC-10 | Existing Tests Pass | All 27 original 008.4 tests passing | ✓ PASS |
+
+### Improvements Checklist
+
+- [x] All 10 acceptance criteria implemented and tested
+- [x] 12 new cache tests added in `TestWebAiScrapeCaching` class
+- [x] Documentation updated in YAML_REFERENCE.md with full cache parameter table
+- [x] Graceful LTM failure handling tested (`test_cache_ltm_failure_graceful`, `test_cache_store_failure_graceful`)
+- [x] No LTM backend scenario tested (`test_cache_no_ltm_backend`)
+- [ ] Consider URL normalization for better cache hit rates (future enhancement)
+- [ ] Consider performance benchmarking test (cache hit <50ms) (future enhancement)
+
+### Security Review
+
+No security concerns. Cache keys use SHA256 hashing which is cryptographically secure. No sensitive data is exposed in cache keys. The implementation properly handles the engine's LTM backend without exposing internal state.
+
+### Performance Considerations
+
+Cache architecture is sound:
+- Cache lookup is O(1) via LTM backend
+- TTL checking uses efficient datetime comparison
+- SHA256 hashing is fast for key generation
+- Graceful degradation ensures scrape succeeds even if caching fails
+
+### Files Modified During Review
+
+None - no refactoring was performed.
+
+### Gate Status
+
+Gate: **PASS** → `docs/qa/gates/TEA-BUILTIN-008.7-scrapegraphai-cache.yml`
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, 39 tests passing (27 existing + 12 new), documentation complete.
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2024-12-24 | 0.1.0 | Initial story creation | Sarah (PO) |
 | 2024-12-24 | 0.1.1 | Added QA test design (24 scenarios) | Quinn (QA) |
+| 2025-12-25 | 0.1.2 | Status updated to Ready - blocker TEA-BUILTIN-010 complete | Bob (SM) |
+| 2025-12-25 | 1.0.0 | Implementation complete - all tasks done, 12 tests added | James (Dev) |
+| 2025-12-25 | 1.0.1 | QA review complete - PASS gate, status updated to Done | Quinn (QA) / Bob (SM) |

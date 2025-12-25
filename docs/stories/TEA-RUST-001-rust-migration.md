@@ -524,7 +524,7 @@ nodes:
 | TEA-RUST-008 | Error handling with retry and fallback | 5 | ✅ Done |
 | TEA-RUST-009 | Lua integration via mlua | 5 | ✅ Done |
 | TEA-RUST-010 | Built-in actions - HTTP and file operations | 3 | ✅ Done |
-| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 | ✅ Done (llm.call + llm.complete, streaming/tools in TEA-RUST-022) |
+| TEA-RUST-011 | Built-in actions - LLM (Ollama, OpenAI-compatible) | 5 | ✅ Done (llm.call + llm.complete; stream/tools in TEA-RUST-040) |
 | TEA-RUST-012 | Stream iterator implementation | 2 | ✅ Done (QA Approved 2025-12-20) |
 | TEA-RUST-013 | CLI binary with clap | 3 | ✅ Done |
 | TEA-RUST-014 | Library crate public API | 2 | ✅ Done |
@@ -535,7 +535,7 @@ nodes:
 | TEA-RUST-019 | Built-in actions - Web (scrape, crawl, search via APIs) | 3 | ❌ Not Started |
 | TEA-RUST-020 | Built-in actions - RAG (embedding, vector store/query) | 5 | ❌ Not Started |
 | TEA-RUST-021 | Built-in actions - Code Execution (Lua sandbox) | 5 | ⏸️ Deferred (inline `run:` blocks sufficient for current needs) |
-| TEA-RUST-022 | LLM Enhanced actions (call with retry, stream, tools) | 5 | ❌ Not Started |
+| ~~TEA-RUST-022~~ | ~~LLM Enhanced actions (call with retry, stream, tools)~~ | ~~5~~ | *Superseded by TEA-RUST-040* |
 | ~~TEA-RUST-023~~ | ~~Built-in actions - Long-Term Memory (ltm.*, SQLite/FTS5)~~ | ~~5~~ | *Merged into TEA-RUST-028* |
 | TEA-RUST-024 | Built-in actions - Graph Database (graph.*, CozoDB native Rust) | 5 | ❌ Not Started |
 | TEA-RUST-025 | Built-in actions - Cloud-Native LTM (Turso, D1, PostgreSQL, Blob-SQLite) | 8 | ❌ Not Started |
@@ -546,17 +546,26 @@ nodes:
 | TEA-RUST-030 | **Parallel Lua VM Isolation** (per-branch LuaRuntime for true parallelism) | 3 | ✅ Done (QA PASS 2025-12-21) |
 | TEA-RUST-031 | **Lua Execution Timeout** (debug hook + watchdog thread for timeout protection) | 2 | ✅ Done |
 | TEA-RUST-032 | **Executor Checkpoint Wiring** (wire `set_last_checkpoint` in Executor) | 1 | ✅ Done |
-| TEA-RUST-033 | **While-Loop Node** (autonomous iteration with max_iterations guard) | 5 | ❌ Not Started |
+| TEA-RUST-033 | **While-Loop Node** (autonomous iteration with max_iterations guard) | 5 | ✅ Done (QA PASS 2025-12-21) |
+| TEA-RUST-034 | **External Imports Support** (Lua modules, builtin action sets) | 13 | 📝 Draft |
+| TEA-RUST-035 | **Prolog Scripting Support** (swipl-rs, sandbox, state/2, return/2) | 5 | ✅ Done (QA PASS 90/100) |
+| TEA-RUST-036 | **Prolog Module Pre-Loading** (lists, clpfd, apply, aggregate) | 3 | 🔍 Ready for Review |
+| TEA-RUST-037 | **Prolog return/2 Predicate** (state update from Prolog) | 3 | ✅ Done |
+| TEA-RUST-038 | **Prolog Inline Rule Definitions** (assertz-based rule handling) | 3 | ✅ Done |
+| TEA-RUST-039 | **Prolog-Side Parsing** (tea_load_code/1 for 100% parity) | 3 | ✅ Done |
+| TEA-RUST-040 | **LLM Stream and Tools** (llm.stream SSE, llm.tools function calling) | 5 | ✅ Done |
 
 ### Implementation Summary
 
 | Status | Count | Points |
 |--------|-------|--------|
-| ✅ Done | 21 | 71 |
-| ❌ Not Started | 8 | 44 |
+| ✅ Done | 27 | 98 |
+| 🔍 Ready for Review | 1 | 3 |
+| 📝 Draft | 1 | 13 |
+| ❌ Not Started | 6 | 32 |
 | ⏸️ Deferred | 1 | 5 |
-| ~~Superseded/Merged~~ | 2 | - |
-| **Total** | **30** | **120** |
+| ~~Superseded/Merged~~ | 3 | - |
+| **Total Active** | **36** | **151** |
 
 ### Sub-Story Dependencies
 
@@ -1644,7 +1653,35 @@ The following Python stories have been implemented and inform this Rust migratio
 |----------|-------|--------|-----------------|
 | TEA-PY-001 | Lua Scripting Support | ✅ Done | TEA-RUST-009 (Lua via mlua) |
 | TEA-PY-002 | Parallel Lua VM Isolation | ✅ Done | TEA-RUST-030 (per-branch LuaRuntime) |
-| TEA-PY-003 | While-Loop Node | ❌ Not Started | TEA-RUST-033 (While-Loop Node) |
+| TEA-PY-003 | While-Loop Node | ✅ Done | TEA-RUST-033 (While-Loop Node) |
+| TEA-PY-004 | Prolog Scripting Support | ✅ Done | TEA-RUST-035 (swipl-rs) |
+| TEA-PY-005 | janus-swi Migration | ✅ Done | N/A (informs TEA-RUST-035 design) |
+| TEA-PY-006 | Fix Flaky Lua Isolation Test | ✅ Done | N/A (test fix) |
+
+### Prolog Integration Stories
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-PROLOG-001 | Prolog Integration Epic | 🔄 In Progress | TEA-RUST-035 to TEA-RUST-039 |
+| TEA-PROLOG-002 | Cross-Runtime Parity Tests | ✅ Done | Shared parity test fixtures |
+| TEA-PROLOG-003 | Neurosymbolic Examples & Docs | ✅ Done | Shared examples |
+| TEA-PROLOG-004 | Backslash Escape Bug | ✅ Done | TEA-RUST-039 (Prolog-side parsing) |
+| TEA-PROLOG-005 | Cut Operator Parsing Bug | ✅ Done | TEA-RUST-039 (Prolog-side parsing) |
+
+### YAML Engine Stories
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-YAML-002 | Implicit Goto Syntax | ✅ Done | ✅ Done (Goto enum, GotoRule struct) |
+| TEA-YAML-003 | Result Variable in Goto Conditions | 📝 Backlog | ❌ Not Started |
+
+### Observability Stories
+
+| Story ID | Title | Status | Rust Equivalent |
+|----------|-------|--------|-----------------|
+| TEA-OBS-001 | Hybrid Observability Epic | 🔄 In Progress | TEA-OBS-001.2 |
+| TEA-OBS-001.1 | Python Observability Core | ✅ Done | N/A (Python-specific) |
+| TEA-OBS-001.2 | Rust Observability Core | ✅ Done | ✅ Done (flow-scoped spans) |
 
 ### Built-in Action Stories
 
@@ -1729,3 +1766,4 @@ The following Python CLI stories have been implemented (not migrated to Rust - R
 | 2025-12-21 | 7.10 | **Story renumbering**: Fixed ID conflicts between epic and story files. Renamed TEA-RUST-002-lua-timeout.md → TEA-RUST-031 (was conflicting with "Core StateGraph with petgraph"). Renamed TEA-RUST-019-executor-checkpoint-wiring.md → TEA-RUST-032 (was conflicting with "Built-in actions - Web"). Added both to sub-story table. Updated summary: 21 Done (71 pts), 7 Not Started (39 pts), 1 Deferred (5 pts). Total: 29 stories (115 pts). | Sarah (PO Agent) |
 | 2025-12-21 | 7.11 | **TEA-RUST-002 Design Rationale**: Added comprehensive documentation for "Core StateGraph with petgraph" decision. Documented goal alignment (7/7 goals supported), technical risks (R1-R4 with mitigations), edge cases (EC1-EC5 with handling), and implementation status. Key findings: petgraph is already implemented and provides strong alignment with TEA's lightweight/edge computing goals. | Sarah (PO Agent) |
 | 2025-12-21 | 7.12 | **Iterative Loop Patterns**: Added documentation for two loop patterns: (1) Interrupt-Based Loop for human-in-the-loop workflows with YAML example, (2) While-Loop Node for autonomous iteration. Created TEA-RUST-033 story for Rust While-Loop Node implementation (5 pts). Created TEA-PY-003 story for Python parity. Updated sub-story table and summary: 30 stories (120 pts). Added TEA-PY-003 to Python Stories Reference. | Sarah (PO Agent) |
+| 2025-12-24 | 7.13 | **Major implementation milestone**: Added 8 new Rust sub-stories (TEA-RUST-033 to TEA-RUST-040). **TEA-RUST-033** (While-Loop) completed with QA PASS. **Prolog integration complete**: TEA-RUST-035 (Prolog scripting, QA 90/100), TEA-RUST-036 (module pre-loading, Ready for Review), TEA-RUST-037 (return/2 predicate), TEA-RUST-038 (inline rules), TEA-RUST-039 (Prolog-side parsing). **TEA-RUST-040** (LLM stream/tools) completed - supersedes TEA-RUST-022. Added 4 new Python story reference sections: Prolog Integration Stories (TEA-PROLOG-001 to 005), YAML Engine Stories (TEA-YAML-002/003), Observability Stories (TEA-OBS-001.x). Updated Core Python Stories with TEA-PY-003 to 006. Updated TEA-RUST-011 reference from TEA-RUST-022 to TEA-RUST-040. Implementation summary: 27 Done (98 pts), 1 Ready for Review (3 pts), 1 Draft (13 pts), 6 Not Started (32 pts), 1 Deferred (5 pts), 3 Superseded. Total active: 36 stories (151 pts). | Sarah (PO Agent) |

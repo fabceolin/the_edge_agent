@@ -32,6 +32,8 @@ Example:
     >>> backend.close()
 """
 
+import os
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Type
 
@@ -65,10 +67,7 @@ class LTMBackend(ABC):
 
     @abstractmethod
     def store(
-        self,
-        key: str,
-        value: Any,
-        metadata: Optional[Dict[str, Any]] = None
+        self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Store a value persistently with optional metadata.
@@ -85,11 +84,7 @@ class LTMBackend(ABC):
         pass
 
     @abstractmethod
-    def retrieve(
-        self,
-        key: str,
-        default: Any = None
-    ) -> Dict[str, Any]:
+    def retrieve(self, key: str, default: Any = None) -> Dict[str, Any]:
         """
         Retrieve a value by key.
 
@@ -122,7 +117,7 @@ class LTMBackend(ABC):
         self,
         query: Optional[str] = None,
         metadata_filter: Optional[Dict[str, Any]] = None,
-        limit: int = 10
+        limit: int = 10,
     ) -> Dict[str, Any]:
         """
         Search across stored values using full-text search and/or metadata filtering.
@@ -166,9 +161,9 @@ class LTMBackend(ABC):
             Override for more efficient implementations.
         """
         result = self.search(limit=10000)
-        if result.get('success'):
-            for item in result.get('results', []):
-                yield item['key'], item['value'], item.get('metadata')
+        if result.get("success"):
+            for item in result.get("results", []):
+                yield item["key"], item["value"], item.get("metadata")
 
     def __enter__(self):
         """Context manager entry."""
@@ -210,10 +205,7 @@ def get_registered_backends() -> List[str]:
     return list(_BACKEND_REGISTRY.keys())
 
 
-def create_ltm_backend(
-    backend_type: str = "sqlite",
-    **kwargs
-) -> LTMBackend:
+def create_ltm_backend(backend_type: str = "sqlite", **kwargs) -> LTMBackend:
     """
     Factory function to create an LTM backend instance.
 
@@ -328,4 +320,105 @@ def parse_backend_config(config: Dict[str, Any]) -> tuple:
     if "litestream_replica" in config:
         kwargs["replica_url"] = config["litestream_replica"]
 
+    # DuckDB LTM Backend (TEA-BUILTIN-001.6.4)
+    if "catalog" in config:
+        kwargs["catalog_config"] = config["catalog"]
+    if "storage" in config:
+        storage_config = config["storage"]
+        if isinstance(storage_config, dict):
+            kwargs["storage_uri"] = storage_config.get("uri", "./ltm_data/")
+        else:
+            kwargs["storage_uri"] = storage_config
+    if "inline_threshold" in config:
+        kwargs["inline_threshold"] = config["inline_threshold"]
+    if "enable_fts" in config:
+        kwargs["enable_fts"] = config["enable_fts"]
+    if "lazy" in config:
+        kwargs["lazy"] = config["lazy"]
+
     return backend_type, kwargs
+
+
+# =============================================================================
+# ENVIRONMENT VARIABLE EXPANSION (TEA-BUILTIN-001.6.4)
+# =============================================================================
+
+
+def expand_env_vars(config: Any) -> Any:
+    """
+    Expand ${ENV_VAR} and ${ENV_VAR:-default} patterns in configuration.
+
+    Recursively processes dicts, lists, and strings to replace environment
+    variable references with their values.
+
+    Args:
+        config: Configuration value (dict, list, or string)
+
+    Returns:
+        Configuration with environment variables expanded
+
+    Example:
+        >>> import os
+        >>> os.environ["MY_VAR"] = "my_value"
+        >>> expand_env_vars("${MY_VAR}")
+        'my_value'
+        >>> expand_env_vars({"key": "${MISSING:-default}"})
+        {'key': 'default'}
+        >>> expand_env_vars([1, "${MY_VAR}", 3])
+        [1, 'my_value', 3]
+    """
+    if isinstance(config, str):
+        # Match ${VAR} or ${VAR:-default}
+        pattern = r"\$\{([^}:]+)(?::-([^}]*))?\}"
+
+        def replace(match):
+            var_name = match.group(1)
+            default = match.group(2) if match.group(2) is not None else ""
+            return os.environ.get(var_name, default)
+
+        return re.sub(pattern, replace, config)
+
+    elif isinstance(config, dict):
+        return {k: expand_env_vars(v) for k, v in config.items()}
+
+    elif isinstance(config, list):
+        return [expand_env_vars(item) for item in config]
+
+    return config
+
+
+def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
+    """
+    Parse LTM configuration from YAML settings and create backend.
+
+    This is a convenience function that combines expand_env_vars and
+    create_ltm_backend for typical YAML-based configuration.
+
+    Args:
+        settings: Dict with 'ltm' key containing LTM configuration
+
+    Returns:
+        LTMBackend instance
+
+    Example:
+        >>> settings = {
+        ...     "ltm": {
+        ...         "backend": "duckdb",
+        ...         "catalog": {"type": "sqlite"},
+        ...         "storage": {"uri": "./ltm_data/"}
+        ...     }
+        ... }
+        >>> backend = parse_ltm_config(settings)
+    """
+    ltm_config = settings.get("ltm", {})
+
+    # Expand environment variables
+    ltm_config = expand_env_vars(ltm_config)
+
+    # Extract backend type
+    backend_type = ltm_config.pop("backend", "sqlite")
+
+    # Parse remaining config
+    _, kwargs = parse_backend_config({"ltm_backend": backend_type, **ltm_config})
+
+    return create_ltm_backend(backend_type, **kwargs)

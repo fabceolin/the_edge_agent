@@ -150,3 +150,61 @@ YAML files execute arbitrary Python code via `exec()` in `run:` blocks. Only loa
 - Edge conditions are re-evaluated on each traversal (allows for dynamic routing)
 - Graph compilation is required before execution to set interrupt points
 - A checkpointer is required when using interrupts
+
+## LTM Backend Selection Guide
+
+The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent state storage:
+
+### LTM Backends
+
+| Backend | Use Case | Install |
+|---------|----------|---------|
+| **sqlite** (default) | Local development, single-node | Built-in |
+| **duckdb** | Analytics-heavy, catalog-aware, cloud storage | `pip install duckdb fsspec` |
+| **litestream** | SQLite with S3 replication | `pip install litestream` |
+| **blob-sqlite** | Distributed with blob storage | `pip install fsspec` |
+
+### Catalog Backends (for DuckDB LTM)
+
+| Catalog | Use Case | Install |
+|---------|----------|---------|
+| **sqlite** (default) | Local, development | Built-in |
+| **firestore** | Serverless, Firebase ecosystem | `pip install firebase-admin` |
+| **postgres** | Self-hosted, SQL compatibility | `pip install psycopg2` |
+| **supabase** | Edge, REST API, managed Postgres | `pip install requests` |
+
+### Example YAML Configuration
+
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: sqlite
+      path: ":memory:"
+    storage:
+      uri: "${LTM_STORAGE_PATH:-./ltm_data/}"
+    inline_threshold: 1024
+    lazy: true
+```
+
+### Factory Functions
+
+```python
+from the_edge_agent.memory import (
+    create_ltm_backend,
+    create_catalog_backend,
+    expand_env_vars,
+)
+
+# Create DuckDB backend with SQLite catalog
+backend = create_ltm_backend(
+    "duckdb",
+    catalog_config={"type": "sqlite", "path": ":memory:"},
+    storage_uri="./ltm_data/",
+    lazy=True
+)
+
+# Create catalog directly
+catalog = create_catalog_backend("sqlite", path="./catalog.db")
+```
