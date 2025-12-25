@@ -988,9 +988,8 @@ jobs:
           docker run --rm -v $(pwd):/work ubuntu:22.04 bash -c '
             chmod +x /work/tea-*-x86_64.AppImage
             # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
+            # Only test --version here; full agent test runs natively with FUSE in smoke test
             /work/tea-*-x86_64.AppImage --appimage-extract-and-run --version
-            # Use Lua example for Docker test (Prolog requires FUSE for SWI_HOME_DIR resolution)
-            /work/tea-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/while-loop-parity-test.yaml
           '
 
       - name: Check AppImage size
