@@ -989,7 +989,8 @@ jobs:
             chmod +x /work/tea-*-x86_64.AppImage
             # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
             /work/tea-*-x86_64.AppImage --appimage-extract-and-run --version
-            /work/tea-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/prolog/simple-prolog-agent.yaml
+            # Use Lua example for Docker test (Prolog requires FUSE for SWI_HOME_DIR resolution)
+            /work/tea-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/while-loop-parity-test.yaml
           '
 
       - name: Check AppImage size
