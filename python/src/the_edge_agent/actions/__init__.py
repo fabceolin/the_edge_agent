@@ -18,6 +18,7 @@ Actions are organized by domain:
 - code_actions: Sandboxed Python code execution (TEA-BUILTIN-003.1)
 - schema_actions: Schema merge and manipulation (TEA-BUILTIN-008.3)
 - llamaextract_actions: Document extraction via LlamaExtract (TEA-BUILTIN-008.1)
+- cache_actions: Cache and memoization with LTM backend (TEA-BUILTIN-010)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -59,6 +60,8 @@ from .tools_actions import register_actions as register_tools
 from .code_actions import register_actions as register_code
 from .schema_actions import register_actions as register_schema
 from .llamaextract_actions import register_actions as register_llamaextract
+from .cache_actions import register_actions as register_cache
+from .cache_actions import register_jinja_filters as register_cache_jinja_filters
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -112,6 +115,7 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     register_code(registry, engine)
     register_schema(registry, engine)
     register_llamaextract(registry, engine)
+    register_cache(registry, engine)
 
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)
@@ -125,4 +129,4 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     return registry
 
 
-__all__ = ['build_actions_registry']
+__all__ = ["build_actions_registry", "register_cache_jinja_filters"]

@@ -32,6 +32,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
     - [Opik Integration](#opik-integration)
   - [Memory Actions](#memory-actions)
   - [Long-Term Memory Actions](#long-term-memory-actions)
+  - [Cache and Memoization Actions](#cache-and-memoization-actions)
   - [Firebase Agent Memory Actions](#firebase-agent-memory-actions)
   - [Tabular Data Actions](#tabular-data-actions)
   - [Graph Database Actions](#graph-database-actions)
@@ -2392,9 +2393,145 @@ All memory actions are available via dual namespaces: `memory.*` and `actions.me
 
 ---
 
+### Long-Term Memory Configuration
+
+Configure LTM backend in the `settings.ltm` section. Supports multiple backend types and catalog options.
+
+#### Basic Configuration
+
+```yaml
+settings:
+  ltm:
+    backend: duckdb              # "sqlite" (default), "duckdb", "litestream", "blob-sqlite"
+    catalog:
+      type: sqlite               # "sqlite", "firestore", "postgres", "supabase"
+      path: ":memory:"           # For sqlite catalog
+    storage:
+      uri: "${LTM_STORAGE:-./ltm_data/}"  # Cloud or local storage path
+    inline_threshold: 1024       # Inline data < this size in catalog (bytes)
+    lazy: true                   # Lazy initialization for serverless
+    enable_fts: true             # Full-text search (default: true)
+```
+
+#### Backend Types
+
+| Backend | Description | Best For |
+|---------|-------------|----------|
+| `sqlite` | Local SQLite with FTS5 | Development, single-node |
+| `duckdb` | DuckDB + catalog + cloud storage | Analytics, cloud storage, caching |
+| `litestream` | SQLite with S3 replication | Disaster recovery, edge sync |
+| `blob-sqlite` | SQLite on blob storage | Distributed, multi-node |
+
+#### Catalog Types (for DuckDB backend)
+
+| Catalog | Description | Best For |
+|---------|-------------|----------|
+| `sqlite` | Local SQLite | Development, testing |
+| `firestore` | Firebase Firestore | Serverless, Firebase ecosystem |
+| `postgres` | PostgreSQL | Self-hosted, SQL compatibility |
+| `supabase` | Supabase REST API | Edge, managed Postgres |
+
+#### Environment Variable Expansion
+
+LTM configuration supports `${VAR}` and `${VAR:-default}` syntax:
+
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: "${CATALOG_TYPE:-sqlite}"
+      path: "${CATALOG_PATH:-:memory:}"
+    storage:
+      uri: "${STORAGE_URI:-./ltm_data/}"
+```
+
+#### Minimal Configuration
+
+For simple use cases, use the default SQLite backend:
+
+```yaml
+settings:
+  ltm:
+    backend: sqlite  # Uses in-memory database by default
+```
+
+#### Migration Guide
+
+##### Migrating from SQLite to DuckDB Backend
+
+The DuckDB backend provides catalog-aware storage with automatic inlining for small data and cloud storage for large data. Migration is seamless:
+
+**Before (SQLite):**
+```yaml
+settings:
+  ltm:
+    backend: sqlite
+```
+Or using Python:
+```python
+engine = YAMLEngine(ltm_backend_type="sqlite", ltm_path="./memory.db")
+```
+
+**After (DuckDB):**
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: sqlite
+      path: "./memory.db"  # Reuse existing SQLite as catalog
+    storage:
+      uri: "./ltm_data/"
+```
+Or using Python:
+```python
+engine = YAMLEngine(
+    ltm_backend_type="duckdb",
+    ltm_config={
+        "catalog_config": {"type": "sqlite", "path": "./memory.db"},
+        "storage_uri": "./ltm_data/"
+    }
+)
+```
+
+**Data Migration:** Existing SQLite data is compatible - DuckDB uses the SQLite file as its catalog.
+
+##### Migrating from Blob-SQLite to DuckDB
+
+For users currently using `blob-sqlite` backend:
+
+**Before (Blob-SQLite):**
+```python
+engine = YAMLEngine(
+    ltm_backend_type="blob-sqlite",
+    ltm_config={
+        "blob_uri": "s3://bucket/prefix/",
+        "lock_backend": "firestore"
+    }
+)
+```
+
+**After (DuckDB):**
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: firestore  # Use Firestore for distributed coordination
+    storage:
+      uri: "s3://bucket/prefix/"  # Same cloud storage
+```
+
+**Key Differences:**
+- DuckDB separates catalog (metadata) from storage (values)
+- Automatic inlining for small values (<1KB by default)
+- Content-hash deduplication built-in
+- FTS search via DuckDB extension
+
 ### Long-Term Memory Actions
 
-Persistent storage using SQLite with FTS5 full-text search. Unlike session memory, data persists across engine restarts.
+Persistent storage using the configured LTM backend with full-text search. Unlike session memory, data persists across engine restarts.
 
 #### `ltm.store`
 
@@ -2461,6 +2598,162 @@ Full-text search across stored values:
 **Returns:** `{"success": true, "results": [{"key": str, "value": any, "metadata": dict, "score": float}], "count": int}`
 
 All LTM actions are available via dual namespaces: `ltm.*` and `actions.ltm_*`.
+
+---
+
+### Cache and Memoization Actions
+
+Automatic caching of action results in Long-Term Memory with configurable TTL and cache key strategies. Avoids redundant expensive operations like API calls, file processing, and LLM inference.
+
+**Required dependencies:**
+- LTM backend configured (SQLite by default)
+- `pip install fsspec` - For remote file hashing
+
+#### `cache.wrap`
+
+Wrap any action with automatic caching:
+
+```yaml
+# Cache LLM call by arguments hash
+- name: translate_cached
+  uses: cache.wrap
+  with:
+    action: llm.call
+    key_strategy: args                     # Hash all arguments
+    ttl_days: 30                           # Cache for 30 days
+    args:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: "Translate to Spanish: {{ state.text }}"
+  output: translation_result
+
+# Cache document extraction by file content hash
+- name: extract_cached
+  uses: cache.wrap
+  with:
+    action: llamaextract.extract
+    key_strategy: file_content             # Hash file content
+    key_source: file                       # Argument containing file path
+    ttl_days: 60
+    args:
+      file: "{{ state.file_path }}"
+      agent_name: "{{ state.agent_name }}"
+  output: extraction_result
+
+# Custom cache key with Jinja expression
+- name: search_cached
+  uses: cache.wrap
+  with:
+    action: web.search
+    key: "search:{{ state.query | lower | sha256 }}"
+    ttl_hours: 24
+    args:
+      query: "{{ state.query }}"
+  output: search_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `action` | string | Yes | - | Action to wrap (e.g., `llm.call`, `llamaextract.extract`) |
+| `args` | dict | Yes | - | Arguments to pass to wrapped action |
+| `key` | string | No | - | Custom cache key or Jinja expression |
+| `key_strategy` | string | No | `args` | One of: `sha256`, `args`, `custom`, `file_content` |
+| `key_source` | string | No | - | Argument name for `file_content`/`sha256` strategy |
+| `ttl_days` | int | No | 60 | Cache TTL in days |
+| `ttl_hours` | int | No | - | TTL in hours (overrides `ttl_days`) |
+| `ttl_seconds` | int | No | - | TTL in seconds (overrides `ttl_hours`) |
+| `skip_cache` | bool | No | false | Bypass cache lookup, force fresh execution |
+| `cache_enabled` | bool | No | true | Enable/disable caching entirely |
+| `cleanup_probability` | float | No | 0.05 | Probability of cleanup after cache miss |
+| `cleanup_limit` | int | No | 5 | Max expired entries to delete per cleanup |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "result": {...},        // Wrapped action result
+  "_cache_hit": true,     // Whether result came from cache
+  "_cache_key": "cache:llm.call:abc123...",
+  "_cache_created_at": "2025-01-15T10:30:00+00:00"  // If cache hit
+}
+```
+
+#### `cache.get`
+
+Retrieve cached value without executing action (for debugging/inspection):
+
+```yaml
+- name: check_cache
+  uses: cache.get
+  with:
+    key: "cache:llm.call:abc123..."        # Cache key to retrieve
+    include_metadata: true                  # Include cache metadata
+  output: cache_entry
+```
+
+**Returns:** `{"success": true, "found": bool, "value": any, "expired": bool, "metadata": dict}`
+
+#### `cache.invalidate`
+
+Delete cached entries by key or pattern:
+
+```yaml
+# Invalidate by exact key
+- name: clear_entry
+  uses: cache.invalidate
+  with:
+    key: "cache:llm.call:abc123..."
+  output: invalidate_result
+
+# Invalidate by pattern
+- name: clear_all_llm_cache
+  uses: cache.invalidate
+  with:
+    pattern: "cache:llm.call:*"
+  output: bulk_invalidate
+
+# Invalidate by metadata filter
+- name: clear_extraction_cache
+  uses: cache.invalidate
+  with:
+    metadata_filter:
+      _cache_action: llamaextract.extract
+  output: filtered_invalidate
+```
+
+**Returns:** `{"success": true, "deleted_count": int, "deleted_keys": list}`
+
+#### `storage.hash`
+
+Compute SHA256 hash of file content from any URI:
+
+```yaml
+- name: hash_document
+  uses: storage.hash
+  with:
+    path: "s3://bucket/document.pdf"       # Any fsspec URI
+    algorithm: sha256                       # sha256, md5, or blake2b
+  output: hash_result
+```
+
+**Returns:** `{"success": true, "hash": str, "algorithm": str, "size_bytes": int, "path": str}`
+
+#### sha256 Jinja Filter
+
+Compute SHA256 hash inline in templates:
+
+```yaml
+# Hash string content
+key: "{{ state.content | sha256 }}"
+
+# Combine with other filters
+key: "cache:{{ state.query | lower | sha256 }}"
+```
+
+All cache actions are available via dual namespaces: `cache.*` and `actions.cache_*`.
 
 ---
 
@@ -3006,6 +3299,25 @@ AI-powered structured data extraction via ScrapeGraphAI API (TEA-BUILTIN-008.4).
   output: merged_data
 ```
 
+```yaml
+# With caching to avoid redundant API calls (Story 008.7)
+- name: extract_cached
+  uses: web.ai_scrape
+  with:
+    url: "{{ state.url }}"
+    prompt: "Extract product data"
+    output_schema:
+      type: object
+      properties:
+        name: { type: string }
+        price: { type: string }
+    cache:
+      enabled: true              # Enable LTM caching
+      ttl_days: 30               # Cache for 30 days
+      key_strategy: "url"        # Cache by URL only
+  output: product_data
+```
+
 **Schema Sources (via Story 008.2):**
 - Inline dict via `output_schema` parameter
 - Git short refs: `owner/repo@ref#path/to/schema.json`
@@ -3015,6 +3327,24 @@ AI-powered structured data extraction via ScrapeGraphAI API (TEA-BUILTIN-008.4).
 **Schema Merging (via Story 008.3):**
 When `schema.uses` is a list, schemas are merged with kubectl-style semantics (last wins).
 
+**Caching (via Story 008.7):**
+When `cache.enabled=true`, results are stored in Long-Term Memory with configurable TTL:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | bool | false | Enable caching |
+| `ttl_days` | int | 60 | Cache TTL in days |
+| `ttl_hours` | int | - | Cache TTL in hours (overrides ttl_days) |
+| `ttl_seconds` | int | - | Cache TTL in seconds (overrides ttl_hours) |
+| `key_strategy` | str | "url" | Cache key strategy (see below) |
+| `skip_cache` | bool | false | Force fresh scrape, ignore cache |
+
+**Cache Key Strategies:**
+- `"url"` - Hash URL only (same URL always returns cached result)
+- `"url+prompt"` - Hash URL + prompt (different prompts get separate entries)
+- `"url+schema"` - Hash URL + schema (different schemas get separate entries)
+- `"url+prompt+schema"` - Hash all three (most granular)
+
 **Returns:**
 ```python
 # Success
@@ -3022,7 +3352,10 @@ When `schema.uses` is a list, schemas are merged with kubectl-style semantics (l
     "success": True,
     "data": {...},           # Extracted data matching schema
     "url": str,
-    "schema_used": {...}     # Final merged schema
+    "schema_used": {...},    # Final merged schema
+    "_cache_hit": bool,      # True if result came from cache
+    "_cache_key": str,       # Cache key used (when caching enabled)
+    "_cache_created_at": str # ISO timestamp (on cache hit)
 }
 
 # Failure

@@ -202,27 +202,27 @@ class TestParallelBranchFreshRuntime(unittest.TestCase):
         """Each parallel branch should create a new LuaRuntime, not share."""
         engine = YAMLEngine(lua_enabled=True)
 
-        # Track which runtimes are used in which threads
-        runtime_ids = {}
+        # Track actual runtime references (not id()) to prevent GC reuse
+        worker_runtimes = {}
         lock = threading.Lock()
 
         def worker(thread_name):
             runtime = engine._get_lua_runtime()
             with lock:
-                runtime_ids[thread_name] = id(runtime)
-            return id(runtime)
+                worker_runtimes[thread_name] = runtime  # Keep reference alive
+            return runtime
 
         # Run in parallel threads
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = [executor.submit(worker, f"thread_{i}") for i in range(3)]
-            results = [f.result() for f in as_completed(futures)]
+            [f.result() for f in as_completed(futures)]
 
         # All thread runtimes should be different from main thread
         main_runtime = engine._get_lua_runtime()
-        for thread_name, runtime_id in runtime_ids.items():
-            self.assertNotEqual(
-                runtime_id,
-                id(main_runtime),
+        for thread_name, worker_runtime in worker_runtimes.items():
+            self.assertIsNot(
+                worker_runtime,
+                main_runtime,
                 f"{thread_name} should have different runtime than main thread",
             )
 

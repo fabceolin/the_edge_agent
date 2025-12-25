@@ -1,8 +1,8 @@
 """
-Memory Backend Infrastructure for YAMLEngine (TEA-BUILTIN-001.1, 001.4, 001.5, 006).
+Memory Backend Infrastructure for YAMLEngine (TEA-BUILTIN-001.1, 001.4, 001.5, 001.6, 006).
 
 This package provides pluggable memory backends for short-term, long-term,
-graph storage, and Firebase agent memory infrastructure:
+graph storage, catalog metadata, and Firebase agent memory infrastructure:
 
 SHORT-TERM MEMORY (001.1):
 - InMemoryBackend: Session-scoped key-value storage with TTL support
@@ -27,6 +27,13 @@ FIREBASE AGENT MEMORY (006):
 GRAPH DATABASE (001.4):
 - CozoBackend: CozoDB with Datalog queries and HNSW vectors
 - KuzuBackend: Kuzu with Cypher queries and cloud storage
+
+CATALOG METADATA (001.6):
+- CatalogBackend: Protocol for metadata catalog storage
+- SQLiteCatalog: Local SQLite catalog (development/testing)
+- FirestoreCatalog: Firestore catalog (serverless)
+- PostgresCatalog: PostgreSQL catalog (self-hosted)
+- SupabaseCatalog: Supabase REST API catalog (edge)
 
 Example (Short-Term):
     >>> from the_edge_agent.memory import InMemoryBackend
@@ -61,13 +68,15 @@ from .short_term import (
     InMemoryBackend,
 )
 
-# LTM base class and factory (TEA-BUILTIN-001.5)
+# LTM base class and factory (TEA-BUILTIN-001.5, 001.6.4)
 from .base import (
     LTMBackend,
     register_backend,
     get_registered_backends,
     create_ltm_backend,
     parse_backend_config,
+    expand_env_vars,
+    parse_ltm_config,
 )
 
 # SQLite backend (TEA-BUILTIN-001.4, refactored in 001.5)
@@ -184,6 +193,44 @@ try:
 except ImportError:
     DuckDBVSSIndex = None  # type: ignore
 
+# Catalog Backend (TEA-BUILTIN-001.6)
+from .catalog import (
+    CatalogBackend,
+    compute_content_hash,
+    generate_entry_id,
+    register_catalog_backend,
+    get_registered_catalog_backends,
+    create_catalog_backend,
+    parse_catalog_config,
+)
+
+# Conditionally import catalog implementations
+try:
+    from .catalog_sqlite import SQLiteCatalog
+except ImportError:
+    SQLiteCatalog = None  # type: ignore
+
+try:
+    from .catalog_firestore import FirestoreCatalog
+except ImportError:
+    FirestoreCatalog = None  # type: ignore
+
+try:
+    from .catalog_postgres import PostgresCatalog
+except ImportError:
+    PostgresCatalog = None  # type: ignore
+
+try:
+    from .catalog_supabase import SupabaseCatalog
+except ImportError:
+    SupabaseCatalog = None  # type: ignore
+
+# DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
+try:
+    from .duckdb_ltm import DuckDBLTMBackend
+except ImportError:
+    DuckDBLTMBackend = None  # type: ignore
+
 __all__ = [
     # Short-term memory (TEA-BUILTIN-001.1)
     "MemoryBackend",
@@ -195,6 +242,8 @@ __all__ = [
     "get_registered_backends",
     "create_ltm_backend",
     "parse_backend_config",
+    "expand_env_vars",
+    "parse_ltm_config",
     # SQLite backend
     "SQLiteBackend",
     # Litestream backend (TEA-BUILTIN-001.5)
@@ -250,4 +299,18 @@ __all__ = [
     "register_vector_index",
     "get_registered_vector_indexes",
     "DUCKDB_VSS_AVAILABLE",
+    # Catalog Backend (TEA-BUILTIN-001.6)
+    "CatalogBackend",
+    "compute_content_hash",
+    "generate_entry_id",
+    "register_catalog_backend",
+    "get_registered_catalog_backends",
+    "create_catalog_backend",
+    "parse_catalog_config",
+    "SQLiteCatalog",
+    "FirestoreCatalog",
+    "PostgresCatalog",
+    "SupabaseCatalog",
+    # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
+    "DuckDBLTMBackend",
 ]

@@ -1,6 +1,6 @@
 # TEA-OBS-001.2: Core ObservabilityContext Infrastructure (Rust)
 
-## Status: Ready
+## Status: Done
 
 ## Story
 
@@ -87,12 +87,12 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
 
 ### Task 1: Create observability module structure (AC1, AC2)
 
-- [ ] Create `rust/src/engine/observability.rs`
-- [ ] Add module declaration to `rust/src/engine/mod.rs`:
+- [x] Create `rust/src/engine/observability.rs`
+- [x] Add module declaration to `rust/src/engine/mod.rs`:
   ```rust
   pub mod observability;
   ```
-- [ ] Define shared types:
+- [x] Define shared types:
   ```rust
   #[derive(Debug, Clone, Serialize, Deserialize)]
   pub struct LogEvent {
@@ -119,7 +119,7 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
 
 ### Task 2: Implement ObservabilityContext (AC1, AC6)
 
-- [ ] Create `ObservabilityContext` struct:
+- [x] Create `ObservabilityContext` struct:
   ```rust
   #[derive(Clone)]
   pub struct ObservabilityContext {
@@ -129,13 +129,13 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
       root_span: Span,
   }
   ```
-- [ ] Implement methods:
-  - [ ] `new(flow_id: Uuid, config: ObsConfig) -> Self`
-  - [ ] `log_entry(&self, node: &str, data: Value)`
-  - [ ] `log_exit(&self, node: &str, data: Value, duration_ms: f64)`
-  - [ ] `log_error(&self, node: &str, error: &str)`
-  - [ ] `get_flow_log(&self) -> FlowTrace`
-- [ ] Implement `FlowTrace` and `FlowMetrics`:
+- [x] Implement methods:
+  - [x] `new(flow_id: Uuid, config: ObsConfig) -> Self`
+  - [x] `log_entry(&self, node: &str, data: Value)`
+  - [x] `log_exit(&self, node: &str, data: Value, duration_ms: f64)`
+  - [x] `log_error(&self, node: &str, error: &str)`
+  - [x] `get_flow_log(&self) -> FlowTrace`
+- [x] Implement `FlowTrace` and `FlowMetrics`:
   ```rust
   pub struct FlowMetrics {
       pub total_duration_ms: f64,
@@ -147,29 +147,29 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
 
 ### Task 3: Implement EventStream ring buffer (AC2)
 
-- [ ] Create `EventStream` struct:
+- [x] Create `EventStream` struct:
   ```rust
   pub struct EventStream {
       buffer: RwLock<VecDeque<LogEvent>>,
       max_size: usize,
   }
   ```
-- [ ] Implement methods:
-  - [ ] `new(max_size: usize) -> Self`
-  - [ ] `push(&self, event: LogEvent)` - with automatic eviction
-  - [ ] `get_all(&self) -> Vec<LogEvent>` - cloned snapshot
-  - [ ] `filter<F>(&self, predicate: F) -> Vec<LogEvent>`
-  - [ ] `clear(&self)`
+- [x] Implement methods:
+  - [x] `new(max_size: usize) -> Self`
+  - [x] `push(&self, event: LogEvent)` - with automatic eviction
+  - [x] `get_all(&self) -> Vec<LogEvent>` - cloned snapshot
+  - [x] `filter<F>(&self, predicate: F) -> Vec<LogEvent>`
+  - [x] `clear(&self)`
 
 ### Task 4: Implement Layer implementations (AC3)
 
-- [ ] Create `ConsoleLayer`:
+- [x] Create `ConsoleLayer`:
   ```rust
   pub struct ConsoleLayer {
       inner: tracing_subscriber::fmt::Layer<Registry>,
   }
   ```
-- [ ] Create `FileLayer`:
+- [x] Create `FileLayer`:
   ```rust
   pub struct FileLayer {
       file: Arc<Mutex<File>>,
@@ -178,7 +178,7 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
       fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) { ... }
   }
   ```
-- [ ] Create `CallbackLayer<F>`:
+- [x] Create `CallbackLayer<F>`:
   ```rust
   pub struct CallbackLayer<F: Fn(LogEvent) + Send + Sync + 'static> {
       callback: Arc<F>,
@@ -187,7 +187,7 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
 
 ### Task 5: Implement FlowSubscriber (AC4)
 
-- [ ] Create `FlowSubscriber` struct:
+- [x] Create `FlowSubscriber` struct:
   ```rust
   pub struct FlowSubscriber {
       flow_id: Uuid,
@@ -195,17 +195,17 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
       spans: RwLock<HashMap<Id, SpanData>>,
   }
   ```
-- [ ] Implement `tracing::Subscriber` trait:
-  - [ ] `enabled(&self, metadata: &Metadata<'_>) -> bool`
-  - [ ] `new_span(&self, span: &Attributes<'_>) -> Id`
-  - [ ] `record(&self, span: &Id, values: &Record<'_>)`
-  - [ ] `event(&self, event: &Event<'_>)`
-  - [ ] `enter(&self, span: &Id)`
-  - [ ] `exit(&self, span: &Id)`
+- [x] Implement `tracing::Subscriber` trait:
+  - [x] `enabled(&self, metadata: &Metadata<'_>) -> bool`
+  - [x] `new_span(&self, span: &Attributes<'_>) -> Id`
+  - [x] `record(&self, span: &Id, values: &Record<'_>)`
+  - [x] `event(&self, event: &Event<'_>)`
+  - [x] `enter(&self, span: &Id)`
+  - [x] `exit(&self, span: &Id)`
 
 ### Task 6: Implement configuration system (AC5)
 
-- [ ] Create `ObsConfig` struct:
+- [x] Create `ObsConfig` struct:
   ```rust
   #[derive(Debug, Clone, Deserialize, Serialize, Default)]
   pub struct ObsConfig {
@@ -227,7 +227,7 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
       Callback,
   }
   ```
-- [ ] Integrate into `engine/yaml.rs`:
+- [x] Integrate into `engine/yaml.rs`:
   ```rust
   pub struct YamlConfig {
       // ... existing fields ...
@@ -238,7 +238,7 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
 
 ### Task 7: Integration with graph execution (AC1, AC6)
 
-- [ ] Modify `engine/graph.rs` to inject ObservabilityContext:
+- [x] Modify `engine/graph.rs` to inject ObservabilityContext:
   ```rust
   let obs_ctx = if self.config.observability.enabled {
       Some(ObservabilityContext::new(Uuid::new_v4(), config.clone()))
@@ -247,21 +247,21 @@ The Rust implementation currently has `tracing` and `tracing-subscriber` as depe
   };
   state["_observability"] = serde_json::to_value(&obs_ctx.flow_id)?;
   ```
-- [ ] Wrap action execution with log events:
-  - [ ] Before: `obs_ctx.log_entry(node_name, input_data)`
-  - [ ] After: `obs_ctx.log_exit(node_name, output_data, duration_ms)`
-  - [ ] On error: `obs_ctx.log_error(node_name, error_msg)`
+- [x] Wrap action execution with log events:
+  - [x] Before: `obs_ctx.log_entry(node_name, input_data)`
+  - [x] After: `obs_ctx.log_exit(node_name, output_data, duration_ms)`
+  - [x] On error: `obs_ctx.log_error(node_name, error_msg)`
 
 ### Task 8: Write comprehensive tests
 
-- [ ] Create `rust/tests/test_observability.rs`
-- [ ] Unit tests:
-  - [ ] `test_observability_context_creation()`
-  - [ ] `test_event_stream_ring_buffer()`
-  - [ ] `test_yaml_config_parsing()`
-  - [ ] `test_flow_metrics_calculation()`
-  - [ ] `test_thread_safety()`
-- [ ] Integration test with workflow execution
+- [x] Create `rust/tests/test_observability.rs`
+- [x] Unit tests:
+  - [x] `test_observability_context_creation()`
+  - [x] `test_event_stream_ring_buffer()`
+  - [x] `test_yaml_config_parsing()`
+  - [x] `test_flow_metrics_calculation()`
+  - [x] `test_thread_safety()`
+- [x] Integration test with workflow execution
 
 ## Dev Notes
 
@@ -801,17 +801,17 @@ cd rust && RUST_LOG=debug cargo test observability -- --nocapture
 
 ## Definition of Done
 
-- [ ] All 6 acceptance criteria met with passing tests
-- [ ] `ObservabilityContext` struct created and functional
-- [ ] `EventStream` ring buffer implemented with thread safety
-- [ ] Console, File, and Callback layers working
-- [ ] `FlowSubscriber` collects spans correctly
-- [ ] YAML configuration parsing works for all handler types
-- [ ] `get_flow_log()` returns complete trace with metrics
-- [ ] Test coverage > 90% for new observability module
-- [ ] No breaking changes to existing engine modules
-- [ ] Documentation in code (doc comments for all public APIs)
-- [ ] Existing tests pass: `cd rust && cargo test`
+- [x] All 6 acceptance criteria met with passing tests
+- [x] `ObservabilityContext` struct created and functional
+- [x] `EventStream` ring buffer implemented with thread safety
+- [x] Console, File, and Callback layers working
+- [x] `FlowSubscriber` collects spans correctly
+- [x] YAML configuration parsing works for all handler types
+- [x] `get_flow_log()` returns complete trace with metrics
+- [x] Test coverage > 90% for new observability module
+- [x] No breaking changes to existing engine modules
+- [x] Documentation in code (doc comments for all public APIs)
+- [x] Existing tests pass: `cd rust && cargo test`
 
 ## Dependencies
 
@@ -830,3 +830,28 @@ cd rust && RUST_LOG=debug cargo test observability -- --nocapture
 | 2024-12-23 | 1.0 | Initial story creation | Sarah (PO) |
 | 2024-12-23 | 1.1 | Added full Rust implementation: LogEvent, EventStream, ObservabilityContext, FlowCollectorLayer, ObsConfig | Sarah (PO) |
 | 2024-12-23 | 1.2 | Status changed to Ready | Sarah (PO) |
+| 2025-12-25 | 1.3 | Implementation verified complete, all 22 tests passing, status changed to Done | James (Dev) |
+
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `rust/src/engine/observability.rs` | Created | ObservabilityContext, EventStream, handlers, FlowTrace |
+| `rust/src/engine/mod.rs` | Modified | Added observability module export |
+| `rust/src/engine/executor.rs` | Modified | Integrated observability context |
+| `rust/tests/test_observability.rs` | Created | 22 tests for observability infrastructure |
+
+### Debug Log References
+None - implementation completed without issues
+
+### Completion Notes
+- All 22 tests pass
+- Implementation matches Python schema for cross-runtime parity
+- Thread-safe via RwLock for EventStream
+- YAML configuration parsing functional
+- Integration with executor working for auto-instrumentation

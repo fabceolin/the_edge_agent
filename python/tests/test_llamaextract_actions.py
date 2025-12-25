@@ -30,16 +30,16 @@ class TestLlamaExtractActionsRegistration:
         register_actions(registry, engine=None)
 
         expected_actions = [
-            'llamaextract.extract',
-            'llamaextract.upload_agent',
-            'llamaextract.list_agents',
-            'llamaextract.get_agent',
-            'llamaextract.delete_agent',
-            'actions.llamaextract_extract',
-            'actions.llamaextract_upload_agent',
-            'actions.llamaextract_list_agents',
-            'actions.llamaextract_get_agent',
-            'actions.llamaextract_delete_agent',
+            "llamaextract.extract",
+            "llamaextract.upload_agent",
+            "llamaextract.list_agents",
+            "llamaextract.get_agent",
+            "llamaextract.delete_agent",
+            "actions.llamaextract_extract",
+            "actions.llamaextract_upload_agent",
+            "actions.llamaextract_list_agents",
+            "actions.llamaextract_get_agent",
+            "actions.llamaextract_delete_agent",
         ]
 
         for action in expected_actions:
@@ -56,10 +56,8 @@ class TestLlamaExtractExtract:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.extract'](
-            state={},
-            file="",
-            schema={"type": "object"}
+        result = registry["llamaextract.extract"](
+            state={}, file="", schema={"type": "object"}
         )
 
         assert result["success"] is False
@@ -72,9 +70,8 @@ class TestLlamaExtractExtract:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.extract'](
-            state={},
-            file="https://example.com/doc.pdf"
+        result = registry["llamaextract.extract"](
+            state={}, file="https://example.com/doc.pdf"
         )
 
         assert result["success"] is False
@@ -91,23 +88,25 @@ class TestLlamaExtractExtract:
         with patch.dict(os.environ, {}, clear=True):
             # Remove existing keys if present
             env_backup = {}
-            for key in ['LLAMAEXTRACT_API_KEY', 'LLAMAPARSE_API_KEY']:
+            for key in ["LLAMAEXTRACT_API_KEY", "LLAMAPARSE_API_KEY"]:
                 if key in os.environ:
                     env_backup[key] = os.environ.pop(key)
 
             try:
-                result = registry['llamaextract.extract'](
+                result = registry["llamaextract.extract"](
                     state={},
                     file="https://example.com/doc.pdf",
-                    schema={"type": "object"}
+                    schema={"type": "object"},
                 )
 
                 assert result["success"] is False
                 # Either API key error or dependency error (package not installed)
                 error_lower = result["error"].lower()
-                assert ("api_key" in error_lower or
-                        "environment" in error_lower or
-                        "not installed" in error_lower)
+                assert (
+                    "api_key" in error_lower
+                    or "environment" in error_lower
+                    or "not installed" in error_lower
+                )
             finally:
                 # Restore keys
                 os.environ.update(env_backup)
@@ -120,11 +119,9 @@ class TestLlamaExtractExtract:
         register_actions(registry, engine=None)
 
         # Mock the client to avoid API key issues
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            result = registry['llamaextract.extract'](
-                state={},
-                file="/nonexistent/file.pdf",
-                schema={"type": "object"}
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            result = registry["llamaextract.extract"](
+                state={}, file="/nonexistent/file.pdf", schema={"type": "object"}
             )
 
             assert result["success"] is False
@@ -138,12 +135,10 @@ class TestLlamaExtractExtract:
         registry = {}
         register_actions(registry, engine=None)
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
             # This will fail at dependency level, but validates URL is accepted
-            result = registry['llamaextract.extract'](
-                state={},
-                file="https://example.com/doc.pdf",
-                schema={"type": "object"}
+            result = registry["llamaextract.extract"](
+                state={}, file="https://example.com/doc.pdf", schema={"type": "object"}
             )
 
             # Should fail at dependency or API level, not validation
@@ -157,13 +152,13 @@ class TestLlamaExtractExtract:
         registry = {}
         register_actions(registry, engine=None)
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
             # The mode validation happens when getting the client
-            result = registry['llamaextract.extract'](
+            result = registry["llamaextract.extract"](
                 state={},
                 file="https://example.com/doc.pdf",
                 schema={"type": "object"},
-                mode="INVALID_MODE"
+                mode="INVALID_MODE",
             )
 
             # Either configuration or dependency error depending on import success
@@ -187,10 +182,8 @@ class TestLlamaExtractUploadAgent:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.upload_agent'](
-            state={},
-            name="",
-            schema={"type": "object"}
+        result = registry["llamaextract.upload_agent"](
+            state={}, name="", schema={"type": "object"}
         )
 
         assert result["success"] is False
@@ -203,10 +196,8 @@ class TestLlamaExtractUploadAgent:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.upload_agent'](
-            state={},
-            name="test-agent",
-            schema=None
+        result = registry["llamaextract.upload_agent"](
+            state={}, name="test-agent", schema=None
         )
 
         assert result["success"] is False
@@ -225,12 +216,12 @@ class TestLlamaExtractListAgents:
 
         # Ensure no API key
         env_backup = {}
-        for key in ['LLAMAEXTRACT_API_KEY', 'LLAMAPARSE_API_KEY']:
+        for key in ["LLAMAEXTRACT_API_KEY", "LLAMAPARSE_API_KEY"]:
             if key in os.environ:
                 env_backup[key] = os.environ.pop(key)
 
         try:
-            result = registry['llamaextract.list_agents'](state={})
+            result = registry["llamaextract.list_agents"](state={})
             assert result["success"] is False
         finally:
             os.environ.update(env_backup)
@@ -246,10 +237,13 @@ class TestLlamaExtractGetAgent:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.get_agent'](state={})
+        result = registry["llamaextract.get_agent"](state={})
 
         assert result["success"] is False
-        assert "agent_id" in result["error"].lower() or "agent_name" in result["error"].lower()
+        assert (
+            "agent_id" in result["error"].lower()
+            or "agent_name" in result["error"].lower()
+        )
 
 
 class TestLlamaExtractDeleteAgent:
@@ -262,10 +256,13 @@ class TestLlamaExtractDeleteAgent:
         registry = {}
         register_actions(registry, engine=None)
 
-        result = registry['llamaextract.delete_agent'](state={})
+        result = registry["llamaextract.delete_agent"](state={})
 
         assert result["success"] is False
-        assert "agent_id" in result["error"].lower() or "agent_name" in result["error"].lower()
+        assert (
+            "agent_id" in result["error"].lower()
+            or "agent_name" in result["error"].lower()
+        )
 
 
 class TestRetryLogic:
@@ -284,7 +281,7 @@ class TestRetryLogic:
         max_delay = 30.0
 
         for attempt in range(5):
-            expected_delay = min(base_delay * (2 ** attempt), max_delay)
+            expected_delay = min(base_delay * (2**attempt), max_delay)
             assert expected_delay <= max_delay
 
 
@@ -311,10 +308,10 @@ class TestErrorTypes:
         register_actions(registry, engine=None)
 
         # Test validation errors
-        result = registry['llamaextract.extract'](state={}, file="")
+        result = registry["llamaextract.extract"](state={}, file="")
         assert result["error_type"] == "validation"
 
-        result = registry['llamaextract.get_agent'](state={})
+        result = registry["llamaextract.get_agent"](state={})
         assert result["error_type"] == "validation"
 
 
@@ -329,15 +326,15 @@ class TestMockedApiCalls:
         register_actions(registry, engine=None)
 
         # Verify the action is registered and callable
-        assert 'llamaextract.extract' in registry
-        assert callable(registry['llamaextract.extract'])
+        assert "llamaextract.extract" in registry
+        assert callable(registry["llamaextract.extract"])
 
         # Test with valid inputs (will fail at dependency level)
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            result = registry["llamaextract.extract"](
                 state={},
                 file="https://example.com/doc.pdf",
-                schema={"type": "object", "properties": {"total": {"type": "number"}}}
+                schema={"type": "object", "properties": {"total": {"type": "number"}}},
             )
 
             # Should return a dict with expected keys
@@ -363,7 +360,7 @@ class TestMockedApiCalls:
         mock_client = MagicMock()
         mock_client.list_agents.return_value = [mock_agent1, mock_agent2]
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
             # This validates structure, full mock would require more setup
             pass
 
@@ -384,19 +381,20 @@ class TestLocalFileHandling:
             test_content = b"PDF content here"
             test_file.write_bytes(test_content)
 
-            with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
+            with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
                 # The action will fail at client creation, but we can verify
                 # the file handling code path is exercised
-                result = registry['llamaextract.extract'](
-                    state={},
-                    file=str(test_file),
-                    schema={"type": "object"}
+                result = registry["llamaextract.extract"](
+                    state={}, file=str(test_file), schema={"type": "object"}
                 )
 
                 # Will fail at dependency/client, but file was read
                 assert result["success"] is False
                 # Should not be file_not_found since file exists
-                assert result["error_type"] != "file_not_found" or "dependency" in result["error_type"]
+                assert (
+                    result["error_type"] != "file_not_found"
+                    or "dependency" in result["error_type"]
+                )
 
 
 class TestBase64Handling:
@@ -410,19 +408,20 @@ class TestBase64Handling:
         register_actions(registry, engine=None)
 
         # Create base64 content
-        content = base64.b64encode(b"PDF content").decode('utf-8')
+        content = base64.b64encode(b"PDF content").decode("utf-8")
         base64_file = f"data:application/pdf;base64,{content}"
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            result = registry['llamaextract.extract'](
-                state={},
-                file=base64_file,
-                schema={"type": "object"}
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            result = registry["llamaextract.extract"](
+                state={}, file=base64_file, schema={"type": "object"}
             )
 
             # Will fail at dependency, but base64 parsing should work
             assert result["success"] is False
-            assert "file" not in result.get("error", "").lower() or "dependency" in result["error_type"]
+            assert (
+                "file" not in result.get("error", "").lower()
+                or "dependency" in result["error_type"]
+            )
 
 
 # ============================================================
@@ -435,7 +434,7 @@ def _mock_url_download():
     mock_get_response = MagicMock()
     mock_get_response.status_code = 200
     mock_get_response.content = b"fake pdf content"
-    mock_get_response.headers = {'Content-Type': 'application/pdf'}
+    mock_get_response.headers = {"Content-Type": "application/pdf"}
     mock_get_response.raise_for_status = MagicMock()
     return mock_get_response
 
@@ -457,21 +456,21 @@ class TestRestApiSuccessfulExtraction:
             "data": {"invoice_number": "INV-001", "total": 100.50}
         }
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response):
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch("requests.post", return_value=mock_post_response):
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/invoice.pdf",
                         schema={
                             "type": "object",
                             "properties": {
                                 "invoice_number": {"type": "string"},
-                                "total": {"type": "number"}
-                            }
+                                "total": {"type": "number"},
+                            },
                         },
                         mode="PREMIUM",
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is True
@@ -490,19 +489,24 @@ class TestRestApiSuccessfulExtraction:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     # Verify endpoint
                     call_args = mock_post.call_args
-                    assert "api.cloud.llamaindex.ai/api/v1/extraction/run" in call_args[0][0]
+                    assert (
+                        "api.cloud.llamaindex.ai/api/v1/extraction/run"
+                        in call_args[0][0]
+                    )
 
 
 class TestRestApiFileHandling:
@@ -519,14 +523,16 @@ class TestRestApiFileHandling:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {"result": "test"}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()) as mock_get:
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()) as mock_get:
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/document.pdf",
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is True
@@ -550,16 +556,13 @@ class TestRestApiFileHandling:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {"result": "test"}}
 
-        content = base64.b64encode(b"PDF content").decode('utf-8')
+        content = base64.b64encode(b"PDF content").decode("utf-8")
         base64_file = f"data:application/pdf;base64,{content}"
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.post', return_value=mock_post_response) as mock_post:
-                result = registry['llamaextract.extract'](
-                    state={},
-                    file=base64_file,
-                    schema={"type": "object"},
-                    use_rest=True
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.post", return_value=mock_post_response) as mock_post:
+                result = registry["llamaextract.extract"](
+                    state={}, file=base64_file, schema={"type": "object"}, use_rest=True
                 )
 
                 assert result["success"] is True
@@ -585,15 +588,17 @@ class TestRestApiFileHandling:
             test_content = b"PDF content here"
             test_file.write_bytes(test_content)
 
-            expected_base64 = base64.b64encode(test_content).decode('utf-8')
+            expected_base64 = base64.b64encode(test_content).decode("utf-8")
 
-            with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    result = registry['llamaextract.extract'](
+            with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file=str(test_file),
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is True
@@ -622,16 +627,18 @@ class TestRestApiRateLimitRetry:
         mock_response_200.status_code = 200
         mock_response_200.json.return_value = {"data": {"success": True}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', side_effect=[mock_response_429, mock_response_200]) as mock_post:
-                    with patch('time.sleep') as mock_sleep:
-                        result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", side_effect=[mock_response_429, mock_response_200]
+                ) as mock_post:
+                    with patch("time.sleep") as mock_sleep:
+                        result = registry["llamaextract.extract"](
                             state={},
                             file="https://example.com/doc.pdf",
                             schema={"type": "object"},
                             max_retries=3,
-                            use_rest=True
+                            use_rest=True,
                         )
 
                         # Should succeed after retry
@@ -651,16 +658,16 @@ class TestRestApiRateLimitRetry:
         mock_response_429 = MagicMock()
         mock_response_429.status_code = 429
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_response_429):
-                    with patch('time.sleep'):
-                        result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch("requests.post", return_value=mock_response_429):
+                    with patch("time.sleep"):
+                        result = registry["llamaextract.extract"](
                             state={},
                             file="https://example.com/doc.pdf",
                             schema={"type": "object"},
                             max_retries=3,
-                            use_rest=True
+                            use_rest=True,
                         )
 
                         assert result["success"] is False
@@ -684,15 +691,17 @@ class TestRestApiServerErrorRetry:
         mock_response_200.status_code = 200
         mock_response_200.json.return_value = {"data": {"success": True}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', side_effect=[mock_response_500, mock_response_200]) as mock_post:
-                    with patch('time.sleep'):
-                        result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", side_effect=[mock_response_500, mock_response_200]
+                ) as mock_post:
+                    with patch("time.sleep"):
+                        result = registry["llamaextract.extract"](
                             state={},
                             file="https://example.com/doc.pdf",
                             schema={"type": "object"},
-                            use_rest=True
+                            use_rest=True,
                         )
 
                         assert result["success"] is True
@@ -714,14 +723,16 @@ class TestRestApiClientError:
         mock_response_400.text = "Bad request"
         mock_response_400.json.return_value = {"detail": "Invalid schema"}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_response_400) as mock_post:
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_response_400
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     # Should fail immediately
@@ -741,14 +752,16 @@ class TestRestApiClientError:
         mock_response_401.status_code = 401
         mock_response_401.text = "Unauthorized"
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'bad-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_response_401) as mock_post:
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "bad-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_response_401
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is False
@@ -767,15 +780,18 @@ class TestRestApiTimeout:
         registry = {}
         register_actions(registry, engine=None)
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', side_effect=requests.Timeout("Connection timed out")):
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post",
+                    side_effect=requests.Timeout("Connection timed out"),
+                ):
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
                         timeout=30,
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is False
@@ -793,15 +809,15 @@ class TestRestApiTimeout:
         mock_response.status_code = 200
         mock_response.json.return_value = {"data": {}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_response) as mock_post:
-                    registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch("requests.post", return_value=mock_response) as mock_post:
+                    registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
                         timeout=60,
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     # Verify timeout was passed (capped at 120 for initial request)
@@ -821,21 +837,24 @@ class TestRestApiMissingApiKey:
 
         # Clear API keys
         env_backup = {}
-        for key in ['LLAMAEXTRACT_API_KEY', 'LLAMAPARSE_API_KEY']:
+        for key in ["LLAMAEXTRACT_API_KEY", "LLAMAPARSE_API_KEY"]:
             if key in os.environ:
                 env_backup[key] = os.environ.pop(key)
 
         try:
-            result = registry['llamaextract.extract'](
+            result = registry["llamaextract.extract"](
                 state={},
                 file="https://example.com/doc.pdf",
                 schema={"type": "object"},
-                use_rest=True
+                use_rest=True,
             )
 
             assert result["success"] is False
             assert result["error_type"] == "configuration"
-            assert "api_key" in result["error"].lower() or "environment" in result["error"].lower()
+            assert (
+                "api_key" in result["error"].lower()
+                or "environment" in result["error"].lower()
+            )
         finally:
             os.environ.update(env_backup)
 
@@ -859,8 +878,8 @@ class TestRestApiFullFlow:
                 "total_amount": 1500.00,
                 "line_items": [
                     {"description": "Widget A", "quantity": 10, "price": 100.00},
-                    {"description": "Widget B", "quantity": 5, "price": 100.00}
-                ]
+                    {"description": "Widget B", "quantity": 5, "price": 100.00},
+                ],
             }
         }
 
@@ -877,23 +896,25 @@ class TestRestApiFullFlow:
                         "properties": {
                             "description": {"type": "string"},
                             "quantity": {"type": "integer"},
-                            "price": {"type": "number"}
-                        }
-                    }
-                }
-            }
+                            "price": {"type": "number"},
+                        },
+                    },
+                },
+            },
         }
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-api-key-12345'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-api-key-12345"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/invoice.pdf",
                         schema=schema,
                         mode="PREMIUM",
                         timeout=300,
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     # Verify success
@@ -934,14 +955,16 @@ class TestRestApiFullFlow:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {"result": "extracted"}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         agent_id="agent-123-456",
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     assert result["success"] is True
@@ -959,21 +982,24 @@ class TestRestApiBackwardsCompatibility:
     def test_default_uses_sdk(self):
         """Test that default path uses SDK (for client-side validation)."""
         from the_edge_agent.actions.llamaextract_actions import register_actions
+        import sys
 
         registry = {}
         register_actions(registry, engine=None)
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            # Default (no use_rest) should try SDK (will fail on import)
-            result = registry['llamaextract.extract'](
-                state={},
-                file="https://example.com/doc.pdf",
-                schema={"type": "object"}
-            )
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            # Mock the SDK import to simulate it not being installed
+            with patch.dict(sys.modules, {"llama_cloud_services": None}):
+                # Default (no use_rest) should try SDK (will fail on import)
+                result = registry["llamaextract.extract"](
+                    state={},
+                    file="https://example.com/doc.pdf",
+                    schema={"type": "object"},
+                )
 
-            # Should fail at dependency level (SDK not installed)
-            assert result["success"] is False
-            assert result["error_type"] == "dependency"
+                # Should fail at dependency level (SDK not installed)
+                assert result["success"] is False
+                assert result["error_type"] == "dependency"
 
     def test_use_rest_flag(self):
         """Test use_rest=True uses REST API directly."""
@@ -986,14 +1012,14 @@ class TestRestApiBackwardsCompatibility:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {"result": "success"}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response):
-                    result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch("requests.post", return_value=mock_post_response):
+                    result = registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     # Should succeed via REST API
@@ -1002,22 +1028,25 @@ class TestRestApiBackwardsCompatibility:
     def test_agent_name_uses_sdk(self):
         """Test that agent_name parameter always uses SDK path."""
         from the_edge_agent.actions.llamaextract_actions import register_actions
+        import sys
 
         registry = {}
         register_actions(registry, engine=None)
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            # agent_name requires SDK (even with use_rest=True)
-            result = registry['llamaextract.extract'](
-                state={},
-                file="https://example.com/doc.pdf",
-                agent_name="my-agent",
-                use_rest=True  # Should be ignored when agent_name is provided
-            )
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            # Mock the SDK import to simulate it not being installed
+            with patch.dict(sys.modules, {"llama_cloud_services": None}):
+                # agent_name requires SDK (even with use_rest=True)
+                result = registry["llamaextract.extract"](
+                    state={},
+                    file="https://example.com/doc.pdf",
+                    agent_name="my-agent",
+                    use_rest=True,  # Should be ignored when agent_name is provided
+                )
 
-            # Should fail at dependency level (SDK not installed)
-            assert result["success"] is False
-            assert result["error_type"] == "dependency"
+                # Should fail at dependency level (SDK not installed)
+                assert result["success"] is False
+                assert result["error_type"] == "dependency"
 
 
 class TestRestApiExtractionModes:
@@ -1035,15 +1064,17 @@ class TestRestApiExtractionModes:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
                         mode=mode,
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     call_kwargs = mock_post.call_args[1]
@@ -1061,15 +1092,17 @@ class TestRestApiExtractionModes:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', return_value=mock_post_response) as mock_post:
-                    registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post", return_value=mock_post_response
+                ) as mock_post:
+                    registry["llamaextract.extract"](
                         state={},
                         file="https://example.com/doc.pdf",
                         schema={"type": "object"},
                         mode="premium",  # lowercase
-                        use_rest=True
+                        use_rest=True,
                     )
 
                     call_kwargs = mock_post.call_args[1]
@@ -1092,19 +1125,22 @@ class TestRestApiConnectionError:
         mock_post_response.status_code = 200
         mock_post_response.json.return_value = {"data": {"success": True}}
 
-        with patch.dict(os.environ, {'LLAMAEXTRACT_API_KEY': 'test-key'}):
-            with patch('requests.get', return_value=_mock_url_download()):
-                with patch('requests.post', side_effect=[
-                    requests.ConnectionError("Connection refused"),
-                    mock_post_response
-                ]) as mock_post:
-                    with patch('time.sleep'):
-                        result = registry['llamaextract.extract'](
+        with patch.dict(os.environ, {"LLAMAEXTRACT_API_KEY": "test-key"}):
+            with patch("requests.get", return_value=_mock_url_download()):
+                with patch(
+                    "requests.post",
+                    side_effect=[
+                        requests.ConnectionError("Connection refused"),
+                        mock_post_response,
+                    ],
+                ) as mock_post:
+                    with patch("time.sleep"):
+                        result = registry["llamaextract.extract"](
                             state={},
                             file="https://example.com/doc.pdf",
                             schema={"type": "object"},
                             max_retries=3,
-                            use_rest=True
+                            use_rest=True,
                         )
 
                         # Should succeed after retry
