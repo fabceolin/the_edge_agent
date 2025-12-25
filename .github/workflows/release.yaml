@@ -987,8 +987,9 @@ jobs:
         run: |
           docker run --rm -v $(pwd):/work ubuntu:22.04 bash -c '
             chmod +x /work/tea-*-x86_64.AppImage
-            /work/tea-*-x86_64.AppImage --version
-            /work/tea-*-x86_64.AppImage run /work/examples/prolog/simple-prolog-agent.yaml
+            # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
+            /work/tea-*-x86_64.AppImage --appimage-extract-and-run --version
+            /work/tea-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/prolog/simple-prolog-agent.yaml
           '
 
       - name: Check AppImage size
