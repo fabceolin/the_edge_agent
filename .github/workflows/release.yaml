@@ -745,7 +745,11 @@ jobs:
       - name: Install SWI-Prolog
         run: |
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox libswipl-dev pkg-config
+          # On Ubuntu 24.04, swi-prolog-nox includes headers and libs (no separate libswipl-dev)
+          sudo apt-get install -y swi-prolog-nox pkg-config
+          # Fix pkg-config path mismatch: pkg-config reports /usr/lib/swi-prolog/lib/x86_64-linux
+          # but library is at /usr/lib/x86_64-linux-gnu/
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libswipl.so /usr/lib/swi-prolog/lib/x86_64-linux/libswipl.so
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -764,31 +768,25 @@ jobs:
       - name: Build release binary with Prolog feature
         run: |
           cd rust
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/x86_64-linux:$LD_LIBRARY_PATH \
-            cargo build --release --features prolog --bin tea
+          cargo build --release --features prolog --bin tea
 
       - name: Copy binary
         run: |
           cp rust/target/release/tea tea-rust-linux-x86_64-prolog
 
       - name: Smoke test - version
-        run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/x86_64-linux:$LD_LIBRARY_PATH \
-            ./tea-rust-linux-x86_64-prolog --version
+        run: ./tea-rust-linux-x86_64-prolog --version
 
       - name: Smoke test - impl
         run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/x86_64-linux:$LD_LIBRARY_PATH \
-            impl=$(./tea-rust-linux-x86_64-prolog --impl)
+          impl=$(./tea-rust-linux-x86_64-prolog --impl)
           if [ "$impl" != "rust" ]; then
             echo "Error: Expected 'rust', got '$impl'"
             exit 1
           fi
 
       - name: Functional test - run Prolog example
-        run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/x86_64-linux:$LD_LIBRARY_PATH \
-            ./tea-rust-linux-x86_64-prolog run examples/prolog/simple-prolog-agent.yaml
+        run: ./tea-rust-linux-x86_64-prolog run examples/prolog/simple-prolog-agent.yaml
 
       - name: Check binary size
         run: |
@@ -813,7 +811,11 @@ jobs:
       - name: Install SWI-Prolog
         run: |
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox libswipl-dev pkg-config
+          # On Ubuntu 24.04, swi-prolog-nox includes headers and libs (no separate libswipl-dev)
+          sudo apt-get install -y swi-prolog-nox pkg-config
+          # Fix pkg-config path mismatch: pkg-config reports /usr/lib/swi-prolog/lib/aarch64-linux
+          # but library is at /usr/lib/aarch64-linux-gnu/
+          sudo ln -sf /usr/lib/aarch64-linux-gnu/libswipl.so /usr/lib/swi-prolog/lib/aarch64-linux/libswipl.so
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -832,31 +834,25 @@ jobs:
       - name: Build release binary with Prolog feature
         run: |
           cd rust
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/aarch64-linux:$LD_LIBRARY_PATH \
-            cargo build --release --features prolog --bin tea
+          cargo build --release --features prolog --bin tea
 
       - name: Copy binary
         run: |
           cp rust/target/release/tea tea-rust-linux-arm64-prolog
 
       - name: Smoke test - version
-        run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/aarch64-linux:$LD_LIBRARY_PATH \
-            ./tea-rust-linux-arm64-prolog --version
+        run: ./tea-rust-linux-arm64-prolog --version
 
       - name: Smoke test - impl
         run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/aarch64-linux:$LD_LIBRARY_PATH \
-            impl=$(./tea-rust-linux-arm64-prolog --impl)
+          impl=$(./tea-rust-linux-arm64-prolog --impl)
           if [ "$impl" != "rust" ]; then
             echo "Error: Expected 'rust', got '$impl'"
             exit 1
           fi
 
       - name: Functional test - run Prolog example
-        run: |
-          LD_LIBRARY_PATH=/usr/lib/swi-prolog/lib/aarch64-linux:$LD_LIBRARY_PATH \
-            ./tea-rust-linux-arm64-prolog run examples/prolog/simple-prolog-agent.yaml
+        run: ./tea-rust-linux-arm64-prolog run examples/prolog/simple-prolog-agent.yaml
 
       - name: Check binary size
         run: |
@@ -878,7 +874,7 @@ jobs:
   build-appimage-x86_64:
     runs-on: ubuntu-latest
     needs: [build-rust-prolog-linux-x86_64]
-    name: AppImage x86_64
+    name: Rust AppImage x86_64 with Prolog
 
     steps:
       - uses: actions/checkout@v4
@@ -886,7 +882,8 @@ jobs:
       - name: Install SWI-Prolog and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox libswipl-dev file libfuse2
+          # On Ubuntu 24.04, swi-prolog-nox includes headers and libs (no separate libswipl-dev)
+          sudo apt-get install -y swi-prolog-nox file libfuse2
 
       - name: Download Prolog binary
         uses: actions/download-artifact@v4
@@ -1010,7 +1007,7 @@ jobs:
   build-appimage-aarch64:
     runs-on: ubuntu-24.04-arm
     needs: [build-rust-prolog-linux-arm64]
-    name: AppImage aarch64
+    name: Rust AppImage aarch64 with Prolog
 
     steps:
       - uses: actions/checkout@v4
@@ -1018,7 +1015,8 @@ jobs:
       - name: Install SWI-Prolog and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox libswipl-dev file libfuse2
+          # On Ubuntu 24.04, swi-prolog-nox includes headers and libs (no separate libswipl-dev)
+          sudo apt-get install -y swi-prolog-nox file libfuse2
 
       - name: Download Prolog binary
         uses: actions/download-artifact@v4
