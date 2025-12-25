@@ -1,6 +1,6 @@
 # YAML Agent Reference
 
-Version: 0.8.1
+Version: 0.8.8
 
 Complete reference for declarative agent configuration in The Edge Agent using YAML files.
 
@@ -43,7 +43,13 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
   - [Checkpoint Actions](#checkpoint-actions)
   - [Schema Actions](#schema-actions)
   - [LlamaExtract Actions](#llamaextract-actions)
+  - [Validation Actions](#validation-actions)
   - [Custom Actions](#custom-actions)
+- [Extraction Validation](#extraction-validation)
+  - [Extraction Schema](#extraction-schema)
+  - [Validation Constraints](#validation-constraints)
+  - [Semantic Probes](#semantic-probes)
+  - [Validation Logging](#validation-logging)
 - [Checkpoint Persistence](#checkpoint-persistence)
 - [Complete Examples](#complete-examples)
 - [Python API](#python-api)
@@ -3781,6 +3787,43 @@ Delete an extraction agent:
 
 ---
 
+### Validation Actions
+
+Actions for validating LLM-extracted data using structural schemas, Prolog constraints, and semantic probes.
+
+#### validate.extraction
+
+Validates extracted entities and relationships through 3 layers:
+
+```yaml
+- name: validate_data
+  action: validate.extraction
+  inputs:
+    entities: "{{ state.entities }}"
+    relationships: "{{ state.relationships }}"
+    source_text: "{{ state.input_text }}"  # For semantic probes
+  output: validation_result
+```
+
+The validation result includes:
+- `valid`: Boolean indicating overall validation success
+- `errors`: List of validation errors with details
+- `validated_at`: ISO timestamp
+
+#### validate.generate_prompt
+
+Generates a schema-guided extraction prompt from the `extraction_schema`:
+
+```yaml
+- name: get_prompt
+  action: validate.generate_prompt
+  output: extraction_prompt
+```
+
+This is automatically done when `guide_extraction: true` is set in the schema.
+
+---
+
 ### Custom Actions
 
 Register custom actions in Python:
@@ -3804,6 +3847,208 @@ Use in YAML:
     param1: value1
     param2: "{{ state.dynamic_value }}"
   output: custom_result
+```
+
+---
+
+## Extraction Validation
+
+The Edge Agent provides a powerful 3-layer validation framework for LLM-extracted data:
+
+1. **Layer 1: Structural Validation** - Schema-based field requirements
+2. **Layer 2: Semantic Validation** - Prolog constraint rules
+3. **Layer 3: Grounding Validation** - LLM-verified semantic probes
+
+This neurosymbolic approach combines symbolic reasoning (Prolog) with neural verification (LLM probes) for robust extraction validation.
+
+### Extraction Schema
+
+Defines the structure of expected entities and relationships:
+
+```yaml
+extraction_schema:
+  entities:
+    required_fields: [name, type]       # Fields that must be present
+    optional_fields: [birth_date]       # Fields that may be present
+    type_field: type                    # Field containing entity type
+
+  relationships:
+    types: [mother, father, spouse]     # Allowed relationship types
+    required_fields: [type, subject, object]
+    optional_fields: [confidence]
+    type_requirements:                  # Type-specific requirements
+      affair:
+        - start_date
+        - end_date
+
+  guide_extraction: true                # Generate extraction prompt
+  confidence_tracking: true             # Include confidence in Prolog facts
+```
+
+**Field Descriptions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entities.required_fields` | list | Fields every entity must have |
+| `entities.optional_fields` | list | Fields entities may have |
+| `entities.type_field` | string | Field name containing entity type (default: `type`) |
+| `relationships.types` | list | Allowed relationship type values (empty = any) |
+| `relationships.required_fields` | list | Fields every relationship must have |
+| `relationships.type_requirements` | dict | Extra required fields per relationship type |
+| `guide_extraction` | bool | If true, generates `extraction_prompt` variable |
+| `confidence_tracking` | bool | If true, passes confidence to Prolog facts |
+
+**Error Types:**
+- `missing_required_field`: Required field is missing or null
+- `invalid_relationship_type`: Relationship type not in allowed list
+
+### Validation Constraints
+
+Prolog rules for semantic validation:
+
+```yaml
+validation_constraints:
+  language: prolog                      # Only "prolog" supported
+  rules: |
+    % A person cannot be their own parent
+    validation_error(self_parent, Person) :-
+        relationship(Type, Person, Person),
+        member(Type, ['mother', 'father']).
+
+    % Each child can have at most one mother
+    validation_error(multiple_mothers, Child) :-
+        relationship('mother', M1, Child),
+        relationship('mother', M2, Child),
+        M1 \= M2.
+
+    % Warn on low confidence (using entity/3 with confidence)
+    validation_error(low_confidence, Entity) :-
+        entity(Entity, _, Conf),
+        Conf < 0.5.
+```
+
+**Available Prolog Predicates:**
+
+| Predicate | Description |
+|-----------|-------------|
+| `entity(Name, Type)` | Entity without confidence |
+| `entity(Name, Type, Confidence)` | Entity with confidence (when `confidence_tracking: true`) |
+| `relationship(Type, Subject, Object)` | Basic relationship |
+| `relationship(Type, Subject, Object, Confidence)` | With confidence |
+| `relationship(Type, Subject, Object, Start, End)` | With date range |
+| `validation_error(ErrorType, Context)` | Define a constraint violation |
+
+When any `validation_error/2` predicate succeeds, validation fails.
+
+### Semantic Probes
+
+LLM-verified grounding checks:
+
+```yaml
+semantic_probes:
+  - for_each: relationship              # "entity" or "relationship"
+    where: "type == 'mother'"           # Optional filter condition
+    probe: |
+      Based on the text, is {{ subject }} explicitly stated
+      to be the mother of {{ object }}?
+
+      Text: "{{ state.input_text }}"
+    on_fail: reject                     # "reject" (fail-fast) or "warn"
+
+  - for_each: entity
+    probe: "Is {{ name }} a real person mentioned in the text?"
+    on_fail: warn
+```
+
+**Field Descriptions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `for_each` | string | Item type to iterate: `entity` or `relationship` |
+| `where` | string | Filter expression (e.g., `type == 'mother'`) |
+| `probe` | string | Jinja2 template for yes/no question |
+| `on_fail` | string | `reject` (default) for fail-fast, `warn` to continue |
+
+**Template Variables:**
+
+- All fields from the current entity/relationship
+- `{{ state.field }}` - Access full state
+- `{{ text }}` - Source text passed to validation
+
+**Error Types:**
+- `semantic_probe_failed`: LLM answered "no" to probe
+- `probe_execution_error`: LLM call failed
+- `configuration_error`: No LLM configured for probes
+
+### Validation Logging
+
+Log failures for analysis and model improvement:
+
+```yaml
+validation_logging:
+  enabled: true
+  log_path: "${VALIDATION_LOG_PATH:-./validation_failures.jsonl}"
+  include_source: true                  # Include source text
+  include_timestamp: true               # Include ISO timestamp
+```
+
+**JSONL Output Format:**
+
+```json
+{
+  "agent_name": "family-extractor",
+  "source_hash": "a1b2c3...",
+  "source_text": "Mary is the mother of John.",
+  "entities": [...],
+  "relationships": [...],
+  "validation_result": {"valid": false, "errors": [...]},
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
+
+### Complete Example
+
+```yaml
+name: family-validator
+
+extraction_schema:
+  entities:
+    required_fields: [name, type]
+  relationships:
+    types: [mother, father]
+    required_fields: [type, subject, object]
+  guide_extraction: true
+  confidence_tracking: true
+
+validation_constraints:
+  language: prolog
+  rules: |
+    validation_error(self_parent, P) :-
+        relationship(T, P, P), member(T, ['mother', 'father']).
+
+semantic_probes:
+  - for_each: relationship
+    probe: "Is {{ subject }} the {{ type }} of {{ object }}?"
+    on_fail: reject
+
+validation_logging:
+  enabled: true
+  log_path: ./failures.jsonl
+
+nodes:
+  - name: validate
+    action: validate.extraction
+    inputs:
+      entities: "{{ state.entities }}"
+      relationships: "{{ state.relationships }}"
+      source_text: "{{ state.text }}"
+    output: result
+
+edges:
+  - from: __start__
+    to: validate
+  - from: validate
+    to: __end__
 ```
 
 ---

@@ -55,6 +55,49 @@ Pre-built binaries are available for all major platforms. No Python or Rust inst
 | macOS Apple Silicon | `tea-python-darwin-arm64` | `tea-rust-darwin-arm64` |
 | Windows | `tea-python-windows-x86_64.exe` | `tea-rust-windows-x86_64.exe` |
 
+### Rust Binary Variants (Prolog Support)
+
+For **neurosymbolic AI** with Prolog inference, additional binary variants are available:
+
+| Binary | Prolog | Size (est.) | Description |
+|--------|--------|-------------|-------------|
+| `tea-rust-linux-x86_64` | No | ~15MB | Core features, statically linked (musl) |
+| `tea-rust-linux-x86_64-prolog` | Yes* | ~18MB | With Prolog support, requires `libswipl.so` installed |
+| `tea-{version}-x86_64.AppImage` | Yes | ~50MB | **Self-contained** with all libs bundled |
+| `tea-rust-linux-arm64` | No | ~15MB | Core features, statically linked (musl) |
+| `tea-rust-linux-arm64-prolog` | Yes* | ~18MB | With Prolog support, requires `libswipl.so` installed |
+| `tea-{version}-aarch64.AppImage` | Yes | ~50MB | **Self-contained** with all libs bundled |
+
+*Requires SWI-Prolog installed on the system (`apt install swi-prolog-nox`)
+
+### Which Binary Should I Use?
+
+```
+Do you need Prolog support?
+├── No  → Use `tea-rust-linux-{arch}` (smallest, static)
+└── Yes → Is SWI-Prolog installed on your system?
+          ├── Yes → Use `tea-rust-linux-{arch}-prolog` (smaller)
+          └── No  → Use `tea-{version}-{arch}.AppImage` (self-contained)
+```
+
+### AppImage Installation
+
+AppImages are **self-contained** executables that bundle the tea binary, SWI-Prolog runtime, and all dependencies. No installation required!
+
+```bash
+# Download the AppImage
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-0.8.1-x86_64.AppImage -o tea.AppImage
+
+# Make executable and run
+chmod +x tea.AppImage
+./tea.AppImage --version
+
+# Run a Prolog-enabled agent
+./tea.AppImage run examples/prolog/simple-prolog-agent.yaml
+```
+
+AppImages work on any Linux distribution (Ubuntu, Fedora, Arch, Alpine, etc.) without installing SWI-Prolog system-wide.
+
 ### Quick Install
 
 ```bash
