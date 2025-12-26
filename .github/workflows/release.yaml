@@ -1028,9 +1028,22 @@ jobs:
           # Copy home directory contents
           cp -r swipl-runtime-x86_64/home/* tea.AppDir/usr/lib/swipl/
 
-          # Copy libswipl.so to usr/lib (linuxdeploy will find it there)
+          # Copy libswipl.so to usr/lib
           mkdir -p tea.AppDir/usr/lib
           cp -L swipl-runtime-x86_64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
 
           # Verify boot.prc exists (critical for VM initialization)
           if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
@@ -1046,7 +1059,9 @@ jobs:
       - name: Run linuxdeploy
         run: |
           # linuxdeploy bundles shared libraries automatically
-          # The libswipl.so is already in usr/lib from our bundle
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
           ./linuxdeploy-x86_64.AppImage \
             --appdir tea.AppDir \
             --executable tea.AppDir/usr/bin/tea \
@@ -1185,9 +1200,22 @@ jobs:
           # Copy home directory contents
           cp -r swipl-runtime-aarch64/home/* tea.AppDir/usr/lib/swipl/
 
-          # Copy libswipl.so to usr/lib (linuxdeploy will find it there)
+          # Copy libswipl.so to usr/lib
           mkdir -p tea.AppDir/usr/lib
           cp -L swipl-runtime-aarch64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
 
           # Verify boot.prc exists (critical for VM initialization)
           if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
@@ -1203,7 +1231,9 @@ jobs:
       - name: Run linuxdeploy
         run: |
           # linuxdeploy bundles shared libraries automatically
-          # The libswipl.so is already in usr/lib from our bundle
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
           ./linuxdeploy-aarch64.AppImage \
             --appdir tea.AppDir \
             --executable tea.AppDir/usr/bin/tea \
