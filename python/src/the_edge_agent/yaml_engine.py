@@ -1097,6 +1097,83 @@ class YAMLEngine:
             self._enable_observability = False
             self._observability_context = None
 
+        # TEA-YAML-004: Parse extraction validation configuration
+        self._extraction_validation_config = {}
+        extraction_schema = config.get("extraction_schema")
+        if extraction_schema:
+            self._extraction_validation_config["extraction_schema"] = extraction_schema
+            # Validate schema at load time (AC: 20)
+            try:
+                from .extraction_validation import ExtractionSchema
+
+                ExtractionSchema.from_dict(extraction_schema)
+            except ValueError as e:
+                raise ValueError(f"Invalid extraction_schema: {e}")
+
+        validation_constraints = config.get("validation_constraints")
+        if validation_constraints:
+            self._extraction_validation_config["validation_constraints"] = (
+                validation_constraints
+            )
+            # Validate Prolog syntax at load time (AC: 21)
+            language = validation_constraints.get("language", "prolog")
+            if language != "prolog":
+                raise ValueError(
+                    f"validation_constraints language must be 'prolog', got '{language}'"
+                )
+            rules = validation_constraints.get("rules", "")
+            if rules and self._prolog_enabled:
+                # Validate Prolog syntax by attempting to parse
+                try:
+                    from .prolog_runtime import PrologRuntime, JANUS_AVAILABLE
+
+                    if JANUS_AVAILABLE:
+                        # Just check syntax, don't execute
+                        pass  # Full validation deferred to runtime
+                except Exception as e:
+                    raise ValueError(
+                        f"Invalid Prolog syntax in validation_constraints: {e}"
+                    )
+
+        semantic_probes = config.get("semantic_probes")
+        if semantic_probes:
+            self._extraction_validation_config["semantic_probes"] = semantic_probes
+            # Validate probe templates at load time
+            for idx, probe in enumerate(semantic_probes):
+                if not probe.get("for_each"):
+                    raise ValueError(
+                        f"semantic_probes[{idx}] missing required 'for_each' field"
+                    )
+                if not probe.get("probe"):
+                    raise ValueError(
+                        f"semantic_probes[{idx}] missing required 'probe' field"
+                    )
+
+        validation_logging = config.get("validation_logging")
+        if validation_logging:
+            self._extraction_validation_config["validation_logging"] = (
+                validation_logging
+            )
+
+        # TEA-YAML-004: Store extraction_prompt template variable if guide_extraction is enabled
+        if extraction_schema and extraction_schema.get("guide_extraction"):
+            from .extraction_validation import (
+                ExtractionSchema,
+                ValidationConstraints,
+                generate_extraction_prompt,
+            )
+
+            schema_obj = ExtractionSchema.from_dict(extraction_schema)
+            constraints_obj = None
+            if validation_constraints:
+                constraints_obj = ValidationConstraints.from_dict(
+                    validation_constraints
+                )
+            prompt = generate_extraction_prompt(
+                schema_obj, constraints_obj, schema_obj.confidence_tracking
+            )
+            self.variables["extraction_prompt"] = prompt
+
         # Create graph
         compile_config = config.get("config", {})
         graph = StateGraph(

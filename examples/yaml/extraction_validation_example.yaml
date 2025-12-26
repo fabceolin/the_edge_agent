@@ -1,0 +1,185 @@
+# Example: Generic Extraction Validation Agent (TEA-YAML-004)
+#
+# This example demonstrates the 3-layer validation approach:
+# - Layer 1: Structural validation via extraction_schema
+# - Layer 2: Semantic validation via Prolog validation_constraints
+# - Layer 3: LLM grounding via semantic_probes
+#
+# Use case: Extract family relationships from text and validate them.
+
+name: family-extraction-validator
+
+state_schema:
+  input_text: str
+  entities: list
+  relationships: list
+  validation_result: dict
+  extraction_prompt: str
+
+# Layer 1: Structural Schema Definition
+# Defines required/optional fields and allowed relationship types
+extraction_schema:
+  entities:
+    required_fields: [name, type]
+    optional_fields: [birth_date, death_date]
+    type_field: type
+
+  relationships:
+    types: [mother, father, sibling, spouse, affair]
+    required_fields: [type, subject, object]
+    optional_fields: [confidence]
+    type_requirements:
+      affair:
+        - start_date
+        - end_date
+
+  # Generate extraction prompt from schema (neurosymbolic: symbolic→neural)
+  guide_extraction: true
+
+  # Track confidence scores for probabilistic reasoning
+  confidence_tracking: true
+
+# Layer 2: Prolog Semantic Constraints
+# Logical rules that validate relationship consistency
+validation_constraints:
+  language: prolog
+  rules: |
+    % A person cannot be their own parent
+    validation_error(self_parent, Person) :-
+        relationship(Type, Person, Person),
+        member(Type, ['mother', 'father']).
+
+    % A person can have at most one biological mother
+    validation_error(multiple_mothers, Child) :-
+        relationship('mother', Mother1, Child),
+        relationship('mother', Mother2, Child),
+        Mother1 \= Mother2.
+
+    % A person can have at most one biological father
+    validation_error(multiple_fathers, Child) :-
+        relationship('father', Father1, Child),
+        relationship('father', Father2, Child),
+        Father1 \= Father2.
+
+    % Sibling relationship should be symmetric
+    validation_error(asymmetric_sibling, Pair) :-
+        relationship('sibling', A, B),
+        \+ relationship('sibling', B, A),
+        Pair = A-B.
+
+    % Affair dates must be valid (start before end)
+    validation_error(invalid_dates, Pair) :-
+        relationship('affair', Subj, Obj, Start, End),
+        Start @> End,
+        Pair = Subj-Obj.
+
+    % Warn on low confidence relationships (< 0.5)
+    validation_error(low_confidence, Rel) :-
+        relationship(Type, Subj, Obj, Conf),
+        Conf < 0.5,
+        Rel = Type-Subj-Obj.
+
+# Layer 3: Semantic Probes (LLM-verified grounding)
+# Verify that extracted relationships are actually stated in the text
+semantic_probes:
+  - for_each: relationship
+    where: "type == 'mother'"
+    probe: |
+      Based on the following text, is {{ subject }} explicitly stated
+      to be the mother of {{ object }}?
+
+      Text: "{{ state.input_text }}"
+    on_fail: reject
+
+  - for_each: relationship
+    where: "type == 'father'"
+    probe: |
+      Based on the following text, is {{ subject }} explicitly stated
+      to be the father of {{ object }}?
+
+      Text: "{{ state.input_text }}"
+    on_fail: reject
+
+  - for_each: relationship
+    where: "type == 'affair'"
+    probe: |
+      Does the text mention a romantic relationship or affair between
+      {{ subject }} and {{ object }}?
+
+      Text: "{{ state.input_text }}"
+    on_fail: warn
+
+  - for_each: entity
+    probe: |
+      Is {{ name }} mentioned as a person in the following text?
+
+      Text: "{{ state.input_text }}"
+    on_fail: warn
+
+# Neurosymbolic: Log validation failures for learning
+validation_logging:
+  enabled: true
+  log_path: "${VALIDATION_LOG_PATH:-./validation_failures.jsonl}"
+  include_source: true
+  include_timestamp: true
+
+# Graph Definition
+nodes:
+  - name: extract_relationships
+    prompt: |
+      {{ state.extraction_prompt }}
+
+      Text to analyze:
+      {{ state.input_text }}
+    run: |
+      # Parse LLM response and return entities/relationships
+      import json
+
+      # In production, this would parse the actual LLM response
+      # For demo, we'll simulate extraction
+      response = state.get("llm_response", {})
+
+      return {
+          "entities": response.get("entities", []),
+          "relationships": response.get("relationships", [])
+      }
+
+  - name: validate_extraction
+    action: validate.extraction
+    inputs:
+      entities: "{{ state.entities }}"
+      relationships: "{{ state.relationships }}"
+      source_text: "{{ state.input_text }}"
+
+  - name: handle_valid
+    run: |
+      return {"status": "success", "message": "Extraction validated successfully"}
+
+  - name: handle_invalid
+    run: |
+      return {
+          "status": "error",
+          "message": "Validation failed",
+          "errors": state.get("validation_result", {}).get("errors", [])
+      }
+
+edges:
+  - from: __start__
+    to: extract_relationships
+
+  - from: extract_relationships
+    to: validate_extraction
+
+  - from: validate_extraction
+    to: handle_valid
+    condition: "{{ state.validation_result.valid }}"
+
+  - from: validate_extraction
+    to: handle_invalid
+    condition: "{{ not state.validation_result.valid }}"
+
+  - from: handle_valid
+    to: __end__
+
+  - from: handle_invalid
+    to: __end__

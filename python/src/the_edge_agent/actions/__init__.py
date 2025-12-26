@@ -19,6 +19,7 @@ Actions are organized by domain:
 - schema_actions: Schema merge and manipulation (TEA-BUILTIN-008.3)
 - llamaextract_actions: Document extraction via LlamaExtract (TEA-BUILTIN-008.1)
 - cache_actions: Cache and memoization with LTM backend (TEA-BUILTIN-010)
+- validation_actions: Generic extraction validation with Prolog/probes (TEA-YAML-004)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -62,6 +63,9 @@ from .schema_actions import register_actions as register_schema
 from .llamaextract_actions import register_actions as register_llamaextract
 from .cache_actions import register_actions as register_cache
 from .cache_actions import register_jinja_filters as register_cache_jinja_filters
+
+# TEA-YAML-004: Generic Extraction Validation
+from .validation_actions import register_actions as register_validation
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -116,6 +120,9 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     register_schema(registry, engine)
     register_llamaextract(registry, engine)
     register_cache(registry, engine)
+
+    # TEA-YAML-004: Generic Extraction Validation
+    register_validation(registry, engine)
 
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)

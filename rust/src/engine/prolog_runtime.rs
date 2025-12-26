@@ -80,13 +80,11 @@ const DEFAULT_MODULES: &[&str] = &["lists", "clpfd", "apply", "aggregate"];
 const TEA_PROLOG_PREDICATES: &str = r#"
 % TEA Prolog Predicates - Prolog-side term processing
 % Using SWI-Prolog's native read_term/3 for 100% accurate parsing
+%
+% NOTE: state/2, return_value/2, and return/2 are defined in setup_predicates_in_context().
+% This file only defines tea_load_code/1 and supporting predicates.
 
-:- thread_local(state/2).
-:- thread_local(return_value/2).
 :- thread_local(tea_user_fact/1).
-
-% Define return/2 predicate
-return(Key, Value) :- assertz(return_value(Key, Value)).
 
 % Action predicates - should be called, not asserted
 % Also includes structural operators that should never be asserted
@@ -432,22 +430,8 @@ impl PrologRuntime {
     /// This is used when the .pl file is not available (e.g., in AppImage).
     /// Writes the embedded predicates to a temp file and consults it.
     fn fallback_load_tea_predicates<C: QueryableContextType>(context: &Context<C>) {
-        // First set up thread-local predicates (must be done before consult)
-        let decl_goals = ["thread_local(state/2)", "thread_local(return_value/2)"];
-
-        for goal in &decl_goals {
-            if let Ok(term) = context.term_from_string(goal) {
-                let _ = context.call_term_once(&term);
-            }
-        }
-
-        // Define return/2 (used by user code)
-        let return_def = "assertz((return(Key, Value) :- assertz(return_value(Key, Value))))";
-        if let Ok(term) = context.term_from_string(return_def) {
-            let _ = context.call_term_once(&term);
-        }
-
-        // Write embedded predicates to temp file and consult
+        // Try to write embedded predicates to temp file and consult
+        // This is the preferred method as it loads all predicates correctly
         if let Ok(temp_dir) = std::env::temp_dir()
             .canonicalize()
             .or_else(|_| Ok::<_, std::io::Error>(std::env::temp_dir()))
@@ -469,7 +453,23 @@ impl PrologRuntime {
             }
         }
 
-        // Ultimate fallback: minimal tea_load_code/1 for basic functionality
+        // Ultimate fallback: define minimal predicates manually
+        // This is only used if temp file approach fails
+        let decl_goals = ["thread_local(state/2)", "thread_local(return_value/2)"];
+
+        for goal in &decl_goals {
+            if let Ok(term) = context.term_from_string(goal) {
+                let _ = context.call_term_once(&term);
+            }
+        }
+
+        // Define return/2 (used by user code)
+        let return_def = "assertz((return(Key, Value) :- assertz(return_value(Key, Value))))";
+        if let Ok(term) = context.term_from_string(return_def) {
+            let _ = context.call_term_once(&term);
+        }
+
+        // Define minimal tea_load_code/1
         let tea_load_code_def = r#"assertz((
             tea_load_code(CodeAtom) :-
                 atom_string(CodeAtom, CodeString),
