@@ -824,32 +824,28 @@ jobs:
           cp -r "$SWIPL_HOME"/* swipl-runtime-x86_64/home/
 
           # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
-          # This ensures linuxdeploy can find all required libraries
           echo "Collecting all library dependencies..."
 
-          # List of libraries to exclude (system libraries that linuxdeploy blacklists)
+          # System libraries to exclude (linuxdeploy blacklists these)
           BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
 
-          # Function to collect deps for a binary
-          collect_deps() {
-            ldd "$1" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" | grep -v -E "$BLACKLIST" || true
-          }
-
-          # Collect deps from tea binary
-          DEPS=$(collect_deps tea-rust-linux-x86_64-prolog)
-
-          # Collect deps from all SWI-Prolog .so extensions
-          for so in swipl-runtime-x86_64/home/lib/x86_64-linux/*.so 2>/dev/null; do
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-x86_64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-x86_64/home/lib/x86_64-linux/*.so; do
             if [ -f "$so" ]; then
-              DEPS="$DEPS $(collect_deps "$so")"
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
             fi
           done
 
-          # Remove duplicates and copy unique libraries
-          echo "$DEPS" | tr ' ' '\n' | sort -u | while read lib; do
-            if [ -f "$lib" ] && [ ! -f "swipl-runtime-x86_64/lib/$(basename "$lib")" ]; then
-              echo "Bundling: $lib"
-              cp -L "$lib" swipl-runtime-x86_64/lib/ 2>/dev/null || true
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-x86_64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-x86_64/lib/ || true
+              fi
             fi
           done
 
@@ -964,32 +960,28 @@ jobs:
           cp -r "$SWIPL_HOME"/* swipl-runtime-aarch64/home/
 
           # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
-          # This ensures linuxdeploy can find all required libraries
           echo "Collecting all library dependencies..."
 
-          # List of libraries to exclude (system libraries that linuxdeploy blacklists)
+          # System libraries to exclude (linuxdeploy blacklists these)
           BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
 
-          # Function to collect deps for a binary
-          collect_deps() {
-            ldd "$1" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" | grep -v -E "$BLACKLIST" || true
-          }
-
-          # Collect deps from tea binary
-          DEPS=$(collect_deps tea-rust-linux-arm64-prolog)
-
-          # Collect deps from all SWI-Prolog .so extensions
-          for so in swipl-runtime-aarch64/home/lib/aarch64-linux/*.so 2>/dev/null; do
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-arm64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-aarch64/home/lib/aarch64-linux/*.so; do
             if [ -f "$so" ]; then
-              DEPS="$DEPS $(collect_deps "$so")"
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
             fi
           done
 
-          # Remove duplicates and copy unique libraries
-          echo "$DEPS" | tr ' ' '\n' | sort -u | while read lib; do
-            if [ -f "$lib" ] && [ ! -f "swipl-runtime-aarch64/lib/$(basename "$lib")" ]; then
-              echo "Bundling: $lib"
-              cp -L "$lib" swipl-runtime-aarch64/lib/ 2>/dev/null || true
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-aarch64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-aarch64/lib/ || true
+              fi
             fi
           done
 
