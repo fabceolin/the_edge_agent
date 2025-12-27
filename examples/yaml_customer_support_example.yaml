@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+
 name: customer-support-agent
 description: Multi-path customer support workflow with parallel processing
 
@@ -17,6 +20,7 @@ state_schema:
 nodes:
   # Stage 1: Intent Classification
   - name: classify_intent
+    language: python
     run: |
       # Simulate intent classification
       message = state["customer_message"].lower()
@@ -50,6 +54,7 @@ nodes:
 
   # Stage 2a: Handle Billing
   - name: handle_billing
+    language: python
     steps:
       - name: check_account
         run: |
@@ -72,6 +77,7 @@ nodes:
 
   # Stage 2b: Handle Technical
   - name: handle_technical
+    language: python
     run: |
       # Simulate technical support
       return {
@@ -83,6 +89,7 @@ nodes:
 
   # Stage 2c: Handle Retention
   - name: handle_retention
+    language: python
     run: |
       # Retention requires human touch
       return {
@@ -94,6 +101,7 @@ nodes:
 
   # Stage 2d: Handle General
   - name: handle_general
+    language: python
     run: |
       return {
         "response": "Thank you for contacting us! How can I assist you today?",
@@ -104,6 +112,7 @@ nodes:
 
   # Stage 3a: Send automated response
   - name: send_response
+    language: python
     run: |
       print(f"[EMAIL] To: {state['customer_id']}")
       print(f"[EMAIL] Subject: Re: Support Ticket {state['ticket_id']}")

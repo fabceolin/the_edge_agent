@@ -1,0 +1,42 @@
+schema: 1
+story: TEA-DOCS-001
+story_title: README Neurosymbolic Focus Restructure
+gate: PASS
+status_reason: All 14 acceptance criteria met. README restructured from 547 to 144 lines with neurosymbolic focus. Hero example tested and working on both runtimes.
+reviewer: Quinn (Test Architect)
+updated: 2025-12-27T00:15:00Z
+
+top_issues: []
+waiver: { active: false }
+
+quality_score: 95
+expires: 2026-01-10T00:00:00Z
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    ac_gaps: [14]  # GitHub preview not verified
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: Documentation only, no security concerns
+  performance:
+    status: PASS
+    notes: N/A for documentation
+  reliability:
+    status: PASS
+    notes: All links verified valid
+  maintainability:
+    status: PASS
+    notes: Clear structure, follows template
+
+recommendations:
+  immediate: []
+  future:
+    - action: Verify GitHub markdown rendering via preview
+      refs: ['README.md']
+    - action: Update story status from Draft to Done
+      refs: ['docs/stories/TEA-DOCS-001-readme-neurosymbolic-focus.md']

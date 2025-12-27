@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+
 name: simple-research-agent
 description: A simple research agent that queries, processes, and formats results
 
@@ -14,6 +17,7 @@ state_schema:
 nodes:
   # Node 1: Simulate search (inline Python)
   - name: search
+    language: python
     run: |
       # Simulate search results
       query = state["query"]
@@ -25,6 +29,7 @@ nodes:
 
   # Node 2: Check if we have results (expression)
   - name: validate_results
+    language: python
     run:
       type: expression
       value: len(state.get("search_results", [])) > 0
@@ -36,6 +41,7 @@ nodes:
 
   # Node 3: Multi-step summarization (GitHub Actions style)
   - name: summarize
+    language: python
     steps:
       - name: prepare_context
         run: |
@@ -55,6 +61,7 @@ nodes:
 
   # Node 4: Format output
   - name: format_output
+    language: python
     run: |
       header = f"# Research Report: {state['query']}"
       summary_section = f"## Summary\n{state['summary']}"
@@ -75,6 +82,7 @@ nodes:
 
   # Node 6: Empty results handler
   - name: handle_empty
+    language: python
     run: |
       return {
         "formatted_output": f"No results found for query: {state['query']}"

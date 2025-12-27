@@ -817,6 +817,16 @@ impl Executor {
                 ));
             }
 
+            // Check for unsupported Python language
+            if node.language.as_deref() == Some("python") {
+                return Err(TeaError::InvalidConfig(format!(
+                    "Error at node '{}': Python scripting is not supported in the Rust runtime. \
+                     Supported languages: lua, prolog. \
+                     Use language: lua for portable cross-runtime agents.",
+                    node.name
+                )));
+            }
+
             // Default: Lua
             return self.lua.execute_node_code(code, state);
         }
@@ -903,6 +913,16 @@ impl Executor {
                 return Err(TeaError::PrologNotEnabled(
                     "Prolog support not enabled. Rebuild with --features prolog".to_string(),
                 ));
+            }
+
+            // Check for unsupported Python language
+            if node.language.as_deref() == Some("python") {
+                return Err(TeaError::InvalidConfig(format!(
+                    "Error at node '{}': Python scripting is not supported in the Rust runtime. \
+                     Supported languages: lua, prolog. \
+                     Use language: lua for portable cross-runtime agents.",
+                    node.name
+                )));
             }
 
             // Default: Lua

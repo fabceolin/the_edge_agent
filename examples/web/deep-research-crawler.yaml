@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # Deep Research Crawler Agent
 #
 # Output: Structured law firm JSON profile
@@ -56,6 +59,7 @@ nodes:
 
   # Stage 3: Scrape each selected page via ScrapeGraphAI API
   - name: scrape_pages
+    language: python
     run: |
       import json
       import requests as req

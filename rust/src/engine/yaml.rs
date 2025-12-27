@@ -2054,4 +2054,124 @@ edges:
             "User: alice, Model: gpt-4, Dir: ./checkpoints, Key: sk-secret"
         );
     }
+
+    /// Test that language: python returns a clear error message
+    #[test]
+    fn test_python_language_returns_clear_error() {
+        use crate::engine::executor::Executor;
+
+        let yaml = r#"
+name: test-python-error
+nodes:
+  - name: python_node
+    language: python
+    run: |
+      return {"key": "value"}
+
+edges:
+  - from: __start__
+    to: python_node
+  - from: python_node
+    to: __end__
+"#;
+
+        let engine = YamlEngine::new();
+        let graph = engine.load_from_string(yaml).unwrap();
+        let compiled = graph.compile().unwrap();
+        let executor = Executor::new(compiled).unwrap();
+
+        let result = executor.invoke(json!({}));
+        assert!(result.is_err(), "Expected error for language: python");
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Python scripting is not supported"),
+            "Error message should mention Python not supported: {}",
+            err
+        );
+        assert!(
+            err.contains("python_node"),
+            "Error message should include node name: {}",
+            err
+        );
+        assert!(
+            err.contains("lua, prolog"),
+            "Error message should list supported languages: {}",
+            err
+        );
+    }
+
+    /// Test that no language field defaults to Lua execution
+    #[test]
+    fn test_no_language_defaults_to_lua() {
+        use crate::engine::executor::Executor;
+
+        let yaml = r#"
+name: test-lua-default
+nodes:
+  - name: lua_node
+    run: |
+      return { result = "ok" }
+
+edges:
+  - from: __start__
+    to: lua_node
+  - from: lua_node
+    to: __end__
+"#;
+
+        let engine = YamlEngine::new();
+        let graph = engine.load_from_string(yaml).unwrap();
+        let compiled = graph.compile().unwrap();
+        let executor = Executor::new(compiled).unwrap();
+
+        let result = executor.invoke(json!({}));
+        assert!(
+            result.is_ok(),
+            "Node with no language field should default to Lua: {:?}",
+            result
+        );
+
+        let state = result.unwrap();
+        assert_eq!(state["result"], "ok", "Lua code should execute correctly");
+    }
+
+    /// Test that explicit language: lua works correctly
+    #[test]
+    fn test_explicit_lua_language_works() {
+        use crate::engine::executor::Executor;
+
+        let yaml = r#"
+name: test-explicit-lua
+nodes:
+  - name: explicit_lua
+    language: lua
+    run: |
+      return { result = "explicit lua" }
+
+edges:
+  - from: __start__
+    to: explicit_lua
+  - from: explicit_lua
+    to: __end__
+"#;
+
+        let engine = YamlEngine::new();
+        let graph = engine.load_from_string(yaml).unwrap();
+        let compiled = graph.compile().unwrap();
+        let executor = Executor::new(compiled).unwrap();
+
+        let result = executor.invoke(json!({}));
+        assert!(
+            result.is_ok(),
+            "Explicit language: lua should work: {:?}",
+            result
+        );
+
+        let state = result.unwrap();
+        assert_eq!(
+            state["result"], "explicit lua",
+            "Lua code should execute correctly"
+        );
+    }
 }

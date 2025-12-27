@@ -1,12 +1,58 @@
 # The Edge Agent
 
-![The Edge Agent Logo](images/tea.jpg)
+[![GitHub stars](https://img.shields.io/github/stars/fabceolin/the_edge_agent?style=social)](https://github.com/fabceolin/the_edge_agent)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-The Edge Agent (tea) ☕ is a lightweight state graph engine for building **neurosymbolic AI agents** that run **without external servers or databases**, making it ideal for serverless cloud functions, edge computing, and offline-first workflows.
+> **Small LLMs hallucinate. TEA fixes that with Prolog.**
+
+One binary. No cloud. Neurosymbolic AI that actually reasons.
+
+TEA combines LLMs with symbolic reasoning (Prolog) to create AI agents that can prove their conclusions, not just generate plausible-sounding text. Perfect for small/local models (Llama, Mistral, Phi, Ollama) where symbolic reasoning compensates for limited model capacity.
+
+## 30-Second Example
+
+```yaml
+# LLM extracts facts, Prolog derives relationships via temporal reasoning
+name: hero-family-reasoning
+
+nodes:
+  - name: extract
+    uses: llm.call              # LLM extracts: mother(alice, bob). affair(alice, dave, 1980, 1990).
+    with:
+      model: "gemma3n:e4b"
+      messages:
+        - role: user
+          content: "Extract family relationships as Prolog facts from: {{ state.text }}"
+    output: llm_response
+
+  - name: reason
+    language: prolog            # Prolog derives: child_of_affair, half_sibling
+    run: |
+      child_of_affair(Child, Partner) :-
+          mother(Mother, Child), birth_year(Child, Year),
+          affair(Mother, Partner, Start, End), Year >= Start, Year =< End.
+
+      half_sibling(X, Y) :-
+          mother(M, X), mother(M, Y), X \= Y,
+          \+ (father(F, X), father(F, Y)).
+
+      state(facts, Facts), tea_load_code(Facts),
+      findall(H, half_sibling(bob, H), Results),
+      return(half_siblings, Results).
+```
+
+**Run it:**
+```bash
+tea run examples/prolog/neurosymbolic/hero-family-reasoning.yaml \
+  --input '{"text": "Alice had two children: Bob and Carol. Alice had an affair with Dave from 1980 to 1990. Bob was born in 1985. Carol was born in 1975.", "person": "bob"}'
+# Output: {"answer": "bob's half-siblings: Carol"}
+```
+
+**What happens:** LLM extracts facts → Prolog *proves* Bob is Carol's half-sibling (born during affair = different father).
+
+> Full runnable example: [`examples/prolog/neurosymbolic/hero-family-reasoning.yaml`](examples/prolog/neurosymbolic/hero-family-reasoning.yaml)
 
 ## Why TEA?
-
-Small and local LLMs are powerful but prone to hallucinations and reasoning errors. TEA solves this by combining LLMs with **symbolic reasoning**:
 
 | Challenge | TEA Solution |
 |-----------|--------------|
@@ -18,529 +64,81 @@ Small and local LLMs are powerful but prone to hallucinations and reasoning erro
 | **Building everything from scratch** | 20+ built-in actions for LLM, RAG, memory, and storage |
 | **No visibility into agent behavior** | Built-in observability with distributed tracing |
 
-### Neurosymbolic AI for the Edge
-
-TEA enables **neurosymbolic workflows** where:
-- **LLMs** handle natural language understanding, text generation, and entity extraction
-- **Prolog** handles logical inference, constraint solving, and knowledge graph reasoning
-- **Lua** provides lightweight scripting that runs identically in Python and Rust runtimes
-
-This hybrid approach is especially effective with **small/local models** (Llama, Mistral, Phi, Ollama) where symbolic reasoning compensates for limited model capacity.
-
-### Dual Runtime Implementation
-
-TEA is implemented in both **Python** and **Rust**, sharing the same YAML agent syntax. Write once, run on any platform from cloud functions to embedded devices.
-
-### Batteries Included
-
-TEA provides 20+ built-in actions so you can focus on agent logic, not infrastructure:
-
-- **LLM**: OpenAI, Azure, Ollama, and 100+ providers via LiteLLM
-- **RAG**: Vector search, embeddings, document retrieval
-- **Memory**: Short-term, long-term, and cloud-synced memory
-- **Web**: Scraping, crawling, and AI-powered extraction (Firecrawl, ScrapeGraphAI)
-- **Observability**: Distributed tracing for debugging and monitoring
-
-## Download Pre-built Binaries
-
-Pre-built binaries are available for all major platforms. No Python or Rust installation required!
-
-**Latest Release:** [GitHub Releases](https://github.com/fabceolin/the_edge_agent/releases/latest)
-
-| Platform | Python CLI | Rust CLI |
-|----------|-----------|----------|
-| Linux x86_64 | `tea-python-linux-x86_64` | `tea-rust-linux-x86_64` |
-| Linux ARM64 | `tea-python-linux-arm64` | `tea-rust-linux-arm64` |
-| macOS Intel | `tea-python-darwin-x86_64` | `tea-rust-darwin-x86_64` |
-| macOS Apple Silicon | `tea-python-darwin-arm64` | `tea-rust-darwin-arm64` |
-| Windows | `tea-python-windows-x86_64.exe` | `tea-rust-windows-x86_64.exe` |
-
-### Rust Binary Variants (Prolog Support)
-
-For **neurosymbolic AI** with Prolog inference, additional binary variants are available:
-
-| Binary | Prolog | Size (est.) | Description |
-|--------|--------|-------------|-------------|
-| `tea-rust-linux-x86_64` | No | ~15MB | Core features, statically linked (musl) |
-| `tea-rust-linux-x86_64-prolog` | Yes* | ~18MB | With Prolog support, requires `libswipl.so` installed |
-| `tea-{version}-x86_64.AppImage` | Yes | ~50MB | **Self-contained** with all libs bundled |
-| `tea-rust-linux-arm64` | No | ~15MB | Core features, statically linked (musl) |
-| `tea-rust-linux-arm64-prolog` | Yes* | ~18MB | With Prolog support, requires `libswipl.so` installed |
-| `tea-{version}-aarch64.AppImage` | Yes | ~50MB | **Self-contained** with all libs bundled |
-
-*Requires SWI-Prolog installed on the system (`apt install swi-prolog-nox`)
-
-### Which Binary Should I Use?
-
-```
-Do you need Prolog support?
-├── No  → Use `tea-rust-linux-{arch}` (smallest, static)
-└── Yes → Is SWI-Prolog installed on your system?
-          ├── Yes → Use `tea-rust-linux-{arch}-prolog` (smaller)
-          └── No  → Use `tea-{version}-{arch}.AppImage` (self-contained)
-```
-
-### AppImage Installation
-
-AppImages are **self-contained** executables that bundle the tea binary, SWI-Prolog runtime, and all dependencies. No installation required!
+## Quick Install
 
 ```bash
-# Download the AppImage
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-0.8.1-x86_64.AppImage -o tea.AppImage
-
-# Make executable and run
-chmod +x tea.AppImage
-./tea.AppImage --version
-
-# Run a Prolog-enabled agent
-./tea.AppImage run examples/prolog/simple-prolog-agent.yaml
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea && chmod +x tea
 ```
 
-AppImages work on any Linux distribution (Ubuntu, Fedora, Arch, Alpine, etc.) without installing SWI-Prolog system-wide.
+For Prolog support, use the [AppImage](docs/installation.md#appimage-installation) (self-contained) or install SWI-Prolog.
 
-### Quick Install
+See [Installation Guide](docs/installation.md) for all platforms and options.
 
-```bash
-# Linux/macOS - Download and install Rust binary
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea
-chmod +x tea
-sudo mv tea /usr/local/bin/
+## vs Alternatives
 
-# Verify installation
-tea --version
-```
+| Feature | TEA | LangGraph | AutoGen |
+|---------|-----|-----------|---------|
+| **Symbolic reasoning (Prolog)** | Yes | No | No |
+| **Single binary** | Yes | No (Python) | No (Python) |
+| **Offline operation** | Yes | Limited | No |
+| **YAML-first** | Yes | Code-first | Code-first |
+| **Neurosymbolic** | Yes | No | No |
+| **Local LLM optimized** | Yes | Partial | No |
+| **Edge/embedded ready** | Yes | No | No |
 
-### Verify Downloads
+## TEA Does More
 
-Each release includes `SHA256SUMS.txt` for verification:
+TEA includes 20+ built-in actions. Full documentation in [docs/capabilities/](docs/capabilities/):
 
-```bash
-# Download checksum file and binary
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/SHA256SUMS.txt -o SHA256SUMS.txt
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea-rust-linux-x86_64
+| Capability | Description | Key Actions |
+|------------|-------------|-------------|
+| **[Neurosymbolic](docs/python/prolog-guide.md)** | LLM + Prolog hybrid reasoning | `language: prolog` |
+| **[LLM Integration](docs/python/actions-reference.md)** | OpenAI, Azure, Ollama, 100+ providers | `llm.call`, `llm.structured` |
+| **[RAG](docs/python/actions-reference.md)** | Vector search and document retrieval | `rag.search`, `rag.embed` |
+| **[Memory](docs/python/actions-reference.md)** | Short-term, long-term, cloud-synced | `memory.store`, `memory.recall` |
+| **[Web](docs/python/actions-reference.md)** | Scraping with Firecrawl, ScrapeGraphAI | `web.scrape`, `web.crawl` |
+| **[Observability](docs/python/actions-reference.md)** | Distributed tracing and debugging | `trace.span`, `trace.log` |
 
-# Verify (Linux)
-sha256sum -c SHA256SUMS.txt --ignore-missing
+## Documentation
 
-# Verify (macOS)
-shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-```
+| Topic | Link |
+|-------|------|
+| **YAML Reference** | [docs/shared/YAML_REFERENCE.md](docs/shared/YAML_REFERENCE.md) |
+| **CLI Reference** | [docs/shared/cli-reference.md](docs/shared/cli-reference.md) |
+| **Python Guide** | [docs/python/getting-started.md](docs/python/getting-started.md) |
+| **Rust Guide** | [docs/rust/getting-started.md](docs/rust/getting-started.md) |
+| **Human-in-the-Loop** | [docs/guides/human-in-the-loop.md](docs/guides/human-in-the-loop.md) |
 
 ## Implementations
 
-This is a **polyglot monorepo** with two implementations:
-
 | Implementation | Status | Best For |
 |----------------|--------|----------|
-| **[Python](docs/python/getting-started.md)** | Production-ready | Online edge computing, full feature set, 20+ built-in actions |
-| **[Rust](docs/rust/getting-started.md)** | Active development | Embedded offline systems, resource-constrained environments |
+| **[Python](docs/python/getting-started.md)** | Production-ready | Online edge, full features, 20+ actions |
+| **[Rust](docs/rust/getting-started.md)** | Active development | Embedded, offline, resource-constrained |
 
-The **Python implementation** is optimized for online edge computing scenarios where network connectivity enables access to external APIs, LLM services, and cloud resources. The **Rust implementation** is designed for embedded offline systems where minimal footprint, deterministic execution, and operation without network dependencies are critical.
+Both share the same YAML syntax. Write once, run anywhere.
 
-Both implementations share the same YAML agent syntax and can run the same agent configurations from the `examples/` directory.
+## Examples
 
-### Quick Start by Language
+See [examples/](examples/) for ready-to-run agents:
 
-**Python:**
-```bash
-cd python && pip install -e .
-python -c "import the_edge_agent as tea; print(tea.__version__)"
-```
+- `examples/prolog/neurosymbolic/` - LLM + Prolog reasoning
+- `examples/llm/` - Pure LLM workflows
+- `examples/rag/` - Document retrieval
+- `examples/web/` - Web scraping agents
 
-**Rust:**
-```bash
-cd rust && cargo build --release
-./target/release/tea --help
-```
+## Contributing
 
-### Repository Structure
+We welcome contributions! Please open an issue or pull request on [GitHub](https://github.com/fabceolin/the_edge_agent).
 
-```
-the_edge_agent/
-├── python/          # Python implementation (full features)
-├── rust/            # Rust implementation (performance)
-├── examples/        # Shared YAML agents (works with both)
-└── docs/
-    ├── shared/      # Language-agnostic docs (YAML reference)
-    ├── python/      # Python-specific guides
-    └── rust/        # Rust-specific guides
-```
+## License
 
-## Features
+MIT License. See [LICENSE](LICENSE) for details.
 
-- Simple state management
-- Easy-to-use graph construction
-- Single app focus
-- Streamlined workflow creation
-- Easy integration with any language models (like GPT)
-- LLM library agnostic
-- Parallel fan out fan in support
-- Visualization of state graphs
-- Declarative YAML-based agent configuration
+## Acknowledgements
 
-## Installation (Python)
+TEA is inspired by [LangGraph](https://github.com/langchain-ai/langgraph). We thank the LangGraph team for their innovative work in language model workflows.
 
-You can install the_edge_agent using pip:
+---
 
-```bash
-pip install git+https://github.com/fabceolin/the_edge_agent.git
-```
-
-After installation, the `tea` command will be available globally.
-
-# Quick Start
-
-## CLI Usage (Unified Interface)
-
-Both Python and Rust implementations share the same CLI interface with identical subcommands and flags:
-
-```bash
-# Run a workflow
-tea run workflow.yaml --input '{"query": "hello"}'
-tea run workflow.yaml --input @state.json
-
-# Run with secrets
-tea run workflow.yaml --secrets '{"api_key": "sk-123"}'
-tea run workflow.yaml --secrets @secrets.json
-tea run workflow.yaml --secrets-env TEA_SECRET_
-
-# Streaming NDJSON output (for pipelines)
-tea run workflow.yaml --stream
-
-# CLI interrupt control
-tea run workflow.yaml --interrupt-before node1,node2
-tea run workflow.yaml --interrupt-after classify
-tea run workflow.yaml --auto-continue
-
-# Load custom actions (Python only)
-tea run workflow.yaml --actions-module my_package.actions
-tea run workflow.yaml --actions-file ./custom_actions.py
-
-# Resume from checkpoint
-tea resume checkpoint.pkl --workflow workflow.yaml
-tea resume checkpoint.pkl --workflow workflow.yaml --input '{"update": "value"}'
-
-# Validate workflow (without execution)
-tea validate workflow.yaml
-tea validate workflow.yaml --detailed
-
-# Inspect workflow structure
-tea inspect workflow.yaml
-tea inspect workflow.yaml --format json
-tea inspect workflow.yaml --format dot    # Graphviz output
-
-# Verbosity control
-tea run workflow.yaml -v      # info
-tea run workflow.yaml -vv     # debug
-tea run workflow.yaml -vvv    # trace
-tea run workflow.yaml -q      # quiet (errors only)
-
-# Version and implementation info
-tea --version                 # tea 0.1.0
-tea --impl                    # python or rust
-tea --version --impl          # tea 0.1.0 (python)
-
-# Show help
-tea --help
-tea run --help
-```
-
-### Custom Actions Modules
-
-You can create reusable action modules that can be loaded via the CLI or YAML configuration:
-
-```python
-# my_custom_actions.py
-from typing import Any, Callable, Dict
-
-def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
-    """Register custom actions into the provided registry."""
-
-    def custom_search(state, query, **kwargs):
-        # Your custom search logic
-        return {"results": [...], "success": True}
-
-    def custom_transform(state, data, **kwargs):
-        # Your custom transformation logic
-        return {"transformed": data, "success": True}
-
-    registry['custom_search'] = custom_search
-    registry['custom_transform'] = custom_transform
-
-# Optional metadata for module discovery
-__tea_actions__ = {
-    "version": "1.0.0",
-    "description": "My company's custom actions",
-    "actions": ["custom_search", "custom_transform"],
-}
-```
-
-Then use these actions in your YAML agent:
-
-```yaml
-name: my_agent
-nodes:
-  - name: search
-    uses: custom_search
-    with:
-      query: "{{ state.query }}"
-```
-
-Load the actions module when running the agent:
-
-```bash
-tea run agent.yaml --actions-module my_custom_actions
-# or from a file:
-tea run agent.yaml --actions-file ./my_custom_actions.py
-```
-
-**Security Warning:** The `--actions-module` and `--actions-file` flags execute Python code from the specified modules. Only load actions from trusted sources. For production use, prefer installed packages over local files.
-
-**Actions Loading Priority:**
-1. Built-in actions (lowest priority)
-2. CLI `--actions-module` flags (in order specified)
-3. CLI `--actions-file` flags (in order specified)
-4. YAML `imports:` section (highest priority - overrides CLI actions)
-```
-
-### Interactive Interrupt Workflow (Human-in-the-Loop)
-
-The Edge Agent supports human-in-the-loop workflows via interactive interrupts. When a YAML agent defines `interrupt_before` or `interrupt_after`, execution pauses at those points, allowing you to review state and make decisions before continuing.
-
-#### Basic Usage
-
-```bash
-# Run agent with interrupts (interactive mode)
-tea run examples/customer_support.yaml --input '{"message": "My bill is wrong"}'
-
-# Resume from a saved checkpoint
-tea resume ./checkpoints/classify_intent_1734567890.pkl --workflow examples/customer_support.yaml
-
-# Auto-continue mode (skip interactive prompts for CI/CD)
-tea run examples/customer_support.yaml --auto-continue
-```
-
-#### Interactive Prompt Example
-
-When execution reaches an interrupt point:
-
-```
-✓ classify_intent
-
-⏸  Interrupt at: classify_intent
-   State: {
-     "customer_message": "My bill is wrong",
-     "intent": "billing",
-     "confidence": 0.95
-   }
-
-Checkpoint saved: ./checkpoints/classify_intent_1734567890123.pkl
-
-Review the state above. Options:
-  [c] Continue with current state
-  [u] Update state before continuing
-  [a] Abort execution
-
-Choice: u
-
-Enter state updates as JSON (or press Enter to skip):
-{"escalate": true, "priority": "high"}
-
-State updated. Resuming execution...
-
-✓ handle_billing
-✓ escalate_to_human
-
-================================================================================
-✓ Completed
-================================================================================
-```
-
-#### Configuring Interrupts in YAML
-
-Define interrupts in your YAML agent configuration:
-
-```yaml
-name: customer_support_agent
-
-nodes:
-  - name: classify_intent
-    uses: llm.call
-    with:
-      model: gpt-4
-      messages:
-        - role: user
-          content: "Classify this customer message: {{ state.message }}"
-
-  - name: handle_billing
-    run: |
-      return {"handled": True, "response": "Billing issue processed"}
-
-edges:
-  - from: __start__
-    to: classify_intent
-  - from: classify_intent
-    to: handle_billing
-  - from: handle_billing
-    to: __end__
-
-config:
-  checkpoint_dir: ./checkpoints
-  interrupt_after: [classify_intent]  # Pause after intent classification
-  raise_exceptions: true
-```
-
-#### Resume with State Updates
-
-You can resume from a checkpoint and merge in new state:
-
-```bash
-# Resume with additional state via --input flag
-tea resume ./checkpoints/classify_intent_123.pkl \
-  --workflow agent.yaml \
-  --input '{"approved": true, "notes": "Verified with supervisor"}'
-```
-
-**State Merge Precedence** (highest to lowest):
-1. User input from interactive prompt
-2. `--input` flag value
-3. Checkpoint state
-4. YAML initial state defaults
-
-#### Non-Interactive Mode (CI/CD)
-
-For automated environments where interactive prompts would block execution:
-
-```bash
-# Auto-continue mode: execution continues at interrupts without pausing
-tea run agent.yaml --auto-continue
-
-# This also works in Docker, systemd services, and CI pipelines
-# where stdin is not a TTY
-```
-
-The CLI automatically detects non-TTY environments (Docker, CI/CD) and auto-continues to prevent hanging.
-
-#### Security Warning
-
-⚠️ **Checkpoint files use Python pickle format and should only be loaded from trusted sources.** Do not load checkpoints from untrusted origins as they can execute arbitrary code during unpickling.
-
-### Example Output
-
-```
-================================================================================
-Running agent from: examples/yaml_agent_example.yaml
-================================================================================
-
-Initial state: {
-  "query": "artificial intelligence"
-}
-
-✓ search
-✓ validate_results
-✓ summarize
-✓ format_output
-✓ save_report
-
-================================================================================
-✓ Completed
-================================================================================
-Final state: {...}
-```
-
-## Python API Usage
-
-Here's a simple example to get you started:
-
-```
-import the_edge_agent as tea
-
-# Initialize the StateGraph
-graph = tea.StateGraph({"value": int, "result": str})
-
-# Add nodes with print statements
-def start_node(state):
-    new_state = {"value": state["value"] + 5}
-    print(f"Start node: {state} -> {new_state}")
-    return new_state
-
-def process_node(state):
-    new_state = {"value": state["value"] * 2}
-    print(f"Process node: {state} -> {new_state}")
-    return new_state
-
-def end_node(state):
-    new_state = {"result": f"Final value: {state['value']}"}
-    print(f"End node: {state} -> {new_state}")
-    return new_state
-
-graph.add_node("start", start_node)
-graph.add_node("process", process_node)
-graph.add_node("end", end_node)
-
-# Add edges
-graph.set_entry_point("start")
-graph.add_conditional_edges(
-    "start",
-    lambda state: state["value"] > 10,
-    {True: "end", False: "process"}
-)
-graph.add_edge("process", "start")
-graph.set_finish_point("end")
-
-# Compile the graph
-compiled_graph = graph.compile()
-
-# Run the graph and print results
-print("Starting graph execution:")
-results = list(compiled_graph.invoke({"value": 1}))
-
-print("\nFinal result:")
-for result in results:
-    print(result)
-```
-
-Graph navigation
-```
-
-  ┌──────────────────────────┐
-  │                          ▼
-┌─────────┐  value <= 10   ┌─────────────┐
-│ process │ ◀───────────── │    start    │
-└─────────┘                └─────────────┘
-                             │
-                             │ value > 10
-                             ▼
-                           ╔═════════════╗
-                           ║     end     ║
-                           ╚═════════════╝
-
-```
-output:
-```
-Starting graph execution:
-Start node: {'value': 1} -> {'value': 6}
-Process node: {'value': 6} -> {'value': 12}
-Start node: {'value': 12} -> {'value': 17}
-End node: {'value': 17} -> {'result': 'Final value: 17'}
-
-Final result:
-{'type': 'final', 'state': {'value': 17, 'result': 'Final value: 17'}}
-```
-
-A full example with LLM capabilities and fan out fan in examples can be found in the examples directory.
-
-# Contributing
-We welcome contributions! Please see our contributing guidelines for more details.
-
-# License
-the_edge_agent is released under the MIT License. See the LICENSE file for more details.
-
-# Contributors
-We extend our gratitude to external contributors who have supported the_edge_agent:
-
-- **[Fabrício Ceolin](https://www.linkedin.com/in/fabceolin/)** : Implementation
-- **[Claudionor Coelho](https://www.linkedin.com/in/claudionor-coelho-jr-b156b01/)** : Contributed to the idealization of the project and provided valuable feedback through test usage.
-
-# Acknowledgements
-the_edge_agent is inspired by LangGraph. We thank the LangGraph team for their innovative work in the field of language model workflows.
+**If TEA helps your project, consider [starring the repo](https://github.com/fabceolin/the_edge_agent)!**

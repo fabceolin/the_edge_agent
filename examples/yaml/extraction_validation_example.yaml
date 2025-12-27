@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # Example: Generic Extraction Validation Agent (TEA-YAML-004)
 #
 # This example demonstrates the 3-layer validation approach:
@@ -126,6 +129,7 @@ validation_logging:
 # Graph Definition
 nodes:
   - name: extract_relationships
+    language: python
     prompt: |
       {{ state.extraction_prompt }}
 
@@ -152,10 +156,12 @@ nodes:
       source_text: "{{ state.input_text }}"
 
   - name: handle_valid
+    language: python
     run: |
       return {"status": "success", "message": "Extraction validated successfully"}
 
   - name: handle_invalid
+    language: python
     run: |
       return {
           "status": "error",

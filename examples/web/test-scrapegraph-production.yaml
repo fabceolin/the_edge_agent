@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # Test Agent: ScrapeGraphAI Production Validation (TEA-BUILTIN-008.4)
 #
 # PURPOSE: Validate web.ai_scrape action against real ScrapeGraphAI API
@@ -46,6 +49,7 @@ nodes:
   # Node 1: Test Router - Select test based on mode
   # ============================================================
   - name: route_test
+    language: python
     run: |
       mode = state.get("test_mode", "inline_schema")
       url = state.get("target_url", variables["default_url"])
@@ -134,6 +138,7 @@ nodes:
   # Tests: AC6 - error handling
   # ============================================================
   - name: test_error_handling
+    language: python
     run: |
       # Test without schema - should return error
       from the_edge_agent.actions.web_actions import web_ai_scrape
@@ -156,6 +161,7 @@ nodes:
   # Node 3: Validate and Report Results
   # ============================================================
   - name: validate_results
+    language: python
     run: |
       result = state.get("extraction_result", {})
       mode = state.get("test_mode", "unknown")

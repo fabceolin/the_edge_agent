@@ -16,8 +16,9 @@ state_schema:
 
 nodes:
   - name: setup
+    language: lua
     run: |
-      return {"branch_id": 0, "value": 100, "computed": 0}
+      return { branch_id = 0, value = 100, computed = 0 }
 
   - name: branch_a
     language: prolog
@@ -45,10 +46,11 @@ nodes:
 
   - name: fan_in
     is_fan_in: true
+    language: lua
     run: |
-      # Collect results from parallel branches
-      results = parallel_results
-      return {"parallel_count": len(results)}
+      -- Collect results from parallel branches
+      local count = #parallel_results
+      return { parallel_count = count }
 
 # Parallel edges require explicit definition (cannot use implicit/goto)
 edges:

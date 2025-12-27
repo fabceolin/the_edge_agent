@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # Simple ScrapeGraphAI Test Agent
 #
 # Quick production test for web.ai_scrape action (TEA-BUILTIN-008.4)
@@ -28,6 +31,7 @@ state_schema:
 
 nodes:
   - name: setup
+    language: python
     run: |
       url = state.get("url", "https://books.toscrape.com")
       prompt = state.get("prompt", "Extract the first 5 book titles with their prices")
@@ -61,6 +65,7 @@ nodes:
     output: result
 
   - name: report
+    language: python
     run: |
       import json
       result = state.get("result", {})
