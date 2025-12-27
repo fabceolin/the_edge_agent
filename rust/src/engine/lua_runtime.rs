@@ -412,6 +412,15 @@ impl LuaRuntime {
     }
 
     /// Execute inline Lua code for a node
+    ///
+    /// TEA-RUST-042: State Preservation
+    /// The result from Lua is merged into the input state (not replaced).
+    /// This matches Python's `current_state.update(result)` pattern and
+    /// Prolog's `collect_returns_from_context()` behavior.
+    ///
+    /// Edge cases:
+    /// - AC-7: When Lua returns `nil`, original state is preserved unchanged
+    /// - AC-8: When Lua returns empty table `{}`, original state is preserved unchanged
     pub fn execute_node_code(&self, code: &str, state: &JsonValue) -> TeaResult<JsonValue> {
         self.execute_with_timeout(|_ctx| {
             // Wrap code in a function that receives state and returns updated state
@@ -437,8 +446,37 @@ impl LuaRuntime {
                 .call(state_value)
                 .map_err(|e| TeaError::Lua(e.to_string()))?;
 
-            // Convert result
-            self.lua_to_json(result)
+            // Convert result to JSON
+            let result_json = self.lua_to_json(result)?;
+
+            // TEA-RUST-042: Merge result into input state (preserve state, overlay with result)
+            // This matches Python's yaml_engine.py:1809 `current_state.update(result)` pattern
+            // and Prolog's collect_returns_from_context() which starts with input state.
+            match &result_json {
+                // AC-7: When Lua returns nil, original state is preserved unchanged
+                JsonValue::Null => Ok(state.clone()),
+                // AC-8 + normal case: Merge object results into state
+                JsonValue::Object(updates) => {
+                    // Empty table {} means no updates - preserve original state
+                    if updates.is_empty() {
+                        return Ok(state.clone());
+                    }
+                    // Merge: start with input state, overlay with result
+                    let mut merged = state.clone();
+                    if let Some(base) = merged.as_object_mut() {
+                        for (k, v) in updates {
+                            base.insert(k.clone(), v.clone());
+                        }
+                        Ok(merged)
+                    } else {
+                        // Input state is not an object - return result as-is
+                        Ok(result_json)
+                    }
+                }
+                // Non-object result (primitive) - return as-is for backward compat
+                // This shouldn't normally happen in node code, but handle gracefully
+                _ => Ok(result_json),
+            }
         })
     }
 }
@@ -726,5 +764,147 @@ mod tests {
 
         let result = runtime.execute(code, &state).unwrap();
         assert_eq!(result, json!(["a!", "b!", "c!"]));
+    }
+
+    // ========================================================================
+    // TEA-RUST-042: Lua State Preservation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lua_state_preservation_merges_result() {
+        // AC-1, AC-2: Lua node execution merges return values into existing state
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"text": "hello", "person": "bob"});
+        let code = r#"
+            return {processed = true}
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // Original fields should be preserved
+        assert_eq!(result["text"], json!("hello"));
+        assert_eq!(result["person"], json!("bob"));
+        // New field should be added
+        assert_eq!(result["processed"], json!(true));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_overwrites_existing() {
+        // AC-2: Original state fields can be explicitly overwritten
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"count": 5, "name": "original"});
+        let code = r#"
+            return {count = 10}
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // count should be overwritten
+        assert_eq!(result["count"], json!(10));
+        // name should be preserved
+        assert_eq!(result["name"], json!("original"));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_nil_return() {
+        // AC-7: When Lua returns nil, original state is preserved unchanged
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"value": 42, "name": "test"});
+        let code = r#"
+            return nil
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // Original state should be preserved exactly
+        assert_eq!(result["value"], json!(42));
+        assert_eq!(result["name"], json!("test"));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_empty_table_return() {
+        // AC-8: When Lua returns empty table {}, original state is preserved unchanged
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"value": 42, "name": "test"});
+        let code = r#"
+            return {}
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // Original state should be preserved exactly
+        assert_eq!(result["value"], json!(42));
+        assert_eq!(result["name"], json!("test"));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_multi_field_update() {
+        // Test adding multiple new fields while preserving originals
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"original": "preserved"});
+        let code = r#"
+            return {
+                field1 = "value1",
+                field2 = 100,
+                field3 = true
+            }
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // Original should be preserved
+        assert_eq!(result["original"], json!("preserved"));
+        // New fields should be added
+        assert_eq!(result["field1"], json!("value1"));
+        assert_eq!(result["field2"], json!(100));
+        assert_eq!(result["field3"], json!(true));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_no_return() {
+        // When Lua code doesn't return anything (implicitly returns nil)
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({"value": 42});
+        let code = r#"
+            local x = state.value * 2
+            -- no return statement
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // Original state should be preserved
+        assert_eq!(result["value"], json!(42));
+    }
+
+    #[test]
+    fn test_lua_state_preservation_complex_nested() {
+        // Test with nested objects
+        let runtime = LuaRuntime::new().unwrap();
+
+        let state = json!({
+            "user": {"name": "alice", "age": 30},
+            "config": {"debug": true}
+        });
+        let code = r#"
+            return {
+                result = "success",
+                user = {name = "bob", age = 25}  -- Overwrite user
+            }
+        "#;
+
+        let result = runtime.execute_node_code(code, &state).unwrap();
+
+        // config should be preserved
+        assert_eq!(result["config"]["debug"], json!(true));
+        // user should be overwritten
+        assert_eq!(result["user"]["name"], json!("bob"));
+        // new field should be added
+        assert_eq!(result["result"], json!("success"));
     }
 }

@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # LlamaExtract with External Schema
 #
 # This example shows how to load a schema from an external file
@@ -46,6 +49,7 @@ nodes:
   # Step 3: Process the result
   - name: process_result
     description: Format the extraction result
+    language: python
     run: |
       result = state.get("extraction_result", {})
       if result.get("success"):

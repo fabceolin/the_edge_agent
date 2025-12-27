@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # LlamaExtract Real API Test
 #
 # This YAML agent tests the LlamaExtract REST API integration.
@@ -51,6 +54,7 @@ nodes:
 
   - name: process_result
     description: Process the extraction result
+    language: python
     run: |
       result = state.get("extraction_result", {})
       if result.get("success"):

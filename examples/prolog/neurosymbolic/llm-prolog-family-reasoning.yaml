@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # LLM + Prolog Family Reasoning Agent
 #
 # Demonstrates neurosymbolic AI with TEMPORAL INFERENCE.
@@ -136,6 +139,7 @@ nodes:
   # STEP 2: Parse extracted data into entities and relationships
   # ============================================================
   - name: parse_extraction
+    language: python
     run: |
       import json
 
@@ -167,6 +171,7 @@ nodes:
   #   affair(person, partner, 'start_date', 'end_date').
   # ============================================================
   - name: generate_prolog_facts
+    language: python
     run: |
       entities = state.get("entities", [])
       relationships = state.get("relationships", [])
@@ -307,6 +312,7 @@ nodes:
   # STEP 5: Format human-readable answer
   # ============================================================
   - name: format_answer
+    language: python
     run: |
       query_person = state["query_person"]
       query_type = state["query_type"]

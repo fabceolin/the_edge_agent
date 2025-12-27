@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # LlamaExtract with Multiple Merged Schemas
 #
 # This example demonstrates merging multiple schemas:
@@ -59,6 +62,7 @@ nodes:
   # Step 3: Display results
   - name: format_output
     description: Format extraction results
+    language: python
     run: |
       result = state.get("extraction_result", {})
       if result.get("success"):

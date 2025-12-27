@@ -323,3 +323,96 @@ fn test_run_help_shows_parity_flags() {
         .stdout(predicate::str::contains("--verbose"))
         .stdout(predicate::str::contains("--quiet"));
 }
+
+/// Test that language: python in YAML returns clear error (TEA-RUST-041)
+#[test]
+fn test_python_language_error() {
+    let dir = tempdir().unwrap();
+    let workflow_path = dir.path().join("python_workflow.yaml");
+    fs::write(
+        &workflow_path,
+        r#"
+name: python-test
+nodes:
+  - name: python_node
+    language: python
+    run: |
+      return {"key": "value"}
+edges:
+  - from: __start__
+    to: python_node
+  - from: python_node
+    to: __end__
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("tea").unwrap();
+    cmd.args(["run", workflow_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Python scripting is not supported",
+        ))
+        .stderr(predicate::str::contains("python_node"))
+        .stderr(predicate::str::contains("lua, prolog"));
+}
+
+/// Test that no language field defaults to Lua and executes (TEA-RUST-041)
+#[test]
+fn test_no_language_defaults_to_lua() {
+    let dir = tempdir().unwrap();
+    let workflow_path = dir.path().join("lua_default.yaml");
+    fs::write(
+        &workflow_path,
+        r#"
+name: lua-default-test
+nodes:
+  - name: lua_node
+    run: |
+      return { result = "default lua works" }
+edges:
+  - from: __start__
+    to: lua_node
+  - from: lua_node
+    to: __end__
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("tea").unwrap();
+    cmd.args(["run", workflow_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default lua works"));
+}
+
+/// Test that explicit language: lua works (TEA-RUST-041)
+#[test]
+fn test_explicit_lua_language() {
+    let dir = tempdir().unwrap();
+    let workflow_path = dir.path().join("explicit_lua.yaml");
+    fs::write(
+        &workflow_path,
+        r#"
+name: explicit-lua-test
+nodes:
+  - name: explicit_lua
+    language: lua
+    run: |
+      return { result = "explicit lua works" }
+edges:
+  - from: __start__
+    to: explicit_lua
+  - from: explicit_lua
+    to: __end__
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("tea").unwrap();
+    cmd.args(["run", workflow_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("explicit lua works"));
+}

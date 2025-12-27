@@ -3,15 +3,18 @@ description: A workflow with interrupt points for testing resume
 
 nodes:
   - name: prepare
+    language: lua
     run: |
       return { step = "prepared", count = (state.count or 0) + 1 }
 
   - name: human_review
+    language: lua
     run: |
       -- This node will be interrupted before/after for human review
       return { step = "reviewed", approved = state.approved or false }
 
   - name: complete
+    language: lua
     run: |
       if state.approved then
         return { step = "completed", status = "success" }

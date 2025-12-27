@@ -1,0 +1,112 @@
+# Hero Example: Neurosymbolic Family Reasoning
+#
+# This is the RUNNABLE version of the README hero example.
+# Demonstrates: LLM extracts facts, Prolog derives relationships.
+#
+# RUN: tea run examples/prolog/neurosymbolic/hero-family-reasoning.yaml \
+#        --input '{"text": "Alice had two children: Bob and Carol. Alice had an affair with Dave from 1980 to 1990. Bob was born in 1985. Carol was born in 1975.", "person": "bob"}'
+#
+# EXPECTED: Bob's half-siblings: Carol (same mother, different father via temporal inference)
+
+name: hero-family-reasoning
+description: Minimal neurosymbolic demo - LLM extracts, Prolog reasons
+
+state_schema:
+  text: str
+  person: str
+  facts: str
+  half_siblings: list
+  answer: str
+
+nodes:
+  # Step 1: LLM extracts family relationships as Prolog facts
+  - name: extract
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            Extract family relationships as Prolog facts. Output ONLY these formats:
+            mother(mother_name, child_name).
+            father(father_name, child_name).
+            affair(person1, person2, start_year, end_year).
+            birth_year(person_name, year).
+
+            IMPORTANT RULES:
+            - ALL names must be lowercase with underscores (alice, bob_smith)
+            - ONLY extract explicit relationships from the text
+            - Do NOT invent unknown/unspecified values
+            - If father is not mentioned, do NOT add a father fact
+            - Output raw Prolog facts only, no explanation or markdown
+        - role: user
+          content: "{{ state.text }}"
+      temperature: 0.0
+    output: llm_response
+
+  # Step 2: Parse LLM response to get facts string
+  - name: parse
+    language: lua
+    run: |
+      local response = state.llm_response
+      local content = response.content or response or ""
+      content = content:gsub("```prolog", ""):gsub("```", "")
+      return {facts = content}
+
+  # Step 3: Prolog derives half-siblings via temporal reasoning
+  - name: reason
+    language: prolog
+    run: |
+      :- dynamic mother/2, father/2, affair/4, birth_year/2.
+
+      % Child of affair if born during affair period
+      child_of_affair(Child, Partner) :-
+          mother(Mother, Child),
+          birth_year(Child, Year),
+          affair(Mother, Partner, Start, End),
+          Year >= Start, Year =< End.
+
+      % Apply exclusive premise: affair partner = father
+      derive_father :-
+          forall(
+              child_of_affair(Child, Partner),
+              (father(Partner, Child) -> true ; assertz(father(Partner, Child)))
+          ).
+
+      % Half-sibling: shares one parent but not both
+      half_sibling(X, Y) :-
+          mother(M, X), mother(M, Y), X \= Y,
+          \+ (father(F, X), father(F, Y)).
+
+      % Load facts and query
+      state(facts, Facts),
+      (Facts \= '' -> tea_load_code(Facts) ; true),
+      derive_father,
+      state(person, Person),
+      downcase_atom(Person, P),
+      findall(H, half_sibling(P, H), Results),
+      return(half_siblings, Results).
+
+  # Step 4: Format answer
+  - name: format
+    language: lua
+    run: |
+      local person = state.person or "unknown"
+      local siblings = state.half_siblings or {}
+      local names = {}
+      for i, s in ipairs(siblings) do
+        local name = tostring(s):gsub("_", " ")
+        -- Capitalize first letter
+        name = name:sub(1,1):upper() .. name:sub(2)
+        names[i] = name
+      end
+      local result
+      if #names > 0 then
+        result = person .. "'s half-siblings: " .. table.concat(names, ", ")
+      else
+        result = "No half-siblings found for " .. person
+      end
+      return {answer = result}
+
+# Implicit flow: extract -> parse -> reason -> format -> __end__

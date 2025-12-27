@@ -3,11 +3,13 @@ description: A simple workflow for CLI testing
 
 nodes:
   - name: process
+    language: lua
     run: |
       -- Lua code
       return { result = "processed: " .. (state.input or "none") }
 
   - name: finalize
+    language: lua
     run: |
       return { output = state.result .. " - done" }
 

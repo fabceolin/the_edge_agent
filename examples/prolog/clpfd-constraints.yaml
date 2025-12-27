@@ -56,15 +56,16 @@ nodes:
       return(solution_y, Y),
       return(solution_z, Z).
 
-  # Node 2: Validate the solution (in Python for demonstration)
+  # Node 2: Validate the solution (in Lua for cross-runtime compatibility)
   - name: validate
+    language: lua
     run: |
-      x = state.get("solution_x", 0)
-      y = state.get("solution_y", 0)
-      z = state.get("solution_z", 0)
-      target = state.get("target_sum", 0)
+      local x = state.solution_x or 0
+      local y = state.solution_y or 0
+      local z = state.solution_z or 0
+      local target = state.target_sum or 0
 
-      is_valid = (x + y + z == target) and (x < y < z)
-      return {"is_valid": is_valid}
+      local is_valid = (x + y + z == target) and (x < y) and (y < z)
+      return { is_valid = is_valid }
 
 # Implicit flow: solve_constraints -> validate -> __end__

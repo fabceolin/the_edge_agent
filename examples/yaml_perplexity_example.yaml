@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+
 name: perplexity-research-agent
 description: Deep research agent using Perplexity API (YAML configuration version)
 
@@ -14,6 +17,7 @@ state_schema:
 nodes:
   # Node 1: Refine user query for better search
   - name: refine_query
+    language: python
     run: |
       # In a real implementation, you might use an LLM here
       # For now, just use the user query as-is
@@ -21,6 +25,7 @@ nodes:
 
   # Node 2: Search using Perplexity API (OpenAI-compatible)
   - name: search_with_perplexity
+    language: python
     run: |
       import os
       try:
@@ -69,6 +74,7 @@ nodes:
 
   # Node 3: Format the results as a report
   - name: format_report
+    language: python
     steps:
       - name: Create header
         run: |
@@ -87,6 +93,7 @@ nodes:
 
   # Node 4: Display results
   - name: display_results
+    language: python
     run: |
       print("\n" + "=" * 80)
       print(state["formatted_report"])

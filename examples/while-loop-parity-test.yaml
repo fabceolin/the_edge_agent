@@ -10,6 +10,7 @@ nodes:
     max_iterations: 10
     body:
       - name: increment
+        language: lua
         run: |
           local count = state.count or 0
           local sum = state.sum or 0

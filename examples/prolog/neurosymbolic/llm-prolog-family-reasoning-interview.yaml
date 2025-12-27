@@ -1,3 +1,6 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
 # LLM + Prolog Family Reasoning Agent (Interview Technique)
 #
 # Uses INTERVIEW-BASED EXTRACTION with TEA-YAML-004 3-layer validation:
@@ -201,6 +204,7 @@ nodes:
   # STEP 2: Parse children and generate explicit questions
   # ============================================================
   - name: generate_questions
+    language: python
     run: |
       import json
 
@@ -286,6 +290,7 @@ nodes:
   # STEP 4: Parse interview responses into entities/relationships
   # ============================================================
   - name: parse_interview
+    language: python
     run: |
       import json
       import re
@@ -513,6 +518,7 @@ nodes:
   # STEP 6: Convert to Prolog facts (only if valid or warnings only)
   # ============================================================
   - name: generate_prolog_facts
+    language: python
     run: |
       entities = state.get("entities", [])
       relationships = state.get("relationships", [])
@@ -649,6 +655,7 @@ nodes:
   # STEP 8: Format answer
   # ============================================================
   - name: format_answer
+    language: python
     run: |
       query_person = state["query_person"]
       query_type = state["query_type"]
@@ -688,6 +695,7 @@ nodes:
   # STEP 9: Handle validation failure
   # ============================================================
   - name: handle_validation_failure
+    language: python
     run: |
       validation = state.get("validation_result", {})
       errors = validation.get("errors", [])

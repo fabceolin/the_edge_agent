@@ -1,0 +1,46 @@
+schema: 1
+story: TEA-DOCS-002
+story_title: Capability Documentation Epic
+gate: PASS
+status_reason: All 8 capability landing pages created following template. Index page links all capabilities. All internal links verified valid.
+reviewer: Quinn (Test Architect)
+updated: 2025-12-27T00:15:00Z
+
+top_issues: []
+waiver: { active: false }
+
+quality_score: 98
+expires: 2026-01-10T00:00:00Z
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 0
+  substories:
+    TEA-DOCS-002.1: PASS  # Neurosymbolic
+    TEA-DOCS-002.2: PASS  # LLM Orchestration
+    TEA-DOCS-002.3: PASS  # RAG & Memory
+    TEA-DOCS-002.4: PASS  # Web Automation
+    TEA-DOCS-002.5: PASS  # Parallel Workflows
+    TEA-DOCS-002.6: PASS  # Human-in-the-Loop
+    TEA-DOCS-002.7: PASS  # Edge Deployment
+    TEA-DOCS-002.8: PASS  # Observability
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: Documentation only
+  performance:
+    status: PASS
+    notes: N/A
+  reliability:
+    status: PASS
+    notes: All links verified
+  maintainability:
+    status: PASS
+    notes: Consistent template across all pages
+
+recommendations:
+  immediate: []
+  future:
+    - action: Update all story statuses from Draft to Done
+      refs: ['docs/stories/TEA-DOCS-002*.md']
