@@ -191,3 +191,6 @@ python/=3.0
 MLUA_RESEARCH.md
 examples/web/scb-advogados-profile.json
 python/LLAMAEXTRACT_FIX_SUMMARY.md
+python/validation_failures.jsonl
+validation_failures.jsonl
+

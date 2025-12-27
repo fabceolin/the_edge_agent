@@ -1,17 +1,20 @@
 # LLM + Prolog Family Reasoning Agent (Interview Technique)
 #
-# Uses INTERVIEW-BASED EXTRACTION instead of complex conditional rules.
-# This approach is more reliable for smaller models like Gemma/Phi4.
+# Uses INTERVIEW-BASED EXTRACTION with TEA-YAML-004 3-layer validation:
+#   Layer 1: Structural schema validation (extraction_schema)
+#   Layer 2: Prolog semantic constraints (validation_constraints)
+#   Layer 3: LLM grounding verification (semantic_probes)
 #
 # ARCHITECTURE:
 #   1. LLM identifies all CHILDREN mentioned in text
 #   2. LLM extracts relationships via EXPLICIT QUESTIONS per child
-#   3. Validation ensures each answer has source citation
+#   3. 3-layer validation ensures correctness
 #   4. Prolog derives: child_of_affair, half_siblings
 
 name: llm-prolog-family-reasoning-interview
 description: |
-  Neurosymbolic agent using interview-based extraction.
+  Neurosymbolic agent using interview-based extraction with
+  TEA-YAML-004 3-layer validation (structural, semantic, grounding).
   Works with multiple LLM providers (Ollama, Azure, OpenAI).
 
 state_schema:
@@ -32,9 +35,8 @@ state_schema:
   # Validated extraction
   entities: list
   relationships: list
-  extraction_valid: bool
-  validation_errors: list
-  refinement_count: int
+  validation_result: dict
+  extraction_prompt: str
 
   # Prolog
   prolog_facts: str
@@ -43,6 +45,124 @@ state_schema:
   reasoning_chain: str
   answer: str
 
+# ============================================================
+# TEA-YAML-004 Layer 1: Structural Schema Definition
+# ============================================================
+extraction_schema:
+  entities:
+    required_fields: [name]
+    optional_fields: [birth_date, type]
+    type_field: type
+
+  relationships:
+    types: [mother, father, affair, sibling]
+    required_fields: [type, subject, object]
+    optional_fields: [confidence, start_date, end_date]
+    type_requirements:
+      affair:
+        - start_date
+        - end_date
+
+  # Generate extraction prompt from schema (symbolic→neural)
+  guide_extraction: true
+
+  # Track confidence scores for probabilistic reasoning
+  confidence_tracking: true
+
+# ============================================================
+# TEA-YAML-004 Layer 2: Prolog Semantic Constraints
+# ============================================================
+validation_constraints:
+  language: prolog
+  rules: |
+    % A person cannot be their own parent
+    validation_error(self_parent, Person) :-
+        relationship(Type, Person, Person),
+        member(Type, ['mother', 'father']).
+
+    % A person can have at most one biological mother
+    validation_error(multiple_mothers, Child) :-
+        relationship('mother', Mother1, Child),
+        relationship('mother', Mother2, Child),
+        Mother1 \= Mother2.
+
+    % A person can have at most one biological father
+    validation_error(multiple_fathers, Child) :-
+        relationship('father', Father1, Child),
+        relationship('father', Father2, Child),
+        Father1 \= Father2.
+
+    % Affair dates must be valid (start before end)
+    validation_error(invalid_affair_dates, Pair) :-
+        relationship('affair', Subj, Obj),
+        affair_dates(Subj, Obj, Start, End),
+        Start @> End,
+        Pair = Subj-Obj.
+
+    % All children should have at least one parent
+    validation_error(orphan_child, Child) :-
+        entity(Child, 'person'),
+        \+ relationship('mother', _, Child),
+        \+ relationship('father', _, Child).
+
+    % Warn on low confidence relationships (< 0.5)
+    validation_error(low_confidence, Rel) :-
+        relationship(Type, Subj, Obj, Conf),
+        Conf < 0.5,
+        Rel = Type-Subj-Obj.
+
+# ============================================================
+# TEA-YAML-004 Layer 3: Semantic Probes (LLM Grounding)
+# ============================================================
+semantic_probes:
+  - for_each: relationship
+    where: "type == 'mother'"
+    probe: |
+      Based on the following text, is {{ subject }} explicitly stated
+      to be the mother of {{ object }}? Answer YES or NO only.
+
+      Text: "{{ state.text }}"
+    on_fail: reject
+
+  - for_each: relationship
+    where: "type == 'father'"
+    probe: |
+      Based on the following text, is {{ subject }} explicitly stated
+      to be the father of {{ object }}? If not explicitly stated,
+      is it strongly implied? Answer YES or NO only.
+
+      Text: "{{ state.text }}"
+    on_fail: warn
+
+  - for_each: relationship
+    where: "type == 'affair'"
+    probe: |
+      Does the text mention a romantic relationship, affair, or
+      extramarital relationship between {{ subject }} and {{ object }}?
+      Answer YES or NO only.
+
+      Text: "{{ state.text }}"
+    on_fail: warn
+
+  - for_each: entity
+    probe: |
+      Is {{ name }} mentioned as a person in the following text?
+      Answer YES or NO only.
+
+      Text: "{{ state.text }}"
+    on_fail: warn
+
+# ============================================================
+# TEA-YAML-004 Neurosymbolic: Log validation failures
+# ============================================================
+validation_logging:
+  enabled: true
+  log_path: "${VALIDATION_LOG_PATH:-./validation_failures.jsonl}"
+  log_failures: true
+
+# ============================================================
+# Graph Definition
+# ============================================================
 nodes:
   # ============================================================
   # STEP 1: Identify all children mentioned in text
@@ -163,9 +283,9 @@ nodes:
     output: interview_response
 
   # ============================================================
-  # STEP 4: Parse and validate interview responses
+  # STEP 4: Parse interview responses into entities/relationships
   # ============================================================
-  - name: validate_interview
+  - name: parse_interview
     run: |
       import json
       import re
@@ -177,9 +297,7 @@ nodes:
       text = text_raw.lower() if isinstance(text_raw, str) else str(text_raw).lower()
       questions = state.get("child_questions", [])
       children = state.get("identified_children", [])
-      refinement_count = state.get("refinement_count", 0)
 
-      errors = []
       entities = []
       relationships = []
 
@@ -208,7 +326,6 @@ nodes:
         else:
           answers = []
       except Exception as e:
-        errors.append("Invalid JSON: " + str(e))
         answers = []
 
       # Build entities from children
@@ -218,7 +335,9 @@ nodes:
         if name:
           entities.append({
             "name": name,
-            "birth_date": str(birth) + "-01-01" if birth else None
+            "type": "person",
+            "birth_date": str(birth) + "-01-01" if birth else None,
+            "confidence": 0.9  # High confidence for identified children
           })
 
       # Process answers into relationships
@@ -251,11 +370,14 @@ nodes:
 
           if rel_type in ["mother", "father"] and answer.upper() != "UNKNOWN":
             if not any(e.get("name") == answer for e in entities):
-              entities.append({"name": answer, "birth_date": None})
+              entities.append({"name": answer, "type": "person", "birth_date": None, "confidence": 0.8})
+            # Higher confidence for mother (usually explicit), lower for father
+            conf = 0.9 if rel_type == "mother" else 0.7
             relationships.append({
               "type": rel_type,
               "subject": answer,
-              "object": child_name
+              "object": child_name,
+              "confidence": conf
             })
 
         # Handle format B: {"person": "X", "mother": "Y", "father": "Z"}
@@ -266,13 +388,13 @@ nodes:
 
           if mother and str(mother).upper() != "UNKNOWN":
             if not any(e.get("name") == mother for e in entities):
-              entities.append({"name": mother, "birth_date": None})
-            relationships.append({"type": "mother", "subject": mother, "object": child_name})
+              entities.append({"name": mother, "type": "person", "birth_date": None, "confidence": 0.8})
+            relationships.append({"type": "mother", "subject": mother, "object": child_name, "confidence": 0.9})
 
           if father and str(father).upper() != "UNKNOWN":
             if not any(e.get("name") == father for e in entities):
-              entities.append({"name": father, "birth_date": None})
-            relationships.append({"type": "father", "subject": father, "object": child_name})
+              entities.append({"name": father, "type": "person", "birth_date": None, "confidence": 0.8})
+            relationships.append({"type": "father", "subject": father, "object": child_name, "confidence": 0.7})
 
       # Helper to find full name from partial
       def find_full_name(partial, entities_list):
@@ -335,7 +457,8 @@ nodes:
             "subject": p1_full,
             "object": p2_full,
             "start_date": start_date,
-            "end_date": end_date
+            "end_date": end_date,
+            "confidence": 0.8
           })
           affair_parsed = True
 
@@ -365,47 +488,41 @@ nodes:
               "subject": p1_full,
               "object": p2_full,
               "start_date": "1970-01-01",
-              "end_date": "1999-12-31"
+              "end_date": "1999-12-31",
+              "confidence": 0.6  # Lower confidence for text-parsed affairs
             })
-
-      # Validation
-      mother_rels = [r for r in relationships if r.get("type") == "mother"]
-      children_with_mothers = {r.get("object") for r in mother_rels}
-      for child in children:
-        child_name = child.get("name", "")
-        if child_name and child_name not in children_with_mothers:
-          errors.append("Child '" + child_name + "' has no mother extracted")
-
-      is_valid = len(errors) == 0
 
       return {
         "entities": entities,
         "relationships": relationships,
-        "extraction_valid": is_valid,
-        "validation_errors": errors,
-        "refinement_count": refinement_count,
         "extraction_responses": answers
       }
 
   # ============================================================
-  # STEP 5: Try refinement if needed (no-op if valid)
+  # STEP 5: Validate extraction using TEA-YAML-004 3-layer validation
   # ============================================================
-  - name: try_refine
-    run: |
-      # If valid or already refined, skip
-      if state.get("extraction_valid", False) or state.get("refinement_count", 0) >= 1:
-        return {"refinement_count": state.get("refinement_count", 0)}
-
-      # Mark as refined (actual refinement would call LLM again)
-      return {"refinement_count": 1}
+  - name: validate_extraction
+    uses: validate.extraction
+    with:
+      entities: "{{ state.entities }}"
+      relationships: "{{ state.relationships }}"
+      source_text: "{{ state.text }}"
+    output: validation_result
 
   # ============================================================
-  # STEP 6: Convert to Prolog facts
+  # STEP 6: Convert to Prolog facts (only if valid or warnings only)
   # ============================================================
   - name: generate_prolog_facts
     run: |
       entities = state.get("entities", [])
       relationships = state.get("relationships", [])
+      validation = state.get("validation_result", {})
+
+      # Skip if hard failures (not just warnings)
+      if not validation.get("valid", True):
+        errors = validation.get("errors", [])
+        if any(e.get("severity") == "error" for e in errors):
+          return {"prolog_facts": "", "answer": "Validation failed: " + str(errors)}
 
       prolog_lines = []
 
@@ -538,7 +655,7 @@ nodes:
       results = state.get("query_result", [])
       derived = state.get("derived_facts", [])
       reasoning = state.get("reasoning_chain", "")
-      refinements = state.get("refinement_count", 0)
+      validation = state.get("validation_result", {})
 
       def format_name(name):
         return name.replace("_", " ").title()
@@ -559,12 +676,32 @@ nodes:
 
       answer = answer + "\n\n**Reasoning:** " + reasoning
 
-      if refinements > 0:
-        answer = answer + "\n\n**LLM Refinements:** " + str(refinements) + " correction(s) applied"
+      # Include validation summary
+      if validation.get("warnings"):
+        answer = answer + "\n\n**Validation warnings:** " + str(len(validation.get("warnings", [])))
 
-      answer = answer + "\n\n---\n*Interview-based extraction with Prolog reasoning*"
+      answer = answer + "\n\n---\n*Interview-based extraction with TEA-YAML-004 3-layer validation and Prolog reasoning*"
 
       return {"answer": answer}
+
+  # ============================================================
+  # STEP 9: Handle validation failure
+  # ============================================================
+  - name: handle_validation_failure
+    run: |
+      validation = state.get("validation_result", {})
+      errors = validation.get("errors", [])
+
+      error_msgs = []
+      for e in errors:
+        if isinstance(e, dict):
+          error_msgs.append(e.get("message", str(e)))
+        else:
+          error_msgs.append(str(e))
+
+      return {
+        "answer": "**Validation Failed**\n\nErrors:\n- " + "\n- ".join(error_msgs) + "\n\n---\n*3-layer validation rejected extraction*"
+      }
 
 edges:
   - from: __start__
@@ -574,16 +711,23 @@ edges:
   - from: generate_questions
     to: extract_via_interview
   - from: extract_via_interview
-    to: validate_interview
-  - from: validate_interview
-    to: try_refine
-  - from: try_refine
+    to: parse_interview
+  - from: parse_interview
+    to: validate_extraction
+  # Conditional: continue if valid, otherwise handle failure
+  - from: validate_extraction
     to: generate_prolog_facts
+    condition: "{{ state.validation_result.valid }}"
+  - from: validate_extraction
+    to: handle_validation_failure
+    condition: "{{ not state.validation_result.valid }}"
   - from: generate_prolog_facts
     to: prolog_reasoning
   - from: prolog_reasoning
     to: format_answer
   - from: format_answer
+    to: __end__
+  - from: handle_validation_failure
     to: __end__
 
 # ============================================================

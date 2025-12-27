@@ -804,11 +804,71 @@ jobs:
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from the version we built against
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(dirname $(ldd tea-rust-linux-x86_64-prolog | grep libswipl | awk '{print $3}'))
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p swipl-runtime-x86_64/lib
+          mkdir -p swipl-runtime-x86_64/home
+
+          # Copy libswipl.so
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* swipl-runtime-x86_64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* swipl-runtime-x86_64/home/
+
+          # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
+          echo "Collecting all library dependencies..."
+
+          # System libraries to exclude (linuxdeploy blacklists these)
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
+
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-x86_64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-x86_64/home/lib/x86_64-linux/*.so; do
+            if [ -f "$so" ]; then
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+            fi
+          done
+
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-x86_64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-x86_64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf swipl-runtime-x86_64.tar.gz swipl-runtime-x86_64
+
+          echo "Bundle contents:"
+          ls -la swipl-runtime-x86_64/lib/
+          echo "---"
+          ls -la swipl-runtime-x86_64/home/ | head -10
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rust-tea-rust-linux-x86_64-prolog
           path: tea-rust-linux-x86_64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: swipl-runtime-x86_64
+          path: swipl-runtime-x86_64.tar.gz
           retention-days: 1
 
   build-rust-prolog-linux-arm64:
@@ -880,11 +940,71 @@ jobs:
           size_mb=$((size / 1024 / 1024))
           echo "Binary size: ${size_mb}MB"
 
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from the version we built against
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(dirname $(ldd tea-rust-linux-arm64-prolog | grep libswipl | awk '{print $3}'))
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p swipl-runtime-aarch64/lib
+          mkdir -p swipl-runtime-aarch64/home
+
+          # Copy libswipl.so
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* swipl-runtime-aarch64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* swipl-runtime-aarch64/home/
+
+          # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
+          echo "Collecting all library dependencies..."
+
+          # System libraries to exclude (linuxdeploy blacklists these)
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
+
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-arm64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-aarch64/home/lib/aarch64-linux/*.so; do
+            if [ -f "$so" ]; then
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+            fi
+          done
+
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-aarch64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-aarch64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf swipl-runtime-aarch64.tar.gz swipl-runtime-aarch64
+
+          echo "Bundle contents:"
+          ls -la swipl-runtime-aarch64/lib/
+          echo "---"
+          ls -la swipl-runtime-aarch64/home/ | head -10
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: rust-tea-rust-linux-arm64-prolog
           path: tea-rust-linux-arm64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: swipl-runtime-aarch64
+          path: swipl-runtime-aarch64.tar.gz
           retention-days: 1
 
   # ============================================================
@@ -899,20 +1019,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog and dependencies
+      - name: Install dependencies
         run: |
-          # Use official SWI-Prolog PPA for consistent versioning (must match build job)
-          sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox file libfuse2
-
-          # Show version for debugging
-          swipl --version
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
 
       - name: Download Prolog binary
         uses: actions/download-artifact@v4
         with:
           name: rust-tea-rust-linux-x86_64-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: swipl-runtime-x86_64
           path: .
 
       - name: Download linuxdeploy
@@ -952,18 +1075,31 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime
         run: |
-          # Get the exact SWI-Prolog home from the installed version
-          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          echo "Bundling SWI-Prolog runtime from: $SWIPL_HOME"
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf swipl-runtime-x86_64.tar.gz
 
-          # Copy the complete runtime directory
-          if [ -d "$SWIPL_HOME" ]; then
-            cp -r "$SWIPL_HOME"/* tea.AppDir/usr/lib/swipl/
-            echo "Successfully copied SWI-Prolog runtime"
-          else
-            echo "ERROR: SWI-Prolog home not found at $SWIPL_HOME"
-            exit 1
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r swipl-runtime-x86_64/home/* tea.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea.AppDir/usr/lib
+          cp -L swipl-runtime-x86_64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
           fi
+          cd ../../..
 
           # Verify boot.prc exists (critical for VM initialization)
           if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
@@ -974,10 +1110,14 @@ jobs:
 
           echo "Bundled SWI-Prolog contents:"
           ls -la tea.AppDir/usr/lib/swipl/
+          ls -la tea.AppDir/usr/lib/libswipl*
 
       - name: Run linuxdeploy
         run: |
           # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
           ./linuxdeploy-x86_64.AppImage \
             --appdir tea.AppDir \
             --executable tea.AppDir/usr/bin/tea \
@@ -1053,20 +1193,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog and dependencies
+      - name: Install dependencies
         run: |
-          # Use official SWI-Prolog PPA for consistent versioning (must match build job)
-          sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox file libfuse2
-
-          # Show version for debugging
-          swipl --version
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
 
       - name: Download Prolog binary
         uses: actions/download-artifact@v4
         with:
           name: rust-tea-rust-linux-arm64-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: swipl-runtime-aarch64
           path: .
 
       - name: Download linuxdeploy
@@ -1106,18 +1249,31 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime
         run: |
-          # Get the exact SWI-Prolog home from the installed version
-          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          echo "Bundling SWI-Prolog runtime from: $SWIPL_HOME"
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf swipl-runtime-aarch64.tar.gz
 
-          # Copy the complete runtime directory
-          if [ -d "$SWIPL_HOME" ]; then
-            cp -r "$SWIPL_HOME"/* tea.AppDir/usr/lib/swipl/
-            echo "Successfully copied SWI-Prolog runtime"
-          else
-            echo "ERROR: SWI-Prolog home not found at $SWIPL_HOME"
-            exit 1
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r swipl-runtime-aarch64/home/* tea.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea.AppDir/usr/lib
+          cp -L swipl-runtime-aarch64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
           fi
+          cd ../../..
 
           # Verify boot.prc exists (critical for VM initialization)
           if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
@@ -1128,10 +1284,14 @@ jobs:
 
           echo "Bundled SWI-Prolog contents:"
           ls -la tea.AppDir/usr/lib/swipl/
+          ls -la tea.AppDir/usr/lib/libswipl*
 
       - name: Run linuxdeploy
         run: |
           # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
           ./linuxdeploy-aarch64.AppImage \
             --appdir tea.AppDir \
             --executable tea.AppDir/usr/bin/tea \

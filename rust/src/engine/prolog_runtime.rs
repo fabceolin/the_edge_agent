@@ -75,19 +75,16 @@ const DEFAULT_MODULES: &[&str] = &["lists", "clpfd", "apply", "aggregate"];
 ///
 /// This is the "thin runtime" architecture: let Prolog parse Prolog!
 ///
-/// NOTE: This constant is kept for documentation and as a fallback reference.
+/// NOTE: This constant is used as a fallback when the .pl file is not available.
 /// The primary loading method uses `consult/1` from `tea_prolog_predicates.pl`.
-#[allow(dead_code)]
 const TEA_PROLOG_PREDICATES: &str = r#"
 % TEA Prolog Predicates - Prolog-side term processing
 % Using SWI-Prolog's native read_term/3 for 100% accurate parsing
+%
+% NOTE: state/2, return_value/2, and return/2 are defined in setup_predicates_in_context().
+% This file only defines tea_load_code/1 and supporting predicates.
 
-:- thread_local(state/2).
-:- thread_local(return_value/2).
 :- thread_local(tea_user_fact/1).
-
-% Define return/2 predicate
-return(Key, Value) :- assertz(return_value(Key, Value)).
 
 % Action predicates - should be called, not asserted
 % Also includes structural operators that should never be asserted
@@ -428,16 +425,37 @@ impl PrologRuntime {
         Self::fallback_load_tea_predicates(context);
     }
 
-    /// Fallback method to load TEA predicates by asserting them individually.
+    /// Fallback method to load TEA predicates from the embedded string.
     ///
-    /// This is used if `load_files/2` from string fails.
+    /// This is used when the .pl file is not available (e.g., in AppImage).
+    /// Writes the embedded predicates to a temp file and consults it.
     fn fallback_load_tea_predicates<C: QueryableContextType>(context: &Context<C>) {
-        // Declare thread-local predicates
-        let decl_goals = [
-            "thread_local(state/2)",
-            "thread_local(return_value/2)",
-            "thread_local(tea_user_fact/1)",
-        ];
+        // Try to write embedded predicates to temp file and consult
+        // This is the preferred method as it loads all predicates correctly
+        if let Ok(temp_dir) = std::env::temp_dir()
+            .canonicalize()
+            .or_else(|_| Ok::<_, std::io::Error>(std::env::temp_dir()))
+        {
+            let temp_file = temp_dir.join("tea_prolog_predicates.pl");
+            if std::fs::write(&temp_file, TEA_PROLOG_PREDICATES).is_ok() {
+                let escaped_path = temp_file.to_str().unwrap_or("").replace('\'', "\\'");
+                let consult_cmd = format!("consult('{}')", escaped_path);
+
+                if let Ok(term) = context.term_from_string(&consult_cmd) {
+                    if context.call_term_once(&term).is_ok() {
+                        // Cleanup temp file after successful consult
+                        let _ = std::fs::remove_file(&temp_file);
+                        return;
+                    }
+                }
+                // Cleanup temp file on failure
+                let _ = std::fs::remove_file(&temp_file);
+            }
+        }
+
+        // Ultimate fallback: define minimal predicates manually
+        // This is only used if temp file approach fails
+        let decl_goals = ["thread_local(state/2)", "thread_local(return_value/2)"];
 
         for goal in &decl_goals {
             if let Ok(term) = context.term_from_string(goal) {
@@ -445,14 +463,13 @@ impl PrologRuntime {
             }
         }
 
-        // Define return/2
+        // Define return/2 (used by user code)
         let return_def = "assertz((return(Key, Value) :- assertz(return_value(Key, Value))))";
         if let Ok(term) = context.term_from_string(return_def) {
             let _ = context.call_term_once(&term);
         }
 
-        // Define tea_load_code/1 using assertz
-        // This is a simplified version that still uses Prolog's read_term
+        // Define minimal tea_load_code/1
         let tea_load_code_def = r#"assertz((
             tea_load_code(CodeAtom) :-
                 atom_string(CodeAtom, CodeString),
@@ -849,7 +866,11 @@ impl PrologRuntime {
                 predicate: "unknown (sandboxed predicate)".to_string(),
             })
         } else {
-            Err(TeaError::PrologTimeout(self.timeout.as_secs()))
+            // Return a generic Prolog error rather than misleading "timeout"
+            // The actual exception details are not easily accessible from swipl-rs
+            Err(TeaError::Prolog(
+                "Prolog execution failed (exception occurred during query)".to_string(),
+            ))
         }
     }
 
