@@ -1,0 +1,660 @@
+# NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
+# For cross-runtime compatibility, use language: lua or language: prolog.
+#
+# LLM + Prolog Family Reasoning Agent (WITH RETRY LOOP + LEARNING)
+#
+# This variant demonstrates the retry.loop action (TEA-YAML-005) for robust
+# self-correcting extraction. When LLM extraction fails validation, it
+# automatically retries with error context AND learns from previous mistakes.
+#
+# ENHANCEMENT OVER ORIGINAL:
+#   - Validates LLM extraction against schema
+#   - Automatically retries with error feedback
+#   - LEARNS from all previous errors (not just the last one)
+#   - Detects repeated error patterns
+#   - No silent failures - extraction issues are caught and corrected
+#
+# ARCHITECTURE:
+#   1. LLM extracts: birth_date, mother, father, married, affair (with dates)
+#   2. VALIDATE & RETRY: Check schema compliance, retry if errors
+#   3. Prolog derives: child_of_affair (from birth_date + affair period)
+#   4. Prolog applies: exclusive relationship premise -> father
+#   5. Prolog queries: sibling, half_sibling
+#
+# KEY PATTERN:
+#   retry.loop wraps validate.extraction and calls correct_extraction on failure
+#   Up to 2 correction attempts before giving up
+
+name: llm-prolog-family-reasoning-with-retry
+description: |
+  Neurosymbolic agent with self-correcting extraction via retry.loop.
+  LLM extracts facts; validates against schema; retries on error;
+  Prolog infers relationships from temporal data.
+
+state_schema:
+  text: str
+  query_person: str
+  query_type: str
+  premise: str
+  entities: list
+  relationships: list
+  llm_response: str
+  prolog_facts: str
+  query_result: list
+  derived_facts: list
+  reasoning_chain: str
+  answer: str
+  # Retry state (set by retry.loop)
+  _retry_count: int
+  _retry_errors: list
+  _retry_exhausted: bool
+  # Error history (accumulated across retries for learning)
+  _error_history: list
+
+# Extraction schema for validation (used by validate.extraction)
+# Defines required/optional fields and relationship types
+extraction_schema:
+  entities:
+    required_fields:
+      - name
+    optional_fields:
+      - birth_date
+      - death_date
+  relationships:
+    types:
+      - mother
+      - father
+      - parent
+      - married
+      - affair
+    required_fields:
+      - type
+      - subject
+      - object
+    optional_fields:
+      - start_date
+      - end_date
+    # Type-specific requirements: affair relationships should have dates
+    type_requirements:
+      affair:
+        - start_date
+      married:
+        - start_date
+
+nodes:
+  # ============================================================
+  # STEP 1: LLM extracts OBSERVABLE FACTS from text
+  # ============================================================
+  - name: extract_facts
+    uses: llm.call
+    with:
+      model: gpt-4o
+      messages:
+        - role: system
+          content: |
+            You are a fact extraction expert. Extract ONLY OBSERVABLE FACTS from text.
+
+            CRITICAL: Do NOT use external knowledge. Extract ONLY from the provided text.
+            CRITICAL: Do NOT infer uncertain relationships. Only extract what is explicit.
+
+            ═══════════════════════════════════════════════════════════════════════
+            EXTRACTION SCHEMA
+            ═══════════════════════════════════════════════════════════════════════
+
+            OUTPUT FORMAT (JSON only, no markdown):
+            {
+              "entities": [{"name": "Full Name", "birth_date": "YYYY-MM-DD or null"}],
+              "relationships": [
+                {"type": "mother|father|married|affair", "subject": "Name", "object": "Name",
+                 "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null"}
+              ]
+            }
+
+            ═══════════════════════════════════════════════════════════════════════
+            RELATIONSHIP TYPES (Extract these)
+            ═══════════════════════════════════════════════════════════════════════
+
+            | Type    | Subject      | Object   | Temporal | Extract When                    |
+            |---------|--------------|----------|----------|---------------------------------|
+            | mother  | Mother       | Child    | No       | "X had children", "mother of"   |
+            | father  | Father       | Child    | No       | "X's sons", explicitly stated   |
+            | parent  | Parent       | Child    | No       | Gender unknown                  |
+            | married | Spouse       | Spouse   | Yes      | "married to", wedding date      |
+            | affair  | Person       | Partner  | Yes      | "affair with", "mistress"       |
+
+            ═══════════════════════════════════════════════════════════════════════
+            DATE EXTRACTION RULES
+            ═══════════════════════════════════════════════════════════════════════
+
+            - Use ISO 8601: YYYY-MM-DD
+            - "born November 14, 1948" -> "1948-11-14"
+            - "early 1970s" -> "1970-01-01"
+            - "mid 1980s" -> "1985-07-01"
+            - "late 1990s" -> "1999-12-31"
+            - If only year known -> "YYYY-01-01"
+            - If date unknown -> null
+
+            ═══════════════════════════════════════════════════════════════════════
+            IMPORTANT: DO NOT EXTRACT
+            ═══════════════════════════════════════════════════════════════════════
+
+            - child_of_affair - This will be DERIVED by Prolog from dates
+            - Uncertain parentage - Let Prolog infer from temporal overlap
+            - Any relationship not explicitly stated in text
+
+            ═══════════════════════════════════════════════════════════════════════
+
+        - role: user
+          content: |
+            Extract all observable facts from this text:
+
+            ───────────────────────────────────────────────────────────────────────
+            {{ state.text }}
+            ───────────────────────────────────────────────────────────────────────
+
+            Remember:
+            - Extract ONLY from the text above
+            - Include birth_date for every person if mentioned
+            - Include start_date/end_date for marriages and affairs
+            - Do NOT infer child_of_affair - Prolog will derive it
+
+            Return ONLY valid JSON.
+      temperature: 0.1
+    output: llm_response
+
+  # ============================================================
+  # STEP 2: Parse extracted data into entities and relationships
+  # ============================================================
+  - name: parse_extraction
+    language: python
+    run: |
+      import json
+
+      llm_response = state.get("llm_response", {})
+      content = llm_response.get("content", "") if isinstance(llm_response, dict) else str(llm_response)
+
+      try:
+        if "```json" in content:
+          content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+          content = content.split("```")[1].split("```")[0]
+
+        data = json.loads(content.strip())
+        entities = data.get("entities", [])
+        relationships = data.get("relationships", [])
+      except Exception as e:
+        # Don't silently fail - return error info for retry.loop
+        entities = []
+        relationships = []
+        return {
+          "entities": entities,
+          "relationships": relationships,
+          "_parse_error": str(e)
+        }
+
+      return {"entities": entities, "relationships": relationships}
+
+  # ============================================================
+  # STEP 3: VALIDATE WITH RETRY (TEA-YAML-005)
+  # ============================================================
+  # This is the key enhancement:
+  # - Validates extraction against extraction_schema
+  # - On failure, routes to correct_extraction node
+  # - Retries up to 2 times before giving up
+  # - Sets _retry_count, _retry_errors, _retry_exhausted
+  # ============================================================
+  - name: validate_with_retry
+    uses: retry.loop
+    with:
+      validate: validate.extraction
+      validate_args: {}  # Pulls entities/relationships from state automatically
+      correct: correct_extraction
+      max_retries: 2
+
+  # ============================================================
+  # STEP 3b: CORRECTION NODE (called by retry.loop on failure)
+  # ============================================================
+  # IMPORTANT: retry.loop executes this node directly and re-validates.
+  # It does NOT follow graph edges. So this node must:
+  # 1. Call LLM with error context
+  # 2. Parse the response
+  # 3. Return corrected entities/relationships
+  #
+  # We use a Python node that calls llm.call action internally.
+  # ============================================================
+  - name: correct_extraction
+    language: python
+    run: |
+      import json
+
+      # Get current retry info
+      errors = state.get("_retry_errors", [])
+      retry_count = state.get("_retry_count", 0)
+
+      # =================================================================
+      # ACCUMULATE ERROR HISTORY (learns from all previous attempts)
+      # =================================================================
+      # Get existing history or initialize empty list
+      error_history = state.get("_error_history", [])
+
+      # Add current attempt to history
+      current_attempt = {
+          "attempt": retry_count,
+          "errors": [e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errors],
+          "entities_tried": state.get("entities", []),
+          "relationships_tried": state.get("relationships", [])
+      }
+      error_history.append(current_attempt)
+
+      # Format error history for LLM
+      history_lines = []
+      for attempt in error_history:
+          history_lines.append("--- Attempt " + str(attempt["attempt"] + 1) + " ---")
+          history_lines.append("Errors:")
+          for err in attempt["errors"]:
+              history_lines.append("  - " + err)
+          history_lines.append("Entities tried: " + str(len(attempt["entities_tried"])))
+          history_lines.append("Relationships tried: " + str(len(attempt["relationships_tried"])))
+          history_lines.append("")
+      error_history_text = "\n".join(history_lines)
+
+      # Format current errors
+      error_list = []
+      for e in errors:
+          msg = e.get("message", str(e)) if isinstance(e, dict) else str(e)
+          error_list.append("- " + msg)
+      current_errors = "\n".join(error_list)
+
+      # =================================================================
+      # BUILD PROMPT WITH FULL HISTORY
+      # =================================================================
+      json_schema = '''
+      {
+        "entities": [{"name": "Full Name", "birth_date": "YYYY-MM-DD or null"}],
+        "relationships": [
+          {"type": "mother|father|married|affair", "subject": "Name", "object": "Name",
+           "start_date": "YYYY-MM-DD or null", "end_date": "YYYY-MM-DD or null"}
+        ]
+      }'''
+
+      prompt_lines = [
+          "=== CORRECTION ATTEMPT " + str(retry_count + 1) + " ===",
+          "",
+          "Your previous extractions had validation errors. Review the FULL HISTORY",
+          "of attempts below to avoid repeating the same mistakes.",
+          "",
+          "=== ERROR HISTORY (all attempts) ===",
+          error_history_text,
+          "=== CURRENT ERRORS TO FIX ===",
+          current_errors,
+          "",
+          "=== ORIGINAL TEXT ===",
+          state.get("text", ""),
+          "",
+          "=== LATEST EXTRACTION (with errors) ===",
+          "Entities: " + json.dumps(state.get("entities", []), indent=2),
+          "Relationships: " + json.dumps(state.get("relationships", []), indent=2),
+          "",
+          "=== INSTRUCTIONS ===",
+          "1. Review ALL previous errors to understand the pattern of mistakes",
+          "2. Fix the current errors listed above",
+          "3. Make sure NOT to reintroduce errors from previous attempts",
+          "4. Return ONLY valid JSON with this format:" + json_schema,
+          "",
+          "REQUIREMENTS:",
+          "- Every entity MUST have a 'name' field",
+          "- Every relationship MUST have: type, subject, object",
+          "- Valid relationship types: mother, father, parent, married, affair",
+          "- affair relationships SHOULD have start_date",
+          "- married relationships SHOULD have start_date"
+      ]
+      prompt = "\n".join(prompt_lines)
+
+      # Call LLM using the registry action
+      from the_edge_agent.actions import get_action_registry
+      registry = get_action_registry()
+      llm_call = registry.get("llm.call")
+
+      if not llm_call:
+          return {"_correction_error": "llm.call action not available"}
+
+      try:
+          llm_result = llm_call(
+              state=state,
+              model="gpt-4o",
+              messages=[
+                  {"role": "system", "content": "You are a fact extraction expert. Fix validation errors and re-extract. Return ONLY valid JSON."},
+                  {"role": "user", "content": prompt}
+              ],
+              temperature=0.1
+          )
+
+          # Parse the LLM response
+          content = llm_result.get("content", "") if isinstance(llm_result, dict) else str(llm_result)
+
+          if "```json" in content:
+              content = content.split("```json")[1].split("```")[0]
+          elif "```" in content:
+              content = content.split("```")[1].split("```")[0]
+
+          data = json.loads(content.strip())
+          return {
+              "entities": data.get("entities", []),
+              "relationships": data.get("relationships", []),
+              "_error_history": error_history  # Preserve history for next retry
+          }
+
+      except Exception as e:
+          # Return error info - retry.loop will see validation fail again
+          return {
+              "_correction_error": str(e),
+              "_error_history": error_history  # Preserve history even on error
+          }
+
+  # ============================================================
+  # STEP 4: Convert JSON entities/relationships to Prolog facts
+  # ============================================================
+  - name: generate_prolog_facts
+    language: python
+    run: |
+      entities = state.get("entities", [])
+      relationships = state.get("relationships", [])
+
+      prolog_lines = []
+
+      def normalize(name):
+        return name.lower().replace(" ", "_").replace("-", "_").replace("'", "").replace(".", "")
+
+      for entity in entities:
+        name = normalize(entity.get("name", ""))
+        birth = entity.get("birth_date")
+        if name and birth:
+          prolog_lines.append(f"birth_date({name}, '{birth}').")
+
+      for rel in relationships:
+        rel_type = rel.get("type", "")
+        subj = normalize(rel.get("subject", ""))
+        obj = normalize(rel.get("object", ""))
+        start = rel.get("start_date")
+        end = rel.get("end_date")
+
+        if rel_type == "mother" and subj and obj:
+          prolog_lines.append(f"mother({subj}, {obj}).")
+        elif rel_type == "father" and subj and obj:
+          prolog_lines.append(f"father({subj}, {obj}).")
+        elif rel_type == "affair" and subj and obj:
+          start_str = f"'{start}'" if start else "null"
+          end_str = f"'{end}'" if end else "null"
+          prolog_lines.append(f"affair({subj}, {obj}, {start_str}, {end_str}).")
+
+      return {"prolog_facts": "\n".join(prolog_lines)}
+
+  # ============================================================
+  # STEP 5: Prolog DERIVES relationships using temporal inference
+  # ============================================================
+  - name: prolog_reasoning
+    language: prolog
+    run: |
+      :- dynamic mother/2.
+      :- dynamic father/2.
+      :- dynamic affair/4.
+      :- dynamic birth_date/2.
+
+      % Rule definitions (must come before main goal)
+      date_in_range(Date, Start, End) :-
+          Date @>= Start,
+          (End = null -> true ; Date @=< End).
+
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(Mother, AffairPartner, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+      child_of_affair(Child, AffairPartner) :-
+          mother(Mother, Child),
+          birth_date(Child, BirthDate),
+          affair(AffairPartner, Mother, StartDate, EndDate),
+          date_in_range(BirthDate, StartDate, EndDate).
+
+      apply_exclusive_premise :-
+          forall(
+              child_of_affair(Child, AffairPartner),
+              (father(AffairPartner, Child) -> true ; assertz(father(AffairPartner, Child)))
+          ).
+
+      sibling(X, Y) :-
+          mother(M, X), mother(M, Y),
+          father(F, X), father(F, Y),
+          X \= Y.
+
+      shares_parent(X, Y) :- mother(M, X), mother(M, Y), X \= Y.
+      shares_parent(X, Y) :- father(F, X), father(F, Y), X \= Y.
+      not_sibling(X, Y) :- \+ sibling(X, Y).
+
+      half_sibling(X, Y) :-
+          shares_parent(X, Y),
+          not_sibling(X, Y).
+
+      % Normalize name: lowercase, replace spaces/hyphens with underscores, remove punctuation
+      normalize_char(32, 95) :- !.  % space -> underscore
+      normalize_char(45, 95) :- !.  % hyphen -> underscore
+      normalize_char(C, C).         % default: keep char
+      valid_char(C) :- C >= 97, C =< 122, !.  % a-z
+      valid_char(95) :- !.                    % underscore
+      valid_char(C) :- C >= 48, C =< 57.      % 0-9
+      normalize_name(In, Out) :-
+          downcase_atom(In, Lower),
+          atom_codes(Lower, Codes),
+          maplist(normalize_char, Codes, NormCodes),
+          include(valid_char, NormCodes, FilteredCodes),
+          atom_codes(Out, FilteredCodes).
+
+      % Main execution goal - load facts from state and run queries
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
+      state(query_person, PersonAtom),
+      state(query_type, QueryType),
+      state(premise, Premise),
+      normalize_name(PersonAtom, Person),
+      (
+        (sub_atom(Premise, _, _, _, 'exclusive') ;
+         sub_atom(Premise, _, _, _, 'one partner')) ->
+            apply_exclusive_premise
+        ; true
+      ),
+      findall(derived(child_of_affair, C, P), child_of_affair(C, P), DerivedAffair),
+      (
+        QueryType = 'siblings' ->
+          findall(S, sibling(Person, S), Results)
+        ; QueryType = 'half_siblings' ->
+          findall(H, half_sibling(Person, H), Results)
+        ; Results = []
+      ),
+      length(Results, Count),
+      length(DerivedAffair, DerivedCount),
+      format(atom(Chain), 'Derived ~w child_of_affair. Found ~w ~w.', [DerivedCount, Count, QueryType]),
+      return(query_result, Results),
+      return(derived_facts, DerivedAffair),
+      return(reasoning_chain, Chain).
+
+  # ============================================================
+  # STEP 6: Format human-readable answer (success path)
+  # ============================================================
+  - name: format_answer
+    language: python
+    run: |
+      query_person = state["query_person"]
+      query_type = state["query_type"]
+      results = state.get("query_result", [])
+      derived = state.get("derived_facts", [])
+      reasoning = state.get("reasoning_chain", "")
+      retry_count = state.get("_retry_count", 0)
+
+      def format_name(name):
+        return name.replace("_", " ").title()
+
+      formatted = [format_name(r) for r in results]
+
+      if not results:
+        answer = f"No {query_type.replace('_', ' ')} found for {query_person}."
+      elif query_type == "half_siblings":
+        answer = f"**{query_person}'s half-siblings:** {', '.join(formatted)}"
+      elif query_type == "siblings":
+        answer = f"**{query_person}'s siblings:** {', '.join(formatted)}"
+      else:
+        answer = f"**Results:** {', '.join(formatted)}"
+
+      if derived:
+        answer += f"\n\n**Derived:** {len(derived)} child_of_affair facts from temporal reasoning"
+
+      answer += f"\n\n**Reasoning:** {reasoning}"
+
+      if retry_count > 0:
+        answer += f"\n\n**Note:** Extraction required {retry_count} correction(s) before validation passed"
+
+      answer += "\n\n---\n*Neurosymbolic AI: LLM extracted facts, Prolog derived relationships*"
+
+      return {"answer": answer}
+
+  # ============================================================
+  # STEP 6b: Handle extraction failure (retry exhausted)
+  # ============================================================
+  - name: handle_extraction_failure
+    language: python
+    run: |
+      import json
+
+      errors = state.get("_retry_errors", [])
+      retry_count = state.get("_retry_count", 0)
+      error_history = state.get("_error_history", [])
+
+      answer = "**Extraction Failed** after " + str(retry_count + 1) + " attempts.\n\n"
+
+      # Show full error history
+      if error_history:
+          answer += "**Error History (all attempts):**\n"
+          for attempt in error_history:
+              answer += "\n*Attempt " + str(attempt["attempt"] + 1) + ":*\n"
+              for err in attempt.get("errors", []):
+                  answer += "- " + str(err) + "\n"
+
+      # Show final errors
+      answer += "\n**Final Errors:**\n"
+      for e in errors:
+          msg = e.get("message", str(e)) if isinstance(e, dict) else str(e)
+          answer += "- " + msg + "\n"
+
+      # Analysis of error patterns
+      if len(error_history) > 1:
+          all_errors = []
+          for attempt in error_history:
+              all_errors.extend(attempt.get("errors", []))
+          unique_errors = list(set(all_errors))
+          repeated = [e for e in unique_errors if all_errors.count(e) > 1]
+          if repeated:
+              answer += "\n**Repeated Errors (pattern detected):**\n"
+              for err in repeated:
+                  answer += "- " + str(err) + " (occurred " + str(all_errors.count(err)) + "x)\n"
+
+      answer += "\n**Suggestion:** The input text may be too complex or ambiguous for extraction."
+      answer += "\n\n---\n*Extraction validation failed - no Prolog reasoning performed*"
+
+      return {"answer": answer}
+
+# Edge definitions with retry loop routing
+#
+# NOTE: The correct_extraction node is called INTERNALLY by retry.loop,
+# not via graph edges. It re-validates automatically after correction.
+edges:
+  - from: __start__
+    to: extract_facts
+
+  - from: extract_facts
+    to: parse_extraction
+
+  - from: parse_extraction
+    to: validate_with_retry
+
+  # After validation: route based on success or exhausted retries
+  - from: validate_with_retry
+    to: generate_prolog_facts
+    condition: "{{ state.valid }}"
+
+  - from: validate_with_retry
+    to: handle_extraction_failure
+    condition: "{{ state._retry_exhausted }}"
+
+  # Success path continues
+  - from: generate_prolog_facts
+    to: prolog_reasoning
+
+  - from: prolog_reasoning
+    to: format_answer
+
+  - from: format_answer
+    to: __end__
+
+  - from: handle_extraction_failure
+    to: __end__
+
+# ============================================================
+# EXAMPLE USAGE
+# ============================================================
+#
+# tea run llm-prolog-family-reasoning-with-retry.yaml --input '{
+#   "text": "Camilla Shand was born in 1947 and married Andrew Parker Bowles in 1973. They had children named Thomas (born 1974) and Laura (born 1978). During her marriage, Camilla had an affair with Prince Charles from the early 1970s until 1999. Diana Spencer was born in 1961 and married Prince Charles in 1981. Diana and Charles had sons Prince William (born 1982) and Prince Harry (born 1984).",
+#   "query_person": "Thomas Parker Bowles",
+#   "query_type": "half_siblings",
+#   "premise": "Camilla only had one partner at a time"
+# }'
+#
+# EXPECTED OUTPUT (with retry info if corrections were needed):
+#   **Thomas Parker Bowles's half-siblings:** Prince William, Prince Harry
+#
+#   **Derived:** 2 child_of_affair facts from temporal reasoning
+#
+#   **Reasoning:** Derived 2 child_of_affair. Found 2 half_siblings.
+#
+#   **Note:** Extraction required 1 correction(s) before validation passed
+#
+# ============================================================
+# KEY DIFFERENCES FROM ORIGINAL
+# ============================================================
+#
+# 1. Added extraction_schema for validate.extraction
+# 2. Added validate_with_retry node using retry.loop action (TEA-YAML-005)
+# 3. Added correct_extraction node that calls LLM and parses result
+# 4. Added handle_extraction_failure node for exhausted retries
+# 5. Edges route based on validation result (valid vs _retry_exhausted)
+#
+# ARCHITECTURE:
+#   retry.loop internally calls correct_extraction when validation fails,
+#   then re-validates. This happens up to max_retries times.
+#
+# LEARNING FEATURE (_error_history):
+#   The correct_extraction node accumulates error history across retries:
+#
+#   _error_history = [
+#     {"attempt": 0, "errors": ["missing 'name' field"], "entities_tried": [...]},
+#     {"attempt": 1, "errors": ["invalid type 'person'"], "entities_tried": [...]},
+#   ]
+#
+#   This allows the LLM to:
+#   - See ALL previous errors, not just the last one
+#   - Avoid repeating mistakes from earlier attempts
+#   - Understand patterns in its errors
+#
+#   The prompt includes:
+#   - Full error history with what was tried each time
+#   - Instructions to review history and avoid repeating mistakes
+#   - Pattern detection for repeated errors
+#
+# BENEFITS:
+# - No silent failures - errors are caught and reported
+# - Self-correcting - LLM can fix its own mistakes
+# - Learning - LLM sees full history, avoids repeating errors
+# - Transparent - retry count and error history shown in output
+# - Pattern detection - repeated errors are highlighted on failure
+# - Robust - up to 2 correction attempts before failing
+#
+# ============================================================

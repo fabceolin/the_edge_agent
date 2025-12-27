@@ -1,0 +1,192 @@
+# Example: Extraction with Retry Loop (TEA-YAML-005)
+#
+# This example demonstrates the retry.loop action for self-correcting
+# extraction workflows. When validation fails, the agent automatically
+# retries with corrections up to a configured limit.
+#
+# Key Features:
+# - Wraps any validation action
+# - Automatically executes correction node on failure
+# - Tracks retry count and error context
+# - Exits on success or max retries exceeded
+#
+# State Variables Set by retry.loop:
+# - _retry_count: Current retry attempt (0-indexed)
+# - _retry_errors: Errors from last validation attempt
+# - _retry_result: Final validation result
+# - _retry_exhausted: True if max retries exceeded
+
+name: extraction-with-retry-example
+description: |
+  Demonstrates retry.loop action for self-correcting extraction.
+  The agent extracts entities from text, validates the extraction,
+  and automatically retries with corrections if validation fails.
+
+state_schema:
+  text: str
+  entities: list
+  relationships: list
+  valid: bool
+  _retry_count: int
+  _retry_exhausted: bool
+
+variables:
+  model: "ollama/gemma3:4b"
+  max_extraction_retries: 2
+
+# Define extraction schema for validation
+extraction_schema:
+  entity_types:
+    - Person
+    - Organization
+    - Location
+  entity_fields:
+    - name
+    - type
+  required_fields:
+    - name
+    - type
+  relationship_types:
+    - works_at
+    - located_in
+    - knows
+
+nodes:
+  # Step 1: Extract entities and relationships from text
+  - name: extract_entities
+    uses: llm.call
+    with:
+      model: "{{ variables.model }}"
+      messages:
+        - role: system
+          content: |
+            You are an entity extraction assistant. Extract entities and relationships from the given text.
+            Return a JSON object with two arrays:
+            - entities: List of {name, type} objects where type is Person, Organization, or Location
+            - relationships: List of {source, target, type} objects where type is works_at, located_in, or knows
+        - role: user
+          content: |
+            Extract entities and relationships from this text:
+            {{ state.text }}
+
+            Return valid JSON only.
+      response_format:
+        type: json_object
+    output: extraction
+
+  # Step 2: Parse the JSON response
+  - name: parse_extraction
+    run: |
+      import json
+      extraction = state.get("extraction", {})
+      content = extraction.get("content", "{}")
+      try:
+          parsed = json.loads(content)
+          return {
+              "entities": parsed.get("entities", []),
+              "relationships": parsed.get("relationships", [])
+          }
+      except json.JSONDecodeError:
+          return {"entities": [], "relationships": []}
+
+  # Step 3: Validate with retry loop
+  # This is the key feature - automatically retries with correction on failure
+  - name: validate_with_retry
+    uses: retry.loop
+    with:
+      validate: validate.extraction
+      validate_args:
+        entities: "{{ state.entities }}"
+        relationships: "{{ state.relationships }}"
+        source_text: "{{ state.text }}"
+      correct: correct_extraction
+      max_retries: "{{ variables.max_extraction_retries }}"
+
+  # Step 4: Correction node - called by retry.loop on validation failure
+  # Has access to _retry_errors for context about what went wrong
+  - name: correct_extraction
+    uses: llm.call
+    with:
+      model: "{{ variables.model }}"
+      messages:
+        - role: system
+          content: |
+            You are an entity extraction assistant. The previous extraction had errors.
+            Fix the errors and re-extract entities and relationships.
+            Return a JSON object with two arrays:
+            - entities: List of {name, type} objects where type is Person, Organization, or Location
+            - relationships: List of {source, target, type} objects where type is works_at, located_in, or knows
+        - role: user
+          content: |
+            The extraction had the following errors:
+            {% for error in state._retry_errors %}
+            - {{ error.message }}
+            {% endfor %}
+
+            Original text:
+            {{ state.text }}
+
+            Previous extraction (with errors):
+            Entities: {{ state.entities | tojson }}
+            Relationships: {{ state.relationships | tojson }}
+
+            Please fix these issues and provide a corrected extraction.
+            Return valid JSON only.
+      response_format:
+        type: json_object
+    output: correction
+
+  # Step 5: Parse the corrected extraction
+  - name: parse_correction
+    run: |
+      import json
+      correction = state.get("correction", {})
+      content = correction.get("content", "{}")
+      try:
+          parsed = json.loads(content)
+          return {
+              "entities": parsed.get("entities", []),
+              "relationships": parsed.get("relationships", [])
+          }
+      except json.JSONDecodeError:
+          return {}
+
+  # Step 6: Handle successful validation
+  - name: process_success
+    run: |
+      return {
+          "status": "success",
+          "message": f"Extraction validated after {state.get('_retry_count', 0)} retries",
+          "entity_count": len(state.get("entities", [])),
+          "relationship_count": len(state.get("relationships", []))
+      }
+
+  # Step 7: Handle max retries exceeded
+  - name: handle_failure
+    run: |
+      return {
+          "status": "failed",
+          "message": "Extraction validation failed after maximum retries",
+          "errors": state.get("_retry_errors", []),
+          "entity_count": len(state.get("entities", [])),
+          "relationship_count": len(state.get("relationships", []))
+      }
+
+edges:
+  - from: __start__
+    to: extract_entities
+  - from: extract_entities
+    to: parse_extraction
+  - from: parse_extraction
+    to: validate_with_retry
+  # Route based on validation result
+  - from: validate_with_retry
+    to: process_success
+    condition: "{{ state.valid }}"
+  - from: validate_with_retry
+    to: handle_failure
+    condition: "{{ not state.valid }}"
+  - from: process_success
+    to: __end__
+  - from: handle_failure
+    to: __end__

@@ -1,0 +1,221 @@
+# Test: Retry Loop with Learning
+#
+# This test forces validation failures to demonstrate:
+# 1. The retry.loop mechanism
+# 2. Error history accumulation (_error_history)
+# 3. LLM learning from previous mistakes
+#
+# HOW IT WORKS:
+# - First extraction intentionally returns BAD data (missing 'name' field)
+# - Validation fails, triggers correct_extraction
+# - correct_extraction sees the error and fixes it
+# - If it fails again, it sees BOTH errors in history
+
+name: test-retry-learning
+description: |
+  Test scenario that forces retry.loop to trigger by providing
+  intentionally malformed initial extraction.
+
+state_schema:
+  text: str
+  entities: list
+  relationships: list
+  valid: bool
+  _retry_count: int
+  _retry_errors: list
+  _retry_exhausted: bool
+  _error_history: list
+  result: str
+
+# Strict schema that will catch errors
+extraction_schema:
+  entities:
+    required_fields:
+      - name
+      - type  # This is strict - requires type field
+  relationships:
+    types:
+      - knows
+      - works_at
+    required_fields:
+      - type
+      - subject
+      - object
+
+nodes:
+  # STEP 1: Intentionally BAD extraction (missing required fields)
+  - name: bad_extraction
+    language: python
+    run: |
+      # Intentionally return entities WITHOUT required 'type' field
+      # and relationships with invalid type
+      return {
+          "entities": [
+              {"name": "Alice"},  # Missing 'type' - will fail validation
+              {"name": "Bob"},    # Missing 'type' - will fail validation
+          ],
+          "relationships": [
+              {"type": "friends", "subject": "Alice", "object": "Bob"}  # Invalid type 'friends'
+          ]
+      }
+
+  # STEP 2: Validate with retry (will fail, trigger correction)
+  - name: validate_with_retry
+    uses: retry.loop
+    with:
+      validate: validate.extraction
+      validate_args: {}
+      correct: correct_extraction
+      max_retries: 2
+
+  # STEP 3: Correction node with learning
+  - name: correct_extraction
+    language: python
+    run: |
+      import json
+
+      # Get current retry info
+      errors = state.get("_retry_errors", [])
+      retry_count = state.get("_retry_count", 0)
+
+      # Accumulate error history
+      error_history = list(state.get("_error_history", []))
+      current_attempt = {
+          "attempt": retry_count,
+          "errors": [e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errors],
+          "entities_tried": state.get("entities", []),
+          "relationships_tried": state.get("relationships", [])
+      }
+      error_history.append(current_attempt)
+
+      print("=" * 60)
+      print("CORRECTION ATTEMPT", retry_count + 1)
+      print("=" * 60)
+      print("Current errors:")
+      for e in errors:
+          msg = e.get("message", str(e)) if isinstance(e, dict) else str(e)
+          print("  -", msg)
+      print()
+      print("Full error history:")
+      for attempt in error_history:
+          print("  Attempt", attempt["attempt"] + 1, ":")
+          for err in attempt["errors"]:
+              print("    -", err)
+      print("=" * 60)
+
+      # Simulate LLM learning behavior based on retry count
+      if retry_count == 0:
+          # First correction: Fix 'type' but use wrong relationship type
+          print("First correction: Adding 'type' to entities, but still wrong relationship type")
+          return {
+              "entities": [
+                  {"name": "Alice", "type": "Person"},
+                  {"name": "Bob", "type": "Person"},
+              ],
+              "relationships": [
+                  {"type": "buddies", "subject": "Alice", "object": "Bob"}  # Still wrong!
+              ],
+              "_error_history": error_history
+          }
+      else:
+          # Second correction: Fix everything (learned from history)
+          print("Second correction: Learned from history, fixing relationship type too")
+          return {
+              "entities": [
+                  {"name": "Alice", "type": "Person"},
+                  {"name": "Bob", "type": "Person"},
+              ],
+              "relationships": [
+                  {"type": "knows", "subject": "Alice", "object": "Bob"}  # Correct!
+              ],
+              "_error_history": error_history
+          }
+
+  # STEP 4: Success handler
+  - name: format_success
+    language: python
+    run: |
+      retry_count = state.get("_retry_count", 0)
+      error_history = state.get("_error_history", [])
+
+      result = "SUCCESS after " + str(retry_count) + " retries!\n\n"
+
+      if error_history:
+          result += "Error History (what was learned):\n"
+          for attempt in error_history:
+              result += "\nAttempt " + str(attempt["attempt"] + 1) + ":\n"
+              for err in attempt["errors"]:
+                  result += "  - " + str(err) + "\n"
+
+      result += "\nFinal valid extraction:\n"
+      result += "  Entities: " + str(len(state.get("entities", []))) + "\n"
+      result += "  Relationships: " + str(len(state.get("relationships", []))) + "\n"
+
+      print(result)
+      return {"result": result}
+
+  # STEP 5: Failure handler
+  - name: format_failure
+    language: python
+    run: |
+      retry_count = state.get("_retry_count", 0)
+      error_history = state.get("_error_history", [])
+      final_errors = state.get("_retry_errors", [])
+
+      result = "FAILED after " + str(retry_count + 1) + " attempts!\n\n"
+
+      if error_history:
+          result += "Full Error History:\n"
+          for attempt in error_history:
+              result += "\nAttempt " + str(attempt["attempt"] + 1) + ":\n"
+              for err in attempt["errors"]:
+                  result += "  - " + str(err) + "\n"
+
+      # Detect repeated errors
+      all_errors = []
+      for attempt in error_history:
+          all_errors.extend(attempt.get("errors", []))
+      repeated = [e for e in set(all_errors) if all_errors.count(e) > 1]
+      if repeated:
+          result += "\nRepeated Errors (patterns):\n"
+          for err in repeated:
+              result += "  - " + str(err) + " (x" + str(all_errors.count(err)) + ")\n"
+
+      print(result)
+      return {"result": result}
+
+edges:
+  - from: __start__
+    to: bad_extraction
+
+  - from: bad_extraction
+    to: validate_with_retry
+
+  - from: validate_with_retry
+    to: format_success
+    condition: "{{ state.valid }}"
+
+  - from: validate_with_retry
+    to: format_failure
+    condition: "{{ state._retry_exhausted }}"
+
+  - from: format_success
+    to: __end__
+
+  - from: format_failure
+    to: __end__
+
+# Expected behavior:
+#
+# 1. bad_extraction returns entities without 'type' field
+# 2. validate.extraction fails: "Entity missing required field: type"
+# 3. correct_extraction (retry 0):
+#    - Sees error about 'type'
+#    - Fixes entities with type="Person"
+#    - But uses wrong relationship type "buddies"
+# 4. validate.extraction fails again: "Invalid relationship type: buddies"
+# 5. correct_extraction (retry 1):
+#    - Sees BOTH errors in history (type + buddies)
+#    - Fixes relationship to use "knows"
+# 6. validate.extraction passes
+# 7. format_success shows the learning journey
