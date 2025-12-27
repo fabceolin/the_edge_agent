@@ -618,3 +618,279 @@ edges:
     let state = result.unwrap();
     assert_eq!(state.get("result"), Some(&json!(42)));
 }
+
+// ============================================================================
+// TEA-RUST-042: Lua State Preservation Tests
+// ============================================================================
+
+/// TEA-RUST-042: Test multi-node Lua workflow where node2 reads state set by node1
+/// This is the core regression test for the state preservation fix.
+#[test]
+fn test_lua_multinode_state_preservation() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lua-multinode-state-test
+nodes:
+  - name: node1
+    language: lua
+    run: |
+      return {
+        greeting = "Hello",
+        counter = 1
+      }
+  - name: node2
+    language: lua
+    run: |
+      -- This should see greeting and counter from node1
+      local msg = state.greeting .. " World!"
+      local new_counter = state.counter + 1
+      return {
+        message = msg,
+        counter = new_counter
+      }
+  - name: node3
+    language: lua
+    run: |
+      -- This should see all previous state including greeting from node1
+      return {
+        final_message = state.message,
+        saw_greeting = state.greeting ~= nil,
+        final_counter = state.counter
+      }
+edges:
+  - from: __start__
+    to: node1
+  - from: node1
+    to: node2
+  - from: node2
+    to: node3
+  - from: node3
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({}));
+    assert!(
+        result.is_ok(),
+        "Multi-node Lua workflow should succeed: {:?}",
+        result
+    );
+
+    let state = result.unwrap();
+
+    // Node1's greeting should be preserved through all nodes
+    assert_eq!(
+        state.get("greeting"),
+        Some(&json!("Hello")),
+        "node1's greeting should be preserved"
+    );
+
+    // Node2's message should be built from node1's greeting
+    assert_eq!(
+        state.get("message"),
+        Some(&json!("Hello World!")),
+        "node2 should have seen node1's greeting"
+    );
+
+    // Counter should have been incremented
+    assert_eq!(
+        state.get("counter"),
+        Some(&json!(2)),
+        "counter should be incremented by node2"
+    );
+
+    // Node3 should confirm it saw the greeting
+    assert_eq!(
+        state.get("saw_greeting"),
+        Some(&json!(true)),
+        "node3 should have seen node1's greeting"
+    );
+
+    // Final message should match
+    assert_eq!(
+        state.get("final_message"),
+        Some(&json!("Hello World!")),
+        "final_message should match message"
+    );
+}
+
+/// TEA-RUST-042: Test that input state is preserved after Lua node execution
+#[test]
+fn test_lua_preserves_input_state() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lua-preserve-input-test
+nodes:
+  - name: processor
+    language: lua
+    run: |
+      -- Only return new field, don't touch input fields
+      return {
+        processed = true,
+        doubled = state.value * 2
+      }
+edges:
+  - from: __start__
+    to: processor
+  - from: processor
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    // Invoke with input state that should be preserved
+    let result = executor.invoke(json!({
+        "value": 21,
+        "name": "original",
+        "config": {"nested": true}
+    }));
+
+    assert!(
+        result.is_ok(),
+        "Lua node should preserve input state: {:?}",
+        result
+    );
+
+    let state = result.unwrap();
+
+    // Original input fields should be preserved
+    assert_eq!(
+        state.get("value"),
+        Some(&json!(21)),
+        "original input 'value' should be preserved"
+    );
+    assert_eq!(
+        state.get("name"),
+        Some(&json!("original")),
+        "original input 'name' should be preserved"
+    );
+    assert_eq!(
+        state.get("config"),
+        Some(&json!({"nested": true})),
+        "original input 'config' should be preserved"
+    );
+
+    // New fields should be added
+    assert_eq!(
+        state.get("processed"),
+        Some(&json!(true)),
+        "'processed' should be added"
+    );
+    assert_eq!(
+        state.get("doubled"),
+        Some(&json!(42)),
+        "'doubled' should be 42"
+    );
+}
+
+/// TEA-RUST-042: Test that Lua returning nil preserves state
+#[test]
+fn test_lua_nil_return_preserves_state() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lua-nil-return-test
+nodes:
+  - name: noop
+    language: lua
+    run: |
+      -- Do some computation but return nil
+      local x = state.value * 2
+      return nil
+edges:
+  - from: __start__
+    to: noop
+  - from: noop
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({
+        "value": 42,
+        "preserved": "yes"
+    }));
+
+    assert!(
+        result.is_ok(),
+        "Lua node returning nil should succeed: {:?}",
+        result
+    );
+
+    let state = result.unwrap();
+
+    // All input fields should be preserved when nil is returned
+    assert_eq!(
+        state.get("value"),
+        Some(&json!(42)),
+        "'value' should be preserved when nil returned"
+    );
+    assert_eq!(
+        state.get("preserved"),
+        Some(&json!("yes")),
+        "'preserved' should be preserved when nil returned"
+    );
+}
+
+/// TEA-RUST-042: Test that Lua returning empty table preserves state
+#[test]
+fn test_lua_empty_table_preserves_state() {
+    use the_edge_agent::engine::executor::Executor;
+
+    let yaml = r#"
+name: lua-empty-return-test
+nodes:
+  - name: noop
+    language: lua
+    run: |
+      -- Return empty table
+      return {}
+edges:
+  - from: __start__
+    to: noop
+  - from: noop
+    to: __end__
+"#;
+
+    let engine = YamlEngine::new();
+    let graph = engine.load_from_string(yaml).unwrap();
+    let compiled = graph.compile().unwrap();
+    let executor = Executor::new(compiled).unwrap();
+
+    let result = executor.invoke(json!({
+        "value": 42,
+        "preserved": "yes"
+    }));
+
+    assert!(
+        result.is_ok(),
+        "Lua node returning empty table should succeed: {:?}",
+        result
+    );
+
+    let state = result.unwrap();
+
+    // All input fields should be preserved when empty table is returned
+    assert_eq!(
+        state.get("value"),
+        Some(&json!(42)),
+        "'value' should be preserved when empty table returned"
+    );
+    assert_eq!(
+        state.get("preserved"),
+        Some(&json!("yes")),
+        "'preserved' should be preserved when empty table returned"
+    );
+}

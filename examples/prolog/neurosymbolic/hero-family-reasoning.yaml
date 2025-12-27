@@ -51,15 +51,8 @@ nodes:
     run: |
       local response = state.llm_response
       local content = response.content or response or ""
-      -- Remove markdown code blocks if present
       content = content:gsub("```prolog", ""):gsub("```", "")
-      -- Preserve state fields (Rust runtime requires explicit state preservation)
-      return {
-        text = state.text,
-        person = state.person,
-        llm_response = state.llm_response,
-        facts = content
-      }
+      return {facts = content}
 
   # Step 3: Prolog derives half-siblings via temporal reasoning
   - name: reason
