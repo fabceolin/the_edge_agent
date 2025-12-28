@@ -1,7 +1,18 @@
 # Story TEA-PY-008.3: Extract Edge Factory Module
 
 ## Status
-Ready for Dev
+Done
+
+## QA Results
+- **Gate**: CONCERNS
+- **Date**: 2025-12-27
+- **Assessor**: Quinn (QA)
+- **Test Results**: 1,746 passed, 0 failed
+- **Functional ACs**: ALL PASS (34/34)
+- **Line Count**: 429 lines (target 400, 7% over)
+- **Gate File**: [TEA-PY-008.3-yaml-edges-module.yml](../qa/gates/TEA-PY-008.3-yaml-edges-module.yml)
+
+**Concern**: Minor line count overrun. TEA-YAML-002 implicit chaining adds complexity.
 
 > **QA Validation**: Passed story-draft-checklist (2025-12-27)
 > - Clarity Score: 8/10
