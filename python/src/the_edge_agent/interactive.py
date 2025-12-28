@@ -4,6 +4,12 @@ Interactive mode for TEA CLI.
 This module provides human-in-the-loop interactive execution for YAML workflows.
 It ports the Rust implementation from TEA-CLI-005a/b to Python.
 
+Enhanced for TEA-KIROKU-004 with:
+- YAML interview config support (settings.interview)
+- Special commands (/save, /status, /references, /help)
+- Contextual prompts per interrupt point
+- Jinja2 template rendering for prompts
+
 Usage:
     tea run workflow.yaml --interactive
     tea run workflow.yaml -I --question-key "question,prompt"
@@ -16,8 +22,9 @@ import signal
 import pickle
 import time
 import select
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 from datetime import datetime, timezone
 
@@ -29,6 +36,11 @@ class InteractiveCommand(Enum):
     QUIT = "quit"
     SKIP = "skip"
     TIMEOUT = "timeout"
+    # Special commands (TEA-KIROKU-004)
+    SAVE = "save"
+    STATUS = "status"
+    REFERENCES = "references"
+    HELP = "help"
 
 
 class InteractiveRunner:
@@ -41,6 +53,8 @@ class InteractiveRunner:
     - Reading user input with double-enter detection
     - Injecting responses into state
     - Managing checkpoints
+    - Special commands (/save, /status, /references, /help) (TEA-KIROKU-004)
+    - YAML interview config prompts (TEA-KIROKU-004)
     """
 
     def __init__(
@@ -55,6 +69,7 @@ class InteractiveRunner:
         display_format: str,
         checkpoint_dir: Path,
         input_timeout: Optional[int] = None,
+        interview_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the interactive runner.
@@ -70,6 +85,7 @@ class InteractiveRunner:
             display_format: Output format: 'pretty', 'json', 'raw'
             checkpoint_dir: Directory for checkpoint files
             input_timeout: Optional timeout in seconds for user input
+            interview_config: Optional YAML interview config (settings.interview)
         """
         self.engine = engine
         self.graph = graph
@@ -81,10 +97,260 @@ class InteractiveRunner:
         self.display_format = display_format
         self.checkpoint_dir = checkpoint_dir
         self.input_timeout = input_timeout
+        self.interview_config = interview_config or {}
 
         # Signal handling state
         self._interrupted = False
         self._original_sigint = None
+
+        # Current node tracking for status command
+        self._current_node = None
+        self._nodes_visited = []
+
+        # Display config from interview settings
+        self._display_config = self.interview_config.get("display", {})
+        self._max_lines = self._display_config.get("max_lines", 50)
+        self._truncate_message = self._display_config.get(
+            "truncate_message", "... [truncated]"
+        )
+
+    def _render_template(self, template: str, state: Dict[str, Any]) -> str:
+        """
+        Render a Jinja2 template with state context.
+
+        Args:
+            template: Jinja2 template string
+            state: Current workflow state
+
+        Returns:
+            Rendered string
+        """
+        try:
+            from jinja2 import Environment, BaseLoader
+
+            env = Environment(loader=BaseLoader())
+            # Add truncate filter
+            env.filters["truncate"] = lambda s, length: (
+                s[:length] + "..." if len(str(s)) > length else s
+            )
+            env.filters["join"] = lambda lst, sep=", ": (
+                sep.join(str(x) for x in lst) if lst else ""
+            )
+
+            tmpl = env.from_string(template)
+            return tmpl.render(state=state)
+        except ImportError:
+            # Fallback: simple variable substitution
+            result = template
+            for key, value in state.items():
+                result = result.replace(f"{{{{ state.{key} }}}}", str(value))
+            return result
+        except Exception as e:
+            # On error, return template as-is
+            return template
+
+    def _get_interview_prompt(self, node: str, state: Dict[str, Any]) -> Optional[str]:
+        """
+        Get the contextual interview prompt for a node.
+
+        Args:
+            node: Current node name
+            state: Current workflow state
+
+        Returns:
+            Rendered prompt string if configured, None otherwise
+        """
+        prompts = self.interview_config.get("prompts", {})
+        template = prompts.get(node)
+        if template:
+            return self._render_template(template, state)
+        return None
+
+    # =========================================================================
+    # Special Command Handlers (TEA-KIROKU-004)
+    # =========================================================================
+
+    def _handle_save_command(self, args: str, state: Dict[str, Any]) -> bool:
+        """
+        Handle /save command - save draft to file.
+
+        Args:
+            args: Command arguments (filename)
+            state: Current workflow state
+
+        Returns:
+            True if command was handled
+        """
+        filename = args.strip() if args else "draft.md"
+        draft = state.get("draft", "")
+        if not draft:
+            self._print_stderr("No draft available to save.")
+            return True
+
+        try:
+            path = Path(filename)
+            path.write_text(draft)
+            self._print_stderr(f"Draft saved to: {path.absolute()}")
+        except Exception as e:
+            self._print_stderr(f"Error saving draft: {e}")
+        return True
+
+    def _handle_status_command(self, state: Dict[str, Any]) -> bool:
+        """
+        Handle /status command - show workflow status.
+
+        Args:
+            state: Current workflow state
+
+        Returns:
+            True if command was handled
+        """
+        self._print_stderr("")
+        self._print_stderr("=" * 60)
+        self._print_stderr(" Workflow Status")
+        self._print_stderr("=" * 60)
+        self._print_stderr("")
+        self._print_stderr(f"Current node: {self._current_node or 'unknown'}")
+        self._print_stderr(f"Nodes visited: {len(self._nodes_visited)}")
+
+        # Show revision progress if available
+        revision_number = state.get("revision_number", 0)
+        max_revisions = state.get("max_revisions", 0)
+        if max_revisions > 0:
+            self._print_stderr(f"Revisions: {revision_number}/{max_revisions}")
+
+        # Show draft length if available
+        draft = state.get("draft", "")
+        if draft:
+            word_count = len(draft.split())
+            self._print_stderr(f"Draft: {word_count} words")
+
+        # Show references count if available
+        references = state.get("references", [])
+        if references:
+            self._print_stderr(f"References: {len(references)}")
+
+        self._print_stderr("")
+        return True
+
+    def _handle_references_command(self, state: Dict[str, Any]) -> bool:
+        """
+        Handle /references command - show references list.
+
+        Args:
+            state: Current workflow state
+
+        Returns:
+            True if command was handled
+        """
+        references = state.get("references", [])
+        self._print_stderr("")
+        self._print_stderr("=" * 60)
+        self._print_stderr(" References")
+        self._print_stderr("=" * 60)
+        self._print_stderr("")
+
+        if not references:
+            self._print_stderr("No references available.")
+        else:
+            for i, ref in enumerate(references, 1):
+                # Truncate long references
+                ref_str = str(ref)
+                if len(ref_str) > 100:
+                    ref_str = ref_str[:100] + "..."
+                self._print_stderr(f"{i}. {ref_str}")
+
+        self._print_stderr("")
+        return True
+
+    def _handle_help_command(self) -> bool:
+        """
+        Handle /help command - show available commands.
+
+        Returns:
+            True if command was handled
+        """
+        self._print_stderr("")
+        self._print_stderr("=" * 60)
+        self._print_stderr(" Available Commands")
+        self._print_stderr("=" * 60)
+        self._print_stderr("")
+        self._print_stderr(
+            "  /save [filename]  - Save current draft to file (default: draft.md)"
+        )
+        self._print_stderr("  /status           - Show current workflow status")
+        self._print_stderr("  /references       - Show references list")
+        self._print_stderr("  /help             - Show this help message")
+        self._print_stderr("  quit, exit, q     - Save checkpoint and exit")
+        self._print_stderr(
+            "  skip              - Skip current question with default response"
+        )
+        self._print_stderr("")
+        self._print_stderr("Input:")
+        self._print_stderr("  - Type your response and press Enter twice to send")
+        self._print_stderr("  - Press Enter (empty) to accept and continue")
+        self._print_stderr("")
+
+        # Show custom commands from interview config if available
+        custom_commands = self.interview_config.get("commands", {})
+        if custom_commands:
+            self._print_stderr("Workflow-specific commands:")
+            for cmd, info in custom_commands.items():
+                desc = (
+                    info.get("description", "") if isinstance(info, dict) else str(info)
+                )
+                self._print_stderr(f"  /{cmd} - {desc}")
+            self._print_stderr("")
+
+        return True
+
+    def _parse_command(self, input_text: str) -> tuple:
+        """
+        Parse input for special commands.
+
+        Args:
+            input_text: User input text
+
+        Returns:
+            Tuple of (command_type, args) or (None, None) if not a command
+        """
+        text = input_text.strip()
+        if not text.startswith("/"):
+            return (None, None)
+
+        # Parse command and args
+        parts = text[1:].split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ""
+        args = parts[1] if len(parts) > 1 else ""
+
+        if cmd == "save":
+            return (InteractiveCommand.SAVE, args)
+        elif cmd == "status":
+            return (InteractiveCommand.STATUS, args)
+        elif cmd == "references" or cmd == "refs":
+            return (InteractiveCommand.REFERENCES, args)
+        elif cmd == "help" or cmd == "?":
+            return (InteractiveCommand.HELP, args)
+        elif cmd == "quit" or cmd == "exit" or cmd == "q":
+            return (InteractiveCommand.QUIT, args)
+
+        return (None, None)
+
+    def _truncate_output(self, text: str) -> str:
+        """
+        Truncate long output to max_lines.
+
+        Args:
+            text: Text to truncate
+
+        Returns:
+            Truncated text with message if needed
+        """
+        lines = text.split("\n")
+        if len(lines) > self._max_lines:
+            truncated = "\n".join(lines[: self._max_lines])
+            return f"{truncated}\n\n{self._truncate_message}"
+        return text
 
     def extract_question(self, state: Dict[str, Any]) -> Optional[str]:
         """
@@ -208,6 +474,12 @@ class InteractiveRunner:
                             # Workflow paused at interrupt
                             checkpoint_path = event.get("checkpoint_path")
                             checkpoint_state = event.get("state", {})
+                            node = event.get("node")
+
+                            # Track current node (TEA-KIROKU-004)
+                            self._current_node = node
+                            if node and node not in self._nodes_visited:
+                                self._nodes_visited.append(node)
 
                             # Handle empty state
                             if not checkpoint_state:
@@ -232,14 +504,38 @@ class InteractiveRunner:
                                 self._display_final_state(checkpoint_state)
                                 return checkpoint_state
 
-                            # Extract and display question
+                            # Extract and display question with node context
                             question = self.extract_question(checkpoint_state)
                             self._display_question(
-                                question, checkpoint_state, iteration
+                                question, checkpoint_state, iteration, node
                             )
 
-                            # Read user input
-                            command, response = self._read_input()
+                            # Input loop with special command handling (TEA-KIROKU-004)
+                            while True:
+                                command, response = self._read_input()
+
+                                # Handle special commands that don't exit the loop
+                                if command == InteractiveCommand.SAVE:
+                                    self._handle_save_command(
+                                        response, checkpoint_state
+                                    )
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.STATUS:
+                                    self._handle_status_command(checkpoint_state)
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.REFERENCES:
+                                    self._handle_references_command(checkpoint_state)
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.HELP:
+                                    self._handle_help_command()
+                                    print("> ", end="", flush=True)
+                                    continue
+                                else:
+                                    # Not a special command, exit input loop
+                                    break
 
                             if command == InteractiveCommand.QUIT:
                                 self._print_stderr("")
@@ -349,44 +645,68 @@ class InteractiveRunner:
         self._print_stderr("")
         self._print_stderr("Commands:")
         self._print_stderr("  - Type your answer and press Enter twice to send")
-        self._print_stderr("  - 'quit' or 'exit' to end session")
-        self._print_stderr("  - 'skip' to skip current question")
+        self._print_stderr("  - Press Enter (empty) to accept and continue")
+        self._print_stderr("  - /help for available commands")
+        self._print_stderr("  - quit or exit to end session")
         self._print_stderr("")
         self._print_stderr("-" * 60)
 
     def _display_question(
-        self, question: Optional[str], state: Dict[str, Any], iteration: int
+        self,
+        question: Optional[str],
+        state: Dict[str, Any],
+        iteration: int,
+        node: Optional[str] = None,
     ):
-        """Display question with formatting (AC-11)."""
-        self._print_stderr("")
-        self._print_stderr("-" * 60)
-        self._print_stderr(f" Question ({iteration})")
-        self._print_stderr("-" * 60)
-        self._print_stderr("")
+        """
+        Display question with formatting (AC-11).
 
-        if question:
-            # Handle long questions by wrapping (AC-15 parity)
-            wrapped = self._wrap_text(question, 76)
-            self._print_stderr(wrapped)
+        Enhanced for TEA-KIROKU-004 to support:
+        - Contextual interview prompts from YAML config
+        - Draft display with truncation
+        """
+        # Check for interview prompt first (TEA-KIROKU-004)
+        interview_prompt = None
+        if node and self.interview_config:
+            interview_prompt = self._get_interview_prompt(node, state)
+
+        if interview_prompt:
+            # Use the contextual interview prompt
+            self._print_stderr("")
+            # Truncate if needed
+            truncated = self._truncate_output(interview_prompt)
+            self._print_stderr(truncated)
         else:
-            # Warning when question key not found (AC-12 parity)
-            self._print_stderr("Warning: No question found in state.")
+            # Fallback to generic question display
             self._print_stderr("")
-            self._print_stderr(f"Available keys: {self.state_keys(state)}")
-            self._print_stderr(f"Expected one of: {self.question_keys}")
+            self._print_stderr("-" * 60)
+            self._print_stderr(f" Question ({iteration})")
+            self._print_stderr("-" * 60)
+            self._print_stderr("")
 
-        # Display additional state keys if specified
-        if self.display_keys:
-            self._print_stderr("")
-            for key in self.display_keys:
-                value = state.get(key)
-                if value is not None:
-                    formatted = self._format_value(value)
-                    self._print_stderr(f"{key}: {formatted}")
+            if question:
+                # Handle long questions by wrapping (AC-15 parity)
+                wrapped = self._wrap_text(question, 76)
+                self._print_stderr(wrapped)
+            else:
+                # Warning when question key not found (AC-12 parity)
+                self._print_stderr("Warning: No question found in state.")
+                self._print_stderr("")
+                self._print_stderr(f"Available keys: {self.state_keys(state)}")
+                self._print_stderr(f"Expected one of: {self.question_keys}")
+
+            # Display additional state keys if specified
+            if self.display_keys:
+                self._print_stderr("")
+                for key in self.display_keys:
+                    value = state.get(key)
+                    if value is not None:
+                        formatted = self._format_value(value)
+                        self._print_stderr(f"{key}: {formatted}")
 
         self._print_stderr("")
         self._print_stderr("-" * 60)
-        self._print_stderr("Your answer (Enter twice to send):")
+        self._print_stderr("Your answer (Enter twice to send, /help for commands):")
 
     def _display_final_state(self, state: Dict[str, Any]):
         """Display final state respecting display filters (AC-9 parity)."""
@@ -473,9 +793,18 @@ class InteractiveRunner:
 
                 line = line.rstrip("\n")
 
-                # Check for quit/exit/skip on first line
+                # Check for special commands on first line (TEA-KIROKU-004)
                 if not lines:
-                    lower = line.lower().strip()
+                    stripped = line.strip()
+
+                    # Check for special commands starting with /
+                    if stripped.startswith("/"):
+                        cmd_type, args = self._parse_command(stripped)
+                        if cmd_type:
+                            return (cmd_type, args)
+
+                    # Check for quit/exit/skip
+                    lower = stripped.lower()
                     if lower in ("quit", "exit", "q"):
                         return (InteractiveCommand.QUIT, "")
                     if lower == "skip":
@@ -523,9 +852,18 @@ class InteractiveRunner:
 
                 line = line.rstrip("\n")
 
-                # Check for quit/exit/skip on first line
+                # Check for special commands on first line (TEA-KIROKU-004)
                 if not lines:
-                    lower = line.lower().strip()
+                    stripped = line.strip()
+
+                    # Check for special commands starting with /
+                    if stripped.startswith("/"):
+                        cmd_type, args = self._parse_command(stripped)
+                        if cmd_type:
+                            return (cmd_type, args)
+
+                    # Check for quit/exit/skip
+                    lower = stripped.lower()
                     if lower in ("quit", "exit", "q"):
                         return (InteractiveCommand.QUIT, "")
                     if lower == "skip":

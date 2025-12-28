@@ -56,10 +56,10 @@ class OutputFormat(str, Enum):
 
 def parse_input(value: Optional[str]) -> Dict[str, Any]:
     """
-    Parse input from JSON string or @file.json.
+    Parse input from JSON/YAML string or @file.json/@file.yaml.
 
     Args:
-        value: JSON string or @file.json path
+        value: JSON/YAML string or @file path
 
     Returns:
         Parsed dictionary
@@ -76,7 +76,22 @@ def parse_input(value: Optional[str]) -> Dict[str, Any]:
             typer.echo(f"Error: Input file not found: {path}", err=True)
             raise typer.Exit(1)
         try:
-            return json.loads(path.read_text())
+            content = path.read_text()
+            # Use YAML parser for .yaml/.yml files, JSON otherwise
+            if path.suffix.lower() in (".yaml", ".yml"):
+                result = yaml.safe_load(content)
+            else:
+                result = json.loads(content)
+            if not isinstance(result, dict):
+                typer.echo(
+                    f"Error: Input must be a mapping/object, got {type(result).__name__}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            return result
+        except yaml.YAMLError as e:
+            typer.echo(f"Error: Invalid YAML in input file: {e}", err=True)
+            raise typer.Exit(1)
         except json.JSONDecodeError as e:
             typer.echo(f"Error: Invalid JSON in input file: {e}", err=True)
             raise typer.Exit(1)
@@ -490,10 +505,15 @@ def run(
     if interactive:
         from the_edge_agent.interactive import InteractiveRunner
 
+        # Get engine config for workflow name and interview settings
+        engine_config = getattr(engine, "_config", {})
+
         # Store workflow name for banner
-        engine.workflow_name = (
-            getattr(engine, "_config", {}).get("name", "") or file.stem
-        )
+        engine.workflow_name = engine_config.get("name", "") or file.stem
+
+        # Extract interview config from YAML settings (TEA-KIROKU-004)
+        settings = engine_config.get("settings", {})
+        interview_config = settings.get("interview", {})
 
         # Parse key lists
         question_keys = [k.strip() for k in question_key.split(",")]
@@ -513,6 +533,7 @@ def run(
             display_format=display_format,
             checkpoint_dir=cp_path,
             input_timeout=input_timeout,
+            interview_config=interview_config,  # TEA-KIROKU-004
         )
 
         try:

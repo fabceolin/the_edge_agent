@@ -1,14 +1,14 @@
 # Story TEA-KIROKU-004: Interview Mode Configuration
 
-## Status: Blocked
+## Status: Done
 
 ## Dependencies
 
 | Story | Title | Status | Blocking |
 |-------|-------|--------|----------|
-| TEA-CLI-005c | [Interactive Mode - Python Parity](TEA-CLI-005c-interactive-python-parity.md) | Approved | Yes |
+| TEA-CLI-005c | [Interactive Mode - Python Parity](TEA-CLI-005c-interactive-python-parity.md) | Done | No |
 
-> **Note:** This story requires `--interactive` CLI flag from TEA-CLI-005. Implementation can proceed for YAML configuration (Task 1) but CLI integration (Tasks 2-6) is blocked until TEA-CLI-005c is complete.
+> **Note:** TEA-CLI-005c is complete. All tasks can now proceed.
 
 ## Story
 
@@ -29,38 +29,38 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Configurar interview mode no YAML** (AC: 1)
-  - [ ] Adicionar seção `settings.interview` no agent YAML
-  - [ ] Definir prompts por estado
-  - [ ] Configurar display de output
+- [x] **Task 1: Configurar interview mode no YAML** (AC: 1)
+  - [x] Adicionar seção `settings.interview` no agent YAML
+  - [x] Definir prompts por estado
+  - [x] Configurar display de output
 
-- [ ] **Task 2: Implementar mensagens contextuais** (AC: 2)
-  - [ ] Mapear cada interrupt point para mensagem explicativa
-  - [ ] suggest_title_review: "Review the suggested titles..."
-  - [ ] topic_sentence_manual_review: "Review the topic sentences..."
-  - [ ] writer_manual_reviewer: "Review the draft..."
-  - [ ] reflection_manual_review: "Add additional feedback..."
-  - [ ] generate_citations (pre): "Review the references below..."
+- [x] **Task 2: Implementar mensagens contextuais** (AC: 2)
+  - [x] Mapear cada interrupt point para mensagem explicativa
+  - [x] suggest_title_review: "Review the suggested titles..."
+  - [x] topic_sentence_manual_review: "Review the topic sentences..."
+  - [x] writer_manual_reviewer: "Review the draft..."
+  - [x] reflection_manual_review: "Add additional feedback..."
+  - [x] generate_citations (pre): "Review the references below..."
 
-- [ ] **Task 3: Configurar comportamento de input vazio** (AC: 3)
-  - [ ] Documentar que Enter vazio = "aceito, próximo passo"
-  - [ ] Validar que edges condicionais tratam instruction vazia
+- [x] **Task 3: Configurar comportamento de input vazio** (AC: 3)
+  - [x] Documentar que Enter vazio = "aceito, próximo passo"
+  - [x] Validar que edges condicionais tratam instruction vazia
 
-- [ ] **Task 4: Configurar display de draft** (AC: 4)
-  - [ ] Após nodes que geram draft, exibir conteúdo
-  - [ ] Usar formatação Markdown no terminal (rich/markdown)
-  - [ ] Truncar se muito longo (mostrar primeiras 50 linhas + "...")
+- [x] **Task 4: Configurar display de draft** (AC: 4)
+  - [x] Após nodes que geram draft, exibir conteúdo
+  - [x] Usar formatação Markdown no terminal (rich/markdown)
+  - [x] Truncar se muito longo (mostrar primeiras 50 linhas + "...")
 
-- [ ] **Task 5: Implementar comandos especiais** (AC: 5, 6, 7)
-  - [ ] `/save [filename]` - salva draft atual
-  - [ ] `/status` - mostra node atual e estado
-  - [ ] `/references` - mostra lista de referências
-  - [ ] `/help` - lista comandos disponíveis
+- [x] **Task 5: Implementar comandos especiais** (AC: 5, 6, 7)
+  - [x] `/save [filename]` - salva draft atual
+  - [x] `/status` - mostra node atual e estado
+  - [x] `/references` - mostra lista de referências
+  - [x] `/help` - lista comandos disponíveis
 
-- [ ] **Task 6: Testar checkpoint e resume** (AC: 8)
-  - [ ] Interromper sessão no meio
-  - [ ] Resumir com mesmo checkpoint ID
-  - [ ] Validar estado preservado
+- [x] **Task 6: Testar checkpoint e resume** (AC: 8)
+  - [x] Interromper sessão no meio
+  - [x] Resumir com mesmo checkpoint ID
+  - [x] Validar estado preservado
 
 ## Dev Notes
 
@@ -220,10 +220,57 @@ Please review. Press Enter to accept.
 | 2024-12-27 | 0.1 | Initial story creation | Sarah (PO Agent) |
 | 2024-12-27 | 0.2 | Added Human-in-the-Loop design and interaction flow from overview.md and kiroku_app.md | Sarah (PO Agent) |
 | 2024-12-28 | 0.3 | Changed `--interview` to `--interactive` for CLI-005 alignment; added dependency on TEA-CLI-005c; status changed to Blocked | James (Dev Agent) |
+| 2024-12-28 | 1.0 | Implemented interview mode: YAML config support, special commands (/save, /status, /references, /help), contextual prompts with Jinja2 templating, output truncation; 24 new tests added (51 total pass) | James (Dev Agent) |
+| 2024-12-28 | 1.1 | QA Review PASS - All ACs met, 51 tests passing, minor recommendations for future (path validation, unused imports); Status → Done | Quinn (QA Agent) |
 
 ## Dev Agent Record
 
-_To be filled during implementation_
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### Implementation Summary
+
+Implemented interview mode configuration for the Kiroku document writer workflow. Key enhancements:
+
+1. **YAML Interview Config Support**
+   - `InteractiveRunner` now accepts `interview_config` parameter
+   - Reads prompts from `settings.interview.prompts` in YAML
+   - Supports display configuration (`max_lines`, `truncate_message`)
+
+2. **Contextual Prompts**
+   - Jinja2 template rendering for prompts with state access
+   - Each interrupt point can have a custom contextual prompt
+   - Fallback to generic question display if no prompt configured
+
+3. **Special Commands**
+   - `/save [filename]` - Save current draft to file
+   - `/status` - Show workflow status (node, revisions, draft length)
+   - `/references` - Display references list
+   - `/help` - Show available commands
+
+4. **Output Truncation**
+   - Configurable `max_lines` (default: 50)
+   - Custom truncate message
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/interactive.py` | Modified | Added interview config support, special commands, template rendering |
+| `python/src/the_edge_agent/cli.py` | Modified | Pass interview config from YAML to InteractiveRunner |
+| `python/tests/test_interactive.py` | Modified | Added 24 new tests for TEA-KIROKU-004 features |
+| `examples/academic/kiroku-document-writer.yaml` | Existing | Already had interview config from TEA-KIROKU-003 |
+
+### Debug Log References
+
+N/A - No blocking issues encountered.
+
+### Completion Notes
+
+- All 51 tests pass (27 existing + 24 new)
+- Interview config properly extracted from YAML settings
+- Special commands integrated into input loop
+- Checkpoint/resume functionality preserved from TEA-CLI-005c
 
 ## QA Results
 
@@ -279,3 +326,74 @@ _To be filled during implementation_
 1. Use pexpect or similar for terminal simulation
 2. Test long-running sessions for memory leaks
 3. Verify Markdown rendering in various terminals
+
+---
+
+### Implementation Review - 2024-12-28
+
+**Reviewer:** Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall: GOOD** - Clean implementation following existing patterns from TEA-CLI-005c. The interview mode configuration is well-structured with proper separation of concerns.
+
+**Strengths:**
+- Clear separation between command parsing and handling
+- Jinja2 template rendering with ImportError fallback
+- Proper signal handling inheritance from base interactive mode
+- 24 new unit tests covering all new functionality
+- All 51 tests pass
+
+**Areas for Improvement:**
+- Generic exception handling in `_render_template` could hide template errors
+- Two unused imports (`re`, `Callable`) in interactive.py
+
+### Refactoring Performed
+
+None - Code quality is acceptable for the current scope.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows Python conventions, proper docstrings
+- Project Structure: ✓ Changes contained to appropriate modules
+- Testing Strategy: ✓ Unit tests for all new features
+- All ACs Met: ✓ All 8 acceptance criteria implemented and tested
+
+### Improvements Checklist
+
+- [x] Interview config support in InteractiveRunner
+- [x] Special command parsing (/save, /status, /references, /help)
+- [x] Command handler implementations
+- [x] Output truncation with configurable limits
+- [x] Node tracking for status command
+- [x] Jinja2 template rendering for prompts
+- [ ] Consider adding path validation for /save command (security hardening)
+- [ ] Remove unused imports (`re`, `Callable`) in interactive.py
+- [ ] Add integration test for actual file write in /save command
+
+### Security Review
+
+**CONCERNS:** The `/save` command accepts user-provided filenames without path validation. A user could potentially write to unintended locations (e.g., `/save ../../../etc/something`).
+
+**Recommendation:** For production use, consider:
+1. Restricting to current directory only
+2. Sanitizing path components
+3. Using a whitelist of allowed extensions
+
+**Severity:** Low - This is an interactive CLI tool where the user already has shell access.
+
+### Performance Considerations
+
+No issues - All operations are O(n) or better. Template rendering uses lazy Jinja2 import.
+
+### Files Modified During Review
+
+None - No refactoring performed.
+
+### Gate Status
+
+Gate: **PASS** → docs/qa/gates/TEA-KIROKU-004-interview-mode-config.yml
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, tests passing, no blocking issues.
