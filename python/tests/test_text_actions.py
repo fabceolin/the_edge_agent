@@ -9,11 +9,22 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 
+from the_edge_agent.actions import text_actions
 from the_edge_agent.actions.text_actions import (
     insert_citations,
     _get_sentences,
     _reorder_references,
+    _ensure_dependencies,
 )
+
+
+# Ensure dependencies are loaded for testing
+# This allows the tests to access _np, _sent_tokenize, _OpenAI
+try:
+    _ensure_dependencies()
+except ImportError:
+    # Dependencies not installed - tests will be skipped or mocked
+    pass
 
 
 def create_mock_embedding(dim: int = 3072) -> list:
@@ -76,8 +87,7 @@ class TestReorderReferences(unittest.TestCase):
 class TestInsertCitations(unittest.TestCase):
     """Test main insert_citations function with mocked embeddings."""
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
-    def test_empty_text_returns_empty(self, mock_openai):
+    def test_empty_text_returns_empty(self):
         """Empty text returns empty result."""
         result = insert_citations({}, text="", references=["Some ref"])
 
@@ -85,8 +95,7 @@ class TestInsertCitations(unittest.TestCase):
         self.assertEqual(result["references_section"], "")
         self.assertEqual(result["citation_map"], {})
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
-    def test_empty_references_returns_original(self, mock_openai):
+    def test_empty_references_returns_original(self):
         """No references returns original text."""
         text = "Some text without references."
         result = insert_citations({}, text=text, references=[])
@@ -94,7 +103,7 @@ class TestInsertCitations(unittest.TestCase):
         self.assertEqual(result["cited_text"], text)
         self.assertEqual(result["references_section"], "")
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_single_citation_insertion(self, mock_openai):
         """Insert single citation marker using semantic matching."""
         # Setup mock
@@ -141,7 +150,7 @@ class TestInsertCitations(unittest.TestCase):
         self.assertIn("## References", result["references_section"])
         self.assertIn("1. Vaswani", result["references_section"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_multiple_citations(self, mock_openai):
         """Insert multiple citation markers."""
         mock_client = MagicMock()
@@ -176,7 +185,7 @@ Large language models show emergent abilities."""
         # Should have References section with both
         self.assertIn("## References", result["references_section"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_citation_map_structure(self, mock_openai):
         """Citation map has correct structure."""
         mock_client = MagicMock()
@@ -204,7 +213,7 @@ Large language models show emergent abilities."""
         # Citation map should have integer keys
         self.assertTrue(all(isinstance(k, int) for k in result["citation_map"].keys()))
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_markdown_formatting_preserved(self, mock_openai):
         """Markdown formatting in text is preserved."""
         mock_client = MagicMock()
@@ -229,7 +238,7 @@ Large language models show emergent abilities."""
         self.assertIn("**Bold**", result["cited_text"])
         self.assertIn("*italic*", result["cited_text"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_unicode_in_references(self, mock_openai):
         """Handle Unicode characters in references."""
         mock_client = MagicMock()
@@ -253,7 +262,7 @@ Large language models show emergent abilities."""
 
         self.assertIn("Müller", result["references_section"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_full_document_processing(self, mock_openai):
         """Process complete academic document."""
         mock_client = MagicMock()
@@ -293,7 +302,7 @@ Recent advances in large language models show promising results.
         # Full text should combine both
         self.assertIn("## References", result["text"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_removes_existing_references_section(self, mock_openai):
         """Existing References section should be removed before processing."""
         mock_client = MagicMock()
@@ -328,7 +337,7 @@ Recent advances in large language models show promising results.
 class TestInsertCitationsEdgeCases(unittest.TestCase):
     """Test edge cases for insert_citations."""
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_no_sentences_extracted(self, mock_openai):
         """Handle case where no sentences are extracted."""
         # Text with only headers/images
@@ -340,7 +349,7 @@ class TestInsertCitationsEdgeCases(unittest.TestCase):
         # Should still return with references appended
         self.assertIn("## References", result["references_section"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_api_error_returns_graceful_fallback(self, mock_openai):
         """API errors should return original text with references appended."""
         mock_client = MagicMock()
@@ -361,7 +370,7 @@ class TestInsertCitationsEdgeCases(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("API rate limit exceeded", result["error"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_conclusions_not_cited(self, mock_openai):
         """Conclusions section should not receive citations."""
         mock_client = MagicMock()
@@ -392,7 +401,7 @@ This is a conclusion that should not be cited."""
         # (implementation excludes conclusions from sentence extraction)
         self.assertIn("[1]", result["cited_text"])
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_custom_model_parameter(self, mock_openai):
         """Custom embedding model can be specified."""
         mock_client = MagicMock()
@@ -438,7 +447,7 @@ class TestActionRegistration(unittest.TestCase):
         self.assertIn("text.insert_citations", registry)
         self.assertIn("actions.text_insert_citations", registry)
 
-    @patch("the_edge_agent.actions.text_actions.OpenAI")
+    @patch.object(text_actions, "_OpenAI")
     def test_registered_action_callable(self, mock_openai):
         """Registered action is callable."""
         from the_edge_agent.actions.text_actions import register_actions

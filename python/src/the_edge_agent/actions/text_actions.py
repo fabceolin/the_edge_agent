@@ -25,9 +25,48 @@ State Variables Set:
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
-from nltk import sent_tokenize
-from openai import OpenAI
+# Lazy imports for optional dependencies
+_np = None
+_sent_tokenize = None
+_OpenAI = None
+
+
+def _ensure_dependencies():
+    """Lazy-load optional dependencies for text actions."""
+    global _np, _sent_tokenize, _OpenAI
+
+    if _np is None:
+        try:
+            import numpy as np
+
+            _np = np
+        except ImportError:
+            raise ImportError(
+                "numpy is required for text.insert_citations. "
+                "Install with: pip install 'the_edge_agent[rag]'"
+            )
+
+    if _sent_tokenize is None:
+        try:
+            from nltk import sent_tokenize
+
+            _sent_tokenize = sent_tokenize
+        except ImportError:
+            raise ImportError(
+                "nltk is required for text.insert_citations. "
+                "Install with: pip install nltk"
+            )
+
+    if _OpenAI is None:
+        try:
+            from openai import OpenAI
+
+            _OpenAI = OpenAI
+        except ImportError:
+            raise ImportError(
+                "openai is required for text.insert_citations. "
+                "Install with: pip install 'the_edge_agent[llm]'"
+            )
 
 
 def _get_sentences(text: str) -> List[str]:
@@ -57,8 +96,8 @@ def _get_sentences(text: str) -> List[str]:
         ]
     )
 
-    # Tokenize into sentences
-    sentences = [s.split("\n")[-1] for s in sent_tokenize(paragraphs)]
+    # Tokenize into sentences (use lazy-loaded nltk)
+    sentences = [s.split("\n")[-1] for s in _sent_tokenize(paragraphs)]
 
     return sentences
 
@@ -145,13 +184,16 @@ def insert_citations(
             "text": text,
         }
 
+    # Ensure dependencies are loaded
+    _ensure_dependencies()
+
     # Initialize OpenAI client
     client_kwargs = {}
     if api_key:
         client_kwargs["api_key"] = api_key
     if base_url:
         client_kwargs["base_url"] = base_url
-    client = OpenAI(**client_kwargs)
+    client = _OpenAI(**client_kwargs)
 
     # Remove existing References section if present
     paper = text.strip()
@@ -190,14 +232,14 @@ def insert_citations(
             input=sentences,
             timeout=30.0,
         )
-        emb_sents = np.array([e.embedding for e in emb_response_sents.data])
+        emb_sents = _np.array([e.embedding for e in emb_response_sents.data])
 
         emb_response_refs = client.embeddings.create(
             model=model,
             input=references,
             timeout=30.0,
         )
-        emb_refs = np.array([e.embedding for e in emb_response_refs.data])
+        emb_refs = _np.array([e.embedding for e in emb_response_refs.data])
     except Exception as e:
         # Return original text with references appended on API failure
         references_lines = ["## References", ""]
@@ -215,10 +257,10 @@ def insert_citations(
 
     # Compute similarity matrix and find best matches
     # similarities[i, j] = similarity between sentence i and reference j
-    similarities = np.dot(emb_sents, emb_refs.T)
+    similarities = _np.dot(emb_sents, emb_refs.T)
 
     # For each reference, find the sentence with highest similarity
-    citation_inserts = np.argmax(similarities, axis=0)
+    citation_inserts = _np.argmax(similarities, axis=0)
 
     # Group citations by sentence
     citations: Dict[int, List[int]] = {}
