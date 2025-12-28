@@ -4,6 +4,7 @@ Tests for the interactive module (TEA-CLI-005c).
 These tests verify Python implementation parity with Rust interactive mode.
 """
 
+import re
 import unittest
 import sys
 import io
@@ -12,6 +13,13 @@ from unittest.mock import patch, MagicMock
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
+    return ansi_pattern.sub("", text)
+
 
 from the_edge_agent.interactive import (
     InteractiveRunner,
@@ -226,8 +234,9 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--interactive", result.output)
-        self.assertIn("-I", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--interactive", output)
+        self.assertIn("-I", output)
 
     def test_question_key_flag_available(self):
         """Test that --question-key flag is available."""
@@ -236,7 +245,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--question-key", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--question-key", output)
 
     def test_response_key_flag_available(self):
         """Test that --response-key flag is available."""
@@ -245,7 +255,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--response-key", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--response-key", output)
 
     def test_complete_key_flag_available(self):
         """Test that --complete-key flag is available."""
@@ -254,7 +265,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--complete-key", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--complete-key", output)
 
     def test_skip_response_flag_available(self):
         """Test that --skip-response flag is available."""
@@ -263,7 +275,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--skip-response", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--skip-response", output)
 
     def test_display_key_flag_available(self):
         """Test that --display-key flag is available."""
@@ -272,7 +285,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--display-key", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--display-key", output)
 
     def test_display_format_flag_available(self):
         """Test that --display-format flag is available."""
@@ -281,7 +295,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--display-format", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--display-format", output)
 
     def test_input_timeout_flag_available(self):
         """Test that --input-timeout flag is available."""
@@ -290,7 +305,8 @@ class TestCLIFlags(unittest.TestCase):
 
         runner = CliRunner()
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--input-timeout", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--input-timeout", output)
 
     def test_mutual_exclusivity_interactive_stream(self):
         """Test that --interactive and --stream are mutually exclusive."""
