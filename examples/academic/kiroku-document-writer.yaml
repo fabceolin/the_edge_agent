@@ -1,0 +1,679 @@
+# Kiroku Document Writer - TEA YAML Agent
+# Migrated from kiroku.claudionor LangGraph implementation
+# TEA-KIROKU-003
+
+name: kiroku-document-writer
+version: "1.0"
+description: |
+  AI-assisted academic document writing workflow.
+  Generates research papers with planning, drafting, review, and citation support.
+
+settings:
+  llm:
+    provider: azure_openai
+    deployment: "{{ env.AZURE_OPENAI_DEPLOYMENT | default('gpt-4o') }}"
+    temperature: 0.0
+
+  # ==========================================================================
+  # INTERVIEW MODE (TEA-KIROKU-004)
+  # Configuration for interactive terminal-based workflow execution
+  # ==========================================================================
+  interview:
+    enabled: true
+
+    # Contextual prompts for each interrupt point
+    prompts:
+      suggest_title_review: |
+        ═══════════════════════════════════════════════════════════════════════
+        📝 TITLE REVIEW
+        ═══════════════════════════════════════════════════════════════════════
+
+        Suggested Title:
+        {{ state.title }}
+
+        ───────────────────────────────────────────────────────────────────────
+        Options:
+        • Type your feedback to request changes
+        • Press Enter to accept and continue
+        • Type /help for available commands
+
+      topic_sentence_manual_review: |
+        ═══════════════════════════════════════════════════════════════════════
+        📋 TOPIC SENTENCE OUTLINE REVIEW
+        ═══════════════════════════════════════════════════════════════════════
+
+        {{ state.plan }}
+
+        ───────────────────────────────────────────────────────────────────────
+        Options:
+        • Type your feedback to request changes to the outline
+        • Press Enter to accept and continue to drafting
+        • Type /help for available commands
+
+      writer_manual_reviewer: |
+        ═══════════════════════════════════════════════════════════════════════
+        📄 DRAFT REVIEW (Revision {{ state.revision_number + 1 }}/{{ state.max_revisions }})
+        ═══════════════════════════════════════════════════════════════════════
+
+        {{ state.draft | truncate(2000) }}
+
+        ───────────────────────────────────────────────────────────────────────
+        Options:
+        • Type your feedback to request changes
+        • Press Enter to continue to AI reflection
+        • Remaining automatic revisions: {{ state.max_revisions - state.revision_number }}
+        • Type /help for available commands
+
+      reflection_manual_review: |
+        ═══════════════════════════════════════════════════════════════════════
+        🔍 AI REFLECTION & CRITIQUE
+        ═══════════════════════════════════════════════════════════════════════
+
+        {{ state.critique }}
+
+        ───────────────────────────────────────────────────────────────────────
+        Options:
+        • Type additional instructions for the next revision
+        • Press Enter to apply reflection and regenerate draft
+        • Type /help for available commands
+
+      generate_citations: |
+        ═══════════════════════════════════════════════════════════════════════
+        📚 REFERENCES FOR REVIEW
+        ═══════════════════════════════════════════════════════════════════════
+
+        {{ state.references | join('\n') if state.references else 'No references available.' }}
+
+        ───────────────────────────────────────────────────────────────────────
+        Options:
+        • Type numbers to remove (e.g., "1,3,5")
+        • Press Enter to keep all and continue
+        • Type /references to see full list
+        • Type /help for available commands
+
+    # Special commands available in interview mode
+    commands:
+      save:
+        description: "Save current draft to file"
+        usage: "/save [filename]"
+        example: "/save my-paper.md"
+      status:
+        description: "Show current workflow status"
+        usage: "/status"
+      references:
+        description: "Show references list"
+        usage: "/references"
+      help:
+        description: "Show available commands"
+        usage: "/help"
+      quit:
+        description: "Save checkpoint and exit"
+        usage: "/quit"
+
+    # Display configuration
+    display:
+      max_lines: 50
+      truncate_message: "... [truncated, use /save to export full draft]"
+      markdown_enabled: true
+
+# =============================================================================
+# STATE SCHEMA (Task 1)
+# Mapped from original AgentState TypedDict in agents/states.py
+# =============================================================================
+state_schema:
+  # === METADATA (from user input) ===
+  title: str
+  hypothesis: str
+  area_of_paper: str
+  type_of_document: str
+
+  # === PLANNING ===
+  section_names: list
+  number_of_paragraphs: list
+  plan: str
+
+  # === DRAFTING ===
+  draft: str
+  sentences_per_paragraph: int
+
+  # === REVIEW ===
+  critique: str
+  review_instructions: list
+  review_topic_sentences: list
+
+  # === RESEARCH ===
+  content: list
+  references: list
+  cache: list
+
+  # === CONTROL ===
+  revision_number: int
+  max_revisions: int
+  number_of_queries: int
+
+  # === USER INPUT (runtime) ===
+  user_instruction: str
+  messages: list
+
+  # === FLAGS (from config) ===
+  suggest_title_flag: bool
+  generate_citations_flag: bool
+  results: str
+
+  # === WORKFLOW CONTEXT ===
+  task: str
+
+# =============================================================================
+# PROMPTS (Task 2)
+# Migrated from agents/prompts.py with Python {var} -> Jinja2 {{ state.var }}
+# =============================================================================
+data:
+  prompts:
+    title: |
+      You are a helpful AI assistant expert in {{ state.area_of_paper }}.
+      The title of the paper is '{{ state.title }}'.
+      The hypothesis of the paper is '{{ state.hypothesis }}'.
+      The user will give you the title of the paper or document the user
+      is writing, and you will recommend possible titles, following user's
+      instructions. You will be truthful to the instructions explained and
+      use your knowledge recommend a good title. You should only answer what
+      you have been asked and nothing more. If user does not request a clarification
+      comment, you should not add it. You should not suggest follow up questions, unless
+      they are requested by the user.
+
+    topic_sentence: |
+      You are an expert writer tasked with writing a high-level outline of a technical
+      report. Write such an outline for the user-provided topic and follow the
+      user-provided instructions. Give an outline of the report along with any
+      relevant notes or instructions for the sections. You must follow any instructions
+      provided by the user. Each section of the report should contain 3 to 4 paragraphs,
+      unless instructed by the user. At the planning stage, you should provide for each
+      paragraph only the topic sentences to be filled later by the content.
+      Each entry on the numbered list of topic sentences should only contain the sentence
+      and nothing more. If there are pictures, you MUST add them. The added pictures MUST
+      be between topic sentences, with '\n' between any topic sentences. You SHOULD NOT add
+      pictures unless instructed by the user. The picture definition in Markdown should not be
+      changed.
+      If there are tables in the instructions, you MUST follow the instructions on how
+      to add the tables. Tables should be spaced by '\n' before and after topic sentences.
+      Do NOT add any references in the 'References section if a 'References' section exist.
+      You MUST return the output in Markdown format without any other text.
+
+    topic_sentence_review: |
+      You are an expert writer who receives an article plan and an instruction
+      from the user, and changes the article plan accordingly according to the
+      instructions. The output should only contain the revised plan according to the
+      instruction, and nothing more. The review should return a new plan in plain
+      Markdown format. You should return a new version following all previous
+      instructions.
+
+    paper_writer: |
+      You are an AI assistant tasked with writing excellent technical documents.
+      Generate the best document possible for the user's request and the initial
+      outline.
+      If the user provides critique, respond by revising the technical document according to the
+      suggestions.
+      You should expand each topic sentence by a paragraph.
+      Each paragraph MUST have at least {{ state.sentences_per_paragraph }} sentences.
+      You SHOULD NOT write a paragraph with less than {{ state.sentences_per_paragraph }} sentences.
+      Each paragraph MUST start with the corresponding topic sentence.
+      You must write a document that is publication ready.
+      You must be truthful to the information provided.
+      Utilize all the information below as needed.
+
+      If there are pictures, you MUST add them. The added pictures MUST
+      be between paragraphs, with '\n' between any paragraphs. You SHOULD NOT add
+      pictures unless instructed by the user.
+
+      If there are tables in the instructions, you MUST follow the instructions on how
+      to add the tables. Tables should be spaced by '\n' before and after paragraphs.
+
+      You MUST NOT add references to the References section.
+
+      Output should only contain a document in Markdown format.
+
+      ------
+
+      Task:
+
+      {{ state.task }}
+      ------
+
+      Content:
+
+      {{ state.content | join('\n\n') if state.content else '' }}
+      ------
+      Previous User's Instructions that Should be Obeyed:
+
+      {{ state.review_instructions | join('\n') if state.review_instructions else '' }}
+      ------
+      Previous Critiques:
+
+      {{ state.critique or '' }}
+
+    writer_review: |
+      You are an expert writer who receives an article and an instruction
+      from the user, and changes the article plan accordingly according to the
+      instructions. The output should only contain the revised article according
+      to the instruction, and nothing more. The review should return a new
+      article in plain Markdown format.
+
+    reflection_reviewer: |
+      You are a PhD advisor evaluating a technical document submission.
+      This paper was submitted to an academic journal. You are a critical
+      reviewer offering detailed and helpful feedback to help the authors.
+      First, read through the paper and list the major issues you see that
+      need help. Then rate it on the following scale: clarity, conciseness,
+      depth.
+      Figures and tables should not be changed.
+      Your review should not contradict the previous manual review steps.
+      Your review should not contradict the hypothesis of the paper.
+      You MUST NEVER remove references added previously.
+
+      Hypothesis of the paper:
+
+      {{ state.hypothesis }}
+
+      Previous User's Instructions that Should be Obeyed:
+
+      {{ state.review_instructions | join('\n') if state.review_instructions else '' }}
+
+    internet_search: |
+      You are in the internet_search phase.
+      You are an AI researcher charged with providing information that can be used
+      when writing the following essay. Generate a list of search queries that will
+      gather any relevant information. Only generate {{ state.number_of_queries }} queries max.
+
+    research_critique: |
+      You are a researcher charged with providing information that can
+      be used when making any requested revisions (as outlined below).
+      Generate a list of search queries that will gather any relevant information.
+      You should use the critique to generate the queries, but focusing on the
+      hypothesis and draft only. Only generate 3 queries max.
+
+    abstract_writer: |
+      You are an AI assistant that analyzes a text and writes an 'Abstract' section
+      with 200 words or less after the title and before the first section of the paper.
+      The abstract section begins with the section 'Abstract'. You must only return the final
+      document in Markdown format.
+
+    references: |
+      You are an AI assistant tasked with writing references for technical documents.
+      Generate the best references possible based on the instructions below.
+      You MUST create reference entries based on all 'Content'
+      entries provided. Entries SHOULD NOT be duplicated.
+      Reference entries MUST be a numbered list of reference item.
+
+      Each reference item MUST be in the format author list (if one exists), title, where
+      the publication was made, publication date, and http link. Except for the
+      title, all other information may be optional. Each author MUST be in the format: last
+      name, comma, first letter of the remaining names followed by a '.'. For example, the
+      following author name is a VALID author name: 'Hubert, K.F.'.
+      Each reference item must be in a single line.
+      An example of a valid reference is the following: 'Hubert, K.F., Awa, K.N., Zabelina,
+      D.L. The current state of artificial intelligence generative language models is more
+      creative than humans on divergent thinking tasks. Sci Rep 14, 3440 (2024).
+      https://doi.org/10.1038/s41598-024-53303-w'
+      In this example, 'The current state of artificial intelligence generative
+      language models is more creative than humans on divergent thinking tasks'
+      is the title of the reference.
+      Another example of a valid reference the following: 'The Need For AI-Powered
+      Cybersecurity to Tackle AI-Driven Cyberattacks, https://www.isaca.org/
+      resources/news-and-trends/isaca-now-blog/2024/the-need-for-ai-powered-
+      cybersecurity-to-tackle-ai-driven-cyberattacks'
+      In this example, there are no authors to the paper, and the title is
+      'The Need For AI-Powered Cybersecurity to Tackle AI-Driven Cyberattacks'.
+
+      Output must be in markdown format.
+
+    task_template: |
+      You will write a {{ state.type_of_document }} in the area of {{ state.area_of_paper }}.
+      The document will have the title '{{ state.title }}'.
+      Your report should contain the sections {{ state.section_names | join(', ') }}.
+      {{ state.user_instruction or '' }}
+
+      Hypothesis:
+
+      {{ state.hypothesis }}
+
+      Results:
+
+      {{ state.results or '' }}
+
+      References:
+
+      {{ state.references | join('\n') if state.references else '' }}
+
+      Your output should be in Markdown format.
+
+# =============================================================================
+# NODES (Task 3) - 13 nodes with goto for conditional edges (Task 4)
+# =============================================================================
+nodes:
+  # -------------------------------------------------------------------------
+  # Node 0: Entry point - conditional routing
+  # -------------------------------------------------------------------------
+  - name: check_suggest_title
+    run: |
+      # Initialize control fields with defaults
+      revision_number = state.get("revision_number", 0)
+      max_revisions = state.get("max_revisions", 2)
+      sentences_per_paragraph = state.get("sentences_per_paragraph", 4)
+      number_of_queries = state.get("number_of_queries", 3)
+
+      # Build task from template
+      section_names = state.get("section_names", [])
+      task = f"You will write a {state.get('type_of_document', 'report')} in the area of {state.get('area_of_paper', '')}.\n"
+      task += f"The document will have the title '{state.get('title', '')}'.\n"
+      task += f"Your report should contain the sections {', '.join(section_names)}.\n"
+      task += state.get("user_instruction", "") + "\n\n"
+      task += f"Hypothesis:\n\n{state.get('hypothesis', '')}\n\n"
+      task += f"Results:\n\n{state.get('results', '')}\n\n"
+
+      return {
+          "revision_number": revision_number,
+          "max_revisions": max_revisions,
+          "sentences_per_paragraph": sentences_per_paragraph,
+          "number_of_queries": number_of_queries,
+          "task": task,
+          "content": state.get("content", []),
+          "references": state.get("references", []),
+          "cache": state.get("cache", []),
+          "review_instructions": state.get("review_instructions", []),
+          "messages": state.get("messages", []),
+          "critique": state.get("critique", ""),
+          "plan": state.get("plan", ""),
+          "draft": state.get("draft", "")
+      }
+    goto:
+      - if: "{{ state.suggest_title_flag }}"
+        to: suggest_title
+      - to: internet_search
+
+  # -------------------------------------------------------------------------
+  # Node 1: Suggest Title (llm.call)
+  # -------------------------------------------------------------------------
+  - name: suggest_title
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.title }}"
+        - role: user
+          content: |
+            Based on the hypothesis: "{{ state.hypothesis }}"
+            And the area: "{{ state.area_of_paper }}"
+            Suggest a compelling title for this {{ state.type_of_document }}.
+    output:
+      title: "{{ result.content }}"
+
+  # -------------------------------------------------------------------------
+  # Node 2: Suggest Title Review (llm.call + interrupt)
+  # -------------------------------------------------------------------------
+  - name: suggest_title_review
+    interrupt: before
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.title }}"
+        - role: user
+          content: |
+            Current title suggestion: "{{ state.title }}"
+
+            {% if state.user_instruction %}
+            User instruction: {{ state.user_instruction }}
+            Please revise the title according to this instruction.
+            {% else %}
+            Confirm this title is appropriate or suggest improvements.
+            {% endif %}
+    output:
+      title: "{{ result.content }}"
+    goto:
+      - if: "{{ state.user_instruction }}"
+        to: suggest_title
+      - to: internet_search
+
+  # -------------------------------------------------------------------------
+  # Node 3: Internet Search (web.search via Perplexity)
+  # -------------------------------------------------------------------------
+  - name: internet_search
+    uses: web.search
+    with:
+      query: "{{ state.hypothesis }} {{ state.area_of_paper }}"
+      num_results: 10
+      model: sonar
+    output:
+      content: "{{ (state.content or []) + [result.content] }}"
+      references: "{{ (state.references or []) + (result.citations or []) }}"
+
+  # -------------------------------------------------------------------------
+  # Node 4: Topic Sentence Writer (llm.call)
+  # -------------------------------------------------------------------------
+  - name: topic_sentence_writer
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.topic_sentence }}"
+        - role: user
+          content: "{{ state.task }}"
+    output:
+      plan: "{{ result.content }}"
+    run: |
+      # Remove References section if LLM added it (shouldn't have)
+      import re
+      plan = state["plan"]
+      match = re.search(r"## References", plan)
+      if match:
+          plan = plan[:match.start()].strip()
+      return {"plan": plan, "draft": plan}
+
+  # -------------------------------------------------------------------------
+  # Node 5: Topic Sentence Manual Review (interrupt)
+  # -------------------------------------------------------------------------
+  - name: topic_sentence_manual_review
+    interrupt: before
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.topic_sentence_review }}"
+        - role: user
+          content: |
+            Current outline:
+
+            {{ state.plan }}
+
+            {% if state.user_instruction %}
+            Revision instruction: {{ state.user_instruction }}
+            {% else %}
+            Please review and confirm this outline is ready for drafting.
+            {% endif %}
+    output:
+      plan: "{{ result.content }}"
+    goto:
+      - if: "{{ state.user_instruction }}"
+        to: topic_sentence_writer
+      - to: paper_writer
+
+  # -------------------------------------------------------------------------
+  # Node 6: Paper Writer (llm.call)
+  # -------------------------------------------------------------------------
+  - name: paper_writer
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.paper_writer }}"
+        - role: user
+          content: |
+            Please write the full document based on this outline:
+
+            {{ state.plan }}
+    output:
+      draft: "{{ result.content }}"
+
+  # -------------------------------------------------------------------------
+  # Node 7: Writer Manual Reviewer (llm.call + interrupt)
+  # -------------------------------------------------------------------------
+  - name: writer_manual_reviewer
+    interrupt: before
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.writer_review }}"
+        - role: user
+          content: |
+            Current draft:
+
+            {{ state.draft }}
+
+            {% if state.user_instruction %}
+            User revision instruction: {{ state.user_instruction }}
+            Please apply these revisions.
+            {% else %}
+            Please review this draft.
+            {% endif %}
+    output:
+      draft: "{{ result.content }}"
+    run: |
+      # Track revision instruction if provided
+      review_instructions = state.get("review_instructions", [])
+      if state.get("user_instruction"):
+          review_instructions = review_instructions + [state["user_instruction"]]
+      return {"review_instructions": review_instructions, "user_instruction": ""}
+    goto:
+      - if: "{{ state.user_instruction }}"
+        to: paper_writer
+      - if: "{{ state.revision_number < state.max_revisions }}"
+        to: reflection_reviewer
+      - to: write_abstract
+
+  # -------------------------------------------------------------------------
+  # Node 8: Reflection Reviewer (llm.call)
+  # -------------------------------------------------------------------------
+  - name: reflection_reviewer
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.reflection_reviewer }}"
+        - role: user
+          content: |
+            Please review this document:
+
+            {{ state.draft }}
+    output:
+      critique: "{{ result.content }}"
+    run: |
+      # Increment revision counter
+      return {"revision_number": state.get("revision_number", 0) + 1}
+
+  # -------------------------------------------------------------------------
+  # Node 9: Reflection Manual Review (interrupt only)
+  # -------------------------------------------------------------------------
+  - name: reflection_manual_review
+    interrupt: before
+    run: |
+      # User reviews the AI critique before next revision
+      # User can provide instruction to guide the revision
+      return {}
+    goto: paper_writer
+
+  # -------------------------------------------------------------------------
+  # Node 10: Write Abstract (llm.call)
+  # -------------------------------------------------------------------------
+  - name: write_abstract
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.abstract_writer }}"
+        - role: user
+          content: |
+            Please add an abstract to this document:
+
+            {{ state.draft }}
+    output:
+      draft: "{{ result.content }}"
+
+  # -------------------------------------------------------------------------
+  # Node 11: Check Citations Flag
+  # -------------------------------------------------------------------------
+  - name: check_citations
+    run: |
+      return {}
+    goto:
+      - if: "{{ state.generate_citations_flag }}"
+        to: generate_references
+      - to: generate_figure_captions
+
+  # -------------------------------------------------------------------------
+  # Node 12: Generate References (llm.call)
+  # -------------------------------------------------------------------------
+  - name: generate_references
+    uses: llm.call
+    with:
+      messages:
+        - role: system
+          content: "{{ data.prompts.references }}"
+        - role: user
+          content: |
+            Generate references based on this content:
+
+            {{ state.content | join('\n\n') if state.content else 'No research content available.' }}
+    output:
+      references: "{{ result.content.split('\n') if result.content else [] }}"
+
+  # -------------------------------------------------------------------------
+  # Node 13: Generate Citations (text.insert_citations)
+  # -------------------------------------------------------------------------
+  - name: generate_citations
+    interrupt: before
+    uses: text.insert_citations
+    with:
+      text: "{{ state.draft }}"
+      references: "{{ state.references }}"
+    output:
+      draft: "{{ result.text }}"
+
+  # -------------------------------------------------------------------------
+  # Node 14: Generate Figure Captions (Python run block)
+  # -------------------------------------------------------------------------
+  - name: generate_figure_captions
+    run: |
+      import re
+      draft = state.get("draft", "")
+
+      # Pattern for Markdown images: ![alt](url)
+      pattern = r'!\[([^\]]*)\]\(([^\)]*)\)'
+
+      # Find all figures in reverse order to maintain positions
+      matches = list(reversed(list(re.finditer(pattern, draft))))
+      fig_num = len(matches)
+
+      for match in matches:
+          left, right = match.span()
+          alt_text = match.group(1)
+          url = match.group(2)
+
+          # Create caption format
+          caption = f'![]({url})\n\n<div align="center">Figure {fig_num}: {alt_text}</div>\n'
+          draft = draft[:left] + caption + draft[right:]
+          fig_num -= 1
+
+      return {"draft": draft}
+
+# =============================================================================
+# CONFIGURATION (Task 5 - Interrupts already defined in nodes above)
+# =============================================================================
+config:
+  raise_exceptions: true
+  # Interrupts are defined inline on nodes using interrupt: before
+  # - suggest_title_review: interrupt before
+  # - topic_sentence_manual_review: interrupt before
+  # - writer_manual_reviewer: interrupt before
+  # - reflection_manual_review: interrupt before
+  # - generate_citations: interrupt before

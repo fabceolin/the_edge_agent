@@ -2,13 +2,13 @@
 
 ## Status
 
-**Approved** - Split into sub-stories
+**In Progress** - Sub-story 005a complete
 
 ## Child Stories
 
 | ID | Title | Effort | Status |
 |----|-------|--------|--------|
-| **TEA-CLI-005a** | [Interactive Mode - Rust Core](TEA-CLI-005a-interactive-rust-core.md) | ~4h | Approved |
+| **TEA-CLI-005a** | [Interactive Mode - Rust Core](TEA-CLI-005a-interactive-rust-core.md) | ~4h | ✅ Done |
 | **TEA-CLI-005b** | [Interactive Mode - Rust UX & Error Handling](TEA-CLI-005b-interactive-rust-ux.md) | ~2h | Approved |
 | **TEA-CLI-005c** | [Interactive Mode - Python Port & Parity](TEA-CLI-005c-interactive-python-parity.md) | ~3h | Approved |
 
@@ -398,4 +398,5 @@ Your answer (Enter twice to send):
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2025-12-28 | 1.1 | TEA-CLI-005a completed and passed QA | Sarah (PO Agent) |
 | 2025-12-21 | 1.0 | Initial story creation | Sarah (PO Agent) |

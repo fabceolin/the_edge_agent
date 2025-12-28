@@ -200,6 +200,304 @@ See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete lis
 | `web.search` | `web_actions.py` | Web search (Perplexity) |
 | `web.ai_scrape` | `web_actions.py` | AI-powered structured extraction (ScrapeGraphAI) |
 
+### Academic Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `academic.pubmed` | `academic_actions.py` | Search PubMed via NCBI E-utilities |
+| `academic.arxiv` | `academic_actions.py` | Search ArXiv preprint server |
+
+#### academic.pubmed
+
+Search the PubMed database for scientific articles using NCBI E-utilities API.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | required | Search query (PubMed query syntax) |
+| `max_results` | int | 5 | Maximum results to return |
+| `sort_by` | string | "relevance" | Sort order: "relevance" or "date" |
+| `timeout` | int | 30 | Request timeout in seconds |
+
+**Returns:**
+
+```python
+{
+    "success": True,
+    "results": [
+        {
+            "pmid": "12345678",
+            "title": "Article Title",
+            "authors": ["Smith John", "Doe A"],
+            "abstract": "Full abstract text...",
+            "journal": "Nature Medicine",
+            "pub_date": "2024-01-15",
+            "doi": "10.1038/xxxxx",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+        }
+    ],
+    "query": "machine learning cancer",
+    "total_results": 150,
+    "returned_results": 5
+}
+```
+
+**YAML Example:**
+
+```yaml
+name: search-research
+nodes:
+  - name: find_papers
+    uses: academic.pubmed
+    with:
+      query: "{{ state.research_topic }}"
+      max_results: 10
+      sort_by: date
+    output:
+      articles: "{{ result.results }}"
+
+  - name: summarize
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: |
+            Summarize these research findings:
+            {% for article in state.articles %}
+            - {{ article.title }} ({{ article.journal }}, {{ article.pub_date }})
+            {% endfor %}
+```
+
+**Rate Limiting:** 3 requests/second (10 req/s with `NCBI_API_KEY`)
+
+**Environment Variables:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NCBI_API_KEY` | No | Increases rate limit from 3 to 10 req/s |
+
+#### academic.arxiv
+
+Search the ArXiv preprint server for research papers.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | optional | Search query string |
+| `arxiv_id` | string | optional | Direct paper lookup by ID |
+| `max_results` | int | 5 | Maximum results to return |
+| `sort_by` | string | "relevance" | Sort order: "relevance" or "date" |
+| `timeout` | int | 30 | Request timeout in seconds |
+
+*Note: Either `query` or `arxiv_id` must be provided.*
+
+**Returns:**
+
+```python
+{
+    "success": True,
+    "results": [
+        {
+            "arxiv_id": "2301.00001v2",
+            "title": "Paper Title",
+            "authors": ["Alice Smith", "Bob Jones"],
+            "abstract": "Full abstract...",
+            "categories": ["cs.CL", "cs.AI"],
+            "published": "2023-01-01T00:00:00Z",
+            "updated": "2023-01-15T12:00:00Z",
+            "pdf_url": "https://arxiv.org/pdf/2301.00001"
+        }
+    ],
+    "query": "transformer neural networks",
+    "total_results": 250
+}
+```
+
+**YAML Examples:**
+
+```yaml
+# Search by query
+- name: search_arxiv
+  uses: academic.arxiv
+  with:
+    query: "large language models"
+    max_results: 5
+    sort_by: date
+  output:
+    papers: "{{ result.results }}"
+
+# Direct lookup by ID
+- name: get_paper
+  uses: academic.arxiv
+  with:
+    arxiv_id: "2301.00001"
+  output:
+    paper: "{{ result.results[0] }}"
+```
+
+**Rate Limiting:** 1 request per 3 seconds (per ArXiv terms of service)
+
+**Error Handling:**
+
+Both actions return structured errors:
+
+```python
+{
+    "success": False,
+    "error": "Rate limit exceeded. Please wait and try again.",
+    "error_code": "rate_limit"  # empty_query, network, timeout, api_error
+}
+```
+
+### Text Actions
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `text.insert_citations` | `text_actions.py` | Insert citation markers using semantic embedding matching |
+
+#### text.insert_citations
+
+Insert citation markers into text using semantic embedding matching. Uses OpenAI embeddings to compute similarity between sentences and references, placing citations at the most semantically relevant positions.
+
+**Algorithm** (from original Kiroku project):
+1. Tokenize text into sentences using NLTK
+2. Compute embeddings for sentences and references using OpenAI
+3. Calculate similarity matrix via dot product
+4. Insert citations at sentences with highest similarity to each reference
+5. Reorder references by first occurrence in text
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | string | required | Markdown text to process |
+| `references` | list[str] | required | List of reference strings |
+| `model` | string | "text-embedding-3-large" | OpenAI embedding model |
+| `api_key` | string | None | OpenAI API key (uses OPENAI_API_KEY env var if not provided) |
+| `base_url` | string | None | Optional API base URL for compatible endpoints |
+
+**Returns:**
+
+```python
+{
+    "cited_text": "Text with [1] citation markers inserted.",
+    "references_section": "## References\n\n1. Author. Title. 2020.",
+    "citation_map": {1: "Author. Title. 2020."},
+    "text": "Full text with citations and References section"
+}
+```
+
+**Features:**
+- Semantic matching via embeddings (not just keyword matching)
+- Citations placed at most relevant sentences
+- Conclusions section excluded from citation (academic convention)
+- Abstract section excluded from citation
+- References reordered by first occurrence
+- Markdown formatting preserved
+
+**YAML Examples:**
+
+```yaml
+# Basic citation insertion with semantic matching
+name: add-citations
+nodes:
+  - name: cite_draft
+    uses: text.insert_citations
+    with:
+      text: "{{ state.draft }}"
+      references: "{{ state.references }}"
+      model: text-embedding-3-large  # or text-embedding-ada-002 for lower cost
+    output:
+      final_document: "{{ result.text }}"
+
+# Complete academic workflow
+name: academic-writer
+state_schema:
+  topic: str
+  draft: str
+  references: list
+  final_document: str
+
+nodes:
+  - name: research
+    uses: academic.arxiv
+    with:
+      query: "{{ state.topic }}"
+      max_results: 5
+    output:
+      papers: "{{ result.results }}"
+
+  - name: format_refs
+    run: |
+      refs = []
+      for p in state['papers']:
+        ref = f"{', '.join(p['authors'][:3])}. {p['title']}. ArXiv {p['arxiv_id']}. {p['pdf_url']}"
+        refs.append(ref)
+      return {"references": refs}
+
+  - name: write_draft
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: |
+            Write a research summary on {{ state.topic }}.
+            Reference these papers: {{ state.references | tojson }}
+
+  - name: add_citations
+    uses: text.insert_citations
+    with:
+      text: "{{ state.draft }}"
+      references: "{{ state.references }}"
+    output:
+      final_document: "{{ result.text }}"
+
+edges:
+  - from: __start__
+    to: research
+  - from: research
+    to: format_refs
+  - from: format_refs
+    to: write_draft
+  - from: write_draft
+    to: add_citations
+  - from: add_citations
+    to: __end__
+```
+
+**Input/Output Example:**
+
+```python
+# Input
+text = """
+Machine learning has revolutionized many fields.
+The transformer architecture changed NLP forever.
+"""
+
+references = [
+    "Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762"
+]
+
+# Output
+{
+    "cited_text": """
+Machine learning has revolutionized many fields.
+The transformer architecture changed NLP forever [1].
+""",
+    "references_section": """## References
+
+1. Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762""",
+    "citation_map": {
+        1: "Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762"
+    },
+    "text": "... (full combined document)"
+}
+```
+
 ### Graph Actions
 
 | Action | Module | Description |
@@ -234,6 +532,8 @@ python/src/the_edge_agent/actions/
 ├── vector_actions.py
 ├── graph_actions.py
 ├── web_actions.py
+├── academic_actions.py
+├── text_actions.py
 ├── tools_actions.py
 ├── observability_actions.py
 └── context_actions.py

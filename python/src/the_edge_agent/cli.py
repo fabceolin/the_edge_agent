@@ -48,6 +48,7 @@ app = typer.Typer(
 
 class OutputFormat(str, Enum):
     """Output format for inspect command."""
+
     text = "text"
     json = "json"
     dot = "dot"
@@ -83,7 +84,10 @@ def parse_input(value: Optional[str]) -> Dict[str, Any]:
     try:
         result = json.loads(value)
         if not isinstance(result, dict):
-            typer.echo(f"Error: Input must be a JSON object, got {type(result).__name__}", err=True)
+            typer.echo(
+                f"Error: Input must be a JSON object, got {type(result).__name__}",
+                err=True,
+            )
             raise typer.Exit(1)
         return result
     except json.JSONDecodeError as e:
@@ -91,10 +95,7 @@ def parse_input(value: Optional[str]) -> Dict[str, Any]:
         raise typer.Exit(1)
 
 
-def parse_secrets(
-    secrets: Optional[str],
-    secrets_env: Optional[str]
-) -> Dict[str, Any]:
+def parse_secrets(secrets: Optional[str], secrets_env: Optional[str]) -> Dict[str, Any]:
     """
     Parse secrets from JSON/file and/or environment variables.
 
@@ -128,7 +129,7 @@ def parse_secrets(
     if secrets_env:
         for key, value in os.environ.items():
             if key.startswith(secrets_env):
-                secret_key = key[len(secrets_env):].lower()
+                secret_key = key[len(secrets_env) :].lower()
                 if secret_key:
                     result[secret_key] = value
 
@@ -151,15 +152,20 @@ def load_actions_from_module(module_path: str) -> Dict[str, Callable]:
         typer.echo(f"Error: Cannot import module '{module_path}': {e}", err=True)
         raise typer.Exit(1)
 
-    if not hasattr(module, 'register_actions'):
-        typer.echo(f"Error: Module '{module_path}' must define a register_actions(registry, engine) function", err=True)
+    if not hasattr(module, "register_actions"):
+        typer.echo(
+            f"Error: Module '{module_path}' must define a register_actions(registry, engine) function",
+            err=True,
+        )
         raise typer.Exit(1)
 
     registry = {}
     try:
         module.register_actions(registry, engine=None)
     except Exception as e:
-        typer.echo(f"Error: Failed to register actions from '{module_path}': {e}", err=True)
+        typer.echo(
+            f"Error: Failed to register actions from '{module_path}': {e}", err=True
+        )
         raise typer.Exit(1)
 
     return registry
@@ -191,15 +197,20 @@ def load_actions_from_file(file_path: str) -> Dict[str, Callable]:
         typer.echo(f"Error: Failed to load Python file '{path}': {e}", err=True)
         raise typer.Exit(1)
 
-    if not hasattr(module, 'register_actions'):
-        typer.echo(f"Error: File '{file_path}' must define a register_actions(registry, engine) function", err=True)
+    if not hasattr(module, "register_actions"):
+        typer.echo(
+            f"Error: File '{file_path}' must define a register_actions(registry, engine) function",
+            err=True,
+        )
         raise typer.Exit(1)
 
     registry = {}
     try:
         module.register_actions(registry, engine=None)
     except Exception as e:
-        typer.echo(f"Error: Failed to register actions from '{file_path}': {e}", err=True)
+        typer.echo(
+            f"Error: Failed to register actions from '{file_path}': {e}", err=True
+        )
         raise typer.Exit(1)
 
     return registry
@@ -207,7 +218,7 @@ def load_actions_from_file(file_path: str) -> Dict[str, Callable]:
 
 def load_cli_actions(
     actions_modules: Optional[List[str]] = None,
-    actions_files: Optional[List[str]] = None
+    actions_files: Optional[List[str]] = None,
 ) -> Dict[str, Callable]:
     """Load and merge actions from CLI-specified modules and files."""
     combined_registry = {}
@@ -248,10 +259,7 @@ def setup_logging(verbose: int, quiet: bool):
     else:
         level = logging.WARNING
 
-    logging.basicConfig(
-        level=level,
-        format="%(levelname)s: %(message)s"
-    )
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
 
 
 def is_interactive_terminal() -> bool:
@@ -264,7 +272,7 @@ def emit_ndjson_event(event_type: str, **kwargs):
     event = {
         "type": event_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        **kwargs
+        **kwargs,
     }
     print(json.dumps(event), flush=True)
 
@@ -285,7 +293,9 @@ def load_checkpoint(checkpoint_path: str) -> Dict[str, Any]:
     return checkpoint
 
 
-def handle_interrupt_interactive(event: Dict[str, Any], checkpoint_dir: str) -> Optional[Dict[str, Any]]:
+def handle_interrupt_interactive(
+    event: Dict[str, Any], checkpoint_dir: str
+) -> Optional[Dict[str, Any]]:
     """Handle interrupt event with interactive prompt."""
     node = event.get("node")
     state = event.get("state", {})
@@ -300,7 +310,7 @@ def handle_interrupt_interactive(event: Dict[str, Any], checkpoint_dir: str) -> 
         "node": node,
         "config": {},
         "timestamp": timestamp_ms,
-        "version": "1.0"
+        "version": "1.0",
     }
     with open(checkpoint_path, "wb") as f:
         pickle.dump(checkpoint_data, f, protocol=4)
@@ -342,18 +352,73 @@ def handle_interrupt_interactive(event: Dict[str, Any], checkpoint_dir: str) -> 
 @app.command()
 def run(
     file: Path = typer.Argument(..., help="Path to workflow YAML file"),
-    input: Optional[str] = typer.Option(None, "--input", "-i", help="Initial state as JSON or @file.json"),
-    secrets: Optional[str] = typer.Option(None, "--secrets", help="Secrets as JSON or @file.json"),
-    secrets_env: Optional[str] = typer.Option(None, "--secrets-env", help="Load secrets from env vars with prefix"),
-    stream: bool = typer.Option(False, "--stream", "-s", help="Output events as NDJSON"),
-    checkpoint_dir: Optional[Path] = typer.Option(None, "--checkpoint-dir", "-c", help="Checkpoint directory"),
-    interrupt_before: Optional[str] = typer.Option(None, "--interrupt-before", help="Nodes to interrupt before (comma-separated)"),
-    interrupt_after: Optional[str] = typer.Option(None, "--interrupt-after", help="Nodes to interrupt after (comma-separated)"),
-    auto_continue: bool = typer.Option(False, "--auto-continue", help="Skip interactive prompts at interrupts"),
-    actions_module: Optional[List[str]] = typer.Option(None, "--actions-module", help="Python module for actions"),
-    actions_file: Optional[List[str]] = typer.Option(None, "--actions-file", help="Python file for actions"),
-    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+    input: Optional[str] = typer.Option(
+        None, "--input", "-i", help="Initial state as JSON or @file.json"
+    ),
+    secrets: Optional[str] = typer.Option(
+        None, "--secrets", help="Secrets as JSON or @file.json"
+    ),
+    secrets_env: Optional[str] = typer.Option(
+        None, "--secrets-env", help="Load secrets from env vars with prefix"
+    ),
+    stream: bool = typer.Option(
+        False, "--stream", "-s", help="Output events as NDJSON"
+    ),
+    checkpoint_dir: Optional[Path] = typer.Option(
+        None, "--checkpoint-dir", "-c", help="Checkpoint directory"
+    ),
+    interrupt_before: Optional[str] = typer.Option(
+        None, "--interrupt-before", help="Nodes to interrupt before (comma-separated)"
+    ),
+    interrupt_after: Optional[str] = typer.Option(
+        None, "--interrupt-after", help="Nodes to interrupt after (comma-separated)"
+    ),
+    auto_continue: bool = typer.Option(
+        False, "--auto-continue", help="Skip interactive prompts at interrupts"
+    ),
+    actions_module: Optional[List[str]] = typer.Option(
+        None, "--actions-module", help="Python module for actions"
+    ),
+    actions_file: Optional[List[str]] = typer.Option(
+        None, "--actions-file", help="Python file for actions"
+    ),
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True, help="Increase verbosity (-v, -vv, -vvv)"
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress non-error output"
+    ),
+    # Interactive mode flags (TEA-CLI-005c)
+    interactive: bool = typer.Option(
+        False, "--interactive", "-I", help="Enable interactive human-in-the-loop mode"
+    ),
+    question_key: str = typer.Option(
+        "question,prompt,message,ask,next_question",
+        "--question-key",
+        help="State key(s) for question extraction (comma-separated)",
+    ),
+    response_key: str = typer.Option(
+        "response", "--response-key", help="State key to inject user response"
+    ),
+    complete_key: str = typer.Option(
+        "complete,done,finished",
+        "--complete-key",
+        help="State key(s) that signal completion (comma-separated)",
+    ),
+    skip_response: str = typer.Option(
+        "I don't have information about this.",
+        "--skip-response",
+        help="Response to use when user types 'skip'",
+    ),
+    display_key: Optional[str] = typer.Option(
+        None, "--display-key", help="State key(s) to display (comma-separated)"
+    ),
+    display_format: str = typer.Option(
+        "pretty", "--display-format", help="Display format: pretty, json, raw"
+    ),
+    input_timeout: Optional[int] = typer.Option(
+        None, "--input-timeout", help="Input timeout in seconds (for testing)"
+    ),
     # Deprecated aliases (hidden)
     state: Optional[str] = typer.Option(None, "--state", hidden=True),
     state_file: Optional[Path] = typer.Option(None, "--state-file", hidden=True),
@@ -361,12 +426,19 @@ def run(
     """Execute a workflow."""
     setup_logging(verbose, quiet)
 
+    # Check mutual exclusivity of --interactive and --stream (AC-2, AC-13)
+    if interactive and stream:
+        typer.echo("Error: --interactive and --stream are mutually exclusive", err=True)
+        raise typer.Exit(1)
+
     # Handle deprecated flags
     if state:
         typer.echo("Warning: --state is deprecated, use --input", err=True)
         input = input or state
     if state_file:
-        typer.echo("Warning: --state-file is deprecated, use --input @file.json", err=True)
+        typer.echo(
+            "Warning: --state-file is deprecated, use --input @file.json", err=True
+        )
         input = input or f"@{state_file}"
 
     # Validate file exists
@@ -380,8 +452,7 @@ def run(
 
     # Load CLI actions
     cli_actions = load_cli_actions(
-        actions_modules=actions_module,
-        actions_files=actions_file
+        actions_modules=actions_module, actions_files=actions_file
     )
 
     # Create engine
@@ -406,8 +477,51 @@ def run(
         nodes = [n.strip() for n in interrupt_after.split(",")]
         compiled = compiled.with_interrupt_after(nodes)
 
-    # Determine checkpoint directory
-    cp_dir = str(checkpoint_dir) if checkpoint_dir else "./checkpoints"
+    # Interactive mode requires checkpointing (AC-14)
+    if interactive:
+        cp_path = checkpoint_dir if checkpoint_dir else Path("/tmp/tea_checkpoints")
+    else:
+        cp_path = checkpoint_dir if checkpoint_dir else Path("./checkpoints")
+
+    # Determine checkpoint directory (for non-interactive mode)
+    cp_dir = str(cp_path)
+
+    # Interactive mode branch (TEA-CLI-005c)
+    if interactive:
+        from the_edge_agent.interactive import InteractiveRunner
+
+        # Store workflow name for banner
+        engine.workflow_name = (
+            getattr(engine, "_config", {}).get("name", "") or file.stem
+        )
+
+        # Parse key lists
+        question_keys = [k.strip() for k in question_key.split(",")]
+        complete_keys = [k.strip() for k in complete_key.split(",")]
+        display_keys_list = (
+            [k.strip() for k in display_key.split(",")] if display_key else None
+        )
+
+        runner = InteractiveRunner(
+            engine=engine,
+            graph=compiled,
+            question_keys=question_keys,
+            response_key=response_key,
+            complete_keys=complete_keys,
+            skip_response=skip_response,
+            display_keys=display_keys_list,
+            display_format=display_format,
+            checkpoint_dir=cp_path,
+            input_timeout=input_timeout,
+        )
+
+        try:
+            final_state = runner.run(initial_state)
+            # Exit cleanly
+            return
+        except Exception as e:
+            typer.echo(f"Error in interactive mode: {e}", err=True)
+            raise typer.Exit(1)
 
     if not quiet and not stream:
         typer.echo("=" * 80)
@@ -434,15 +548,25 @@ def run(
                 if stream:
                     # Emit NDJSON events
                     if event_type == "state":
-                        emit_ndjson_event("node_complete", node=node, state=event.get("state", {}))
-                    elif event_type in ["interrupt_before", "interrupt_after", "interrupt"]:
-                        emit_ndjson_event("interrupt", node=node, state=event.get("state", {}))
+                        emit_ndjson_event(
+                            "node_complete", node=node, state=event.get("state", {})
+                        )
+                    elif event_type in [
+                        "interrupt_before",
+                        "interrupt_after",
+                        "interrupt",
+                    ]:
+                        emit_ndjson_event(
+                            "interrupt", node=node, state=event.get("state", {})
+                        )
                     elif event_type == "final":
                         emit_ndjson_event("complete", state=event.get("state", {}))
                         completed = True
                         break
                     elif event_type == "error":
-                        emit_ndjson_event("error", node=node, error=str(event.get("error", "")))
+                        emit_ndjson_event(
+                            "error", node=node, error=str(event.get("error", ""))
+                        )
                         raise typer.Exit(1)
                 else:
                     # Standard output
@@ -450,7 +574,11 @@ def run(
                         if not quiet:
                             typer.echo(f"✓ {node}")
 
-                    elif event_type in ["interrupt_before", "interrupt_after", "interrupt"]:
+                    elif event_type in [
+                        "interrupt_before",
+                        "interrupt_after",
+                        "interrupt",
+                    ]:
                         state = event.get("state", {})
                         if not quiet:
                             typer.echo(f"⏸  Interrupt at: {node}")
@@ -465,7 +593,9 @@ def run(
                             break
 
                         if not is_interactive_terminal():
-                            typer.echo("   (non-TTY detected, auto-continuing...)", err=True)
+                            typer.echo(
+                                "   (non-TTY detected, auto-continuing...)", err=True
+                            )
                             current_state = state
                             break
 
@@ -486,7 +616,9 @@ def run(
                             typer.echo("\n" + "=" * 80)
                             typer.echo("✓ Completed")
                             typer.echo("=" * 80)
-                            typer.echo(f"Final state: {json.dumps(event.get('state', {}), indent=2)}")
+                            typer.echo(
+                                f"Final state: {json.dumps(event.get('state', {}), indent=2)}"
+                            )
                         completed = True
                         break
 
@@ -504,14 +636,30 @@ def run(
 @app.command()
 def resume(
     checkpoint: Path = typer.Argument(..., help="Path to checkpoint file"),
-    workflow: Path = typer.Option(..., "--workflow", "-w", help="Original workflow YAML"),
-    input: Optional[str] = typer.Option(None, "--input", "-i", help="State updates as JSON or @file.json"),
-    secrets: Optional[str] = typer.Option(None, "--secrets", help="Secrets as JSON or @file.json"),
-    secrets_env: Optional[str] = typer.Option(None, "--secrets-env", help="Load secrets from env vars with prefix"),
-    stream: bool = typer.Option(False, "--stream", "-s", help="Output events as NDJSON"),
-    auto_continue: bool = typer.Option(False, "--auto-continue", help="Skip interactive prompts at interrupts"),
-    verbose: int = typer.Option(0, "--verbose", "-v", count=True, help="Increase verbosity"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-error output"),
+    workflow: Path = typer.Option(
+        ..., "--workflow", "-w", help="Original workflow YAML"
+    ),
+    input: Optional[str] = typer.Option(
+        None, "--input", "-i", help="State updates as JSON or @file.json"
+    ),
+    secrets: Optional[str] = typer.Option(
+        None, "--secrets", help="Secrets as JSON or @file.json"
+    ),
+    secrets_env: Optional[str] = typer.Option(
+        None, "--secrets-env", help="Load secrets from env vars with prefix"
+    ),
+    stream: bool = typer.Option(
+        False, "--stream", "-s", help="Output events as NDJSON"
+    ),
+    auto_continue: bool = typer.Option(
+        False, "--auto-continue", help="Skip interactive prompts at interrupts"
+    ),
+    verbose: int = typer.Option(
+        0, "--verbose", "-v", count=True, help="Increase verbosity"
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress non-error output"
+    ),
 ):
     """Resume execution from a checkpoint."""
     setup_logging(verbose, quiet)
@@ -569,12 +717,16 @@ def resume(
 
             if stream:
                 if event_type == "state":
-                    emit_ndjson_event("node_complete", node=node, state=event.get("state", {}))
+                    emit_ndjson_event(
+                        "node_complete", node=node, state=event.get("state", {})
+                    )
                 elif event_type == "final":
                     emit_ndjson_event("complete", state=event.get("state", {}))
                     break
                 elif event_type == "error":
-                    emit_ndjson_event("error", node=node, error=str(event.get("error", "")))
+                    emit_ndjson_event(
+                        "error", node=node, error=str(event.get("error", ""))
+                    )
                     raise typer.Exit(1)
             else:
                 if event_type == "state":
@@ -585,7 +737,9 @@ def resume(
                         typer.echo("\n" + "=" * 80)
                         typer.echo("✓ Completed")
                         typer.echo("=" * 80)
-                        typer.echo(f"Final state: {json.dumps(event.get('state', {}), indent=2)}")
+                        typer.echo(
+                            f"Final state: {json.dumps(event.get('state', {}), indent=2)}"
+                        )
                     break
                 elif event_type == "error":
                     if not quiet:
@@ -600,7 +754,9 @@ def resume(
 @app.command()
 def validate(
     file: Path = typer.Argument(..., help="Path to workflow YAML file"),
-    detailed: bool = typer.Option(False, "--detailed", help="Show detailed validation info"),
+    detailed: bool = typer.Option(
+        False, "--detailed", help="Show detailed validation info"
+    ),
 ):
     """Validate a workflow without execution."""
     if not file.exists():
@@ -616,25 +772,25 @@ def validate(
 
     if detailed:
         typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
-        if config.get('description'):
+        if config.get("description"):
             typer.echo(f"Description: {config.get('description')}")
 
-        nodes = config.get('nodes', [])
+        nodes = config.get("nodes", [])
         typer.echo(f"\nNodes: {len(nodes)}")
         for node in nodes:
-            name = node.get('name', 'unnamed')
-            action = node.get('uses') or node.get('action')
+            name = node.get("name", "unnamed")
+            action = node.get("uses") or node.get("action")
             if action:
                 typer.echo(f"  - {name} (uses: {action})")
             else:
                 typer.echo(f"  - {name}")
 
-        edges = config.get('edges', [])
+        edges = config.get("edges", [])
         typer.echo(f"\nEdges: {len(edges)}")
         for edge in edges:
-            from_node = edge.get('from', '?')
-            to_node = edge.get('to')
-            targets = edge.get('targets')
+            from_node = edge.get("from", "?")
+            to_node = edge.get("to")
+            targets = edge.get("targets")
             if to_node:
                 typer.echo(f"  - {from_node} -> {to_node}")
             if targets:
@@ -656,7 +812,9 @@ def validate(
 @app.command()
 def inspect(
     file: Path = typer.Argument(..., help="Path to workflow YAML file"),
-    format: OutputFormat = typer.Option(OutputFormat.text, "--format", "-f", help="Output format (text, json, dot)"),
+    format: OutputFormat = typer.Option(
+        OutputFormat.text, "--format", "-f", help="Output format (text, json, dot)"
+    ),
 ):
     """Inspect workflow structure."""
     if not file.exists():
@@ -674,7 +832,7 @@ def inspect(
         print(json.dumps(config, indent=2))
 
     elif format == OutputFormat.dot:
-        name = config.get('name', 'workflow').replace('-', '_')
+        name = config.get("name", "workflow").replace("-", "_")
         print(f"digraph {name} {{")
         print("  rankdir=TB;")
         print("  node [shape=box];")
@@ -684,10 +842,10 @@ def inspect(
         print()
 
         # Nodes
-        for node in config.get('nodes', []):
-            node_name = node.get('name', 'unnamed')
-            action = node.get('uses') or node.get('action')
-            if node.get('run'):
+        for node in config.get("nodes", []):
+            node_name = node.get("name", "unnamed")
+            action = node.get("uses") or node.get("action")
+            if node.get("run"):
                 label = f"{node_name}\\n(lua)"
             elif action:
                 label = f"{node_name}\\n[{action}]"
@@ -698,17 +856,19 @@ def inspect(
         print()
 
         # Edges
-        for edge in config.get('edges', []):
-            from_node = edge.get('from', '__start__')
-            to_node = edge.get('to')
-            condition = edge.get('condition') or edge.get('when')
-            targets = edge.get('targets')
-            parallel = edge.get('parallel')
+        for edge in config.get("edges", []):
+            from_node = edge.get("from", "__start__")
+            to_node = edge.get("to")
+            condition = edge.get("condition") or edge.get("when")
+            targets = edge.get("targets")
+            parallel = edge.get("parallel")
 
             if to_node:
                 if condition:
                     condition_escaped = condition.replace('"', '\\"')
-                    print(f'  "{from_node}" -> "{to_node}" [label="when: {condition_escaped}"];')
+                    print(
+                        f'  "{from_node}" -> "{to_node}" [label="when: {condition_escaped}"];'
+                    )
                 else:
                     print(f'  "{from_node}" -> "{to_node}";')
 
@@ -725,36 +885,36 @@ def inspect(
     else:
         # Text format
         typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
-        if config.get('description'):
+        if config.get("description"):
             typer.echo(f"Description: {config.get('description')}")
         typer.echo()
 
-        nodes = config.get('nodes', [])
+        nodes = config.get("nodes", [])
         typer.echo(f"Nodes ({len(nodes)}):")
         for node in nodes:
-            name = node.get('name', 'unnamed')
+            name = node.get("name", "unnamed")
             parts = [f"  {name}"]
-            action = node.get('uses') or node.get('action')
+            action = node.get("uses") or node.get("action")
             if action:
                 parts.append(f"[{action}]")
-            if node.get('run'):
+            if node.get("run"):
                 parts.append("(lua)")
-            if node.get('retry'):
+            if node.get("retry"):
                 parts.append("(retry)")
-            if node.get('fallback'):
+            if node.get("fallback"):
                 parts.append(f"(fallback: {node.get('fallback')})")
             typer.echo(" ".join(parts))
 
         typer.echo()
 
-        edges = config.get('edges', [])
+        edges = config.get("edges", [])
         typer.echo(f"Edges ({len(edges)}):")
         for edge in edges:
-            from_node = edge.get('from', '?')
-            to_node = edge.get('to')
-            condition = edge.get('condition') or edge.get('when')
-            targets = edge.get('targets')
-            parallel = edge.get('parallel')
+            from_node = edge.get("from", "?")
+            to_node = edge.get("to")
+            condition = edge.get("condition") or edge.get("when")
+            targets = edge.get("targets")
+            parallel = edge.get("parallel")
 
             if to_node:
                 line = f"  {from_node} -> {to_node}"
@@ -769,7 +929,7 @@ def inspect(
             if parallel:
                 typer.echo(f"  {from_node} => [{', '.join(parallel)}]")
 
-        variables = config.get('variables', {})
+        variables = config.get("variables", {})
         if variables:
             typer.echo()
             typer.echo("Variables:")
@@ -791,11 +951,23 @@ app.add_typer(schema_app, name="schema")
 
 @schema_app.command("merge")
 def schema_merge(
-    files: List[Path] = typer.Argument(None, help="Schema files to merge (JSON or YAML)"),
-    uses: Optional[List[str]] = typer.Option(None, "--uses", "-u", help="Git refs or fsspec URIs to merge"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output file path"),
-    validate_schema: bool = typer.Option(False, "--validate", help="Validate merged result against JSON Schema Draft 2020-12"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print to stdout without writing file"),
+    files: List[Path] = typer.Argument(
+        None, help="Schema files to merge (JSON or YAML)"
+    ),
+    uses: Optional[List[str]] = typer.Option(
+        None, "--uses", "-u", help="Git refs or fsspec URIs to merge"
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output file path"
+    ),
+    validate_schema: bool = typer.Option(
+        False,
+        "--validate",
+        help="Validate merged result against JSON Schema Draft 2020-12",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print to stdout without writing file"
+    ),
 ):
     """
     Deep merge multiple JSON Schemas with kubectl-style semantics.
@@ -871,19 +1043,38 @@ def impl_callback(ctx: typer.Context, value: bool):
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
-    version: bool = typer.Option(None, "--version", callback=version_callback, is_eager=True,
-                                   help="Show version and exit"),
-    show_impl: bool = typer.Option(False, "--impl", callback=impl_callback, is_eager=True,
-                                    help="Show implementation (python/rust)"),
+    version: bool = typer.Option(
+        None,
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version and exit",
+    ),
+    show_impl: bool = typer.Option(
+        False,
+        "--impl",
+        callback=impl_callback,
+        is_eager=True,
+        help="Show implementation (python/rust)",
+    ),
 ):
     """The Edge Agent - Lightweight State Graph Workflow Engine."""
     # Handle legacy invocation: tea workflow.yaml (without subcommand)
     if ctx.invoked_subcommand is None and len(sys.argv) > 1:
         first_arg = sys.argv[1]
-        if not first_arg.startswith("-") and first_arg not in ["run", "resume", "validate", "inspect", "schema"]:
+        if not first_arg.startswith("-") and first_arg not in [
+            "run",
+            "resume",
+            "validate",
+            "inspect",
+            "schema",
+        ]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):
-                typer.echo("Warning: Direct file argument is deprecated. Use 'tea run workflow.yaml'", err=True)
+                typer.echo(
+                    "Warning: Direct file argument is deprecated. Use 'tea run workflow.yaml'",
+                    err=True,
+                )
                 # Rewrite args and invoke run command
                 sys.argv.insert(1, "run")
                 ctx.invoke(run)

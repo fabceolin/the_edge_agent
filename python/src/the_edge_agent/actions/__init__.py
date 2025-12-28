@@ -21,6 +21,8 @@ Actions are organized by domain:
 - cache_actions: Cache and memoization with LTM backend (TEA-BUILTIN-010)
 - validation_actions: Generic extraction validation with Prolog/probes (TEA-YAML-004)
 - retry_actions: General-purpose retry loop with correction (TEA-YAML-005)
+- academic_actions: Academic research via PubMed and ArXiv APIs (TEA-KIROKU-001)
+- text_actions: Text processing including citation insertion (TEA-KIROKU-002)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -70,6 +72,12 @@ from .validation_actions import register_actions as register_validation
 
 # TEA-YAML-005: General-Purpose Retry Loop Action
 from .retry_actions import register_actions as register_retry
+
+# TEA-KIROKU-001: Academic Research Actions
+from .academic_actions import register_actions as register_academic
+
+# TEA-KIROKU-002: Text Processing Actions (Citation Insertion)
+from .text_actions import register_actions as register_text
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -130,6 +138,12 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-YAML-005: General-Purpose Retry Loop Action
     register_retry(registry, engine)
+
+    # TEA-KIROKU-001: Academic Research Actions
+    register_academic(registry, engine)
+
+    # TEA-KIROKU-002: Text Processing Actions
+    register_text(registry, engine)
 
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)

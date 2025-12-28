@@ -59,6 +59,37 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 
 ---
 
+## Documentation Structure
+
+This reference is organized into focused modules for easier navigation:
+
+### Core Concepts (this document)
+- Overview, Security, Basic Structure
+- State and Variable Passing
+- Document Structure, Top-Level Keys
+
+### Detailed References
+| Topic | Document |
+|-------|----------|
+| Node Specification | [yaml-reference/nodes.md](./yaml-reference/nodes.md) |
+| Navigation & Flow | [yaml-reference/navigation.md](./yaml-reference/navigation.md) |
+| Template Syntax | [yaml-reference/templates.md](./yaml-reference/templates.md) |
+| Lua & Prolog | [yaml-reference/advanced-runtimes.md](./yaml-reference/advanced-runtimes.md) |
+| Extraction Validation | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md#validation-actions) |
+
+### Built-in Actions
+| Category | Document |
+|----------|----------|
+| Overview | [yaml-reference/actions/README.md](./yaml-reference/actions/README.md) |
+| LLM Actions | [yaml-reference/actions/llm.md](./yaml-reference/actions/llm.md) |
+| I/O Actions | [yaml-reference/actions/io.md](./yaml-reference/actions/io.md) |
+| Data Processing | [yaml-reference/actions/data.md](./yaml-reference/actions/data.md) |
+| Memory Actions | [yaml-reference/actions/memory.md](./yaml-reference/actions/memory.md) |
+| Integrations | [yaml-reference/actions/integrations.md](./yaml-reference/actions/integrations.md) |
+| Specialized | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
+
+---
+
 ## Overview
 
 The Edge Agent supports declarative agent configuration using YAML files, inspired by GitHub Actions and GitLab CI/CD pipelines. Instead of writing Python code to construct your StateGraph, you can define the entire workflow in a YAML file.
