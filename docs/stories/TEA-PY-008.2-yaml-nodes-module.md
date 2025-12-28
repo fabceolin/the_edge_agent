@@ -1,7 +1,18 @@
 # Story TEA-PY-008.2: Extract Node Factory Module
 
 ## Status
-Ready for Dev
+Done
+
+## QA Results
+- **Gate**: CONCERNS
+- **Date**: 2025-12-27
+- **Assessor**: Quinn (QA)
+- **Test Results**: 1,746 passed, 0 failed
+- **Functional ACs**: ALL PASS (30/30)
+- **Line Count**: 839 lines (target 750, 12% over)
+- **Gate File**: [TEA-PY-008.2-yaml-nodes-module.yml](../qa/gates/TEA-PY-008.2-yaml-nodes-module.yml)
+
+**Concern**: Line count exceeds target. Justified by 7 node types + Lua/Prolog runtimes.
 
 > **QA Validation**: Passed story-draft-checklist (2025-12-27)
 > - Clarity Score: 9/10

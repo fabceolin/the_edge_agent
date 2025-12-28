@@ -1,7 +1,18 @@
 # Story TEA-PY-008.1: Extract Template Processing Module
 
 ## Status
-Ready for Dev
+Done
+
+## QA Results
+- **Gate**: CONCERNS
+- **Date**: 2025-12-27
+- **Assessor**: Quinn (QA)
+- **Test Results**: 1,746 passed, 0 failed
+- **Functional ACs**: ALL PASS (27/27)
+- **Line Count**: 398 lines (target 300, 33% over)
+- **Gate File**: [TEA-PY-008.1-yaml-templates-module.yml](../qa/gates/TEA-PY-008.1-yaml-templates-module.yml)
+
+**Concern**: Line count exceeds target due to DotDict inclusion (shared by multiple modules).
 
 > **QA Validation**: Passed story-draft-checklist (2025-12-27)
 > - Clarity Score: 8/10

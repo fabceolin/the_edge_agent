@@ -1,0 +1,96 @@
+schema: qa-gate-v1
+story: TEA-PY-008.2
+gate: CONCERNS
+date: 2025-12-27
+assessor: Quinn (QA)
+
+summary: |
+  Node factory extraction to yaml_nodes.py is FUNCTIONALLY COMPLETE with all
+  acceptance criteria met EXCEPT line count target. Module is 839 lines vs 750
+  target (12% over). All node types work including Lua/Prolog runtimes and
+  while-loop. All 1,746 tests pass.
+
+evidence:
+  acceptance_criteria:
+    module_creation:
+      - AC-1: "yaml_nodes.py created" - PASS (file exists at 839 lines)
+      - AC-2: "Module docstring with examples" - PASS
+      - AC-3: "Module under 750 lines" - FAIL (839 lines vs 750 target)
+
+    node_factory_class:
+      - AC-4: "NodeFactory class with engine reference" - PASS
+      - AC-5: "Constructor accepts engine reference" - PASS
+      - AC-6: "add_node_from_config method" - PASS
+      - AC-7: "create_run_function method" - PASS
+      - AC-8: "All node creation methods moved" - PASS
+
+    runtime_integration:
+      - AC-9: "_detect_lua_code works" - PASS
+      - AC-10: "_detect_prolog_code works" - PASS
+      - AC-11: "_get_lua_runtime with thread caching" - PASS (main thread cached, workers fresh)
+      - AC-12: "_get_prolog_runtime with thread-local" - PASS
+      - AC-13: "Parallel branch isolation" - PASS (TEA-PY-006 pattern preserved)
+
+    wrapper_functions:
+      - AC-14: "_wrap_with_auto_trace" - PASS
+      - AC-15: "_wrap_with_observability" - PASS
+      - AC-16: "Closure capture correct" - PASS
+
+    node_types:
+      - AC-17: "Inline Python" - PASS
+      - AC-18: "Inline Lua" - PASS
+      - AC-19: "Inline Prolog" - PASS
+      - AC-20: "Action function (uses:)" - PASS
+      - AC-21: "Multi-step (steps:)" - PASS
+      - AC-22: "Expression function" - PASS
+      - AC-23: "While-loop node" - PASS (all validations preserved)
+
+    integration:
+      - AC-24: "_node_factory attribute" - PASS
+      - AC-25-27: "Delegations work" - PASS
+
+    backward_compatibility:
+      - AC-28: "All tests pass" - PASS (1,746 passed)
+      - AC-29: "No public API changes" - PASS
+      - AC-30: "Identical behavior" - PASS
+
+  test_results:
+    command: "cd python && pytest"
+    passed: 1746
+    failed: 0
+    skipped: 54
+    key_tests:
+      - test_yaml_engine_while_loop.py
+      - test_lua_isolation.py
+      - test_prolog_runtime.py
+
+  code_verification:
+    file: yaml_nodes.py
+    lines: 839
+    target: 750
+    classes:
+      - NodeFactory
+    critical_methods:
+      - _get_lua_runtime (thread isolation logic preserved)
+      - _create_while_loop_function (all validations preserved)
+      - _wrap_with_auto_trace
+      - _wrap_with_observability
+
+concerns:
+  - severity: low
+    issue: "Module at 839 lines exceeds 750 line DoD target (12% over)"
+    mitigation: "Only 89 lines over. Module is large due to comprehensive runtime support."
+    recommendation: "Accept as-is. While-loop + dual runtime support justifies size."
+
+nfr_validation:
+  circular_imports: PASS
+  type_hints: PASS
+  thread_isolation: PASS (TEA-PY-006 pattern verified)
+  lua_main_thread_caching: PASS
+  prolog_thread_local: PASS
+
+recommendation: |
+  PROCEED WITH CONCERNS - The node factory is functionally complete with
+  Lua/Prolog runtime isolation correctly preserved. 12% line count overrun
+  is acceptable given the complexity of node types supported (Python, Lua,
+  Prolog, while-loop, multi-step, expression, action).
