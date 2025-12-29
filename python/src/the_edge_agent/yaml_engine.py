@@ -837,6 +837,9 @@ class YAMLEngine:
         # Extract settings (YAML-level configuration)
         settings = config.get("settings", {})
 
+        # TEA-KIROKU-005: Store full config for CLI access (interview prompts, etc.)
+        self._config = config
+
         # Extract LLM settings for default injection into llm.call actions
         # Maps settings.llm.deployment -> model, settings.llm.* -> other params
         # Process templates at load time (e.g., {{ env.VAR | default('value') }})
@@ -1041,10 +1044,19 @@ class YAMLEngine:
         checkpoint_dir = compile_config.get("checkpoint_dir")
         self._checkpoint_dir = checkpoint_dir
 
-        # Add nodes
+        # Add nodes and collect inline interrupt definitions
         nodes_list = config.get("nodes", [])
+        interrupt_before_nodes = []
+        interrupt_after_nodes = []
         for node_config in nodes_list:
             self._add_node_from_config(graph, node_config)
+            # TEA-KIROKU-005: Collect inline interrupt: before/after from node definitions
+            node_name = node_config.get("name")
+            interrupt_type = node_config.get("interrupt")
+            if interrupt_type == "before" and node_name:
+                interrupt_before_nodes.append(node_name)
+            elif interrupt_type == "after" and node_name:
+                interrupt_after_nodes.append(node_name)
 
         # TEA-YAML-002: Get edges list to determine which nodes are covered by legacy edges
         edges_list = config.get("edges", [])
@@ -1068,11 +1080,34 @@ class YAMLEngine:
         # Store checkpointer reference for resume
         self._checkpointer = checkpointer
 
+        # TEA-KIROKU-005: Merge inline interrupt definitions with config section
+        # Inline node-level 'interrupt: before/after' takes precedence by appearing first
+        all_interrupt_before = interrupt_before_nodes + compile_config.get(
+            "interrupt_before", []
+        )
+        all_interrupt_after = interrupt_after_nodes + compile_config.get(
+            "interrupt_after", []
+        )
+
+        # TEA-KIROKU-005: Auto-provide checkpoint directory when interrupts are defined
+        # This ensures HITL workflows work out-of-the-box without explicit checkpoint config
+        has_interrupts = bool(all_interrupt_before or all_interrupt_after)
+        has_checkpointer = bool(checkpoint_dir or checkpointer)
+        effective_checkpoint_dir = checkpoint_dir
+        if has_interrupts and not has_checkpointer:
+            import tempfile
+
+            effective_checkpoint_dir = tempfile.mkdtemp(prefix="tea_checkpoint_")
+            self._checkpoint_dir = effective_checkpoint_dir
+            logger.info(
+                f"Auto-created checkpoint directory for interrupts: {effective_checkpoint_dir}"
+            )
+
         # Compile with checkpoint support
         compiled_graph = graph.compile(
-            interrupt_before=compile_config.get("interrupt_before", []),
-            interrupt_after=compile_config.get("interrupt_after", []),
-            checkpoint_dir=checkpoint_dir,
+            interrupt_before=all_interrupt_before,
+            interrupt_after=all_interrupt_after,
+            checkpoint_dir=effective_checkpoint_dir,
             checkpointer=checkpointer,
         )
 

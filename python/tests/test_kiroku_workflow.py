@@ -269,13 +269,12 @@ class TestKirokuConditionalEdges(unittest.TestCase):
         self.assertIsNotNone(rule)
         self.assertEqual(rule["to"], "reflection_reviewer")
 
-    def test_user_instruction_triggers_revision(self):
-        """KIROKU-003-UNIT-011: user_instruction non-empty triggers revision"""
+    def test_user_response_triggers_revision(self):
+        """KIROKU-003-UNIT-011: user response non-empty triggers revision via _has_revision flag"""
         node = self._get_node("writer_manual_reviewer")
         goto = node.get("goto", [])
-        rule = next(
-            (r for r in goto if "user_instruction" in str(r.get("if", ""))), None
-        )
+        # TEA-KIROKU-005: Changed from user_instruction to _has_revision flag
+        rule = next((r for r in goto if "_has_revision" in str(r.get("if", ""))), None)
         self.assertIsNotNone(rule)
         self.assertEqual(rule["to"], "paper_writer")
 

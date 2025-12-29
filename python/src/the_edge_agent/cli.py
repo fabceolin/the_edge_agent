@@ -481,16 +481,23 @@ def run(
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)
 
-    # Compile with interrupts
-    compiled = graph.compile()
+    # TEA-KIROKU-005: graph is already compiled by load_from_file with inline interrupts
+    # Only add CLI-specified interrupt points on top of inline ones
+    compiled = graph
 
-    # Apply interrupt points from CLI flags
+    # Apply additional interrupt points from CLI flags
     if interrupt_before:
         nodes = [n.strip() for n in interrupt_before.split(",")]
-        compiled = compiled.with_interrupt_before(nodes)
+        # Merge with existing interrupt_before (don't override)
+        for node in nodes:
+            if node not in compiled.interrupt_before:
+                compiled.interrupt_before.append(node)
     if interrupt_after:
         nodes = [n.strip() for n in interrupt_after.split(",")]
-        compiled = compiled.with_interrupt_after(nodes)
+        # Merge with existing interrupt_after (don't override)
+        for node in nodes:
+            if node not in compiled.interrupt_after:
+                compiled.interrupt_after.append(node)
 
     # Interactive mode requires checkpointing (AC-14)
     if interactive:

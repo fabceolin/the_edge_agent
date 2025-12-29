@@ -421,8 +421,8 @@ nodes:
           content: |
             Current title suggestion: "{{ state.title }}"
 
-            {% if state.user_instruction %}
-            User instruction: {{ state.user_instruction }}
+            {% if state.response %}
+            User instruction: {{ state.response }}
             Please revise the title according to this instruction.
             {% else %}
             Confirm this title is appropriate or suggest improvements.
@@ -430,7 +430,7 @@ nodes:
     output:
       title: "{{ result.content }}"
     goto:
-      - if: "{{ state.user_instruction }}"
+      - if: "{{ state.response }}"
         to: suggest_title
       - to: internet_search
 
@@ -485,15 +485,15 @@ nodes:
 
             {{ state.plan }}
 
-            {% if state.user_instruction %}
-            Revision instruction: {{ state.user_instruction }}
+            {% if state.response %}
+            Revision instruction: {{ state.response }}
             {% else %}
             Please review and confirm this outline is ready for drafting.
             {% endif %}
     output:
       plan: "{{ result.content }}"
     goto:
-      - if: "{{ state.user_instruction }}"
+      - if: "{{ state.response }}"
         to: topic_sentence_writer
       - to: paper_writer
 
@@ -530,8 +530,8 @@ nodes:
 
             {{ state.draft }}
 
-            {% if state.user_instruction %}
-            User revision instruction: {{ state.user_instruction }}
+            {% if state.response %}
+            User revision instruction: {{ state.response }}
             Please apply these revisions.
             {% else %}
             Please review this draft.
@@ -539,13 +539,14 @@ nodes:
     output:
       draft: "{{ result.content }}"
     run: |
-      # Track revision instruction if provided
+      # Track revision instruction if provided and flag for goto
       review_instructions = state.get("review_instructions", [])
-      if state.get("user_instruction"):
-          review_instructions = review_instructions + [state["user_instruction"]]
-      return {"review_instructions": review_instructions, "user_instruction": ""}
+      has_revision = bool(state.get("response"))
+      if has_revision:
+          review_instructions = review_instructions + [state["response"]]
+      return {"review_instructions": review_instructions, "response": "", "_has_revision": has_revision}
     goto:
-      - if: "{{ state.user_instruction }}"
+      - if: "{{ state._has_revision }}"
         to: paper_writer
       - if: "{{ state.revision_number < state.max_revisions }}"
         to: reflection_reviewer

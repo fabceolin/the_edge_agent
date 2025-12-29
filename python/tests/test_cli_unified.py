@@ -21,6 +21,7 @@ def strip_ansi(text: str) -> str:
     ansi_pattern = re.compile(r"\x1b\[[0-9;]*m")
     return ansi_pattern.sub("", text)
 
+
 from the_edge_agent.cli import (
     app,
     parse_input,
@@ -91,14 +92,19 @@ class TestParseSecrets(unittest.TestCase):
 
     def test_parse_secrets_env(self):
         """Test parsing from environment variables."""
-        with patch.dict(os.environ, {"TEA_SECRET_API_KEY": "sk-from-env", "TEA_SECRET_TOKEN": "tok123"}):
+        with patch.dict(
+            os.environ,
+            {"TEA_SECRET_API_KEY": "sk-from-env", "TEA_SECRET_TOKEN": "tok123"},
+        ):
             result = parse_secrets(None, "TEA_SECRET_")
             self.assertEqual(result, {"api_key": "sk-from-env", "token": "tok123"})
 
     def test_parse_secrets_env_and_json(self):
         """Test that env vars override JSON secrets."""
         with patch.dict(os.environ, {"TEA_SECRET_API_KEY": "sk-from-env"}):
-            result = parse_secrets('{"api_key": "sk-json", "other": "value"}', "TEA_SECRET_")
+            result = parse_secrets(
+                '{"api_key": "sk-json", "other": "value"}', "TEA_SECRET_"
+            )
             self.assertEqual(result, {"api_key": "sk-from-env", "other": "value"})
 
 
@@ -149,7 +155,8 @@ class TestCliValidate(unittest.TestCase):
     def test_validate_valid_yaml(self):
         """Test validating a valid YAML file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -159,7 +166,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -191,7 +199,8 @@ edges:
     def test_validate_detailed(self):
         """Test validate with --detailed flag."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 description: A test workflow
 nodes:
@@ -206,7 +215,8 @@ edges:
     to: step2
   - from: step2
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -226,7 +236,8 @@ class TestCliInspect(unittest.TestCase):
     def test_inspect_text_format(self):
         """Test inspect with default text format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -236,7 +247,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -251,7 +263,8 @@ edges:
     def test_inspect_json_format(self):
         """Test inspect with JSON format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -259,7 +272,8 @@ nodes:
 edges:
   - from: __start__
     to: step1
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -274,7 +288,8 @@ edges:
     def test_inspect_dot_format(self):
         """Test inspect with DOT format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -284,7 +299,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -315,13 +331,13 @@ class TestCliRun(unittest.TestCase):
             temp_yaml = f.name
 
         try:
-            mock_compiled = MagicMock()
-            mock_compiled.stream.return_value = [{"type": "final", "state": {"result": "done"}}]
-            mock_compiled.with_interrupt_before.return_value = mock_compiled
-            mock_compiled.with_interrupt_after.return_value = mock_compiled
-
+            # TEA-KIROKU-005: load_from_file now returns compiled graph directly
             mock_graph = MagicMock()
-            mock_graph.compile.return_value = mock_compiled
+            mock_graph.stream.return_value = [
+                {"type": "final", "state": {"result": "done"}}
+            ]
+            mock_graph.interrupt_before = []
+            mock_graph.interrupt_after = []
 
             mock_engine = MagicMock()
             mock_engine.load_from_file.return_value = mock_graph
@@ -341,23 +357,25 @@ class TestCliRun(unittest.TestCase):
             temp_yaml = f.name
 
         try:
-            mock_compiled = MagicMock()
-            mock_compiled.stream.return_value = [{"type": "final", "state": {"result": "done"}}]
-            mock_compiled.with_interrupt_before.return_value = mock_compiled
-            mock_compiled.with_interrupt_after.return_value = mock_compiled
-
+            # TEA-KIROKU-005: load_from_file now returns compiled graph directly
             mock_graph = MagicMock()
-            mock_graph.compile.return_value = mock_compiled
+            mock_graph.stream.return_value = [
+                {"type": "final", "state": {"result": "done"}}
+            ]
+            mock_graph.interrupt_before = []
+            mock_graph.interrupt_after = []
 
             mock_engine = MagicMock()
             mock_engine.load_from_file.return_value = mock_graph
             mock_engine_class.return_value = mock_engine
 
-            result = runner.invoke(app, ["run", temp_yaml, "--input", '{"key": "value"}'])
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--input", '{"key": "value"}']
+            )
             self.assertEqual(result.exit_code, 0)
             # Verify stream was called with input state
-            mock_compiled.stream.assert_called()
-            call_args = mock_compiled.stream.call_args
+            mock_graph.stream.assert_called()
+            call_args = mock_graph.stream.call_args
             self.assertEqual(call_args[0][0], {"key": "value"})
         finally:
             Path(temp_yaml).unlink()
@@ -370,13 +388,13 @@ class TestCliRun(unittest.TestCase):
             temp_yaml = f.name
 
         try:
-            mock_compiled = MagicMock()
-            mock_compiled.stream.return_value = [{"type": "final", "state": {"result": "done"}}]
-            mock_compiled.with_interrupt_before.return_value = mock_compiled
-            mock_compiled.with_interrupt_after.return_value = mock_compiled
-
+            # TEA-KIROKU-005: load_from_file now returns compiled graph directly
             mock_graph = MagicMock()
-            mock_graph.compile.return_value = mock_compiled
+            mock_graph.stream.return_value = [
+                {"type": "final", "state": {"result": "done"}}
+            ]
+            mock_graph.interrupt_before = []
+            mock_graph.interrupt_after = []
 
             mock_engine = MagicMock()
             mock_engine.load_from_file.return_value = mock_graph
@@ -401,19 +419,19 @@ class TestCliDeprecatedFlags(unittest.TestCase):
             temp_yaml = f.name
 
         try:
-            mock_compiled = MagicMock()
-            mock_compiled.stream.return_value = [{"type": "final", "state": {}}]
-            mock_compiled.with_interrupt_before.return_value = mock_compiled
-            mock_compiled.with_interrupt_after.return_value = mock_compiled
-
+            # TEA-KIROKU-005: load_from_file now returns compiled graph directly
             mock_graph = MagicMock()
-            mock_graph.compile.return_value = mock_compiled
+            mock_graph.stream.return_value = [{"type": "final", "state": {}}]
+            mock_graph.interrupt_before = []
+            mock_graph.interrupt_after = []
 
             mock_engine = MagicMock()
             mock_engine.load_from_file.return_value = mock_graph
             mock_engine_class.return_value = mock_engine
 
-            result = runner.invoke(app, ["run", temp_yaml, "--state", '{"key": "value"}'])
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--state", '{"key": "value"}']
+            )
             # Check stderr for deprecation warning - typer combines stdout/stderr in result.output
             self.assertIn("deprecated", result.output.lower())
         finally:

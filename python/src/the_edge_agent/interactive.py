@@ -435,6 +435,7 @@ class InteractiveRunner:
 
         current_state = initial_state
         iteration = 0
+        resume_checkpoint = None  # TEA-KIROKU-005: Track checkpoint for resume
 
         try:
             while True:
@@ -453,7 +454,17 @@ class InteractiveRunner:
                     final_state = None
                     checkpoint_path = None
 
-                    for event in self.graph.stream(current_state):
+                    # TEA-KIROKU-005: Resume from checkpoint if we have one, otherwise start fresh
+                    if resume_checkpoint:
+                        # Resume with state update containing user response
+                        stream_iter = self.graph.stream(
+                            current_state, checkpoint=resume_checkpoint
+                        )
+                    else:
+                        # First iteration - start fresh
+                        stream_iter = self.graph.stream(current_state)
+
+                    for event in stream_iter:
                         event_type = event.get("type")
 
                         if event_type == "final":
@@ -579,7 +590,9 @@ class InteractiveRunner:
                                     checkpoint_state, response
                                 )
 
-                            break  # Exit stream loop to re-execute with new state
+                            # TEA-KIROKU-005: Set checkpoint for resume on next iteration
+                            resume_checkpoint = checkpoint_path
+                            break  # Exit stream loop to resume from checkpoint
 
                         elif event_type == "error":
                             error = event.get("error", "Unknown error")
