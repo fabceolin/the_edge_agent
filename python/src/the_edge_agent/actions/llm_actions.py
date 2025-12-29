@@ -202,6 +202,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # 3. Default to OpenAI
         resolved_provider = provider.lower() if provider else "auto"
 
+        # Normalize provider names (azure_openai -> azure)
+        if resolved_provider in ("azure_openai", "azureopenai"):
+            resolved_provider = "azure"
+
         if resolved_provider == "auto":
             # Check environment variables in priority order
             if os.getenv("OLLAMA_API_BASE"):

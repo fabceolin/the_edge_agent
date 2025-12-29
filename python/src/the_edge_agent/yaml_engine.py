@@ -451,6 +451,8 @@ class YAMLEngine:
 
         self.variables: Dict[str, Any] = {}
         self.secrets: Dict[str, Any] = {}
+        self.data: Dict[str, Any] = {}
+        self.llm_settings: Dict[str, Any] = {}  # Default LLM settings from settings.llm
 
         # Checkpoint tracking
         self._last_checkpoint_path: Optional[str] = None
@@ -824,6 +826,9 @@ class YAMLEngine:
         # Extract global variables
         self.variables = config.get("variables", {})
 
+        # Extract data section (reusable prompts, templates, constants)
+        self.data = config.get("data", {})
+
         # Load external action modules from imports section (TEA-BUILTIN: External Imports)
         imports = config.get("imports", [])
         if imports:
@@ -831,6 +836,35 @@ class YAMLEngine:
 
         # Extract settings (YAML-level configuration)
         settings = config.get("settings", {})
+
+        # Extract LLM settings for default injection into llm.call actions
+        # Maps settings.llm.deployment -> model, settings.llm.* -> other params
+        # Process templates at load time (e.g., {{ env.VAR | default('value') }})
+        llm_config = settings.get("llm", {})
+        if isinstance(llm_config, dict):
+            self.llm_settings = {}
+            # Map 'deployment' to 'model' for Azure OpenAI convention
+            if "deployment" in llm_config:
+                raw_value = llm_config["deployment"]
+                # Process template with empty state (env vars available)
+                self.llm_settings["model"] = self._process_template(raw_value, {})
+            elif "model" in llm_config:
+                raw_value = llm_config["model"]
+                self.llm_settings["model"] = self._process_template(raw_value, {})
+            # Copy other settings (provider, temperature, etc.)
+            for key in [
+                "provider",
+                "temperature",
+                "api_base",
+                "timeout",
+                "max_retries",
+            ]:
+                if key in llm_config:
+                    raw_value = llm_config[key]
+                    if isinstance(raw_value, str):
+                        self.llm_settings[key] = self._process_template(raw_value, {})
+                    else:
+                        self.llm_settings[key] = raw_value
 
         # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
         # Settings can be nested under 'opik' key or flat under 'settings'
@@ -1196,19 +1230,30 @@ class YAMLEngine:
         """
         return self._template_processor._template_cache
 
-    def _process_template(self, text: str, state: Dict[str, Any]) -> Any:
+    def _process_template(
+        self,
+        text: str,
+        state: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Process template variables in text using Jinja2.
 
         TEA-PY-008.1: Delegates to TemplateProcessor for modularity.
 
         See TemplateProcessor.process_template() for full documentation.
+
+        Args:
+            text: The template string to process
+            state: Current state dictionary
+            extra_context: Optional additional context variables (e.g., result from action)
         """
         return self._template_processor.process_template(
             text,
             state,
             checkpoint_dir=self._checkpoint_dir,
             last_checkpoint=self._last_checkpoint_path,
+            extra_context=extra_context,
         )
 
     def _process_params(

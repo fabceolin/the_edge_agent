@@ -22,6 +22,7 @@ Example usage:
 """
 
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional, Union
 
@@ -36,10 +37,16 @@ class DotDict(dict):
     nested dictionary values (e.g., {{ state.user.name }} instead of
     {{ state['user']['name'] }}).
 
+    Missing keys return None instead of raising AttributeError, which allows
+    Jinja2 templates to safely use patterns like {% if state.user_instruction %}
+    without requiring | default(false) for every access.
+
     Example:
         >>> d = DotDict({'user': {'name': 'Alice'}})
         >>> d.user.name
         'Alice'
+        >>> d.missing_key  # Returns None instead of raising
+        None
     """
 
     def __getattr__(self, key: str) -> Any:
@@ -49,9 +56,9 @@ class DotDict(dict):
                 return DotDict(value)
             return value
         except KeyError:
-            raise AttributeError(
-                f"'{type(self).__name__}' object has no attribute '{key}'"
-            )
+            # Return None for missing keys instead of raising AttributeError
+            # This allows safe access in Jinja2 templates like {% if state.x %}
+            return None
 
     def __setattr__(self, key: str, value: Any) -> None:
         self[key] = value
@@ -113,12 +120,20 @@ class TemplateProcessor:
             return self._engine.secrets
         return self._secrets_fallback
 
+    @property
+    def _data(self) -> Dict[str, Any]:
+        """Get data section from engine (for reusable prompts, templates, constants)."""
+        if self._engine is not None:
+            return getattr(self._engine, "data", {})
+        return {}
+
     def process_template(
         self,
         text: str,
         state: Dict[str, Any],
         checkpoint_dir: Optional[str] = None,
         last_checkpoint: Optional[str] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Process template variables in text using Jinja2.
@@ -135,6 +150,7 @@ class TemplateProcessor:
         - {% if %}...{% endif %} - Jinja2 conditionals
         - {% for %}...{% endfor %} - Jinja2 loops
         - {{ data | fromjson }} - custom filter to parse JSON strings
+        - {{ result.key }} - access result from action (when extra_context provided)
 
         When the entire value is a single template expression (e.g., "{{ state.data }}"),
         returns the actual object instead of converting to string. This allows passing
@@ -148,6 +164,7 @@ class TemplateProcessor:
             state: Current state dictionary accessible via {{ state.key }}
             checkpoint_dir: Checkpoint directory accessible via {{ checkpoint.dir }}
             last_checkpoint: Last checkpoint path accessible via {{ checkpoint.last }}
+            extra_context: Optional additional context variables (e.g., result from action)
 
         Returns:
             Processed value. For single expressions, returns the native Python object.
@@ -164,6 +181,10 @@ class TemplateProcessor:
             "state": DotDict(state),
             "variables": DotDict(self._variables),
             "secrets": DotDict(self._secrets),
+            "data": DotDict(self._data),
+            "env": DotDict(
+                os.environ
+            ),  # Access environment variables via {{ env.VAR }}
             "checkpoint": DotDict(
                 {
                     "dir": checkpoint_dir or "",
@@ -172,15 +193,29 @@ class TemplateProcessor:
             ),
         }
 
+        # Add extra context variables (e.g., result from action)
+        if extra_context:
+            for key, value in extra_context.items():
+                if isinstance(value, dict):
+                    context[key] = DotDict(value)
+                else:
+                    context[key] = value
+
         text_stripped = text.strip()
 
         # Check if the entire string is a single template expression (AC: 5)
         # This allows returning actual objects instead of string representation
-        # Pattern matches {{ expr }} without Jinja2 block tags
-        single_expr_pattern = r"^\{\{\s*(.+?)\s*\}\}$"
+        # Pattern matches {{ expr }} where expr doesn't contain }} (no nested expressions)
+        # Using [^}]+ instead of .+? to prevent matching multiple expressions
+        single_expr_pattern = r"^\{\{\s*([^}]+(?:\}(?!\})[^}]*)*)\s*\}\}$"
         single_match = re.match(single_expr_pattern, text_stripped)
 
-        if single_match and "{%" not in text_stripped:
+        # Also check there's no second {{ after the first expression
+        if (
+            single_match
+            and "{%" not in text_stripped
+            and text_stripped.count("{{") == 1
+        ):
             expr = single_match.group(1)
 
             try:

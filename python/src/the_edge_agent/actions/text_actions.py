@@ -131,6 +131,7 @@ def insert_citations(
     model: str = "text-embedding-3-large",
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    provider: str = "auto",
     **kwargs,
 ) -> Dict[str, Any]:
     """
@@ -139,6 +140,18 @@ def insert_citations(
     This action uses OpenAI embeddings to compute semantic similarity between
     sentences in the text and the provided references. Citations are inserted
     at the sentence with highest similarity to each reference.
+
+    Provider Detection (same as llm.call):
+    1. Explicit `provider` parameter (highest priority)
+    2. Environment variable detection:
+       - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT → Azure OpenAI
+    3. Default → OpenAI
+
+    Azure OpenAI Configuration:
+    - AZURE_OPENAI_API_KEY: Azure OpenAI API key
+    - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
+    - AZURE_OPENAI_EMBEDDING_DEPLOYMENT: Embedding model deployment name
+      (defaults to 'text-embedding-3-large')
 
     Algorithm (from original Kiroku):
     1. Tokenize text into sentences using NLTK
@@ -154,6 +167,7 @@ def insert_citations(
         model: Embedding model (default: text-embedding-3-large)
         api_key: Optional OpenAI API key (uses OPENAI_API_KEY env var if not provided)
         base_url: Optional API base URL for compatible endpoints
+        provider: Provider - "auto", "openai", or "azure" (default: "auto")
 
     Returns:
         Dict with:
@@ -168,6 +182,8 @@ def insert_citations(
         >>> result = insert_citations({}, text=text, references=refs)
         >>> # Citations inserted based on semantic similarity
     """
+    import os
+
     if not text:
         return {
             "cited_text": "",
@@ -187,13 +203,54 @@ def insert_citations(
     # Ensure dependencies are loaded
     _ensure_dependencies()
 
-    # Initialize OpenAI client
-    client_kwargs = {}
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    if base_url:
-        client_kwargs["base_url"] = base_url
-    client = _OpenAI(**client_kwargs)
+    # Determine provider
+    resolved_provider = provider.lower() if provider else "auto"
+    if resolved_provider in ("azure_openai", "azureopenai"):
+        resolved_provider = "azure"
+
+    if resolved_provider == "auto":
+        if os.getenv("AZURE_OPENAI_API_KEY") and os.getenv("AZURE_OPENAI_ENDPOINT"):
+            resolved_provider = "azure"
+        else:
+            resolved_provider = "openai"
+
+    # Initialize client based on provider
+    if resolved_provider == "azure":
+        # Azure OpenAI
+        try:
+            from openai import AzureOpenAI
+        except ImportError:
+            raise ImportError(
+                "openai is required for text.insert_citations with Azure. "
+                "Install with: pip install 'the_edge_agent[llm]'"
+            )
+
+        azure_api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+        azure_endpoint = base_url or os.getenv("AZURE_OPENAI_ENDPOINT")
+        api_version = os.getenv("OPENAI_API_VERSION", "2024-02-15-preview")
+
+        if not azure_api_key or not azure_endpoint:
+            raise ValueError(
+                "Azure OpenAI requires AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT "
+                "environment variables, or api_key and base_url parameters."
+            )
+
+        client = AzureOpenAI(
+            api_key=azure_api_key,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
+        )
+        # For Azure, use deployment name from env or model param
+        embedding_model = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", model)
+    else:
+        # Standard OpenAI
+        client_kwargs = {}
+        if api_key:
+            client_kwargs["api_key"] = api_key
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = _OpenAI(**client_kwargs)
+        embedding_model = model
 
     # Remove existing References section if present
     paper = text.strip()
@@ -228,14 +285,14 @@ def insert_citations(
     # Compute embeddings for sentences and references
     try:
         emb_response_sents = client.embeddings.create(
-            model=model,
+            model=embedding_model,
             input=sentences,
             timeout=30.0,
         )
         emb_sents = _np.array([e.embedding for e in emb_response_sents.data])
 
         emb_response_refs = client.embeddings.create(
-            model=model,
+            model=embedding_model,
             input=references,
             timeout=30.0,
         )
@@ -324,7 +381,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     Args:
         registry: Action registry to populate
-        engine: YAMLEngine instance (not used by text actions)
+        engine: YAMLEngine instance (used to inherit LLM settings)
     """
 
     def text_insert_citations_action(
@@ -334,13 +391,23 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         model: str = "text-embedding-3-large",
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        provider: str = "auto",
         **kwargs,
     ) -> Dict[str, Any]:
         """
         Wrapper for insert_citations with state access.
 
+        Inherits provider settings from engine.llm_settings if not explicitly set.
+
         See insert_citations() for full documentation.
         """
+        # Inherit provider from engine's LLM settings if not explicitly set
+        resolved_provider = provider
+        if resolved_provider == "auto" and hasattr(engine, "llm_settings"):
+            llm_settings = engine.llm_settings
+            if "provider" in llm_settings:
+                resolved_provider = llm_settings["provider"]
+
         return insert_citations(
             state=state,
             text=text,
@@ -348,6 +415,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             model=model,
             api_key=api_key,
             base_url=base_url,
+            provider=resolved_provider,
             **kwargs,
         )
 
