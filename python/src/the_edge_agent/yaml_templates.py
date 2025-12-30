@@ -216,7 +216,7 @@ class TemplateProcessor:
             and "{%" not in text_stripped
             and text_stripped.count("{{") == 1
         ):
-            expr = single_match.group(1)
+            expr = single_match.group(1).strip()
 
             try:
                 # Use compile_expression for single expressions to return native objects

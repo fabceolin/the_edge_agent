@@ -5,9 +5,17 @@ Tests the text.insert_citations action using semantic embedding matching.
 All OpenAI API calls are mocked to avoid real API requests during testing.
 """
 
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
+
+
+# Environment patch to force OpenAI provider (not Azure) for mocked tests
+FORCE_OPENAI_ENV = {
+    "AZURE_OPENAI_API_KEY": "",
+    "AZURE_OPENAI_ENDPOINT": "",
+}
 
 from the_edge_agent.actions import text_actions
 from the_edge_agent.actions.text_actions import (
@@ -103,6 +111,7 @@ class TestInsertCitations(unittest.TestCase):
         self.assertEqual(result["cited_text"], text)
         self.assertEqual(result["references_section"], "")
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_single_citation_insertion(self, mock_openai):
         """Insert single citation marker using semantic matching."""
@@ -150,6 +159,7 @@ class TestInsertCitations(unittest.TestCase):
         self.assertIn("## References", result["references_section"])
         self.assertIn("1. Vaswani", result["references_section"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_multiple_citations(self, mock_openai):
         """Insert multiple citation markers."""
@@ -185,6 +195,7 @@ Large language models show emergent abilities."""
         # Should have References section with both
         self.assertIn("## References", result["references_section"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_citation_map_structure(self, mock_openai):
         """Citation map has correct structure."""
@@ -213,6 +224,7 @@ Large language models show emergent abilities."""
         # Citation map should have integer keys
         self.assertTrue(all(isinstance(k, int) for k in result["citation_map"].keys()))
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_markdown_formatting_preserved(self, mock_openai):
         """Markdown formatting in text is preserved."""
@@ -238,6 +250,7 @@ Large language models show emergent abilities."""
         self.assertIn("**Bold**", result["cited_text"])
         self.assertIn("*italic*", result["cited_text"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_unicode_in_references(self, mock_openai):
         """Handle Unicode characters in references."""
@@ -262,6 +275,7 @@ Large language models show emergent abilities."""
 
         self.assertIn("Müller", result["references_section"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_full_document_processing(self, mock_openai):
         """Process complete academic document."""
@@ -302,6 +316,7 @@ Recent advances in large language models show promising results.
         # Full text should combine both
         self.assertIn("## References", result["text"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_removes_existing_references_section(self, mock_openai):
         """Existing References section should be removed before processing."""
@@ -337,6 +352,7 @@ Recent advances in large language models show promising results.
 class TestInsertCitationsEdgeCases(unittest.TestCase):
     """Test edge cases for insert_citations."""
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_no_sentences_extracted(self, mock_openai):
         """Handle case where no sentences are extracted."""
@@ -349,6 +365,7 @@ class TestInsertCitationsEdgeCases(unittest.TestCase):
         # Should still return with references appended
         self.assertIn("## References", result["references_section"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_api_error_returns_graceful_fallback(self, mock_openai):
         """API errors should return original text with references appended."""
@@ -370,6 +387,7 @@ class TestInsertCitationsEdgeCases(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIn("API rate limit exceeded", result["error"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_conclusions_not_cited(self, mock_openai):
         """Conclusions section should not receive citations."""
@@ -401,6 +419,7 @@ This is a conclusion that should not be cited."""
         # (implementation excludes conclusions from sentence extraction)
         self.assertIn("[1]", result["cited_text"])
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_custom_model_parameter(self, mock_openai):
         """Custom embedding model can be specified."""
@@ -447,6 +466,7 @@ class TestActionRegistration(unittest.TestCase):
         self.assertIn("text.insert_citations", registry)
         self.assertIn("actions.text_insert_citations", registry)
 
+    @patch.dict(os.environ, FORCE_OPENAI_ENV)
     @patch.object(text_actions, "_OpenAI")
     def test_registered_action_callable(self, mock_openai):
         """Registered action is callable."""
