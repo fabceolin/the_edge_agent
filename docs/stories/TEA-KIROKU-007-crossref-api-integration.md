@@ -1,6 +1,6 @@
 # Story TEA-KIROKU-007: CrossRef API Integration
 
-## Status: Draft
+## Status: Approved
 
 ## Story
 
@@ -175,8 +175,71 @@ CROSSREF_DOI_SUCCESS = {
 }
 ```
 
+## QA Results
+
+### Test Design Review (2025-12-29)
+
+**Reviewer:** Quinn (Test Architect)
+
+**Test Design Document:** `docs/qa/assessments/TEA-KIROKU-007-test-design-20251229.md`
+
+#### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| Total scenarios | 18 |
+| Unit tests | 10 (55%) |
+| Integration tests | 5 (28%) |
+| E2E tests | 3 (17%) |
+
+#### Priority Distribution
+
+| Priority | Count | Focus Areas |
+|----------|-------|-------------|
+| P0 | 6 | Core parsing, error handling, rate limiting |
+| P1 | 8 | Author/date parsing, API contract, workflows |
+| P2 | 4 | Defaults, search, registry aliases |
+
+#### Key Test Scenarios
+
+**P0 Critical Tests:**
+- `KIROKU-007-UNIT-001`: DOI response parsing
+- `KIROKU-007-UNIT-004`: Output field contract
+- `KIROKU-007-UNIT-011`: NOT_FOUND error handling
+- `KIROKU-007-UNIT-012`: TIMEOUT error handling
+- `KIROKU-007-INT-004`: Polite pool User-Agent
+- `KIROKU-007-UNIT-010`: Rate limiting enforcement
+
+**Integration/E2E Tests:**
+- `KIROKU-007-INT-001`: Live DOI lookup
+- `KIROKU-007-E2E-001`: YAML workflow execution
+
+#### Coverage Assessment
+
+- All 12 Acceptance Criteria have test coverage
+- No coverage gaps identified
+- Test levels appropriately assigned per test-levels-framework
+
+#### Risks Addressed
+
+| Risk | Tests |
+|------|-------|
+| API contract changes | INT-001, INT-002 |
+| Rate limiting violations | INT-004, UNIT-010 |
+| Parse edge cases | UNIT-006, UNIT-007 |
+| Network resilience | UNIT-011, UNIT-012 |
+
+#### Recommendations
+
+1. **Mock data preparation**: Use provided CROSSREF_DOI_SUCCESS fixture
+2. **Integration tests**: Mark with `@pytest.mark.integration` for CI exclusion
+3. **Rate limit testing**: Verify User-Agent header format matches CrossRef polite pool requirements
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
+| 2025-12-29 | 0.2 | Added QA test design review | Quinn (QA Agent) |
 | 2025-12-27 | 0.1 | Initial story creation from QA recommendations | Sarah (PO Agent) |

@@ -1,0 +1,192 @@
+name: bmad-story-validation
+description: Autonomous BMad Story Validation using Context Injection Pattern
+
+state_schema:
+  arg: str
+  bmad_root: str
+  agent_persona: str
+  task_definition: str
+  qa_output: str
+  qa_notes_output: str
+  sm_output: str
+  status_output: str
+
+nodes:
+  - name: detect_bmad_version
+    description: Auto-detect BMad directory structure
+    run: |
+      import os
+      if os.path.isdir(".bmad-core/agents"):
+          bmad_root = ".bmad-core"
+      elif os.path.isdir("_bmad/bmm/agents"):
+          bmad_root = "_bmad/bmm"
+      else:
+          bmad_root = ".bmad-core"
+      return {"bmad_root": bmad_root}
+
+  - name: load_qa_context
+    description: Load QA agent persona and task definition
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+      agent_file = os.path.join(bmad_root, "agents", "qa.md")
+      task_file = os.path.join(bmad_root, "tasks", "test-design.md")
+      agent_persona = ""
+      task_definition = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              agent_persona = f.read()
+      if os.path.exists(task_file):
+          with open(task_file, "r") as f:
+              task_definition = f.read()
+      return {"agent_persona": agent_persona, "task_definition": task_definition}
+
+  - name: run_qa_test_design
+    description: Execute QA test-design via context injection
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.agent_persona }}
+
+            TASK: Perform *test-design for story {{ state.arg }}.
+
+            {{ state.task_definition }}
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            Find story in docs/stories/ matching {{ state.arg }}.
+            Generate comprehensive test design.
+
+            When done print: BMAD_QA_COMPLETED
+    output:
+      qa_output: "{{ result.content }}"
+
+  - name: write_qa_notes
+    description: Write QA notes to story file
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.agent_persona }}
+
+            TASK: Write QA notes to the story file for {{ state.arg }}.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            Based on the test design analysis, add a "## QA Notes" section to the story file.
+            Find the story file in docs/stories/ matching {{ state.arg }}.
+
+            The QA notes should include:
+            - Test coverage summary
+            - Risk areas identified
+            - Recommended test scenarios
+            - Any concerns or blockers
+
+            Save the updated story file.
+
+            When done print: QA_NOTES_WRITTEN
+    output:
+      qa_notes_output: "{{ result.content }}"
+
+  - name: load_sm_context
+    description: Load SM agent persona
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+      agent_file = os.path.join(bmad_root, "agents", "sm.md")
+      agent_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              agent_persona = f.read()
+      return {"agent_persona": agent_persona}
+
+  - name: run_sm_story_checklist
+    description: Execute SM story-checklist via context injection
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.agent_persona }}
+
+            TASK: Perform *story-checklist for story {{ state.arg }}.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands.
+
+            Find story in docs/stories/ matching {{ state.arg }}.
+            Validate against Definition of Ready checklist.
+
+            When done print: BMAD_SM_COMPLETED
+    output:
+      sm_output: "{{ result.content }}"
+
+  - name: update_story_status
+    description: Update story status based on checklist results
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.agent_persona }}
+
+            TASK: Update story status for {{ state.arg }}.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            Find the story file in docs/stories/ matching {{ state.arg }}.
+
+            Based on the checklist validation:
+            - If all criteria passed: Update status to "Ready for Development"
+            - If some criteria failed: Update status to "Needs Revision" and add notes
+
+            Update the "## Status" section in the story file.
+            Save the file.
+
+            When done print: STATUS_UPDATED
+    output:
+      status_output: "{{ result.content }}"
+
+edges:
+  - from: __start__
+    to: detect_bmad_version
+  - from: detect_bmad_version
+    to: load_qa_context
+  - from: load_qa_context
+    to: run_qa_test_design
+  - from: run_qa_test_design
+    to: write_qa_notes
+  - from: write_qa_notes
+    to: load_sm_context
+  - from: load_sm_context
+    to: run_sm_story_checklist
+  - from: run_sm_story_checklist
+    to: update_story_status
+  - from: update_story_status
+    to: __end__

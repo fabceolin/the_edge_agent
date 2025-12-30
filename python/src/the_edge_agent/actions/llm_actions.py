@@ -129,9 +129,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         return {
             "claude": {
                 "command": "claude",
-                "args": ["-p"],
-                "stdin_mode": "pipe",
-                "timeout": 300,
+                "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+                "timeout": 600,
             },
             "gemini": {
                 "command": "gemini",
@@ -232,11 +231,41 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Format messages into prompt text
         prompt_text = _format_messages_for_cli(messages)
 
-        # Build full command
-        full_command = [command] + args
+        # Build full command - replace {prompt} placeholder in args if present
+        processed_args = [
+            (
+                a.replace("{prompt}", prompt_text)
+                if isinstance(a, str) and "{prompt}" in a
+                else a
+            )
+            for a in args
+        ]
+        full_command = [command] + processed_args
+
+        # Check if prompt was passed as arg (contains {prompt} placeholder)
+        prompt_in_args = any("{prompt}" in str(a) for a in args)
+
+        # If prompt is too large for CLI args (>100KB), fall back to stdin mode
+        MAX_ARG_SIZE = 100000  # ~100KB safe limit for shell args
+        if prompt_in_args and len(prompt_text) > MAX_ARG_SIZE:
+            # Revert to stdin mode for large prompts
+            prompt_in_args = False
+            # Remove {prompt} from args and use original args without replacement
+            full_command = [command] + [a for a in args if "{prompt}" not in str(a)]
+            stdin_mode = "pipe"
 
         try:
-            if stdin_mode == "pipe":
+            if prompt_in_args:
+                # Prompt already in args, no stdin needed
+                proc = subprocess.Popen(
+                    full_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+                stdout, stderr = proc.communicate(timeout=provider_timeout)
+            elif stdin_mode == "pipe":
                 proc = subprocess.Popen(
                     full_command,
                     stdin=subprocess.PIPE,
@@ -361,11 +390,32 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Format messages into prompt text
         prompt_text = _format_messages_for_cli(messages)
 
-        # Build full command
-        full_command = [command] + args
+        # Build full command - replace {prompt} placeholder in args if present
+        processed_args = [
+            (
+                a.replace("{prompt}", prompt_text)
+                if isinstance(a, str) and "{prompt}" in a
+                else a
+            )
+            for a in args
+        ]
+        full_command = [command] + processed_args
+
+        # Check if prompt was passed as arg (contains {prompt} placeholder)
+        prompt_in_args = any("{prompt}" in str(a) for a in args)
 
         try:
-            if stdin_mode == "pipe":
+            if prompt_in_args:
+                # Prompt already in args, no stdin needed
+                proc = subprocess.Popen(
+                    full_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    bufsize=1,  # Line buffered for streaming
+                )
+            elif stdin_mode == "pipe":
                 proc = subprocess.Popen(
                     full_command,
                     stdin=subprocess.PIPE,

@@ -1,6 +1,6 @@
 # Story TEA-KIROKU-006: Academic Actions Resilience Improvements
 
-## Status: Draft
+## Status: Ready for Development
 
 ## Story
 
@@ -148,8 +148,59 @@ def test_concurrent_pubmed_respects_rate_limit():
     # Verify timing shows rate limiting was applied
 ```
 
+## QA Notes
+
+**Review Date:** 2025-12-29
+**Reviewer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+- **Total test scenarios designed:** 24
+- **Unit tests:** 10 (42%) - Core algorithm validation
+- **Integration tests:** 10 (42%) - Thread-safety and error handling
+- **E2E tests:** 4 (17%) - Regression prevention and workflow validation
+- **Priority distribution:** P0: 6, P1: 12, P2: 6
+- **AC coverage:** 100% - All 10 acceptance criteria have mapped test scenarios
+
+### Risk Areas Identified
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **Race condition in rate limiting** | High | INT-001, INT-002, INT-004 verify concurrent execution thread-safety |
+| **Infinite retry loop** | High | UNIT-007, INT-010 verify max retry termination and error code return |
+| **Incorrect backoff timing** | Medium | UNIT-004 explicitly validates 2s, 4s, 8s delay sequence |
+| **Regression in existing functionality** | Medium | E2E-003 runs full existing test suite (25 tests) |
+| **Cross-action rate limiter interference** | Low | INT-006 verifies PubMed and ArXiv rate limiters are independent |
+
+### Recommended Test Scenarios (P0 Priority)
+
+1. **UNIT-001:** Verify RateLimiter class uses threading.Lock internally
+2. **UNIT-004:** Verify _request_with_backoff retries on 429 with delays 2s, 4s, 8s
+3. **UNIT-007:** Verify _request_with_backoff returns after max_retries=3
+4. **INT-001:** Test 5 concurrent PubMed calls via ThreadPoolExecutor respect rate limits
+5. **INT-004:** Test 5 concurrent ArXiv calls via ThreadPoolExecutor respect 3s rate limit
+6. **INT-010:** Test PubMed returns error_code "rate_limit_exhausted" after 4 consecutive 429s
+
+### Testing Patterns Required
+
+- **ThreadPoolExecutor** for concurrent execution testing
+- **time.sleep mocking** for backoff delay validation
+- **requests.get mocking** with side_effect for 429 response simulation
+- **Timing validation** to confirm rate limit spacing
+
+### Concerns / Blockers
+
+- **None identified** - Story is well-defined with clear acceptance criteria
+- **Recommendation:** Ensure new RateLimiter instances don't break existing mocks in the 25 existing tests
+- **Implementation note:** ArXiv's stricter 3-second rate limit should use independent RateLimiter configuration
+
+### Test Design Reference
+
+Full test design document: `docs/qa/assessments/TEA-KIROKU-006-test-design-20251229.md`
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2025-12-27 | 0.1 | Initial story creation from QA recommendations | Sarah (PO Agent) |
+| 2025-12-29 | 0.2 | Added QA Notes with test design analysis | Quinn (Test Architect) |
