@@ -55,7 +55,7 @@ settings:
         📄 DRAFT REVIEW (Revision {{ state.revision_number + 1 }}/{{ state.max_revisions }})
         ═══════════════════════════════════════════════════════════════════════
 
-        {{ state.draft | truncate(2000) }}
+        {{ state.draft }}
 
         ───────────────────────────────────────────────────────────────────────
         Options:
@@ -443,9 +443,10 @@ nodes:
     goto:
       - if: "{{ state._has_response }}"
         to: suggest_title
-      # Skip internet_search if PERPLEXITY_API_KEY is not set
-      - if: "{{ env.PERPLEXITY_API_KEY }}"
-        to: internet_search
+      # Internet search disabled - go directly to topic_sentence_writer
+      # To enable: uncomment the condition below and ensure PERPLEXITY_API_KEY has credits
+      # - if: "{{ env.PERPLEXITY_API_KEY }}"
+      #   to: internet_search
       - to: topic_sentence_writer
 
   # -------------------------------------------------------------------------
@@ -645,6 +646,7 @@ nodes:
 
   # -------------------------------------------------------------------------
   # Node 12: Generate References (llm.call)
+  # Uses references from input file if available, otherwise generates from content
   # -------------------------------------------------------------------------
   - name: generate_references
     uses: llm.call
@@ -654,11 +656,21 @@ nodes:
           content: "{{ data.prompts.references }}"
         - role: user
           content: |
+            {% if state.references %}
+            Format these references in proper academic citation style:
+
+            {% for ref in state.references %}
+            - {{ ref }}
+            {% endfor %}
+            {% elif state.content %}
             Generate references based on this content:
 
-            {{ state.content | join('\n\n') if state.content else 'No research content available.' }}
+            {{ state.content | join('\n\n') }}
+            {% else %}
+            Generate placeholder references for a paper about: {{ state.hypothesis }}
+            {% endif %}
     output:
-      references: "{{ result.content.split('\n') if result.content else [] }}"
+      references: "{{ result.content.split('\n') if result.content else state.references }}"
 
   # -------------------------------------------------------------------------
   # Node 13: Generate Citations (text.insert_citations)

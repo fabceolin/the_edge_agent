@@ -109,9 +109,10 @@ class InteractiveRunner:
 
         # Display config from interview settings
         self._display_config = self.interview_config.get("display", {})
-        self._max_lines = self._display_config.get("max_lines", 50)
+        # Default to 0 (no truncation) - user can scroll in terminal
+        self._max_lines = self._display_config.get("max_lines", 0)
         self._truncate_message = self._display_config.get(
-            "truncate_message", "... [truncated]"
+            "truncate_message", "... [truncated, use /save to export full draft]"
         )
 
     def _render_template(self, template: str, state: Dict[str, Any]) -> str:
@@ -346,6 +347,9 @@ class InteractiveRunner:
         Returns:
             Truncated text with message if needed
         """
+        # max_lines=0 means no truncation
+        if self._max_lines == 0:
+            return text
         lines = text.split("\n")
         if len(lines) > self._max_lines:
             truncated = "\n".join(lines[: self._max_lines])
