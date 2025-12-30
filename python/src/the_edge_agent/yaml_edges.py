@@ -273,13 +273,19 @@ class EdgeFactory:
             - "result.status == 'error'"
             - "state.retry_count < 3"
             - "result.confidence < 0.7 and state.require_review"
+            - "env.PERPLEXITY_API_KEY"  # Check if env var is set
         """
-        # Build evaluation context with state and result
+        import os
+
+        # Build evaluation context with state, result, and env
         context = {
             "state": DotDict(state) if state else DotDict({}),
             "result": DotDict(result) if result else DotDict({}),
             "variables": DotDict(self._engine.variables),
             "secrets": DotDict(self._engine.secrets),
+            "env": DotDict(
+                dict(os.environ)
+            ),  # TEA-KIROKU-005: Add env vars to goto conditions
         }
 
         # Wrap expression in Jinja2 syntax if not already
@@ -297,10 +303,15 @@ class EdgeFactory:
                 )
 
             template = self._engine._template_processor._template_cache[cache_key]
-            rendered = template.render(**context).strip().lower()
+            rendered = template.render(**context).strip()
 
             # Convert rendered string to boolean
-            return rendered in ("true", "1", "yes")
+            # Empty string, "false", "0", "no", "none" are falsy
+            # Any other non-empty string is truthy (e.g., API keys, env var values)
+            lower_rendered = rendered.lower()
+            if lower_rendered in ("", "false", "0", "no", "none"):
+                return False
+            return True  # Non-empty, non-falsy string is truthy
 
         except Exception as e:
             # Log warning and return False on evaluation errors

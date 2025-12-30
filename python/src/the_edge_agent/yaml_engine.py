@@ -453,6 +453,9 @@ class YAMLEngine:
         self.secrets: Dict[str, Any] = {}
         self.data: Dict[str, Any] = {}
         self.llm_settings: Dict[str, Any] = {}  # Default LLM settings from settings.llm
+        self.shell_providers: Dict[str, Any] = (
+            {}
+        )  # Shell CLI providers from settings.llm.shell_providers
 
         # Checkpoint tracking
         self._last_checkpoint_path: Optional[str] = None
@@ -868,6 +871,43 @@ class YAMLEngine:
                         self.llm_settings[key] = self._process_template(raw_value, {})
                     else:
                         self.llm_settings[key] = raw_value
+
+            # TEA-LLM-004: Parse shell_providers configuration
+            # Allows configuring CLI commands like claude, gemini, qwen
+            shell_providers_config = llm_config.get("shell_providers", {})
+            if isinstance(shell_providers_config, dict):
+                for provider_name, provider_config in shell_providers_config.items():
+                    if isinstance(provider_config, dict):
+                        processed_config = {}
+                        for key, value in provider_config.items():
+                            if isinstance(value, str):
+                                # Process templates and expand env vars
+                                processed_config[key] = self._process_template(
+                                    value, {}
+                                )
+                            elif isinstance(value, list):
+                                # Process list items (like args)
+                                processed_config[key] = [
+                                    (
+                                        self._process_template(v, {})
+                                        if isinstance(v, str)
+                                        else v
+                                    )
+                                    for v in value
+                                ]
+                            elif isinstance(value, dict):
+                                # Process dict items (like env)
+                                processed_config[key] = {
+                                    k: (
+                                        self._process_template(v, {})
+                                        if isinstance(v, str)
+                                        else v
+                                    )
+                                    for k, v in value.items()
+                                }
+                            else:
+                                processed_config[key] = value
+                        self.shell_providers[provider_name] = processed_config
 
         # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
         # Settings can be nested under 'opik' key or flat under 'settings'

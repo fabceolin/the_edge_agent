@@ -1,6 +1,6 @@
 # Status
 
-Approved
+Ready for Review
 
 # Story
 
@@ -59,46 +59,46 @@ This story adds `shell` as a new explicit provider that executes local CLI comma
 
 # Tasks / Subtasks
 
-- [ ] **Task 1: Design shell provider configuration schema** (AC: 6, 7)
-  - [ ] Define `settings.llm.shell_providers` schema in YAML
-  - [ ] Create default configurations for claude, gemini, qwen
-  - [ ] Support `stdin_mode: pipe` (default) and `stdin_mode: file` (for large contexts)
+- [x] **Task 1: Design shell provider configuration schema** (AC: 6, 7)
+  - [x] Define `settings.llm.shell_providers` schema in YAML
+  - [x] Create default configurations for claude, gemini, qwen
+  - [x] Support `stdin_mode: pipe` (default) and `stdin_mode: file` (for large contexts)
 
-- [ ] **Task 2: Implement shell provider in `llm.call`** (AC: 1, 4, 6, 8, 9, 13)
-  - [ ] Add `shell` case to provider resolution in `llm_call()` function
-  - [ ] Load shell provider config from engine settings
-  - [ ] Build command with arguments and environment variable expansion
-  - [ ] Execute via `subprocess.Popen` with stdin pipe
-  - [ ] Format messages into prompt text for stdin
-  - [ ] Handle stdout/stderr capture
-  - [ ] Implement timeout handling
-  - [ ] Parse CLI output (assume plain text response)
+- [x] **Task 2: Implement shell provider in `llm.call`** (AC: 1, 4, 6, 8, 9, 13)
+  - [x] Add `shell` case to provider resolution in `llm_call()` function
+  - [x] Load shell provider config from engine settings
+  - [x] Build command with arguments and environment variable expansion
+  - [x] Execute via `subprocess.Popen` with stdin pipe
+  - [x] Format messages into prompt text for stdin
+  - [x] Handle stdout/stderr capture
+  - [x] Implement timeout handling
+  - [x] Parse CLI output (assume plain text response)
 
-- [ ] **Task 3: Implement shell provider in `llm.stream`** (AC: 2, 4)
-  - [ ] Add `shell` case to `llm_stream()` function
-  - [ ] Use `subprocess.Popen` with stdout line buffering
-  - [ ] Yield lines as they arrive (or aggregate like current pattern)
-  - [ ] Return consistent response format with chunk_count
+- [x] **Task 3: Implement shell provider in `llm.stream`** (AC: 2, 4)
+  - [x] Add `shell` case to `llm_stream()` function
+  - [x] Use `subprocess.Popen` with stdout line buffering
+  - [x] Yield lines as they arrive (or aggregate like current pattern)
+  - [x] Return consistent response format with chunk_count
 
-- [ ] **Task 4: Add settings schema support** (AC: 3, 7, 8)
-  - [ ] Extend YAMLEngine settings parsing for `llm.shell_providers`
-  - [ ] Add default shell provider configs (claude, gemini, qwen)
-  - [ ] Implement environment variable expansion in config values
+- [x] **Task 4: Add settings schema support** (AC: 3, 7, 8)
+  - [x] Extend YAMLEngine settings parsing for `llm.shell_providers`
+  - [x] Add default shell provider configs (claude, gemini, qwen)
+  - [x] Implement environment variable expansion in config values
 
-- [ ] **Task 5: Write unit tests** (AC: 10, 12, 13)
-  - [ ] Create `tests/test_llm_shell_provider.py`
-  - [ ] Mock `subprocess.Popen` for deterministic tests
-  - [ ] Test `llm.call` with `provider: shell`
-  - [ ] Test `llm.stream` with `provider: shell`
-  - [ ] Test error handling (command not found, timeout, non-zero exit)
-  - [ ] Test large input via stdin
-  - [ ] Verify existing tests still pass (no regression)
+- [x] **Task 5: Write unit tests** (AC: 10, 12, 13)
+  - [x] Create `tests/test_llm_shell_provider.py`
+  - [x] Mock `subprocess.Popen` for deterministic tests
+  - [x] Test `llm.call` with `provider: shell`
+  - [x] Test `llm.stream` with `provider: shell`
+  - [x] Test error handling (command not found, timeout, non-zero exit)
+  - [x] Test large input via stdin
+  - [x] Verify existing tests still pass (no regression)
 
-- [ ] **Task 6: Update documentation** (AC: 11)
-  - [ ] Add Shell provider section to `docs/shared/YAML_REFERENCE.md`
-  - [ ] Add Shell examples to `docs/python/actions-reference.md`
-  - [ ] Document settings schema for `llm.shell_providers`
-  - [ ] Include examples for claude, gemini, qwen
+- [x] **Task 6: Update documentation** (AC: 11)
+  - [x] Add Shell provider section to `docs/shared/YAML_REFERENCE.md`
+  - [x] Add Shell examples to `docs/python/actions-reference.md`
+  - [x] Document settings schema for `llm.shell_providers`
+  - [x] Include examples for claude, gemini, qwen
 
 # Dev Notes
 
@@ -356,12 +356,12 @@ cd python && pytest
 
 # Definition of Done
 
-- [ ] Functional requirements met (AC1-AC5)
-- [ ] Configuration requirements verified (AC6-AC9)
-- [ ] Existing functionality regression tested (AC12)
-- [ ] Code follows existing patterns and standards
-- [ ] Tests pass (existing and new)
-- [ ] Documentation updated (AC11)
+- [x] Functional requirements met (AC1-AC5)
+- [x] Configuration requirements verified (AC6-AC9)
+- [x] Existing functionality regression tested (AC12)
+- [x] Code follows existing patterns and standards
+- [x] Tests pass (existing and new)
+- [x] Documentation updated (AC11)
 
 # Risk and Compatibility Check
 
@@ -381,10 +381,10 @@ cd python && pytest
 **Rollback**: Remove `shell` case from provider switch; no impact on existing providers
 
 **Compatibility Verification**:
-- [ ] No breaking changes to existing APIs (`provider: openai/azure/ollama/litellm` unchanged)
-- [ ] No database changes
-- [ ] UI changes: N/A (Python-only, CLI/API)
-- [ ] Performance impact: Negligible (only affects calls with `provider: shell`)
+- [x] No breaking changes to existing APIs (`provider: openai/azure/ollama/litellm` unchanged)
+- [x] No database changes
+- [x] UI changes: N/A (Python-only, CLI/API)
+- [x] Performance impact: Negligible (only affects calls with `provider: shell`)
 
 # Change Log
 
@@ -399,22 +399,116 @@ cd python && pytest
 
 ## Agent Model Used
 
-_To be filled by Dev Agent_
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ## File List
 
-_To be filled by Dev Agent_
+**Modified:**
+- `python/src/the_edge_agent/actions/llm_actions.py` - Added shell provider implementation, `_execute_shell_provider()`, `_stream_shell_provider()`, `_get_default_shell_providers()`, `_expand_env_vars()`, `_format_messages_for_cli()` helper functions
+- `python/src/the_edge_agent/yaml_engine.py` - Added `shell_providers` attribute and parsing from `settings.llm.shell_providers`
+- `docs/shared/YAML_REFERENCE.md` - Added Shell Provider documentation section with configuration examples
+- `docs/python/actions-reference.md` - Added Shell CLI Provider section
+
+**Created:**
+- `python/tests/test_llm_shell_provider.py` - 20 unit tests for shell provider functionality
 
 ## Completion Notes
 
-_To be filled by Dev Agent_
+1. **Implementation Complete**: All 6 tasks completed successfully
+   - Shell provider supports `llm.call` and `llm.stream` actions
+   - Three built-in providers: `claude`, `gemini`, `qwen`
+   - Custom providers configurable via `settings.llm.shell_providers`
+   - Environment variable expansion with `${VAR}` syntax
+   - Both `pipe` and `file` stdin modes supported
+
+2. **Test Results**: 59 tests passed, 3 skipped (integration tests requiring real Ollama)
+   - 20 new shell provider tests
+   - All existing LLM provider tests pass (no regression)
+
+3. **Key Design Decisions**:
+   - Messages sent via stdin to avoid shell argument length limits
+   - subprocess.Popen with list arguments (no shell=True) for security
+   - Error responses follow existing LLM action patterns
+   - Default configs merged with user configs (user takes precedence)
 
 ## Debug Log References
 
-_To be filled by Dev Agent_
+No debug logs required - all tests passed on first run after minor mock adjustments.
 
 ---
 
 ## QA Results
 
-_To be filled by QA Agent_
+### QA Review - 2024-12-29
+
+**Reviewer**: Quinn (QA Agent)
+**Model**: Claude Opus 4.5
+
+---
+
+#### Real Integration Tests (Without Mocks)
+
+| Test | Result | Details |
+|------|--------|---------|
+| `llm.call` with `claude` CLI | ✅ PASS | Returns `{"content": ..., "provider": "shell", "shell_provider": "claude"}` |
+| `llm.stream` with `claude` CLI | ✅ PASS | Returns `{"streamed": True, "chunk_count": 1, ...}` |
+| `stdin_mode: file` | ✅ PASS | Temp file created, `{input_file}` placeholder replaced, file read correctly |
+| Temp file cleanup | ✅ PASS | No temp file leak after 3 consecutive calls |
+| YAML `shell_providers` parsing | ✅ PASS | Custom config with command, args, timeout, env parsed correctly |
+| Error: Missing `shell_provider` | ✅ PASS | Returns descriptive error message |
+| Error: Command not found | ✅ PASS | Returns `Shell command not found: ...` |
+| Error: Unconfigured provider | ✅ PASS | Lists available providers in error |
+| Error: Non-zero exit code | ✅ PASS | Returns exit code in error message |
+
+**Note on `stdin_mode: file`**: This mode is for CLIs that accept a file path argument (e.g., `my-llm --input {input_file}`). The `{input_file}` placeholder gets replaced with the temp file path. The `claude -p` flag expects stdin, not a file path, so it uses `stdin_mode: pipe` (the default).
+
+#### Code Quality Assessment
+
+| Aspect | Rating | Notes |
+|--------|--------|-------|
+| Security | ✅ Good | Uses `subprocess.Popen` with list args (no `shell=True`), stdin for user content |
+| Error Handling | ✅ Good | Covers timeout, command not found, non-zero exit, unknown stdin_mode |
+| Code Organization | ✅ Good | Helper functions well-named and single-purpose |
+| Documentation | ✅ Good | Docstrings complete with Args/Returns |
+| Test Coverage | ✅ Good | 20 unit tests covering success/error paths |
+
+#### Acceptance Criteria Verification
+
+| AC | Status | Verification |
+|----|--------|--------------|
+| AC1: `llm.call` provider=shell | ✅ Met | Real integration test passed |
+| AC2: `llm.stream` provider=shell | ✅ Met | Real integration test passed |
+| AC3: YAML settings.llm.shell_providers | ✅ Met | Parsing test passed |
+| AC4: stdin pipe mode | ✅ Met | Messages sent via stdin |
+| AC5: Existing providers unchanged | ✅ Met | 39 existing LLM tests pass |
+| AC6: Provider config schema | ✅ Met | command, args, stdin_mode, timeout, env |
+| AC7: Default providers | ✅ Met | claude, gemini, qwen pre-configured |
+| AC8: Env var expansion | ✅ Met | `${VAR}` syntax implemented |
+| AC9: Timeout config | ✅ Met | Per-provider timeout with override |
+| AC10: Unit tests | ✅ Met | 20 tests in test_llm_shell_provider.py |
+| AC11: Documentation | ✅ Met | YAML_REFERENCE.md and actions-reference.md updated |
+| AC12: No regression | ✅ Met | 59 passed, 3 skipped |
+| AC13: Error handling | ✅ Met | All error paths tested |
+
+#### Out of Scope (Noted)
+
+- `llm.tools` does NOT support shell provider (intentionally - not in story scope)
+- A future story could add tool calling support if CLI tools support structured output
+
+#### Risk Assessment
+
+| Risk | Level | Mitigation |
+|------|-------|------------|
+| Shell injection | Low | List args, stdin for user content, no `shell=True` |
+| Large context buffer | Low | `stdin_mode: file` option available |
+| CLI availability | Low | Clear error message if command not found |
+
+---
+
+### Gate Decision
+
+**PASS** ✅
+
+All acceptance criteria met. Real integration tests confirm the implementation works with the `claude` CLI. Error handling is comprehensive and follows existing patterns.
+
+**Recommendation**: Ready for merge.

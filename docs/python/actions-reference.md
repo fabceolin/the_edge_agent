@@ -18,7 +18,7 @@ The Python implementation provides 20+ action modules organized by domain:
 
 #### LLM Provider Configuration
 
-The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, and **LiteLLM**.
+The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, **LiteLLM**, and **Shell CLI**.
 
 **Provider Detection Priority:**
 1. Explicit `provider` parameter (highest priority)
@@ -135,6 +135,48 @@ pip install the_edge_agent[litellm]
 - Tool calling support (`llm.tools`)
 
 See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete list.
+
+#### Shell CLI Provider (TEA-LLM-004)
+
+Execute local CLI commands for LLM calls. Useful for leveraging CLI tools like `claude`, `gemini`, or `qwen`.
+
+**Shell CLI Example:**
+
+```yaml
+- name: ask_claude
+  uses: llm.call
+  with:
+    provider: shell
+    shell_provider: claude          # Which shell provider config to use
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+```
+
+**Built-in Shell Providers:** `claude`, `gemini`, `qwen`
+
+**Custom Shell Provider Configuration:**
+
+```yaml
+settings:
+  llm:
+    shell_providers:
+      my_llm:
+        command: /usr/local/bin/my-llm
+        args: ["--model", "mistral-7b"]
+        stdin_mode: pipe              # pipe (default) or file
+        timeout: 600
+        env:
+          API_KEY: "${MY_API_KEY}"
+```
+
+**Shell Provider Features:**
+- Execute any CLI tool that accepts stdin input
+- Supports streaming via `llm.stream`
+- Environment variable expansion (`${VAR}` syntax)
+- File mode for large contexts
+
+See [YAML Reference](../shared/YAML_REFERENCE.md#shell-provider-tea-llm-004) for complete documentation.
 
 ### HTTP Actions
 

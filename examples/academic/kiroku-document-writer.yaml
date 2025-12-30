@@ -12,7 +12,7 @@ settings:
   llm:
     provider: azure_openai
     deployment: "{{ env.AZURE_OPENAI_DEPLOYMENT | default('gpt-4o') }}"
-    temperature: 0.0
+    temperature: 1  # gpt-5.2-chat only supports temperature=1
 
   # ==========================================================================
   # INTERVIEW MODE (TEA-KIROKU-004)
@@ -153,7 +153,12 @@ state_schema:
 
   # === USER INPUT (runtime) ===
   user_instruction: str
+  response: str  # Set by interactive mode with user's input
   messages: list
+
+  # === INTERNAL FLAGS (for routing) ===
+  _has_response: bool  # Flag set when user provides response (for goto conditions)
+  _has_revision: bool  # Flag set when user requests revision
 
   # === FLAGS (from config) ===
   suggest_title_flag: bool
@@ -171,15 +176,15 @@ data:
   prompts:
     title: |
       You are a helpful AI assistant expert in {{ state.area_of_paper }}.
-      The title of the paper is '{{ state.title }}'.
       The hypothesis of the paper is '{{ state.hypothesis }}'.
-      The user will give you the title of the paper or document the user
-      is writing, and you will recommend possible titles, following user's
-      instructions. You will be truthful to the instructions explained and
-      use your knowledge recommend a good title. You should only answer what
-      you have been asked and nothing more. If user does not request a clarification
-      comment, you should not add it. You should not suggest follow up questions, unless
-      they are requested by the user.
+
+      Your task is to suggest 3-5 compelling title options for the paper.
+      Present them as a numbered list so the user can select one.
+
+      Example output format:
+      1. First Title Option Here
+      2. Second Title Option Here
+      3. Third Title Option Here
 
     topic_sentence: |
       You are an expert writer tasked with writing a high-level outline of a technical
@@ -403,36 +408,45 @@ nodes:
           content: |
             Based on the hypothesis: "{{ state.hypothesis }}"
             And the area: "{{ state.area_of_paper }}"
-            Suggest a compelling title for this {{ state.type_of_document }}.
-    output:
-      title: "{{ result.content }}"
-
-  # -------------------------------------------------------------------------
-  # Node 2: Suggest Title Review (llm.call + interrupt)
-  # -------------------------------------------------------------------------
-  - name: suggest_title_review
-    interrupt: before
-    uses: llm.call
-    with:
-      messages:
-        - role: system
-          content: "{{ data.prompts.title }}"
-        - role: user
-          content: |
-            Current title suggestion: "{{ state.title }}"
-
-            {% if state.response %}
-            User instruction: {{ state.response }}
-            Please revise the title according to this instruction.
+            {% if state.user_instruction %}
+            Current options: "{{ state.title }}"
+            User feedback: {{ state.user_instruction }}
+            Please provide new title options based on this feedback.
             {% else %}
-            Confirm this title is appropriate or suggest improvements.
+            Suggest 3-5 compelling title options for this {{ state.type_of_document }}.
             {% endif %}
     output:
       title: "{{ result.content }}"
+      # Clear user_instruction after using it to prevent re-use in loops
+      user_instruction: ""
+
+  # -------------------------------------------------------------------------
+  # Node 2: Suggest Title Review (interrupt for user approval)
+  # -------------------------------------------------------------------------
+  - name: suggest_title_review
+    interrupt: before
+    # This node is a routing checkpoint - user reviews title and optionally provides feedback
+    # If user provides text feedback, go back to suggest_title with their instruction
+    # If user types a number (selection) or empty, accept and proceed
+    run: |
+      response = state.get("response", "").strip()
+      # Check if response is a number (selection from options) - treat as acceptance
+      is_selection = response.isdigit() if response else False
+      # Only treat as feedback if it's non-empty text (not a number selection)
+      is_feedback = bool(response) and not is_selection
+      # Copy response to user_instruction only if it's actual feedback
+      return {
+          "user_instruction": response if is_feedback else "",
+          "response": "",
+          "_has_response": is_feedback
+      }
     goto:
-      - if: "{{ state.response }}"
+      - if: "{{ state._has_response }}"
         to: suggest_title
-      - to: internet_search
+      # Skip internet_search if PERPLEXITY_API_KEY is not set
+      - if: "{{ env.PERPLEXITY_API_KEY }}"
+        to: internet_search
+      - to: topic_sentence_writer
 
   # -------------------------------------------------------------------------
   # Node 3: Internet Search (web.search via Perplexity)
@@ -449,6 +463,7 @@ nodes:
 
   # -------------------------------------------------------------------------
   # Node 4: Topic Sentence Writer (llm.call)
+  # Note: run: and uses: cannot be combined - run: takes precedence
   # -------------------------------------------------------------------------
   - name: topic_sentence_writer
     uses: llm.call
@@ -457,43 +472,53 @@ nodes:
         - role: system
           content: "{{ data.prompts.topic_sentence }}"
         - role: user
-          content: "{{ state.task }}"
+          content: |
+            {% if state.user_instruction %}
+            Current outline:
+
+            {{ state.plan }}
+
+            User revision instruction: {{ state.user_instruction }}
+            Please revise the outline according to this feedback.
+            {% else %}
+            {{ state.task }}
+            {% endif %}
     output:
       plan: "{{ result.content }}"
+      # Clear user_instruction after using it
+      user_instruction: ""
+
+  # -------------------------------------------------------------------------
+  # Node 4b: Topic Sentence Cleanup (post-processing)
+  # -------------------------------------------------------------------------
+  - name: topic_sentence_cleanup
     run: |
       # Remove References section if LLM added it (shouldn't have)
       import re
-      plan = state["plan"]
+      plan = state.get("plan", "")
       match = re.search(r"## References", plan)
       if match:
           plan = plan[:match.start()].strip()
       return {"plan": plan, "draft": plan}
 
   # -------------------------------------------------------------------------
-  # Node 5: Topic Sentence Manual Review (interrupt)
+  # Node 5: Topic Sentence Manual Review (interrupt for user review)
+  # Note: Using run: only for routing - don't call LLM which would overwrite plan
   # -------------------------------------------------------------------------
   - name: topic_sentence_manual_review
     interrupt: before
-    uses: llm.call
-    with:
-      messages:
-        - role: system
-          content: "{{ data.prompts.topic_sentence_review }}"
-        - role: user
-          content: |
-            Current outline:
-
-            {{ state.plan }}
-
-            {% if state.response %}
-            Revision instruction: {{ state.response }}
-            {% else %}
-            Please review and confirm this outline is ready for drafting.
-            {% endif %}
-    output:
-      plan: "{{ result.content }}"
+    run: |
+      response = state.get("response", "").strip()
+      # Check if response is a number (selection) - treat as acceptance
+      is_selection = response.isdigit() if response else False
+      is_feedback = bool(response) and not is_selection
+      return {
+          "user_instruction": response if is_feedback else "",
+          "response": "",
+          "_has_response": is_feedback
+      }
     goto:
-      - if: "{{ state.response }}"
+      - if: "{{ state._has_response }}"
         to: topic_sentence_writer
       - to: paper_writer
 
@@ -508,43 +533,44 @@ nodes:
           content: "{{ data.prompts.paper_writer }}"
         - role: user
           content: |
-            Please write the full document based on this outline:
-
-            {{ state.plan }}
-    output:
-      draft: "{{ result.content }}"
-
-  # -------------------------------------------------------------------------
-  # Node 7: Writer Manual Reviewer (llm.call + interrupt)
-  # -------------------------------------------------------------------------
-  - name: writer_manual_reviewer
-    interrupt: before
-    uses: llm.call
-    with:
-      messages:
-        - role: system
-          content: "{{ data.prompts.writer_review }}"
-        - role: user
-          content: |
+            {% if state.user_instruction %}
             Current draft:
 
             {{ state.draft }}
 
-            {% if state.response %}
-            User revision instruction: {{ state.response }}
-            Please apply these revisions.
+            User revision instruction: {{ state.user_instruction }}
+            Please apply these revisions while maintaining the overall structure.
             {% else %}
-            Please review this draft.
+            Please write the full document based on this outline:
+
+            {{ state.plan }}
             {% endif %}
     output:
       draft: "{{ result.content }}"
+      # Clear user_instruction after using it
+      user_instruction: ""
+
+  # -------------------------------------------------------------------------
+  # Node 7: Writer Manual Reviewer (interrupt for user review)
+  # Note: run: and uses: cannot be combined - using run: only for routing
+  # -------------------------------------------------------------------------
+  - name: writer_manual_reviewer
+    interrupt: before
     run: |
       # Track revision instruction if provided and flag for goto
       review_instructions = state.get("review_instructions", [])
-      has_revision = bool(state.get("response"))
+      response = state.get("response", "").strip()
+      # Check if response is a number (selection) - treat as acceptance
+      is_selection = response.isdigit() if response else False
+      has_revision = bool(response) and not is_selection
       if has_revision:
-          review_instructions = review_instructions + [state["response"]]
-      return {"review_instructions": review_instructions, "response": "", "_has_revision": has_revision}
+          review_instructions = review_instructions + [response]
+      return {
+          "review_instructions": review_instructions,
+          "user_instruction": response if has_revision else "",
+          "response": "",
+          "_has_revision": has_revision
+      }
     goto:
       - if: "{{ state._has_revision }}"
         to: paper_writer
@@ -554,6 +580,7 @@ nodes:
 
   # -------------------------------------------------------------------------
   # Node 8: Reflection Reviewer (llm.call)
+  # Note: run: and uses: cannot be combined - split into two nodes
   # -------------------------------------------------------------------------
   - name: reflection_reviewer
     uses: llm.call
@@ -568,6 +595,11 @@ nodes:
             {{ state.draft }}
     output:
       critique: "{{ result.content }}"
+
+  # -------------------------------------------------------------------------
+  # Node 8b: Increment Revision Counter
+  # -------------------------------------------------------------------------
+  - name: increment_revision
     run: |
       # Increment revision counter
       return {"revision_number": state.get("revision_number", 0) + 1}

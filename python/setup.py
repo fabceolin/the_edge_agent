@@ -36,6 +36,7 @@ setup(
         "jsonschema>=4.20.0",
         "fsspec>=2023.1.0",
         "typer>=0.9.0",  # TEA-CLI-004: CLI subcommand support
+        "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
     ],
     entry_points={
         "console_scripts": [

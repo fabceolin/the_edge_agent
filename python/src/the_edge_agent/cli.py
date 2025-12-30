@@ -17,6 +17,15 @@ Usage:
 
 import sys
 import os
+
+# TEA-KIROKU-005: Load .env files for API keys and configuration
+# This loads from current directory's .env and parent directories
+from dotenv import load_dotenv
+
+load_dotenv()  # Load from current working directory
+load_dotenv(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"), override=False
+)  # Load from package root
 import json
 import yaml
 import importlib
