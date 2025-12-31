@@ -100,6 +100,14 @@ pub enum TeaError {
     // Circuit breaker
     #[error("Circuit breaker open for '{0}'")]
     CircuitOpen(String),
+
+    // Rate limiting
+    #[error("Rate limit timeout for limiter '{limiter}': wait would exceed {timeout_ms}ms (estimated {estimated_wait_ms}ms)")]
+    RateLimitTimeout {
+        limiter: String,
+        timeout_ms: u64,
+        estimated_wait_ms: u64,
+    },
 }
 
 /// Result type alias for The Edge Agent

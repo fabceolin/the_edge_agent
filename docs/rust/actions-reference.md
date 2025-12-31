@@ -4,7 +4,7 @@ This document lists all built-in actions available in the Rust implementation of
 
 ## Available Actions
 
-The Rust implementation currently provides 5 action modules with the following actions:
+The Rust implementation currently provides 6 action modules with the following actions:
 
 ### LLM Actions (`actions/llm.rs`)
 
@@ -236,6 +236,73 @@ with:
   output_key: validation_result
 ```
 
+### Rate Limit Actions (`actions/ratelimit.rs`)
+
+| Action | Description |
+|--------|-------------|
+| `ratelimit.wrap` | Wrap action with rate limiting |
+| `actions.ratelimit_wrap` | Alias for ratelimit.wrap |
+
+#### ratelimit.wrap
+
+Wraps another action with rate limiting to prevent API throttling when making concurrent calls to rate-limited services.
+
+**Parameters:**
+
+```yaml
+- name: call_api
+  uses: ratelimit.wrap
+  with:
+    action: http.get                # Required: Action to wrap
+    limiter: api_provider           # Required: Named limiter
+    rpm: 60                         # Optional: Requests per minute (default: 60)
+    rps: 1                          # Optional: Requests per second (takes precedence over rpm)
+    timeout: 5000                   # Optional: Max wait time in ms (fails fast if exceeded)
+    args:                           # Optional: Arguments for the wrapped action
+      url: "https://api.example.com/data"
+```
+
+**Returns:** Original action result with additional metadata:
+
+```json
+{
+  "_ratelimit_waited_ms": 150.5,    // Time spent waiting for rate limit
+  "_ratelimit_limiter": "api_provider"  // Name of the limiter used
+}
+```
+
+**Pre-configuration via Settings:**
+
+Rate limiters can be pre-configured in the workflow settings:
+
+```yaml
+name: api-workflow
+settings:
+  rate_limiters:
+    openai:
+      rpm: 60
+    anthropic:
+      rps: 2
+
+nodes:
+  - name: call_openai
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # Uses pre-configured 60 rpm
+      args:
+        model: gpt-4
+        prompt: "{{ state.input }}"
+```
+
+**Error Handling:**
+
+If timeout is specified and the wait would exceed it, returns a `RateLimitTimeout` error:
+
+```
+Rate limit timeout for limiter 'api_provider': wait would exceed 5000ms (estimated 10000ms)
+```
+
 ### Memory Actions (`actions/memory.rs`)
 
 | Action | Description |
@@ -271,12 +338,13 @@ with:
 
 | Feature | Python | Rust |
 |---------|--------|------|
-| Action modules | 20+ | 5 |
+| Action modules | 20+ | 6 |
 | LLM actions | Full (call, stream, tools, retry) | Full (call, stream, tools) |
 | HTTP actions | Full | Full |
 | File actions | Local + remote (S3, GCS, Azure) | Local only |
 | Data actions | Full (JSON, CSV, validate) | Full |
 | Memory actions | Session + LTM + Cloud | Session only |
+| Rate limiting | Yes | Yes |
 | Vector/RAG | Yes | Not yet |
 | Web scraping | Yes | Not yet |
 | Graph DB | Yes | Not yet |
@@ -291,10 +359,11 @@ See [Development Guide](development-guide.md#adding-a-new-action) for instructio
 
 ```
 rust/src/actions/
-├── mod.rs      # Action registry
-├── llm.rs      # LLM actions (~1800 lines, includes stream/tools)
-├── http.rs     # HTTP actions (~200 lines)
-├── file.rs     # File actions (~250 lines)
-├── data.rs     # Data actions (~1000 lines)
-└── memory.rs   # Memory actions (~700 lines)
+├── mod.rs        # Action registry
+├── llm.rs        # LLM actions (~1800 lines, includes stream/tools)
+├── http.rs       # HTTP actions (~200 lines)
+├── file.rs       # File actions (~250 lines)
+├── data.rs       # Data actions (~1000 lines)
+├── memory.rs     # Memory actions (~700 lines)
+└── ratelimit.rs  # Rate limiting actions (~500 lines)
 ```
