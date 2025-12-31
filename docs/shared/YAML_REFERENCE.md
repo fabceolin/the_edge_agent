@@ -59,6 +59,37 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 
 ---
 
+## Documentation Structure
+
+This reference is organized into focused modules for easier navigation:
+
+### Core Concepts (this document)
+- Overview, Security, Basic Structure
+- State and Variable Passing
+- Document Structure, Top-Level Keys
+
+### Detailed References
+| Topic | Document |
+|-------|----------|
+| Node Specification | [yaml-reference/nodes.md](./yaml-reference/nodes.md) |
+| Navigation & Flow | [yaml-reference/navigation.md](./yaml-reference/navigation.md) |
+| Template Syntax | [yaml-reference/templates.md](./yaml-reference/templates.md) |
+| Lua & Prolog | [yaml-reference/advanced-runtimes.md](./yaml-reference/advanced-runtimes.md) |
+| Extraction Validation | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md#validation-actions) |
+
+### Built-in Actions
+| Category | Document |
+|----------|----------|
+| Overview | [yaml-reference/actions/README.md](./yaml-reference/actions/README.md) |
+| LLM Actions | [yaml-reference/actions/llm.md](./yaml-reference/actions/llm.md) |
+| I/O Actions | [yaml-reference/actions/io.md](./yaml-reference/actions/io.md) |
+| Data Processing | [yaml-reference/actions/data.md](./yaml-reference/actions/data.md) |
+| Memory Actions | [yaml-reference/actions/memory.md](./yaml-reference/actions/memory.md) |
+| Integrations | [yaml-reference/actions/integrations.md](./yaml-reference/actions/integrations.md) |
+| Specialized | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
+
+---
+
 ## Overview
 
 The Edge Agent supports declarative agent configuration using YAML files, inspired by GitHub Actions and GitLab CI/CD pipelines. Instead of writing Python code to construct your StateGraph, you can define the entire workflow in a YAML file.
@@ -1408,7 +1439,7 @@ Call OpenAI-compatible LLM API:
 
 #### LLM Provider Configuration
 
-LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, and **LiteLLM**.
+LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**, **LiteLLM**, and **Shell CLI**.
 
 **Provider Detection Priority:**
 1. Explicit `provider` parameter (highest priority)
@@ -1447,7 +1478,8 @@ LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Ollama**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `provider` | Provider selection: `auto`, `openai`, `azure`, `ollama`, `litellm` | `auto` |
+| `provider` | Provider selection: `auto`, `openai`, `azure`, `ollama`, `litellm`, `shell` | `auto` |
+| `shell_provider` | Shell provider name when `provider: shell` (e.g., `claude`, `gemini`, `qwen`) | - |
 | `api_base` | Custom API base URL | Provider default |
 
 **Environment Variables:**
@@ -1558,6 +1590,124 @@ See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete lis
         content: "{{ state.question }}"
   output: response
 ```
+
+##### Shell Provider (TEA-LLM-004)
+
+The Shell provider allows you to execute local CLI commands for LLM calls. This is useful for leveraging CLI tools like `claude`, `gemini`, or `qwen` that you already have installed, avoiding API costs while using familiar command-line tools.
+
+**Basic Usage:**
+
+```yaml
+- name: ask_claude
+  uses: llm.call
+  with:
+    provider: shell
+    shell_provider: claude          # Which shell provider config to use
+    messages:
+      - role: user
+        content: "{{ state.question }}"
+  output: response
+```
+
+**Built-in Shell Providers:**
+
+Three shell providers are pre-configured:
+
+| Provider | Command | Default Args |
+|----------|---------|--------------|
+| `claude` | `claude` | `["-p"]` |
+| `gemini` | `gemini` | `["prompt"]` |
+| `qwen` | `qwen` | `[]` |
+
+**Custom Shell Providers:**
+
+Configure custom CLI tools in `settings.llm.shell_providers`:
+
+```yaml
+settings:
+  llm:
+    shell_providers:
+      my_local_llm:
+        command: /usr/local/bin/my-llm
+        args: ["--model", "mistral-7b", "--input", "-"]
+        stdin_mode: pipe              # pipe (default) or file
+        timeout: 600                  # seconds
+        env:                          # Optional extra env vars
+          MY_API_KEY: "${MY_API_KEY}"
+```
+
+**Shell Provider Parameters:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `command` | CLI command to execute | Required |
+| `args` | Command arguments | `[]` |
+| `stdin_mode` | How to send input: `pipe` or `file` | `pipe` |
+| `timeout` | Max execution time in seconds | `300` |
+| `env` | Additional environment variables | `{}` |
+
+**Environment Variable Expansion:**
+
+Config values support `${VAR}` syntax for environment variable expansion:
+
+```yaml
+settings:
+  llm:
+    shell_providers:
+      secure_llm:
+        command: secure-llm-cli
+        args: []
+        env:
+          API_KEY: "${SECRET_API_KEY}"
+          MODEL_PATH: "${HOME}/models/mistral"
+```
+
+**File Mode for Large Contexts:**
+
+For very large prompts that may exceed stdin buffer limits, use `stdin_mode: file`:
+
+```yaml
+settings:
+  llm:
+    shell_providers:
+      large_context_llm:
+        command: my-llm
+        args: ["--input-file", "{input_file}"]  # {input_file} is replaced with temp file path
+        stdin_mode: file
+        timeout: 600
+```
+
+**Streaming with Shell Provider:**
+
+Shell provider also supports `llm.stream` with line-by-line output aggregation:
+
+```yaml
+- name: stream_claude
+  uses: llm.stream
+  with:
+    provider: shell
+    shell_provider: claude
+    messages:
+      - role: user
+        content: "Write a poem about coding"
+  output: poem
+```
+
+**Message Formatting:**
+
+Messages are formatted for CLI stdin as plain text:
+- System messages: `System: <content>`
+- Assistant messages: `Assistant: <content>`
+- User messages: `<content>` (no prefix)
+
+Messages are joined with double newlines.
+
+**Error Handling:**
+
+Shell provider returns appropriate error responses for:
+- Command not found: `{"error": "Shell command not found: ...", "success": false}`
+- Timeout: `{"error": "Shell command timed out after Ns", "success": false}`
+- Non-zero exit: `{"error": "Shell command failed (exit N): stderr...", "success": false}`
 
 #### `llm.stream`
 

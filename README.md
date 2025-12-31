@@ -126,6 +126,26 @@ See [examples/](examples/) for ready-to-run agents:
 - `examples/llm/` - Pure LLM workflows
 - `examples/rag/` - Document retrieval
 - `examples/web/` - Web scraping agents
+- `examples/academic/` - Academic writing workflows
+
+### Academic Writing Example
+
+Generate research papers with human-in-the-loop review:
+
+```bash
+cd python
+python -m the_edge_agent.cli run \
+  ../examples/academic/kiroku-document-writer.yaml \
+  --input @../examples/academic/sample-paper-spec.yaml
+```
+
+This workflow includes:
+- AI-assisted title suggestion and research
+- Topic sentence planning with manual review
+- Draft generation with revision cycles
+- Abstract and citation generation
+
+See [Migration Guide](docs/examples/langraph-to-tea-migration.md) for migrating LangGraph workflows to TEA.
 
 ## Contributing
 

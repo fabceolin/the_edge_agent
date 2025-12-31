@@ -1,0 +1,28 @@
+name: test-create-todo
+description: Test TODO creation
+
+state_schema:
+  arg: str
+  todo_file: str
+  todo_content: str
+
+nodes:
+  - name: create_todo
+    description: Create TODO.md
+    run: |
+      import os
+      import tempfile
+      arg = state.get("arg", "UNKNOWN")
+      todo_content = "# BMad Story Validation: " + arg + "\n\n"
+      todo_content += "## Tasks\n\n"
+      todo_content += "- [ ] Run QA test-design for story " + arg + "\n"
+      todo_path = os.path.join(tempfile.gettempdir(), "bmad-todo-" + arg + ".md")
+      with open(todo_path, "w") as f:
+          f.write(todo_content)
+      return {"todo_file": todo_path, "todo_content": todo_content}
+
+edges:
+  - from: __start__
+    to: create_todo
+  - from: create_todo
+    to: __end__

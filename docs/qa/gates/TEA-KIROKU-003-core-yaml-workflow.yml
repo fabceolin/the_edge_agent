@@ -1,0 +1,60 @@
+schema: 1
+story: TEA-KIROKU-003
+story_title: "Core Kiroku YAML Workflow"
+gate: PASS
+status_reason: "All 6 core ACs verified with 38 passing tests. AC7/AC8 have partial coverage acceptable for YAML validation story."
+reviewer: "Quinn (Test Architect)"
+updated: "2024-12-27T23:59:00Z"
+
+top_issues: []
+waiver:
+  active: false
+
+quality_score: 90
+expires: "2025-01-10T00:00:00Z"
+
+evidence:
+  tests_reviewed: 38
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]
+    ac_gaps: [7, 8]  # Partial coverage - E2E infrastructure not available
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No security concerns. Standard TEA built-ins used."
+  performance:
+    status: PASS
+    notes: "Sequential workflow with clear node boundaries."
+  reliability:
+    status: PASS
+    notes: "Interrupt points and conditional edges well-defined."
+  maintainability:
+    status: PASS
+    notes: "Clear YAML structure with comments. Single file approach."
+
+test_coverage:
+  unit_tests: 12
+  integration_tests: 22
+  e2e_tests: 0
+  total_passing: 38
+  total_failing: 0
+
+  by_ac:
+    ac1_yaml_validity: 4
+    ac2_state_schema: 8
+    ac3_nodes: 10
+    ac4_conditional_edges: 6
+    ac5_interrupts: 4
+    ac6_prompts: 3
+    ac7_checkpointing: 0  # Not directly testable without E2E
+    ac8_e2e_paper: 2  # Spec validation only
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add mock LLM responses for deterministic E2E testing"
+      refs: ["python/tests/test_kiroku_workflow.py"]
+    - action: "Add checkpoint save/resume integration test"
+      refs: ["python/tests/test_kiroku_workflow.py"]

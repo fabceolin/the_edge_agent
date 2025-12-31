@@ -1,0 +1,25 @@
+name: test-claude-shell
+description: Simple test for Claude shell provider
+
+state_schema:
+  response: str
+
+nodes:
+  - name: call_claude
+    description: Test Claude shell provider
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: user
+          content: "Say hello in one word"
+    output:
+      response: "{{ result.content }}"
+
+edges:
+  - from: __start__
+    to: call_claude
+  - from: call_claude
+    to: __end__

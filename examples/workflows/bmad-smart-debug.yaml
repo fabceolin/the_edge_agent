@@ -1,0 +1,83 @@
+name: bmad-smart-debug
+description: |
+  Debug issues using BMad PO context + smart-debug skill.
+  Loads project knowledge via PO persona then runs debugging analysis.
+
+state_schema:
+  arg: str                    # Issue/error to debug (from command line)
+  bmad_root: str              # Detected BMad root directory
+  po_persona: str             # PO agent persona
+  project_knowledge: str      # Project brief, PRD, architecture docs
+  smart_debug_skill: str      # smart-debug.md content
+  debug_output: str           # Final debug analysis
+
+nodes:
+  - name: detect_bmad_version
+    description: Auto-detect BMad directory structure
+    run: |
+      import os
+      if os.path.isdir(".bmad-core/agents"):
+          bmad_root = ".bmad-core"
+      elif os.path.isdir("_bmad/bmm/agents"):
+          bmad_root = "_bmad/bmm"
+      else:
+          bmad_root = ".bmad-core"
+      return {"bmad_root": bmad_root}
+
+  - name: load_po_context
+    description: Load PO agent persona
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+      agent_file = os.path.join(bmad_root, "agents", "po.md")
+      po_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              po_persona = f.read()
+      return {"po_persona": po_persona}
+
+  - name: load_smart_debug_skill
+    description: Load smart-debug skill definition
+    run: |
+      import os
+      skill_path = os.path.expanduser("~/.claude/commands/tools/smart-debug.md")
+      smart_debug_skill = ""
+      if os.path.exists(skill_path):
+          with open(skill_path, "r") as f:
+              smart_debug_skill = f.read()
+      return {"smart_debug_skill": smart_debug_skill}
+
+  - name: run_smart_debug
+    description: Execute smart-debug with PO context and project knowledge
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 900
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.po_persona }}
+
+            SKILL TO EXECUTE:
+            {{ state.smart_debug_skill }}
+
+            ISSUE TO DEBUG: {{ state.arg }}
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Analyze code.
+
+            Follow the smart-debug skill instructions to:
+            1. Analyze the issue thoroughly
+            2. Identify root cause
+            3. Provide multiple solution approaches
+            4. Recommend the best fix
+
+            Use your knowledge of the project context to provide accurate analysis.
+
+            When done print: DEBUG_COMPLETED
+    output:
+      debug_output: "{{ result.content }}"
+

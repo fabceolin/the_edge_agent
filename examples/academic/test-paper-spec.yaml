@@ -1,0 +1,37 @@
+# Test Paper Specification
+# Minimal input for testing kiroku-document-writer.yaml
+# TEA-KIROKU-003
+
+# === METADATA ===
+title: "AI-Assisted Academic Writing: A Case Study"
+hypothesis: "AI language models can assist researchers in producing higher quality academic documents more efficiently"
+area_of_paper: "Computer Science"
+type_of_document: "Technical Report"
+
+# === PLANNING ===
+section_names:
+  - "Introduction"
+  - "Background"
+  - "Methodology"
+  - "Results"
+  - "Conclusion"
+number_of_paragraphs:
+  - 2
+  - 3
+  - 2
+  - 2
+  - 1
+
+# === CONTROL ===
+sentences_per_paragraph: 3
+max_revisions: 1
+number_of_queries: 3
+
+# === FLAGS ===
+suggest_title_flag: false
+generate_citations_flag: false
+
+# === RESULTS (optional) ===
+results: |
+  Preliminary testing shows 40% reduction in document preparation time
+  when using AI-assisted writing tools.

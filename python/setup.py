@@ -36,6 +36,7 @@ setup(
         "jsonschema>=4.20.0",
         "fsspec>=2023.1.0",
         "typer>=0.9.0",  # TEA-CLI-004: CLI subcommand support
+        "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
     ],
     entry_points={
         "console_scripts": [
@@ -62,6 +63,7 @@ setup(
             "pandas>=2.0.0",  # Required by pycozo
             "lupa>=2.0",  # For Lua runtime tests
             "janus-swi>=0.1.0",  # For Prolog runtime tests (requires SWI-Prolog 9.1+)
+            "nltk>=3.8.0",  # For text_actions tests (sentence tokenization)
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
