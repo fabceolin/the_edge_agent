@@ -336,8 +336,10 @@ class NodeFactory:
         if "uses" in node_config:
             action_name = node_config["uses"]
             action_params = node_config.get("with", {})
-            output_key = node_config.get("output", node_config.get("output_key"))
-            return self._create_action_function(action_name, action_params, output_key)
+            output_config = node_config.get("output", node_config.get("output_key"))
+            return self._create_action_function(
+                action_name, action_params, output_config
+            )
 
         # Option 4: Multi-step execution
         if "steps" in node_config:
@@ -576,7 +578,7 @@ class NodeFactory:
         self,
         action_name: str,
         params: Dict[str, Any],
-        output_key: Optional[str] = None,
+        output_config: Optional[Any] = None,
     ) -> Callable:
         """
         Create a function that calls a built-in action.
@@ -584,7 +586,11 @@ class NodeFactory:
         Args:
             action_name: Name of the action to look up in registry
             params: Parameters to pass to the action
-            output_key: Optional key to wrap result in
+            output_config: Output configuration. Can be:
+                - None: Return the raw action result
+                - str: Wrap result in {output_config: result}
+                - dict: Template mapping, e.g., {title: "{{ result.content }}"}
+                        Each value is processed as a template with `result` in context
 
         Returns:
             Callable that executes the action
@@ -608,22 +614,59 @@ class NodeFactory:
             if action_name in (
                 "llm.call",
                 "llm.stream",
+                "llm.tools",
                 "actions.llm_call",
                 "actions.llm_stream",
             ):
                 if "opik_trace" not in processed_params and engine_opik_llm_tracing:
                     processed_params["opik_trace"] = True
 
+                # Inject default LLM settings from settings.llm section
+                # Only inject if not explicitly provided in node's with: block
+                llm_defaults = getattr(engine, "llm_settings", {})
+                for key, value in llm_defaults.items():
+                    if key not in processed_params:
+                        # Process template in case value contains {{ }} expressions
+                        if isinstance(value, str):
+                            processed_params[key] = engine._process_template(
+                                value, state
+                            )
+                        else:
+                            processed_params[key] = value
+
             # Call action
             result = action_func(state=state, **processed_params, **kwargs)
 
-            # Return result with appropriate key
-            if output_key:
-                return {output_key: result}
-            elif isinstance(result, dict):
-                return result
+            # Process output configuration
+            if output_config is None:
+                # No output config: return raw result or wrap in dict
+                if isinstance(result, dict):
+                    return result
+                else:
+                    return {"result": result}
+            elif isinstance(output_config, str):
+                # String output_config: wrap result in {output_config: result}
+                return {output_config: result}
+            elif isinstance(output_config, dict):
+                # Dict output_config: template mapping with result in context
+                # E.g., {title: "{{ result.content }}"} -> {title: "Actual Title"}
+                output_result = {}
+                # Use extra_context to make result available for templates
+                extra_context = {"result": result}
+                for key, template in output_config.items():
+                    if isinstance(template, str):
+                        output_result[key] = engine._process_template(
+                            template, state, extra_context=extra_context
+                        )
+                    else:
+                        output_result[key] = template
+                return output_result
             else:
-                return {"result": result}
+                # Unknown output_config type: return raw result
+                if isinstance(result, dict):
+                    return result
+                else:
+                    return {"result": result}
 
         return run_action
 

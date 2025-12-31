@@ -1,0 +1,97 @@
+# Quality Gate: TEA-KIROKU-001
+schema: 1
+story: "TEA-KIROKU-001"
+story_title: "Academic Research Built-in Actions"
+gate: PASS
+status_reason: "All 7 acceptance criteria fully covered with 25 unit tests. Implementation follows established action patterns, includes defensive XML parsing, and provides comprehensive documentation."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-12-27T21:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+# No blocking issues identified
+
+quality_score: 98
+# 98 - All ACs covered, minor observation on thread-safety for rate limiting
+expires: "2026-01-10T00:00:00Z"
+
+evidence:
+  tests_reviewed: 25
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []  # All ACs covered
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No credential exposure, API key passed via environment variable, no arbitrary code execution"
+  performance:
+    status: PASS
+    notes: "Rate limiting prevents API abuse, timeout parameter prevents hanging requests"
+  reliability:
+    status: PASS
+    notes: "Defensive XML parsing, all error paths handled, structured error responses"
+  maintainability:
+    status: PASS
+    notes: "Comprehensive docstrings, follows existing action patterns, clear separation of concerns"
+
+test_coverage:
+  unit_tests:
+    - class: TestAcademicPubMed
+      tests: 10
+      coverage: "AC1, AC3, AC4, AC5, AC6"
+    - class: TestAcademicArXiv
+      tests: 9
+      coverage: "AC2, AC3, AC4, AC5, AC6"
+    - class: TestActionRegistration
+      tests: 2
+      coverage: "AC1, AC2"
+    - class: TestPubMedXMLParsing
+      tests: 2
+      coverage: "AC1, AC6"
+    - class: TestArXivXMLParsing
+      tests: 2
+      coverage: "AC2, AC6"
+
+ac_traceability:
+  AC1:
+    description: "academic.pubmed returns pmid, title, authors, abstract, journal, pub_date, doi, url"
+    tests: ["test_pubmed_search_success"]
+    status: PASS
+  AC2:
+    description: "academic.arxiv returns arxiv_id, title, authors, abstract, categories, published, updated, pdf_url"
+    tests: ["test_arxiv_search_success", "test_arxiv_by_id"]
+    status: PASS
+  AC3:
+    description: "Both actions support max_results and sort_by parameters"
+    tests: ["test_pubmed_sort_by_date", "test_arxiv_sort_by_date"]
+    status: PASS
+  AC4:
+    description: "Rate limiting: PubMed 3 req/s, ArXiv 1 req/3s"
+    tests: ["test_arxiv_rate_limit_sleep", "test_pubmed_with_api_key"]
+    status: PASS
+  AC5:
+    description: "Structured error responses with error and error_code"
+    tests: ["test_pubmed_rate_limit", "test_pubmed_network_error", "test_pubmed_timeout", "test_pubmed_api_error", "test_arxiv_network_error", "test_arxiv_timeout"]
+    status: PASS
+  AC6:
+    description: "Unit tests cover success, network error, rate limit, empty query"
+    tests: ["all 25 tests"]
+    status: PASS
+  AC7:
+    description: "Documentation in actions-reference.md with YAML examples"
+    file: "docs/python/actions-reference.md"
+    status: PASS
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider thread-safe rate limiting if multi-threaded usage becomes a requirement"
+      refs: ["python/src/the_edge_agent/actions/academic_actions.py:48-50"]
+    - action: "Consider exponential backoff retry on 429 errors for resilience"
+      refs: ["python/src/the_edge_agent/actions/academic_actions.py:175"]
+    - action: "Consider adding CrossRef API for comprehensive DOI resolution"
+      refs: []
+  completed: []

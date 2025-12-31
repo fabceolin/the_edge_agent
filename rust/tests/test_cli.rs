@@ -498,3 +498,444 @@ fn test_version() {
         stdout
     );
 }
+
+// ============================================================================
+// Interactive Mode Tests (TEA-CLI-005a)
+// ============================================================================
+
+#[test]
+fn test_interactive_flag_help() {
+    // AC-1: Verify --interactive flag is documented in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "tea run --help failed");
+    assert!(
+        stdout.contains("--interactive") || stdout.contains("-I"),
+        "Expected --interactive/-I in help output, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_interactive_conflicts_with_stream() {
+    // AC-13: --interactive and --stream are mutually exclusive
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+            "--stream",
+        ])
+        .output()
+        .expect("Failed to execute tea run");
+
+    assert!(
+        !output.status.success(),
+        "Expected failure when both --interactive and --stream are specified"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("conflict"),
+        "Expected conflict error message, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_question_key_default() {
+    // AC-7: Verify --question-key appears in help with default value
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "tea run --help failed");
+    assert!(
+        stdout.contains("--question-key"),
+        "Expected --question-key in help output, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("question,prompt,message,ask,next_question"),
+        "Expected default question keys in help, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_response_key_default() {
+    // AC-8: Verify --response-key appears in help with default value
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "tea run --help failed");
+    assert!(
+        stdout.contains("--response-key"),
+        "Expected --response-key in help output, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_complete_key_default() {
+    // AC-9: Verify --complete-key appears in help with default value
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "tea run --help failed");
+    assert!(
+        stdout.contains("--complete-key"),
+        "Expected --complete-key in help output, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("complete,done,finished"),
+        "Expected default complete keys in help, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_skip_response_default() {
+    // AC-12: Verify --skip-response appears in help with default value
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success(), "tea run --help failed");
+    assert!(
+        stdout.contains("--skip-response"),
+        "Expected --skip-response in help output, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_interactive_with_piped_input() {
+    use std::io::Write;
+    use std::process::Stdio;
+    use tempfile::tempdir;
+
+    // Test interactive mode with piped input (simulating user typing "quit")
+    // This tests that interactive mode works and can be exited
+    let checkpoint_dir = tempdir().expect("Failed to create temp dir");
+
+    let mut child = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("interactive_interview.yaml").to_str().unwrap(),
+            "--interactive",
+            "--checkpoint-dir",
+            checkpoint_dir.path().to_str().unwrap(),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn tea run --interactive");
+
+    // Send "quit" to exit interactive mode
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(b"quit\n")
+            .expect("Failed to write to stdin");
+    }
+
+    let output = child.wait_with_output().expect("Failed to wait for child");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Interactive mode should exit cleanly when user types quit
+    assert!(
+        output.status.success(),
+        "Expected successful exit on quit, stderr: {}",
+        stderr
+    );
+
+    // Should see session ended message or workflow completion (TEA-CLI-005b new banner format)
+    assert!(
+        stderr.contains("Session ended")
+            || stderr.contains("(Interactive Mode)")
+            || stderr.contains("Workflow complete"),
+        "Expected interactive mode output, got stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_interactive_creates_checkpoint_dir() {
+    use tempfile::tempdir;
+
+    // Test that interactive mode creates checkpoint dir if it doesn't exist
+    let checkpoint_dir = tempdir().expect("Failed to create temp dir");
+    let custom_dir = checkpoint_dir.path().join("custom_checkpoints");
+
+    // The directory should not exist yet
+    assert!(!custom_dir.exists());
+
+    let _output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+            "--checkpoint-dir",
+            custom_dir.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute tea run --interactive");
+
+    // The workflow doesn't have interrupts, so it completes immediately
+    // But the checkpoint directory should have been created
+    assert!(
+        custom_dir.exists(),
+        "Expected checkpoint directory to be created"
+    );
+}
+
+// ============================================================================
+// TEA-CLI-005b: Interactive Mode UX & Error Handling Tests
+// ============================================================================
+
+#[test]
+fn test_display_key_flag_in_help() {
+    // Test that --display-key flag appears in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--display-key"),
+        "Expected --display-key in help output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_display_format_flag_in_help() {
+    // Test that --display-format flag appears in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--display-format"),
+        "Expected --display-format in help output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_input_timeout_flag_in_help() {
+    // Test that --input-timeout flag appears in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--input-timeout"),
+        "Expected --input-timeout in help output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_interactive_banner_with_workflow_name() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Test that interactive mode shows workflow name in banner
+    let mut child = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("interactive_interview.yaml").to_str().unwrap(),
+            "--interactive",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn tea run --interactive");
+
+    // Send "quit" to exit immediately
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(b"quit\n")
+            .expect("Failed to write to stdin");
+    }
+
+    let output = child.wait_with_output().expect("Failed to wait for child");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should show workflow name in banner (TEA-CLI-005b AC-1)
+    assert!(
+        stderr.contains("interactive-interview") || stderr.contains("Interactive Mode"),
+        "Expected workflow name in banner, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_interactive_with_display_format_json() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Test that --display-format json is accepted
+    let mut child = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+            "--display-format",
+            "json",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn tea run with --display-format json");
+
+    // Send "quit" to exit
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(b"quit\n")
+            .expect("Failed to write to stdin");
+    }
+
+    let output = child.wait_with_output().expect("Failed to wait for child");
+
+    // Should exit cleanly (the format option was accepted)
+    assert!(
+        output.status.success(),
+        "Expected --display-format json to be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_interactive_with_display_key() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    // Test that --display-key is accepted
+    let mut child = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+            "--display-key",
+            "result,status",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn tea run with --display-key");
+
+    // Send "quit" to exit
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(b"quit\n")
+            .expect("Failed to write to stdin");
+    }
+
+    let output = child.wait_with_output().expect("Failed to wait for child");
+
+    // Should exit cleanly (the option was accepted)
+    assert!(
+        output.status.success(),
+        "Expected --display-key to be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_interactive_with_input_timeout() {
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    // Test that --input-timeout causes the session to timeout
+    // Note: This test uses a workflow that completes immediately (no interrupts)
+    // so we're just testing that the flag is accepted
+    let start = Instant::now();
+
+    let child = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+            "--input-timeout",
+            "1", // 1 second timeout
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn tea run with --input-timeout");
+
+    // Don't send any input - let it timeout or complete
+    // The simple_workflow doesn't have interrupts, so it completes immediately
+
+    let output = child.wait_with_output().expect("Failed to wait for child");
+    let elapsed = start.elapsed();
+
+    // Should complete quickly since simple_workflow has no interrupts
+    // (timeout would only apply at interrupt points)
+    assert!(
+        elapsed.as_secs() < 5,
+        "Test took too long ({:?}), timeout may not be working",
+        elapsed
+    );
+
+    // Should exit successfully (workflow completed without hitting interrupt)
+    assert!(
+        output.status.success(),
+        "Expected --input-timeout to be accepted, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_input_timeout_default_value() {
+    // Test that --input-timeout is optional (no default required)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--interactive",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .output()
+        .expect("Failed to run without --input-timeout");
+
+    // Should work without specifying --input-timeout
+    assert!(
+        output.status.success(),
+        "Expected run without --input-timeout to work, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

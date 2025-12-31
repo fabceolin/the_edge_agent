@@ -24,9 +24,10 @@ FIREBASE AGENT MEMORY (006):
 - QueryEngine: SQL query interface with resilience (DuckDB)
 - VectorIndex: Vector similarity search interface (DuckDB VSS)
 
-GRAPH DATABASE (001.4):
+GRAPH DATABASE (001.4, 001.7):
 - CozoBackend: CozoDB with Datalog queries and HNSW vectors
 - KuzuBackend: Kuzu with Cypher queries and cloud storage
+- Neo4jBackend: Neo4j with Cypher queries and remote graph support
 
 CATALOG METADATA (001.6):
 - CatalogBackend: Protocol for metadata catalog storage
@@ -88,11 +89,13 @@ from .litestream import LitestreamBackend
 # Blob SQLite backend (TEA-BUILTIN-001.5)
 from .blob_sqlite import BlobSQLiteBackend
 
-# Graph backends (TEA-BUILTIN-001.4)
+# Graph backends (TEA-BUILTIN-001.4, 001.7)
 from .graph import (
     GraphBackend,
     COZO_AVAILABLE,
     KUZU_AVAILABLE,
+    NEO4J_AVAILABLE,
+    _check_neo4j_available,
 )
 
 # Distributed locks (TEA-BUILTIN-001.5)
@@ -118,6 +121,12 @@ try:
 except ImportError:
     KuzuBackend = None  # type: ignore
     BighornBackend = None  # type: ignore
+
+# Conditionally import Neo4jBackend (TEA-BUILTIN-001.7)
+try:
+    from .graph import Neo4jBackend
+except ImportError:
+    Neo4jBackend = None  # type: ignore
 
 # Conditionally import lock implementations
 try:
@@ -250,13 +259,16 @@ __all__ = [
     "LitestreamBackend",
     # Blob SQLite backend (TEA-BUILTIN-001.5)
     "BlobSQLiteBackend",
-    # Graph backends (TEA-BUILTIN-001.4)
+    # Graph backends (TEA-BUILTIN-001.4, 001.7)
     "GraphBackend",
     "CozoBackend",
     "COZO_AVAILABLE",
     "KuzuBackend",
     "BighornBackend",
     "KUZU_AVAILABLE",
+    "Neo4jBackend",
+    "NEO4J_AVAILABLE",
+    "_check_neo4j_available",
     # Distributed locks (TEA-BUILTIN-001.5)
     "DistributedLock",
     "register_lock",

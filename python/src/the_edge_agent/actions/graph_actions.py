@@ -57,8 +57,8 @@ def _graph_not_available_error() -> Dict[str, Any]:
     return {
         "success": False,
         "error": "No graph database installed. Install with: "
-                 "pip install 'pycozo[embedded]' (CozoDB) or pip install kuzu (Kuzu/Bighorn)",
-        "error_type": "dependency_missing"
+        "pip install 'pycozo[embedded]' (CozoDB) or pip install kuzu (Kuzu/Bighorn)",
+        "error_type": "dependency_missing",
     }
 
 
@@ -67,7 +67,7 @@ def _graph_not_configured_error() -> Dict[str, Any]:
     return {
         "success": False,
         "error": "Graph backend not configured. Enable with: YAMLEngine(enable_graph=True)",
-        "error_type": "configuration_error"
+        "error_type": "configuration_error",
     }
 
 
@@ -86,13 +86,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     """
 
     def graph_store_entity(
-        state,
-        entity_id,
-        entity_type,
-        properties=None,
-        text=None,
-        embed=False,
-        **kwargs
+        state, entity_id, entity_type, properties=None, text=None, embed=False, **kwargs
     ):
         """
         Store an entity (node) in the graph database.
@@ -112,25 +106,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if not _is_graph_available():
             return _graph_not_available_error()
 
-        if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
             return _graph_not_configured_error()
 
         if not entity_id or not entity_type:
             return {
                 "success": False,
                 "error": "entity_id and entity_type are required",
-                "error_type": "validation_error"
+                "error_type": "validation_error",
             }
 
         # Generate embedding if requested
         embedding = None
         if embed and text:
-            embedding_create = engine.actions_registry.get('embedding.create')
+            embedding_create = engine.actions_registry.get("embedding.create")
             if embedding_create:
                 try:
                     emb_result = embedding_create(state=state, text=text)
-                    if emb_result.get('embedding'):
-                        embedding = emb_result['embedding']
+                    if emb_result.get("embedding"):
+                        embedding = emb_result["embedding"]
                 except Exception:
                     # Continue without embedding if generation fails
                     pass
@@ -139,19 +133,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             entity_id=str(entity_id),
             entity_type=str(entity_type),
             properties=properties,
-            embedding=embedding
+            embedding=embedding,
         )
 
-    registry['graph.store_entity'] = graph_store_entity
-    registry['actions.graph_store_entity'] = graph_store_entity
+    registry["graph.store_entity"] = graph_store_entity
+    registry["actions.graph_store_entity"] = graph_store_entity
 
     def graph_store_relation(
-        state,
-        from_entity,
-        to_entity,
-        relation_type,
-        properties=None,
-        **kwargs
+        state, from_entity, to_entity, relation_type, properties=None, **kwargs
     ):
         """
         Store a relation (edge) between two entities.
@@ -170,25 +159,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if not _is_graph_available():
             return _graph_not_available_error()
 
-        if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
             return _graph_not_configured_error()
 
         if not from_entity or not to_entity or not relation_type:
             return {
                 "success": False,
                 "error": "from_entity, to_entity, and relation_type are required",
-                "error_type": "validation_error"
+                "error_type": "validation_error",
             }
 
         return engine._graph_backend.store_relation(
             from_entity=str(from_entity),
             to_entity=str(to_entity),
             relation_type=str(relation_type),
-            properties=properties
+            properties=properties,
         )
 
-    registry['graph.store_relation'] = graph_store_relation
-    registry['actions.graph_store_relation'] = graph_store_relation
+    registry["graph.store_relation"] = graph_store_relation
+    registry["actions.graph_store_relation"] = graph_store_relation
 
     def graph_query(
         state,
@@ -223,14 +212,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if not _is_graph_available():
             return _graph_not_available_error()
 
-        if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
             return _graph_not_configured_error()
 
         if not cypher and not datalog and not pattern:
             return {
                 "success": False,
                 "error": "One of cypher, datalog, or pattern is required",
-                "error_type": "validation_error"
+                "error_type": "validation_error",
             }
 
         return engine._graph_backend.query(
@@ -239,20 +228,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             pattern=pattern,
             params=params,
             limit=int(limit) if limit else 100,
-            timeout=float(timeout) if timeout else None
+            timeout=float(timeout) if timeout else None,
         )
 
-    registry['graph.query'] = graph_query
-    registry['actions.graph_query'] = graph_query
+    registry["graph.query"] = graph_query
+    registry["actions.graph_query"] = graph_query
 
     def graph_retrieve_context(
-        state,
-        query=None,
-        embedding=None,
-        entity_id=None,
-        hops=2,
-        limit=20,
-        **kwargs
+        state, query=None, embedding=None, entity_id=None, hops=2, limit=20, **kwargs
     ):
         """
         Retrieve relevant subgraph context.
@@ -277,25 +260,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if not _is_graph_available():
             return _graph_not_available_error()
 
-        if not hasattr(engine, '_graph_backend') or engine._graph_backend is None:
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
             return _graph_not_configured_error()
 
         if not query and not embedding and not entity_id:
             return {
                 "success": False,
                 "error": "One of query, embedding, or entity_id is required",
-                "error_type": "validation_error"
+                "error_type": "validation_error",
             }
 
         # Convert text query to embedding if provided
         search_embedding = embedding
         if query and not embedding:
-            embedding_create = engine.actions_registry.get('embedding.create')
+            embedding_create = engine.actions_registry.get("embedding.create")
             if embedding_create:
                 try:
                     emb_result = embedding_create(state=state, text=query)
-                    if emb_result.get('embedding'):
-                        search_embedding = emb_result['embedding']
+                    if emb_result.get("embedding"):
+                        search_embedding = emb_result["embedding"]
                 except Exception:
                     # Continue without embedding, will fall back to entity_id if available
                     pass
@@ -305,8 +288,440 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             embedding=search_embedding,
             entity_id=str(entity_id) if entity_id else None,
             hops=int(hops) if hops else 2,
-            limit=int(limit) if limit else 20
+            limit=int(limit) if limit else 20,
         )
 
-    registry['graph.retrieve_context'] = graph_retrieve_context
-    registry['actions.graph_retrieve_context'] = graph_retrieve_context
+    registry["graph.retrieve_context"] = graph_retrieve_context
+    registry["actions.graph_retrieve_context"] = graph_retrieve_context
+
+    # =========================================================================
+    # EXTENDED CRUD ACTIONS (TEA-BUILTIN-001.7.2)
+    # =========================================================================
+
+    def graph_delete_entity(state, entity_id, detach=True, **kwargs):
+        """
+        Delete an entity (node) from the graph database.
+
+        Args:
+            state: Current state dictionary
+            entity_id: The unique identifier of the entity to delete
+            detach: If True (default), also delete all relationships connected
+                   to this entity. If False, fail if relationships exist.
+
+        Returns:
+            {"success": True, "deleted": True, "entity_id": str}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_id:
+            return {
+                "success": False,
+                "error": "entity_id is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.delete_entity(
+            entity_id=str(entity_id), detach=detach
+        )
+
+    registry["graph.delete_entity"] = graph_delete_entity
+    registry["actions.graph_delete_entity"] = graph_delete_entity
+
+    def graph_delete_relation(state, from_entity, to_entity, relation_type, **kwargs):
+        """
+        Delete a relation (edge) from the graph database.
+
+        Args:
+            state: Current state dictionary
+            from_entity: Source entity ID
+            to_entity: Target entity ID
+            relation_type: Type of the relationship to delete
+
+        Returns:
+            {"success": True, "deleted": True}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not from_entity or not to_entity or not relation_type:
+            return {
+                "success": False,
+                "error": "from_entity, to_entity, and relation_type are required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.delete_relation(
+            from_entity=str(from_entity),
+            to_entity=str(to_entity),
+            relation_type=str(relation_type),
+        )
+
+    registry["graph.delete_relation"] = graph_delete_relation
+    registry["actions.graph_delete_relation"] = graph_delete_relation
+
+    def graph_update_entity(state, entity_id, properties, merge=True, **kwargs):
+        """
+        Update properties of an entity (node) in the graph database.
+
+        Args:
+            state: Current state dictionary
+            entity_id: The unique identifier of the entity to update
+            properties: Properties to set/merge
+            merge: If True (default), merge with existing properties.
+                   If False, replace all properties.
+
+        Returns:
+            {"success": True, "entity_id": str, "properties": dict}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_id:
+            return {
+                "success": False,
+                "error": "entity_id is required",
+                "error_type": "validation_error",
+            }
+
+        if properties is None:
+            return {
+                "success": False,
+                "error": "properties is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.update_entity_properties(
+            entity_id=str(entity_id), properties=properties, merge=merge
+        )
+
+    registry["graph.update_entity"] = graph_update_entity
+    registry["actions.graph_update_entity"] = graph_update_entity
+
+    def graph_update_relation(
+        state, from_entity, to_entity, relation_type, properties, merge=True, **kwargs
+    ):
+        """
+        Update properties of a relation (edge) in the graph database.
+
+        Args:
+            state: Current state dictionary
+            from_entity: Source entity ID
+            to_entity: Target entity ID
+            relation_type: Type of the relationship
+            properties: Properties to set/merge
+            merge: If True (default), merge with existing properties.
+
+        Returns:
+            {"success": True, "properties": dict}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not from_entity or not to_entity or not relation_type:
+            return {
+                "success": False,
+                "error": "from_entity, to_entity, and relation_type are required",
+                "error_type": "validation_error",
+            }
+
+        if properties is None:
+            return {
+                "success": False,
+                "error": "properties is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.update_relation_properties(
+            from_entity=str(from_entity),
+            to_entity=str(to_entity),
+            relation_type=str(relation_type),
+            properties=properties,
+            merge=merge,
+        )
+
+    registry["graph.update_relation"] = graph_update_relation
+    registry["actions.graph_update_relation"] = graph_update_relation
+
+    def graph_add_labels(state, entity_id, labels, **kwargs):
+        """
+        Add labels to an entity (node) in the graph database.
+
+        Args:
+            state: Current state dictionary
+            entity_id: The unique identifier of the entity
+            labels: List of labels to add
+
+        Returns:
+            {"success": True, "entity_id": str, "labels_added": list}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_id:
+            return {
+                "success": False,
+                "error": "entity_id is required",
+                "error_type": "validation_error",
+            }
+
+        if not labels:
+            return {
+                "success": False,
+                "error": "labels is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.add_labels(entity_id=str(entity_id), labels=labels)
+
+    registry["graph.add_labels"] = graph_add_labels
+    registry["actions.graph_add_labels"] = graph_add_labels
+
+    def graph_remove_labels(state, entity_id, labels, **kwargs):
+        """
+        Remove labels from an entity (node) in the graph database.
+
+        Args:
+            state: Current state dictionary
+            entity_id: The unique identifier of the entity
+            labels: List of labels to remove
+
+        Returns:
+            {"success": True, "entity_id": str, "labels_removed": list}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_id:
+            return {
+                "success": False,
+                "error": "entity_id is required",
+                "error_type": "validation_error",
+            }
+
+        if not labels:
+            return {
+                "success": False,
+                "error": "labels is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.remove_labels(
+            entity_id=str(entity_id), labels=labels
+        )
+
+    registry["graph.remove_labels"] = graph_remove_labels
+    registry["actions.graph_remove_labels"] = graph_remove_labels
+
+    def graph_store_entities_batch(state, entities, **kwargs):
+        """
+        Bulk insert/update multiple entities in a single transaction.
+
+        Args:
+            state: Current state dictionary
+            entities: List of entity dictionaries, each with:
+                - entity_id: str (required)
+                - entity_type: str (required)
+                - properties: dict (optional)
+                - embedding: list[float] (optional)
+
+        Returns:
+            {"success": True, "processed_count": int, "created": int, "updated": int}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entities:
+            return {
+                "success": False,
+                "error": "entities list is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.store_entities_batch(entities=entities)
+
+    registry["graph.store_entities_batch"] = graph_store_entities_batch
+    registry["actions.graph_store_entities_batch"] = graph_store_entities_batch
+
+    def graph_store_relations_batch(state, relations, **kwargs):
+        """
+        Bulk create/update multiple relations in a single transaction.
+
+        Args:
+            state: Current state dictionary
+            relations: List of relation dictionaries, each with:
+                - from_entity: str (required)
+                - to_entity: str (required)
+                - relation_type: str (required)
+                - properties: dict (optional)
+
+        Returns:
+            {"success": True, "processed_count": int, "created": int, "updated": int}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not relations:
+            return {
+                "success": False,
+                "error": "relations list is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.store_relations_batch(relations=relations)
+
+    registry["graph.store_relations_batch"] = graph_store_relations_batch
+    registry["actions.graph_store_relations_batch"] = graph_store_relations_batch
+
+    def graph_delete_entities_batch(state, entity_ids, detach=True, **kwargs):
+        """
+        Delete multiple entities in a single transaction.
+
+        Args:
+            state: Current state dictionary
+            entity_ids: List of entity IDs to delete
+            detach: If True (default), also delete all relationships
+
+        Returns:
+            {"success": True, "deleted_count": int, "entity_ids": list}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_ids:
+            return {
+                "success": False,
+                "error": "entity_ids list is required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.delete_entities_batch(
+            entity_ids=entity_ids, detach=detach
+        )
+
+    registry["graph.delete_entities_batch"] = graph_delete_entities_batch
+    registry["actions.graph_delete_entities_batch"] = graph_delete_entities_batch
+
+    def graph_merge_entity(
+        state, entity_id, entity_type, on_create=None, on_match=None, **kwargs
+    ):
+        """
+        Conditional upsert with ON CREATE / ON MATCH semantics.
+
+        Args:
+            state: Current state dictionary
+            entity_id: Unique identifier for the entity
+            entity_type: Type/label of the entity
+            on_create: Properties to set only when creating (new entity)
+            on_match: Properties to set only when updating (existing entity)
+
+        Returns:
+            {"success": True, "entity_id": str, "created": bool, "properties": dict}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not entity_id or not entity_type:
+            return {
+                "success": False,
+                "error": "entity_id and entity_type are required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.merge_entity(
+            entity_id=str(entity_id),
+            entity_type=str(entity_type),
+            on_create=on_create,
+            on_match=on_match,
+        )
+
+    registry["graph.merge_entity"] = graph_merge_entity
+    registry["actions.graph_merge_entity"] = graph_merge_entity
+
+    def graph_merge_relation(
+        state,
+        from_entity,
+        to_entity,
+        relation_type,
+        on_create=None,
+        on_match=None,
+        **kwargs
+    ):
+        """
+        Conditional upsert of a relation with ON CREATE / ON MATCH semantics.
+
+        Args:
+            state: Current state dictionary
+            from_entity: Source entity ID
+            to_entity: Target entity ID
+            relation_type: Type of the relationship
+            on_create: Properties to set only when creating (new relation)
+            on_match: Properties to set only when updating (existing relation)
+
+        Returns:
+            {"success": True, "created": bool, "properties": dict}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not _is_graph_available():
+            return _graph_not_available_error()
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        if not from_entity or not to_entity or not relation_type:
+            return {
+                "success": False,
+                "error": "from_entity, to_entity, and relation_type are required",
+                "error_type": "validation_error",
+            }
+
+        return engine._graph_backend.merge_relation(
+            from_entity=str(from_entity),
+            to_entity=str(to_entity),
+            relation_type=str(relation_type),
+            on_create=on_create,
+            on_match=on_match,
+        )
+
+    registry["graph.merge_relation"] = graph_merge_relation
+    registry["actions.graph_merge_relation"] = graph_merge_relation

@@ -40,8 +40,11 @@ Example:
 """
 
 import json
+import os
+import subprocess
+import tempfile
 import time
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Optional
 
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
@@ -121,6 +124,409 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         return round(prompt_cost + completion_cost, 6)
 
+    def _get_default_shell_providers() -> Dict[str, Dict[str, Any]]:
+        """Return default shell provider configurations."""
+        return {
+            "claude": {
+                "command": "claude",
+                "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+                "timeout": 600,
+            },
+            "gemini": {
+                "command": "gemini",
+                "args": ["prompt"],
+                "stdin_mode": "pipe",
+                "timeout": 300,
+            },
+            "qwen": {
+                "command": "qwen",
+                "args": [],
+                "stdin_mode": "pipe",
+                "timeout": 300,
+            },
+        }
+
+    def _expand_env_vars(value: str) -> str:
+        """Expand environment variables in a string using ${VAR} syntax."""
+        if not isinstance(value, str):
+            return value
+        import re
+
+        def replace_env_var(match):
+            var_name = match.group(1)
+            return os.getenv(var_name, "")
+
+        return re.sub(r"\$\{([^}]+)\}", replace_env_var, value)
+
+    def _format_messages_for_cli(messages: list) -> str:
+        """Format chat messages into plain text for CLI stdin."""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                parts.append(f"System: {content}")
+            elif role == "assistant":
+                parts.append(f"Assistant: {content}")
+            else:
+                # User message - just include content
+                parts.append(content)
+        return "\n\n".join(parts)
+
+    def _execute_shell_provider(
+        shell_provider: str,
+        messages: list,
+        timeout: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Execute LLM call via shell CLI command.
+
+        Args:
+            shell_provider: Name of shell provider to use (e.g., 'claude', 'gemini')
+            messages: List of message dicts with 'role' and 'content'
+            timeout: Override timeout in seconds (uses provider default if None)
+            **kwargs: Additional parameters (ignored for shell provider)
+
+        Returns:
+            {"content": str, "usage": {}, "provider": "shell", "shell_provider": str}
+            Or {"error": str, "success": False} on failure
+        """
+        # Get shell provider config from engine settings or defaults
+        shell_providers = {}
+        if hasattr(engine, "shell_providers") and engine.shell_providers:
+            shell_providers = engine.shell_providers
+
+        # Merge with defaults (user config takes precedence)
+        defaults = _get_default_shell_providers()
+        for name, config in defaults.items():
+            if name not in shell_providers:
+                shell_providers[name] = config
+
+        if shell_provider not in shell_providers:
+            return {
+                "error": f"Shell provider '{shell_provider}' not configured. "
+                f"Available: {list(shell_providers.keys())}",
+                "success": False,
+            }
+
+        config = shell_providers[shell_provider]
+
+        # Build command
+        command = _expand_env_vars(config.get("command", shell_provider))
+        args = config.get("args", [])
+        # Expand env vars in args
+        args = [_expand_env_vars(a) if isinstance(a, str) else a for a in args]
+        provider_timeout = (
+            timeout if timeout is not None else config.get("timeout", 300)
+        )
+        stdin_mode = config.get("stdin_mode", "pipe")
+
+        # Set up environment
+        env = os.environ.copy()
+        provider_env = config.get("env", {})
+        for key, value in provider_env.items():
+            env[key] = _expand_env_vars(value)
+
+        # Format messages into prompt text
+        prompt_text = _format_messages_for_cli(messages)
+
+        # Build full command - replace {prompt} placeholder in args if present
+        processed_args = [
+            (
+                a.replace("{prompt}", prompt_text)
+                if isinstance(a, str) and "{prompt}" in a
+                else a
+            )
+            for a in args
+        ]
+        full_command = [command] + processed_args
+
+        # Check if prompt was passed as arg (contains {prompt} placeholder)
+        prompt_in_args = any("{prompt}" in str(a) for a in args)
+
+        # If prompt is too large for CLI args (>100KB), fall back to stdin mode
+        MAX_ARG_SIZE = 100000  # ~100KB safe limit for shell args
+        if prompt_in_args and len(prompt_text) > MAX_ARG_SIZE:
+            # Revert to stdin mode for large prompts
+            prompt_in_args = False
+            # Remove {prompt} from args and use original args without replacement
+            full_command = [command] + [a for a in args if "{prompt}" not in str(a)]
+            stdin_mode = "pipe"
+
+        try:
+            if prompt_in_args:
+                # Prompt already in args, no stdin needed
+                proc = subprocess.Popen(
+                    full_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+                stdout, stderr = proc.communicate(timeout=provider_timeout)
+            elif stdin_mode == "pipe":
+                proc = subprocess.Popen(
+                    full_command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
+                stdout, stderr = proc.communicate(
+                    input=prompt_text, timeout=provider_timeout
+                )
+            elif stdin_mode == "file":
+                # Write to temp file for very large contexts
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".txt", delete=False
+                ) as f:
+                    f.write(prompt_text)
+                    temp_path = f.name
+                try:
+                    # Replace {input_file} placeholder in args
+                    file_args = [a.replace("{input_file}", temp_path) for a in args]
+                    proc = subprocess.Popen(
+                        [command] + file_args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    )
+                    stdout, stderr = proc.communicate(timeout=provider_timeout)
+                finally:
+                    os.unlink(temp_path)
+            else:
+                return {
+                    "error": f"Unknown stdin_mode: {stdin_mode}. Use 'pipe' or 'file'.",
+                    "success": False,
+                }
+
+            if proc.returncode != 0:
+                return {
+                    "error": f"Shell command failed (exit {proc.returncode}): {stderr}",
+                    "success": False,
+                }
+
+            return {
+                "content": stdout.strip(),
+                "usage": {},  # CLI doesn't provide token counts
+                "provider": "shell",
+                "shell_provider": shell_provider,
+            }
+
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            return {
+                "error": f"Shell command timed out after {provider_timeout}s",
+                "success": False,
+            }
+        except FileNotFoundError:
+            return {
+                "error": f"Shell command not found: {command}",
+                "success": False,
+            }
+        except Exception as e:
+            return {
+                "error": f"Shell command execution error: {str(e)}",
+                "success": False,
+            }
+
+    def _stream_shell_provider(
+        shell_provider: str,
+        messages: list,
+        timeout: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Execute LLM call via shell CLI command with line-by-line streaming.
+
+        Args:
+            shell_provider: Name of shell provider to use
+            messages: List of message dicts with 'role' and 'content'
+            timeout: Override timeout in seconds
+            **kwargs: Additional parameters (ignored for shell provider)
+
+        Returns:
+            {"content": str, "usage": {}, "streamed": True, "chunk_count": int, ...}
+            Or {"error": str, "success": False} on failure
+        """
+        # Get shell provider config from engine settings or defaults
+        shell_providers = {}
+        if hasattr(engine, "shell_providers") and engine.shell_providers:
+            shell_providers = engine.shell_providers
+
+        # Merge with defaults
+        defaults = _get_default_shell_providers()
+        for name, config in defaults.items():
+            if name not in shell_providers:
+                shell_providers[name] = config
+
+        if shell_provider not in shell_providers:
+            return {
+                "error": f"Shell provider '{shell_provider}' not configured. "
+                f"Available: {list(shell_providers.keys())}",
+                "success": False,
+            }
+
+        config = shell_providers[shell_provider]
+
+        # Build command
+        command = _expand_env_vars(config.get("command", shell_provider))
+        args = config.get("args", [])
+        args = [_expand_env_vars(a) if isinstance(a, str) else a for a in args]
+        provider_timeout = (
+            timeout if timeout is not None else config.get("timeout", 300)
+        )
+        stdin_mode = config.get("stdin_mode", "pipe")
+
+        # Set up environment
+        env = os.environ.copy()
+        provider_env = config.get("env", {})
+        for key, value in provider_env.items():
+            env[key] = _expand_env_vars(value)
+
+        # Format messages into prompt text
+        prompt_text = _format_messages_for_cli(messages)
+
+        # Build full command - replace {prompt} placeholder in args if present
+        processed_args = [
+            (
+                a.replace("{prompt}", prompt_text)
+                if isinstance(a, str) and "{prompt}" in a
+                else a
+            )
+            for a in args
+        ]
+        full_command = [command] + processed_args
+
+        # Check if prompt was passed as arg (contains {prompt} placeholder)
+        prompt_in_args = any("{prompt}" in str(a) for a in args)
+
+        try:
+            if prompt_in_args:
+                # Prompt already in args, no stdin needed
+                proc = subprocess.Popen(
+                    full_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    bufsize=1,  # Line buffered for streaming
+                )
+            elif stdin_mode == "pipe":
+                proc = subprocess.Popen(
+                    full_command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    bufsize=1,  # Line buffered for streaming
+                )
+                # Send input and close stdin to signal end of input
+                proc.stdin.write(prompt_text)
+                proc.stdin.close()
+            elif stdin_mode == "file":
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".txt", delete=False
+                ) as f:
+                    f.write(prompt_text)
+                    temp_path = f.name
+                # Replace {input_file} placeholder in args
+                file_args = [a.replace("{input_file}", temp_path) for a in args]
+                proc = subprocess.Popen(
+                    [command] + file_args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    bufsize=1,
+                )
+            else:
+                return {
+                    "error": f"Unknown stdin_mode: {stdin_mode}. Use 'pipe' or 'file'.",
+                    "success": False,
+                }
+
+            # Read output line by line
+            full_content = []
+            chunk_count = 0
+            import select
+
+            start_time = time.time()
+
+            # Use select for timeout support on Unix systems
+            # Fall back to simple read on Windows
+            try:
+                while True:
+                    elapsed = time.time() - start_time
+                    if elapsed >= provider_timeout:
+                        proc.kill()
+                        return {
+                            "error": f"Shell command timed out after {provider_timeout}s",
+                            "success": False,
+                        }
+
+                    # Try to read a line
+                    line = proc.stdout.readline()
+                    if not line:
+                        # Check if process has ended
+                        if proc.poll() is not None:
+                            break
+                        continue
+
+                    full_content.append(line)
+                    chunk_count += 1
+            except Exception:
+                # Fallback: just read all output
+                remaining = proc.stdout.read()
+                if remaining:
+                    full_content.append(remaining)
+                    chunk_count += 1
+
+            # Wait for process to complete
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+            # Clean up temp file if used
+            if stdin_mode == "file":
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
+            stderr_output = proc.stderr.read() if proc.stderr else ""
+
+            if proc.returncode != 0:
+                return {
+                    "error": f"Shell command failed (exit {proc.returncode}): {stderr_output}",
+                    "success": False,
+                }
+
+            return {
+                "content": "".join(full_content).strip(),
+                "usage": {},
+                "streamed": True,
+                "chunk_count": chunk_count,
+                "provider": "shell",
+                "shell_provider": shell_provider,
+            }
+
+        except FileNotFoundError:
+            return {
+                "error": f"Shell command not found: {command}",
+                "success": False,
+            }
+        except Exception as e:
+            return {
+                "error": f"Shell command execution error: {str(e)}",
+                "success": False,
+            }
+
     def llm_call(
         state,
         model,
@@ -133,10 +539,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         provider="auto",
         api_base=None,
         timeout=300,
+        shell_provider=None,
         **kwargs,
     ):
         """
-        Call a language model (supports OpenAI, Azure OpenAI, Ollama, and LiteLLM) with optional retry logic.
+        Call a language model (supports OpenAI, Azure OpenAI, Ollama, LiteLLM, and Shell CLI) with optional retry logic.
 
         Provider Detection Priority:
         1. Explicit `provider` parameter (highest priority)
@@ -161,6 +568,12 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         - Requires: pip install litellm
         - Environment variables per provider (e.g., ANTHROPIC_API_KEY, etc.)
 
+        For Shell CLI (TEA-LLM-004):
+        - Execute local CLI commands (claude, gemini, qwen, etc.)
+        - Use provider: "shell" with shell_provider: "claude" (or other)
+        - Configure in settings.llm.shell_providers or use built-in defaults
+        - No API key required for local CLI tools
+
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
@@ -172,9 +585,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry (model, tokens, latency). Requires opik SDK installed.
                        Default: False (opt-in feature).
-            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", "litellm", or "shell"
             api_base: Custom API base URL (overrides defaults)
             timeout: Request timeout in seconds (default: 300 for slow local models like Ollama)
+            shell_provider: Shell provider name when provider="shell" (e.g., "claude", "gemini", "qwen")
             **kwargs: Additional parameters passed to OpenAI/LiteLLM
 
         Returns:
@@ -186,6 +600,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 Result dict also includes "cost_usd": float (estimated cost)
             When provider=litellm:
                 Result dict also includes "cost_usd": float (from LiteLLM cost tracking)
+            When provider=shell:
+                {"content": str, "usage": {}, "provider": "shell", "shell_provider": str}
             Or {"error": str, "success": False, "attempts": int} on failure
 
         Retry behavior:
@@ -194,13 +610,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             - Retries: HTTP 429, 5xx errors, timeouts, connection errors
             - Fails fast: HTTP 4xx (except 429)
         """
-        import os
-
         # Determine provider based on priority:
         # 1. Explicit provider parameter
         # 2. Environment variable detection
         # 3. Default to OpenAI
         resolved_provider = provider.lower() if provider else "auto"
+
+        # Normalize provider names (azure_openai -> azure)
+        if resolved_provider in ("azure_openai", "azureopenai"):
+            resolved_provider = "azure"
 
         if resolved_provider == "auto":
             # Check environment variables in priority order
@@ -212,6 +630,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
+
+        # Shell provider - execute CLI commands (TEA-LLM-004)
+        if resolved_provider == "shell":
+            if not shell_provider:
+                return {
+                    "error": "provider='shell' requires shell_provider parameter "
+                    "(e.g., shell_provider='claude')",
+                    "success": False,
+                }
+            return _execute_shell_provider(
+                shell_provider=shell_provider,
+                messages=messages,
+                timeout=timeout,
+                **kwargs,
+            )
 
         # LiteLLM provider - uses separate code path (TEA-LLM-003)
         if resolved_provider == "litellm":
@@ -597,6 +1030,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         opik_trace=False,
         provider="auto",
         api_base=None,
+        timeout=300,
+        shell_provider=None,
         **kwargs,
     ):
         """
@@ -614,6 +1049,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         - Supports 100+ LLM providers via unified streaming interface
         - Model format: "provider/model-name" (e.g., "anthropic/claude-3-opus")
 
+        For Shell CLI (TEA-LLM-004):
+        - Execute local CLI commands with line-by-line streaming
+        - Use provider: "shell" with shell_provider: "claude" (or other)
+
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
@@ -623,8 +1062,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                        telemetry. Opik's wrapper handles streaming chunk aggregation.
                        For LiteLLM, uses OpikLogger callback.
                        Default: False (opt-in feature).
-            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", "litellm", or "shell"
             api_base: Custom API base URL (overrides defaults)
+            timeout: Request timeout in seconds (default: 300)
+            shell_provider: Shell provider name when provider="shell" (e.g., "claude", "gemini", "qwen")
             **kwargs: Additional parameters passed to OpenAI/LiteLLM
 
         Returns:
@@ -633,14 +1074,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 Result dict also includes "cost_usd": float (estimated cost)
             When provider=litellm:
                 Result dict also includes "cost_usd": float (from LiteLLM cost tracking)
+            When provider=shell:
+                {"content": str, "usage": {}, "streamed": True, "chunk_count": int, ...}
             Or {"error": str, "success": False} on failure
 
         Example:
             result = llm_stream(state, "gpt-4", messages)
             print(result["content"])
         """
-        import os
-
         try:
             # Determine provider based on priority (same as llm.call)
             resolved_provider = provider.lower() if provider else "auto"
@@ -654,6 +1095,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     resolved_provider = "azure"
                 else:
                     resolved_provider = "openai"
+
+            # Shell provider - execute CLI commands with streaming (TEA-LLM-004)
+            if resolved_provider == "shell":
+                if not shell_provider:
+                    return {
+                        "error": "provider='shell' requires shell_provider parameter "
+                        "(e.g., shell_provider='claude')",
+                        "success": False,
+                    }
+                return _stream_shell_provider(
+                    shell_provider=shell_provider,
+                    messages=messages,
+                    timeout=timeout,
+                    **kwargs,
+                )
 
             # LiteLLM provider - uses separate streaming code path (TEA-LLM-003)
             if resolved_provider == "litellm":

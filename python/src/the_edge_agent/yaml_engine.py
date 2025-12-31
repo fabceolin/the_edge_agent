@@ -451,6 +451,11 @@ class YAMLEngine:
 
         self.variables: Dict[str, Any] = {}
         self.secrets: Dict[str, Any] = {}
+        self.data: Dict[str, Any] = {}
+        self.llm_settings: Dict[str, Any] = {}  # Default LLM settings from settings.llm
+        self.shell_providers: Dict[str, Any] = (
+            {}
+        )  # Shell CLI providers from settings.llm.shell_providers
 
         # Checkpoint tracking
         self._last_checkpoint_path: Optional[str] = None
@@ -824,6 +829,9 @@ class YAMLEngine:
         # Extract global variables
         self.variables = config.get("variables", {})
 
+        # Extract data section (reusable prompts, templates, constants)
+        self.data = config.get("data", {})
+
         # Load external action modules from imports section (TEA-BUILTIN: External Imports)
         imports = config.get("imports", [])
         if imports:
@@ -831,6 +839,75 @@ class YAMLEngine:
 
         # Extract settings (YAML-level configuration)
         settings = config.get("settings", {})
+
+        # TEA-KIROKU-005: Store full config for CLI access (interview prompts, etc.)
+        self._config = config
+
+        # Extract LLM settings for default injection into llm.call actions
+        # Maps settings.llm.deployment -> model, settings.llm.* -> other params
+        # Process templates at load time (e.g., {{ env.VAR | default('value') }})
+        llm_config = settings.get("llm", {})
+        if isinstance(llm_config, dict):
+            self.llm_settings = {}
+            # Map 'deployment' to 'model' for Azure OpenAI convention
+            if "deployment" in llm_config:
+                raw_value = llm_config["deployment"]
+                # Process template with empty state (env vars available)
+                self.llm_settings["model"] = self._process_template(raw_value, {})
+            elif "model" in llm_config:
+                raw_value = llm_config["model"]
+                self.llm_settings["model"] = self._process_template(raw_value, {})
+            # Copy other settings (provider, temperature, etc.)
+            for key in [
+                "provider",
+                "temperature",
+                "api_base",
+                "timeout",
+                "max_retries",
+            ]:
+                if key in llm_config:
+                    raw_value = llm_config[key]
+                    if isinstance(raw_value, str):
+                        self.llm_settings[key] = self._process_template(raw_value, {})
+                    else:
+                        self.llm_settings[key] = raw_value
+
+            # TEA-LLM-004: Parse shell_providers configuration
+            # Allows configuring CLI commands like claude, gemini, qwen
+            shell_providers_config = llm_config.get("shell_providers", {})
+            if isinstance(shell_providers_config, dict):
+                for provider_name, provider_config in shell_providers_config.items():
+                    if isinstance(provider_config, dict):
+                        processed_config = {}
+                        for key, value in provider_config.items():
+                            if isinstance(value, str):
+                                # Process templates and expand env vars
+                                processed_config[key] = self._process_template(
+                                    value, {}
+                                )
+                            elif isinstance(value, list):
+                                # Process list items (like args)
+                                processed_config[key] = [
+                                    (
+                                        self._process_template(v, {})
+                                        if isinstance(v, str)
+                                        else v
+                                    )
+                                    for v in value
+                                ]
+                            elif isinstance(value, dict):
+                                # Process dict items (like env)
+                                processed_config[key] = {
+                                    k: (
+                                        self._process_template(v, {})
+                                        if isinstance(v, str)
+                                        else v
+                                    )
+                                    for k, v in value.items()
+                                }
+                            else:
+                                processed_config[key] = value
+                        self.shell_providers[provider_name] = processed_config
 
         # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
         # Settings can be nested under 'opik' key or flat under 'settings'
@@ -1007,10 +1084,19 @@ class YAMLEngine:
         checkpoint_dir = compile_config.get("checkpoint_dir")
         self._checkpoint_dir = checkpoint_dir
 
-        # Add nodes
+        # Add nodes and collect inline interrupt definitions
         nodes_list = config.get("nodes", [])
+        interrupt_before_nodes = []
+        interrupt_after_nodes = []
         for node_config in nodes_list:
             self._add_node_from_config(graph, node_config)
+            # TEA-KIROKU-005: Collect inline interrupt: before/after from node definitions
+            node_name = node_config.get("name")
+            interrupt_type = node_config.get("interrupt")
+            if interrupt_type == "before" and node_name:
+                interrupt_before_nodes.append(node_name)
+            elif interrupt_type == "after" and node_name:
+                interrupt_after_nodes.append(node_name)
 
         # TEA-YAML-002: Get edges list to determine which nodes are covered by legacy edges
         edges_list = config.get("edges", [])
@@ -1034,11 +1120,34 @@ class YAMLEngine:
         # Store checkpointer reference for resume
         self._checkpointer = checkpointer
 
+        # TEA-KIROKU-005: Merge inline interrupt definitions with config section
+        # Inline node-level 'interrupt: before/after' takes precedence by appearing first
+        all_interrupt_before = interrupt_before_nodes + compile_config.get(
+            "interrupt_before", []
+        )
+        all_interrupt_after = interrupt_after_nodes + compile_config.get(
+            "interrupt_after", []
+        )
+
+        # TEA-KIROKU-005: Auto-provide checkpoint directory when interrupts are defined
+        # This ensures HITL workflows work out-of-the-box without explicit checkpoint config
+        has_interrupts = bool(all_interrupt_before or all_interrupt_after)
+        has_checkpointer = bool(checkpoint_dir or checkpointer)
+        effective_checkpoint_dir = checkpoint_dir
+        if has_interrupts and not has_checkpointer:
+            import tempfile
+
+            effective_checkpoint_dir = tempfile.mkdtemp(prefix="tea_checkpoint_")
+            self._checkpoint_dir = effective_checkpoint_dir
+            logger.info(
+                f"Auto-created checkpoint directory for interrupts: {effective_checkpoint_dir}"
+            )
+
         # Compile with checkpoint support
         compiled_graph = graph.compile(
-            interrupt_before=compile_config.get("interrupt_before", []),
-            interrupt_after=compile_config.get("interrupt_after", []),
-            checkpoint_dir=checkpoint_dir,
+            interrupt_before=all_interrupt_before,
+            interrupt_after=all_interrupt_after,
+            checkpoint_dir=effective_checkpoint_dir,
             checkpointer=checkpointer,
         )
 
@@ -1196,19 +1305,30 @@ class YAMLEngine:
         """
         return self._template_processor._template_cache
 
-    def _process_template(self, text: str, state: Dict[str, Any]) -> Any:
+    def _process_template(
+        self,
+        text: str,
+        state: Dict[str, Any],
+        extra_context: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Process template variables in text using Jinja2.
 
         TEA-PY-008.1: Delegates to TemplateProcessor for modularity.
 
         See TemplateProcessor.process_template() for full documentation.
+
+        Args:
+            text: The template string to process
+            state: Current state dictionary
+            extra_context: Optional additional context variables (e.g., result from action)
         """
         return self._template_processor.process_template(
             text,
             state,
             checkpoint_dir=self._checkpoint_dir,
             last_checkpoint=self._last_checkpoint_path,
+            extra_context=extra_context,
         )
 
     def _process_params(

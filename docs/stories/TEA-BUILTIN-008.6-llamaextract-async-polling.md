@@ -1,175 +1,131 @@
-# Story TEA-BUILTIN-008.6: LlamaExtract Async Polling Support
+# Story TEA-BUILTIN-008.6: LlamaExtract Async Polling Configuration
 
-## Status: Draft
+## Status: Ready for Development
+
+**QA Gate Passed:** 2024-12-30
+**Test Design:** 24 scenarios (P0: 10, P1: 9, P2: 5) - 100% AC coverage
+**Notes:** 2 minor clarifications pending (float interval, async_mode/use_rest coupling) - non-blocking
 
 ## Story
 
 **As a** TEA agent developer,
-**I want** `llamaextract.extract` to support async polling mode,
-**so that** I can extract data from large documents (30+ pages) without timeout issues.
+**I want** configurable async polling parameters for `llamaextract.extract`,
+**so that** I can tune polling behavior for large document extractions.
 
 ## Context
 
 ### Dependencies
 
-- **TEA-BUILTIN-008.5**: Sync REST API foundation must be completed first
+- **TEA-BUILTIN-008.5**: Sync REST API foundation ✅ **DONE**
 
-### Problem
+### Related Stories
 
-The sync endpoint (`/api/v1/extraction/run`) blocks until extraction completes. For large documents (30+ pages), this can:
-1. Exceed HTTP timeout limits
-2. Hold connections open unnecessarily
-3. Risk losing work on transient network issues
+- **TEA-BUILTIN-008.7**: LlamaExtract Workflow Primitives (depends on this story)
+  - Exposes individual primitives (`submit_job`, `poll_status`, `get_result`) for advanced workflows
+  - Use 008.7 when you need: custom polling logic, multi-mode escalation, checkpoint integration
 
-### Solution
+### Existing Implementation (from 008.5)
 
-Add `async_mode: true` parameter that:
-1. Submits extraction job via `POST /api/v1/extraction/jobs`
-2. Polls job status via `GET /api/v1/extraction/jobs/{job_id}`
-3. Retrieves result via `GET /api/v1/extraction/jobs/{job_id}/result`
-4. Returns same response format as sync mode
+TEA-BUILTIN-008.5 already implemented significant async polling infrastructure:
 
-## API Reference (from Research)
+| Feature | Status | Location |
+|---------|--------|----------|
+| `_poll_job_status()` helper | ✅ Exists | `llamaextract_actions.py:153-278` |
+| Job-based response handling | ✅ Exists | `_execute_rest_with_retry()` auto-detects `status=PENDING` |
+| Retry with exponential backoff | ✅ Exists | `_execute_rest_with_retry()` |
+| PARTIAL_SUCCESS handling | ✅ Exists | Returns data with warning |
+| ERROR status handling | ✅ Exists | Returns structured error |
+| job_id in responses | ✅ Exists | Included in all job-related responses |
 
-### Async Endpoints
+### What This Story Adds
 
-**Base URL**: `https://api.cloud.llamaindex.ai`
+This story focuses on **exposing configuration** for the existing polling infrastructure:
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/extraction/jobs` | POST | Submit extraction job, returns `job_id` |
-| `/api/v1/extraction/jobs/{job_id}` | GET | Poll job status |
-| `/api/v1/extraction/jobs/{job_id}/result` | GET | Get extraction result |
+1. **`async_mode: true`** - Explicitly use async `/jobs` endpoint instead of relying on sync endpoint fallback
+2. **`polling_interval`** - Configurable poll interval (currently hardcoded at 5s)
+3. **`max_poll_attempts`** - Maximum poll count (currently only timeout-based)
 
-### Job Status Values
+### Design Decision: Single-Node vs Primitives
 
-| Status | Description | Action |
-|--------|-------------|--------|
-| `PENDING` | Job queued, not yet processing | Continue polling |
-| `SUCCESS` | Extraction completed successfully | Fetch result |
-| `ERROR` | Extraction failed | Return error |
-| `PARTIAL_SUCCESS` | Some pages extracted, some failed | Fetch partial result |
+This story implements async polling as a **single-node convenience action**. The polling loop is encapsulated inside `llamaextract.extract` with `async_mode: true`.
 
-### Job Submission Request
+**For advanced workflows** requiring custom polling logic, multi-mode escalation, or checkpoint integration between polls, see **TEA-BUILTIN-008.7** which exposes the individual primitives.
 
-```http
-POST /api/v1/extraction/jobs HTTP/1.1
-Host: api.cloud.llamaindex.ai
-Authorization: Bearer $LLAMA_CLOUD_API_KEY
-Content-Type: application/json
+### Important API Limitation
 
-{
-  "file": "<base64_or_url>",
-  "data_schema": {
-    "type": "object",
-    "properties": { ... }
-  },
-  "config": {
-    "extraction_mode": "PREMIUM"
-  }
-}
-```
-
-### Job Submission Response
-
-```json
-{
-  "job_id": "job_abc123",
-  "status": "PENDING",
-  "created_at": "2024-12-23T10:00:00Z"
-}
-```
-
-### Poll Status Response
-
-```json
-{
-  "job_id": "job_abc123",
-  "status": "SUCCESS",
-  "progress": 100,
-  "created_at": "2024-12-23T10:00:00Z",
-  "completed_at": "2024-12-23T10:02:30Z"
-}
-```
+**File Upload Cannot Be Reused**: The LlamaExtract API does NOT support referencing previously uploaded files by `file_id` for subsequent extractions. Each extraction request requires including the file content. This is a LlamaExtract API limitation, not a TEA limitation.
 
 ## Acceptance Criteria
 
-### Functional Requirements
-
-1. **AC-1**: Action accepts `async_mode: true` parameter to enable async polling
-2. **AC-2**: Action submits job via `POST /api/v1/extraction/jobs`
-3. **AC-3**: Action polls status via `GET /api/v1/extraction/jobs/{job_id}`
-4. **AC-4**: Action retrieves result via `GET /api/v1/extraction/jobs/{job_id}/result`
-5. **AC-5**: Action returns same response format as sync mode (`success`, `data`, `status`)
-6. **AC-6**: Action handles `PARTIAL_SUCCESS` status (returns partial data with warning)
-
 ### Configuration Requirements
 
-7. **AC-7**: Configurable `polling_interval` parameter (default: 5 seconds)
-8. **AC-8**: Configurable `max_poll_attempts` parameter (default: 120 = 10 minutes at 5s interval)
-9. **AC-9**: Configurable `timeout` parameter for total operation (default: 600 seconds)
-10. **AC-10**: All existing parameters from 008.5 continue to work
+1. **AC-1**: Action accepts `async_mode: true` parameter to explicitly use async `/jobs` endpoint
+2. **AC-2**: Action accepts `polling_interval` parameter (default: 5 seconds)
+3. **AC-3**: Action accepts `max_poll_attempts` parameter (default: 120)
+4. **AC-4**: Existing `timeout` parameter works as overall operation timeout
+5. **AC-5**: All existing parameters from 008.5 continue to work unchanged
 
-### Error Handling Requirements
+### Functional Requirements
 
-11. **AC-11**: Timeout error if job doesn't complete within `timeout` seconds
-12. **AC-12**: Clear error with `job_id` for debugging failed jobs
-13. **AC-13**: Retry logic for transient polling failures (network errors)
-14. **AC-14**: `ERROR` job status returns structured error response
+6. **AC-6**: When `async_mode: true`, submit directly to `POST /api/v1/extraction/jobs`
+7. **AC-7**: Poll respects configurable `polling_interval` between status checks
+8. **AC-8**: Polling stops after `max_poll_attempts` with timeout error
+9. **AC-9**: Polling stops if overall `timeout` exceeded (whichever comes first)
+
+### Backwards Compatibility
+
+10. **AC-10**: Default `async_mode: false` uses existing sync behavior (008.5)
+11. **AC-11**: Sync endpoint auto-poll behavior unchanged when job response detected
 
 ### Quality Requirements
 
-15. **AC-15**: Unit tests for async flow with mocked responses
-16. **AC-16**: Integration tests for polling loop logic
-17. **AC-17**: Documentation updated in YAML_REFERENCE.md
-18. **AC-18**: Backwards compatible - `async_mode: false` (default) uses sync endpoint
+12. **AC-12**: Unit tests for configurable polling parameters
+13. **AC-13**: Documentation updated in YAML_REFERENCE.md
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Implement Async Job Submission** (AC: 1-2)
-  - [ ] Add `async_mode` parameter to `llamaextract_extract()`
-  - [ ] Create `_submit_extraction_job()` helper
-  - [ ] Parse job submission response for `job_id`
+- [ ] **Task 1: Add Async Mode Parameter** (AC: 1, 6)
+  - [ ] Add `async_mode: bool = False` parameter to `llamaextract_extract()`
+  - [ ] When `async_mode=True`, use `POST /api/v1/extraction/jobs` directly
+  - [ ] Reuse existing `_poll_job_status()` for completion polling
 
-- [ ] **Task 2: Implement Polling Loop** (AC: 3, 7-8, 13)
-  - [ ] Create `_poll_job_status()` helper
-  - [ ] Implement configurable polling interval
-  - [ ] Add retry logic for transient poll failures
-  - [ ] Track poll attempts vs max_poll_attempts
+- [ ] **Task 2: Make Polling Interval Configurable** (AC: 2, 7)
+  - [ ] Add `polling_interval: int = 5` parameter to `llamaextract_extract()`
+  - [ ] Pass `polling_interval` to `_poll_job_status()` (currently hardcoded)
+  - [ ] Update `_poll_job_status()` signature to accept `poll_interval` parameter
 
-- [ ] **Task 3: Implement Result Retrieval** (AC: 4-6, 14)
-  - [ ] Create `_get_job_result()` helper
-  - [ ] Handle SUCCESS status → fetch and return result
-  - [ ] Handle PARTIAL_SUCCESS status → fetch with warning
-  - [ ] Handle ERROR status → return structured error
+- [ ] **Task 3: Add Max Poll Attempts** (AC: 3, 8, 9)
+  - [ ] Add `max_poll_attempts: int = 120` parameter to `llamaextract_extract()`
+  - [ ] Implement attempt counter in polling loop
+  - [ ] Return timeout error when `max_poll_attempts` exceeded
+  - [ ] Check both `max_poll_attempts` AND `timeout` (whichever triggers first)
 
-- [ ] **Task 4: Timeout and Error Handling** (AC: 9, 11-12)
-  - [ ] Implement overall timeout tracking
-  - [ ] Include `job_id` in error responses for debugging
-  - [ ] Classify timeout errors appropriately
+- [ ] **Task 4: Testing** (AC: 12)
+  - [ ] Unit test: `async_mode=true` uses /jobs endpoint
+  - [ ] Unit test: custom `polling_interval` is respected
+  - [ ] Unit test: `max_poll_attempts` triggers timeout
+  - [ ] Unit test: overall `timeout` still works
+  - [ ] Unit test: backwards compatibility with existing behavior
 
-- [ ] **Task 5: Backwards Compatibility** (AC: 10, 18)
-  - [ ] Default `async_mode: false` uses sync endpoint (008.5)
-  - [ ] Verify all existing parameters work unchanged
-
-- [ ] **Task 6: Testing** (AC: 15-16)
-  - [ ] Unit test: successful async extraction
-  - [ ] Unit test: polling loop with multiple attempts
-  - [ ] Unit test: timeout handling
-  - [ ] Unit test: PARTIAL_SUCCESS handling
-  - [ ] Unit test: ERROR status handling
-  - [ ] Integration test: full async flow with mocked API
-
-- [ ] **Task 7: Documentation** (AC: 17)
+- [ ] **Task 5: Documentation** (AC: 13)
   - [ ] Update `docs/shared/YAML_REFERENCE.md`
-  - [ ] Document async_mode, polling_interval, max_poll_attempts
+  - [ ] Document `async_mode`, `polling_interval`, `max_poll_attempts`
   - [ ] Add example for large document extraction
 
 ## Dev Notes
 
-### Implementation Pattern
+### Minimal Code Changes Required
+
+The existing `_poll_job_status()` function (lines 153-278) already handles:
+- Status polling loop
+- SUCCESS/ERROR/PARTIAL_SUCCESS handling
+- Timeout tracking
+- Retry on transient failures
+
+**Changes needed:**
 
 ```python
+# 1. Update function signature in llamaextract_extract()
 def llamaextract_extract(
     state,
     file: str,
@@ -179,218 +135,37 @@ def llamaextract_extract(
     mode: str = "BALANCED",
     timeout: int = 300,
     max_retries: int = 3,
-    async_mode: bool = False,           # NEW: Enable async polling
-    polling_interval: int = 5,          # NEW: Seconds between polls
-    max_poll_attempts: int = 120,       # NEW: Max poll attempts
-    **kwargs
+    use_rest: bool = False,
+    async_mode: bool = False,        # NEW
+    polling_interval: int = 5,       # NEW
+    max_poll_attempts: int = 120,    # NEW
+    **kwargs,
 ) -> Dict[str, Any]:
-    """
-    Extract structured data using LlamaExtract REST API.
 
-    Args:
-        async_mode: If True, use job submission + polling for large documents.
-                   If False (default), use sync endpoint.
-        polling_interval: Seconds to wait between status polls (async only).
-        max_poll_attempts: Maximum polling attempts before timeout (async only).
-    """
-
-    # ... validation and setup from 008.5 ...
-
-    if async_mode:
-        return _extract_async(
-            file_content=file_content,
-            schema=schema,
-            mode=mode,
-            api_key=api_key,
-            timeout=timeout,
-            polling_interval=polling_interval,
-            max_poll_attempts=max_poll_attempts,
-            max_retries=max_retries
-        )
-    else:
-        # Sync path from 008.5
-        return _extract_sync(...)
-
-
-def _extract_async(
-    file_content: str,
-    schema: Dict,
-    mode: str,
-    api_key: str,
+# 2. Update _poll_job_status to accept configurable interval
+def _poll_job_status(
+    job_id: str,
+    headers: Dict[str, str],
     timeout: int,
-    polling_interval: int,
-    max_poll_attempts: int,
-    max_retries: int
+    poll_interval: int = 5,          # Make configurable
+    max_attempts: int = 120          # Add attempt limit
 ) -> Dict[str, Any]:
-    """Async extraction with job submission and polling."""
-    import time
+    # ... existing code ...
+    # Change: time.sleep(poll_interval) instead of hardcoded 5
+    # Add: attempt counter check
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    # Step 1: Submit job
-    job_response = _submit_extraction_job(
-        file_content=file_content,
+# 3. Add async submission path
+if async_mode and use_rest:
+    # Submit directly to /jobs endpoint
+    return _extract_async(
+        file=file,
         schema=schema,
         mode=mode,
-        headers=headers,
-        max_retries=max_retries
+        timeout=timeout,
+        polling_interval=polling_interval,
+        max_poll_attempts=max_poll_attempts,
+        max_retries=max_retries,
     )
-
-    if not job_response.get("success"):
-        return job_response
-
-    job_id = job_response["job_id"]
-    start_time = time.time()
-
-    # Step 2: Poll for completion
-    for attempt in range(max_poll_attempts):
-        # Check overall timeout
-        if time.time() - start_time > timeout:
-            return {
-                "success": False,
-                "error": f"Async extraction timed out after {timeout}s",
-                "error_type": "timeout",
-                "job_id": job_id
-            }
-
-        status_response = _poll_job_status(job_id, headers, max_retries)
-
-        if not status_response.get("success"):
-            return status_response
-
-        status = status_response["status"]
-
-        if status == "SUCCESS":
-            return _get_job_result(job_id, headers)
-
-        elif status == "PARTIAL_SUCCESS":
-            result = _get_job_result(job_id, headers)
-            result["warning"] = "Partial extraction - some pages failed"
-            return result
-
-        elif status == "ERROR":
-            return {
-                "success": False,
-                "error": status_response.get("error", "Extraction job failed"),
-                "error_type": "api_error",
-                "job_id": job_id
-            }
-
-        # PENDING - continue polling
-        time.sleep(polling_interval)
-
-    return {
-        "success": False,
-        "error": f"Max poll attempts ({max_poll_attempts}) exceeded",
-        "error_type": "timeout",
-        "job_id": job_id
-    }
-
-
-def _submit_extraction_job(file_content, schema, mode, headers, max_retries):
-    """Submit async extraction job."""
-    import requests
-
-    payload = {
-        "file": file_content,
-        "data_schema": schema,
-        "config": {"extraction_mode": mode.upper()}
-    }
-
-    url = "https://api.cloud.llamaindex.ai/api/v1/extraction/jobs"
-
-    for attempt in range(max_retries):
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "success": True,
-                    "job_id": data["job_id"],
-                    "status": data.get("status", "PENDING")
-                }
-            elif response.status_code == 429:
-                time.sleep(2 ** attempt)
-                continue
-            else:
-                return {
-                    "success": False,
-                    "error": response.text,
-                    "error_type": "api_error"
-                }
-        except Exception as e:
-            if attempt == max_retries - 1:
-                return {"success": False, "error": str(e), "error_type": "api_error"}
-            time.sleep(2 ** attempt)
-
-    return {"success": False, "error": "Max retries exceeded", "error_type": "api_error"}
-
-
-def _poll_job_status(job_id, headers, max_retries):
-    """Poll job status."""
-    import requests
-
-    url = f"https://api.cloud.llamaindex.ai/api/v1/extraction/jobs/{job_id}"
-
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-
-            if response.status_code == 200:
-                data = response.json()
-                return {
-                    "success": True,
-                    "status": data["status"],
-                    "progress": data.get("progress"),
-                    "error": data.get("error")
-                }
-            elif response.status_code == 429:
-                time.sleep(2 ** attempt)
-                continue
-            else:
-                return {
-                    "success": False,
-                    "error": response.text,
-                    "error_type": "api_error"
-                }
-        except Exception as e:
-            if attempt == max_retries - 1:
-                return {"success": False, "error": str(e), "error_type": "api_error"}
-            time.sleep(2 ** attempt)
-
-    return {"success": False, "error": "Max retries exceeded", "error_type": "api_error"}
-
-
-def _get_job_result(job_id, headers):
-    """Get extraction result for completed job."""
-    import requests
-
-    url = f"https://api.cloud.llamaindex.ai/api/v1/extraction/jobs/{job_id}/result"
-
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-
-        if response.status_code == 200:
-            data = response.json()
-            return {
-                "success": True,
-                "data": data.get("data", data),
-                "status": "completed",
-                "job_id": job_id
-            }
-        else:
-            return {
-                "success": False,
-                "error": response.text,
-                "error_type": "api_error",
-                "job_id": job_id
-            }
-    except Exception as e:
-        return {"success": False, "error": str(e), "error_type": "api_error", "job_id": job_id}
 ```
 
 ### YAML Usage
@@ -408,32 +183,23 @@ def _get_job_result(job_id, headers):
         effective_date: { type: string }
         terms: { type: object }
     mode: PREMIUM
-    async_mode: true              # Enable async polling
-    polling_interval: 10          # Poll every 10 seconds
-    max_poll_attempts: 60         # Max 60 attempts (10 min at 10s)
+    use_rest: true                # Required for async_mode
+    async_mode: true              # NEW: Explicitly use async endpoint
+    polling_interval: 10          # NEW: Poll every 10 seconds
+    max_poll_attempts: 60         # NEW: Max 60 attempts
     timeout: 900                  # Overall timeout 15 minutes
   output: extraction_result
-
-# Check result
-- name: check_result
-  run: |
-    result = state.get("extraction_result", {})
-    if result.get("warning"):
-      print(f"Warning: {result['warning']}")
-    if result.get("job_id"):
-      print(f"Job ID: {result['job_id']}")
-    return {"data": result.get("data")}
 ```
 
 ### Source Tree Reference
 
 ```
 python/src/the_edge_agent/actions/
-├── llamaextract_actions.py  # Extend with async support
+├── llamaextract_actions.py  # Modify existing functions
 └── ...
 
 python/tests/
-├── test_llamaextract_actions.py  # Add async tests
+├── test_llamaextract_actions.py  # Add parameter tests
 └── ...
 ```
 
@@ -446,34 +212,167 @@ python/tests/
 
 | ID | Priority | Type | Scenario |
 |----|----------|------|----------|
-| T1 | P0 | Unit | Async mode submits to /jobs endpoint |
-| T2 | P0 | Unit | Polling loop continues on PENDING |
-| T3 | P0 | Unit | SUCCESS status fetches result |
-| T4 | P1 | Unit | PARTIAL_SUCCESS returns data with warning |
-| T5 | P0 | Unit | ERROR status returns structured error |
-| T6 | P0 | Unit | Timeout after max_poll_attempts |
-| T7 | P0 | Unit | Overall timeout respected |
-| T8 | P1 | Unit | Transient poll failures retry |
-| T9 | P0 | Unit | job_id included in error responses |
-| T10 | P1 | Unit | async_mode=false uses sync path |
-| T11 | P1 | Integration | Full async flow with mock API |
+| T1 | P0 | Unit | `async_mode=true` uses /jobs endpoint |
+| T2 | P0 | Unit | Custom `polling_interval` is respected |
+| T3 | P0 | Unit | `max_poll_attempts` triggers timeout error |
+| T4 | P1 | Unit | Overall `timeout` triggers before max_attempts |
+| T5 | P0 | Unit | `async_mode=false` uses existing sync behavior |
+| T6 | P1 | Unit | Parameters passed correctly to `_poll_job_status` |
 
 ### Testing Frameworks
 - Python: pytest with `responses` or `requests-mock` for HTTP mocking
 
 ## Definition of Done
 
-- [ ] TEA-BUILTIN-008.5 dependency completed
-- [ ] Async job submission implemented
-- [ ] Polling loop with configurable interval
-- [ ] Result retrieval for all status types
-- [ ] Timeout handling working
+- [x] TEA-BUILTIN-008.5 dependency completed
+- [ ] `async_mode` parameter added and working
+- [ ] `polling_interval` parameter configurable
+- [ ] `max_poll_attempts` parameter implemented
 - [ ] Unit tests passing
-- [ ] Integration tests passing
 - [ ] Documentation updated
-- [ ] Backwards compatible (async_mode=false works)
+- [ ] Backwards compatible
 - [ ] Code reviewed
 - [ ] CI/CD passing
+
+---
+
+## QA Results
+
+### Test Design Review - 2024-12-30
+
+**Reviewer:** Quinn (Test Architect)
+**Assessment:** `docs/qa/assessments/TEA-BUILTIN-008.6-test-design-20251230.md`
+
+#### Summary
+
+| Metric | Value |
+|--------|-------|
+| Total Scenarios | 24 |
+| Unit Tests | 18 (75%) |
+| Integration Tests | 6 (25%) |
+| E2E Tests | 0 (0%) |
+| P0 (Critical) | 10 |
+| P1 (High) | 9 |
+| P2 (Medium) | 5 |
+
+#### Coverage Analysis
+
+- **All 13 Acceptance Criteria have test coverage**
+- **Backwards compatibility**: 5 dedicated regression tests (AC-5, AC-10, AC-11)
+- **Boundary values**: 4 edge case tests for parameter limits
+- **No coverage gaps identified**
+
+#### Key Test Areas
+
+1. **Parameter Validation** (8 tests): All new parameters (`async_mode`, `polling_interval`, `max_poll_attempts`) validated for types, defaults, and edge cases
+2. **API Endpoint Selection** (2 tests): Verify correct endpoint used based on `async_mode` flag
+3. **Polling Behavior** (4 tests): Timing verification, attempt counting, timeout race conditions
+4. **Backwards Compatibility** (5 tests): Ensure 008.5 functionality unchanged
+
+#### Risks Identified
+
+| Risk | Mitigation | Test Coverage |
+|------|------------|---------------|
+| Polling timing drift | Mock `time.sleep`, verify call args | 008.6-INT-004 |
+| Timeout race conditions | Test both timeout-first and attempts-first scenarios | 008.6-INT-001, 002, 006 |
+| Parameter type errors | Explicit type validation tests | 008.6-UNIT-003, 006, 010 |
+
+#### Recommendations
+
+1. **Required Before Development:**
+   - Clarify if `polling_interval` should accept floats (currently assumed yes in 008.6-UNIT-007)
+   - Confirm `async_mode=True` requires `use_rest=True` or auto-enables it
+
+2. **Testing Notes:**
+   - Use `@patch('time.sleep')` for timing verification to avoid slow tests
+   - All LlamaExtract API calls should be mocked (no real API calls in unit/integration tests)
+
+---
+
+## QA Notes
+
+**Date:** 2024-12-30
+**Reviewer:** Quinn (Test Architect)
+**Gate Decision:** READY FOR DEVELOPMENT
+
+### Test Coverage Summary
+
+| Category | Coverage | Notes |
+|----------|----------|-------|
+| Acceptance Criteria | 100% (13/13) | All ACs mapped to test scenarios |
+| Parameter Validation | Complete | 8 tests covering types, defaults, boundaries |
+| Backwards Compatibility | Strong | 5 regression tests for 008.5 behavior |
+| Error Handling | Complete | Timeout, attempt limit, and race conditions covered |
+| API Contract | Complete | Endpoint selection verified (sync vs async) |
+
+**Test Distribution:**
+- P0 (Critical Path): 10 tests - Must pass for release
+- P1 (High Priority): 9 tests - Required for quality bar
+- P2 (Edge Cases): 5 tests - Nice to have, boundary validation
+
+### Risk Areas Identified
+
+| Risk Level | Area | Description | Mitigation |
+|------------|------|-------------|------------|
+| **MEDIUM** | Timeout Race Condition | `timeout` vs `max_poll_attempts` - whichever triggers first must win cleanly | 3 integration tests specifically target this |
+| **MEDIUM** | Polling Timing Accuracy | Real-world network latency may cause drift from `polling_interval` | Mock-based testing; document as best-effort |
+| **LOW** | Parameter Coercion | `async_mode=True` + `use_rest=False` - undefined behavior | Add explicit validation or auto-enable `use_rest` |
+| **LOW** | Float Interval Support | Story unclear if `polling_interval` accepts floats | Recommend: accept floats, truncate to 0.1s minimum |
+
+### Recommended Test Scenarios
+
+**Must Have (P0 - Critical):**
+1. `async_mode=True` routes to `/api/v1/extraction/jobs` endpoint
+2. `async_mode=False` (default) uses existing sync behavior unchanged
+3. `polling_interval` is respected between poll requests
+4. `max_poll_attempts` stops polling with appropriate error
+5. Overall `timeout` triggers before attempts if configured shorter
+6. All 008.5 parameters continue to function (`file`, `schema`, `mode`, etc.)
+
+**Should Have (P1 - High):**
+1. Invalid `async_mode` type raises `TypeError`
+2. `polling_interval=0` or negative raises `ValueError`
+3. `max_poll_attempts=0` or negative raises `ValueError`
+4. Sync endpoint auto-poll still works when job response detected
+5. Error messages include attempt count and timing info
+
+**Could Have (P2 - Boundary):**
+1. `polling_interval=1` (minimum practical)
+2. `polling_interval=300` (5 minutes, large interval)
+3. `max_poll_attempts=1` (single attempt allowed)
+4. `max_poll_attempts=1000` (large value, no overflow)
+5. YAML examples in documentation parse correctly
+
+### Concerns / Blockers
+
+**Clarifications Required Before Development:**
+
+1. **Float Polling Interval**: Should `polling_interval=2.5` be accepted? Currently assumed YES in test design (008.6-UNIT-007). If NO, add explicit integer-only validation.
+
+2. **Parameter Coupling**: What happens with `async_mode=True, use_rest=False`?
+   - Option A: Raise `ValueError` (explicit is better)
+   - Option B: Auto-enable `use_rest=True` with warning
+   - **Recommendation:** Option A - explicit error
+
+3. **No Blockers Identified** - Story can proceed to development.
+
+### Testing Implementation Notes
+
+- Use `@responses.activate` or `requests-mock` for HTTP mocking
+- Use `@patch('time.sleep')` to verify polling intervals without slow tests
+- All LlamaExtract API calls MUST be mocked (no real API calls in CI)
+- Test file: `python/tests/test_llamaextract_actions.py`
+
+### QA Validation Checklist
+
+- [x] All acceptance criteria have corresponding tests
+- [x] Backwards compatibility explicitly tested (5 regression tests)
+- [x] Error scenarios covered (invalid inputs, timeouts, race conditions)
+- [x] Boundary values tested (min/max intervals and attempts)
+- [x] Test priorities align with business risk
+- [x] No overlapping coverage between test levels
+- [ ] **PENDING:** Clarification on float interval support
+- [ ] **PENDING:** Clarification on `async_mode`/`use_rest` coupling
 
 ---
 
@@ -482,3 +381,5 @@ python/tests/
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2024-12-23 | 0.1.0 | Initial story creation with API research | Sarah (PO) |
+| 2024-12-30 | 0.2.0 | Added design decision section, API limitation note, and reference to TEA-BUILTIN-008.7 | Sarah (PO) |
+| 2024-12-30 | 0.3.0 | **Reduced scope**: 008.5 already has polling infrastructure; this story now focuses on exposing configurable parameters only | Sarah (PO) |

@@ -16,7 +16,9 @@ use clap::{Parser, Subcommand};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use the_edge_agent::actions;
@@ -50,6 +52,7 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Execute a workflow
     Run {
@@ -101,6 +104,38 @@ enum Commands {
         /// [NOT IMPLEMENTED] Python file for actions (Python only)
         #[arg(long, value_name = "FILE")]
         actions_file: Option<Vec<String>>,
+
+        /// Enable interactive human-in-the-loop mode
+        #[arg(short = 'I', long, conflicts_with = "stream")]
+        interactive: bool,
+
+        /// State key(s) to extract question from (comma-separated)
+        #[arg(long, default_value = "question,prompt,message,ask,next_question")]
+        question_key: String,
+
+        /// State key to inject user response into
+        #[arg(long, default_value = "response")]
+        response_key: String,
+
+        /// State key(s) that signal completion (comma-separated)
+        #[arg(long, default_value = "complete,done,finished")]
+        complete_key: String,
+
+        /// Response to use when user types 'skip'
+        #[arg(long, default_value = "I don't have information about this.")]
+        skip_response: String,
+
+        /// State key(s) to display to user (comma-separated, default: question only)
+        #[arg(long)]
+        display_key: Option<String>,
+
+        /// Display format: pretty, json, raw (default: pretty)
+        #[arg(long, default_value = "pretty")]
+        display_format: String,
+
+        /// Input timeout in seconds (for automated testing)
+        #[arg(long)]
+        input_timeout: Option<u64>,
     },
 
     /// Resume execution from a checkpoint
@@ -209,6 +244,14 @@ fn main() -> Result<()> {
             auto_continue,
             actions_module,
             actions_file,
+            interactive,
+            question_key,
+            response_key,
+            complete_key,
+            skip_response,
+            display_key,
+            display_format,
+            input_timeout,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -233,6 +276,14 @@ fn main() -> Result<()> {
                 interrupt_before,
                 interrupt_after,
                 auto_continue,
+                interactive,
+                question_key,
+                response_key,
+                complete_key,
+                skip_response,
+                display_key,
+                display_format,
+                input_timeout,
             )
         }
 
@@ -275,6 +326,14 @@ fn run_workflow(
     interrupt_before: Option<String>,
     interrupt_after: Option<String>,
     _auto_continue: bool,
+    interactive: bool,
+    question_key: String,
+    response_key: String,
+    complete_key: String,
+    skip_response: String,
+    display_key: Option<String>,
+    display_format: String,
+    input_timeout: Option<u64>,
 ) -> Result<()> {
     // Load workflow
     let mut engine = YamlEngine::new();
@@ -317,6 +376,9 @@ fn run_workflow(
             compiled.with_interrupt_after(nodes.split(',').map(|s| s.trim().to_string()).collect());
     }
 
+    // Get workflow name before executor takes ownership (for interactive mode banner)
+    let workflow_name_from_graph = compiled.name().to_string();
+
     // Setup executor with actions and observability (TEA-OBS-001.2)
     let registry = Arc::new(the_edge_agent::engine::executor::ActionRegistry::new());
     actions::register_defaults(&registry);
@@ -327,20 +389,55 @@ fn run_workflow(
         Executor::with_actions(compiled, registry)?
     };
 
+    // Interactive mode requires checkpointing (AC-14)
+    let checkpoint_dir = if interactive {
+        Some(checkpoint_dir.unwrap_or_else(|| PathBuf::from("/tmp/tea_checkpoints")))
+    } else {
+        checkpoint_dir
+    };
+
     // Setup checkpointer
-    let checkpointer: Option<Arc<dyn Checkpointer>> = checkpoint_dir.map(|dir| {
+    let checkpointer: Option<Arc<dyn Checkpointer>> = checkpoint_dir.clone().map(|dir| {
+        fs::create_dir_all(&dir).expect("Failed to create checkpoint directory");
         Arc::new(FileCheckpointer::new(dir).expect("Failed to create checkpointer"))
             as Arc<dyn Checkpointer>
     });
 
     let options = ExecutionOptions {
         stream,
-        checkpointer,
+        checkpointer: checkpointer.clone(),
         resume_from: None,
         ..Default::default()
     };
 
-    // Execute
+    // Branch to interactive mode if requested
+    if interactive {
+        // Get workflow name for banner
+        let workflow_name = if workflow_name_from_graph.is_empty() {
+            file.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Workflow".to_string())
+        } else {
+            workflow_name_from_graph
+        };
+
+        return run_interactive(
+            executor,
+            initial_state,
+            options,
+            checkpoint_dir.unwrap(),
+            workflow_name,
+            question_key,
+            response_key,
+            complete_key,
+            skip_response,
+            display_key,
+            display_format,
+            input_timeout,
+        );
+    }
+
+    // Execute (non-interactive mode)
     match executor.execute(initial_state, &options) {
         Ok(events) => {
             if stream {
@@ -361,6 +458,256 @@ fn run_workflow(
             std::process::exit(130); // SIGINT exit code
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Run workflow in interactive mode (TEA-CLI-005a, TEA-CLI-005b)
+/// Loops on interrupts, prompting user for input until completion or quit.
+#[allow(clippy::too_many_arguments)]
+fn run_interactive(
+    executor: Executor,
+    initial_state: JsonValue,
+    options: ExecutionOptions,
+    checkpoint_dir: PathBuf,
+    workflow_name: String,
+    question_key: String,
+    response_key: String,
+    complete_key: String,
+    skip_response: String,
+    display_key: Option<String>,
+    display_format: String,
+    input_timeout: Option<u64>,
+) -> Result<()> {
+    // Setup Ctrl+C signal handler (AC-10)
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let interrupted_clone = interrupted.clone();
+    let checkpoint_dir_clone = checkpoint_dir.clone();
+
+    ctrlc::set_handler(move || {
+        interrupted_clone.store(true, Ordering::SeqCst);
+        eprintln!();
+        eprintln!("------------------------------------------------------------");
+        eprintln!(" Interrupted! Saving checkpoint...");
+        eprintln!("------------------------------------------------------------");
+        eprintln!();
+        eprintln!("Checkpoint directory: {:?}", checkpoint_dir_clone);
+        eprintln!("Resume with: tea resume <checkpoint> --workflow <file>");
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    // Parse key lists
+    let question_keys: Vec<&str> = question_key.split(',').map(|s| s.trim()).collect();
+    let complete_keys: Vec<&str> = complete_key.split(',').map(|s| s.trim()).collect();
+    let display_keys: Option<Vec<&str>> = display_key
+        .as_ref()
+        .map(|k| k.split(',').map(|s| s.trim()).collect());
+
+    let mut current_state = initial_state;
+    let mut iteration = 0;
+
+    // Display welcome banner (AC-1, AC-2)
+    display_welcome(&workflow_name);
+
+    loop {
+        // Check if interrupted by Ctrl+C (AC-10)
+        if interrupted.load(Ordering::SeqCst) {
+            // Find latest checkpoint to report
+            if let Ok(Some(checkpoint_path)) = find_latest_checkpoint(&checkpoint_dir) {
+                eprintln!("Checkpoint saved: {:?}", checkpoint_path);
+            }
+            return Ok(());
+        }
+
+        iteration += 1;
+
+        // Execute workflow
+        match executor.execute(current_state.clone(), &options) {
+            Ok(events) => {
+                // Workflow completed normally (reached __end__) - AC-17
+                eprintln!();
+                eprintln!("============================================================");
+                eprintln!(" Workflow complete!");
+                eprintln!("============================================================");
+                if let Some(last) = events.last() {
+                    // Display final state respecting filters (AC-9)
+                    display_final_state(&last.state, display_keys.as_deref(), &display_format);
+                }
+                return Ok(());
+            }
+            Err(TeaError::Interrupt(node)) => {
+                tracing::debug!("Interrupted at node: {}", node);
+
+                // Find latest checkpoint - AC-16
+                let checkpoint_path = match find_latest_checkpoint(&checkpoint_dir)? {
+                    Some(path) => path,
+                    None => {
+                        // AC-13: Helpful checkpoint error message
+                        eprintln!();
+                        eprintln!("============================================================");
+                        eprintln!(" Error: Checkpoint Not Found");
+                        eprintln!("============================================================");
+                        eprintln!();
+                        eprintln!("An interrupt occurred but no checkpoint file was found.");
+                        eprintln!();
+                        eprintln!("Possible causes:");
+                        eprintln!("  - The checkpoint directory is not writable");
+                        eprintln!("  - The checkpoint was not created before the interrupt");
+                        eprintln!("  - Permissions issue on the directory");
+                        eprintln!();
+                        eprintln!("Checkpoint directory: {:?}", checkpoint_dir);
+                        eprintln!();
+                        eprintln!("Try:");
+                        eprintln!("  1. Ensure the directory exists and is writable");
+                        eprintln!("  2. Check disk space availability");
+                        eprintln!("  3. Run with -v for verbose logging");
+                        std::process::exit(1);
+                    }
+                };
+
+                // Load checkpoint state
+                let checkpointer = FileCheckpointer::new(&checkpoint_dir)?;
+                let checkpoint = match checkpointer.load(checkpoint_path.to_str().unwrap())? {
+                    Some(cp) => cp,
+                    None => {
+                        // AC-13: Helpful checkpoint load error
+                        eprintln!();
+                        eprintln!("============================================================");
+                        eprintln!(" Error: Failed to Load Checkpoint");
+                        eprintln!("============================================================");
+                        eprintln!();
+                        eprintln!("The checkpoint file exists but could not be loaded.");
+                        eprintln!("File: {:?}", checkpoint_path);
+                        eprintln!();
+                        eprintln!("Possible causes:");
+                        eprintln!("  - Checkpoint file is corrupted");
+                        eprintln!("  - File was created by incompatible version");
+                        eprintln!("  - Partial write due to previous crash");
+                        eprintln!();
+                        eprintln!("Try:");
+                        eprintln!("  1. Delete the checkpoint and restart");
+                        eprintln!("  2. Check for other checkpoint files in directory");
+                        std::process::exit(1);
+                    }
+                };
+
+                let checkpoint_state = checkpoint.state;
+
+                // AC-14: Handle empty state gracefully
+                if checkpoint_state
+                    .as_object()
+                    .map(|m| m.is_empty())
+                    .unwrap_or(true)
+                {
+                    eprintln!();
+                    eprintln!("------------------------------------------------------------");
+                    eprintln!(" Warning: Empty State");
+                    eprintln!("------------------------------------------------------------");
+                    eprintln!();
+                    eprintln!("The workflow state is empty at this interrupt point.");
+                    eprintln!("This may indicate the workflow hasn't produced output yet.");
+                    eprintln!("Continuing to next iteration...");
+                    eprintln!();
+                    current_state = checkpoint_state;
+                    continue;
+                }
+
+                // Check for completion via complete keys - AC-5, AC-9
+                if is_complete(&checkpoint_state, &complete_keys) {
+                    eprintln!();
+                    eprintln!("============================================================");
+                    eprintln!(" Complete!");
+                    eprintln!("============================================================");
+                    display_final_state(
+                        &checkpoint_state,
+                        display_keys.as_deref(),
+                        &display_format,
+                    );
+                    return Ok(());
+                }
+
+                // Extract question
+                let question = extract_question(&checkpoint_state, &question_keys);
+
+                // Display question with formatting (AC-3, AC-4, AC-7, AC-8)
+                display_question(
+                    question.as_deref(),
+                    &checkpoint_state,
+                    iteration,
+                    display_keys.as_deref(),
+                    &display_format,
+                    &question_keys,
+                );
+
+                // Prompt for input
+                eprint!("Your answer: ");
+                io::stderr().flush()?;
+
+                // Read user input with optional timeout (AC-11)
+                let input_result = if let Some(timeout_secs) = input_timeout {
+                    read_multiline_input_with_timeout(std::time::Duration::from_secs(timeout_secs))
+                } else {
+                    read_multiline_input()
+                };
+
+                match input_result {
+                    Ok(InteractiveCommand::Quit) => {
+                        // quit/exit ends session
+                        eprintln!();
+                        eprintln!("------------------------------------------------------------");
+                        eprintln!(" Session ended by user.");
+                        eprintln!("------------------------------------------------------------");
+                        eprintln!();
+                        eprintln!("Checkpoint saved: {:?}", checkpoint_path);
+                        eprintln!(
+                            "Resume with: tea resume {:?} --workflow <file>",
+                            checkpoint_path
+                        );
+                        return Ok(());
+                    }
+                    Ok(InteractiveCommand::Skip) => {
+                        // skip sends default skip response
+                        eprintln!();
+                        eprintln!(" (Skipping with default response)");
+                        let mut new_state = checkpoint_state.clone();
+                        inject_response(&mut new_state, &response_key, &skip_response);
+                        current_state = new_state;
+                    }
+                    Ok(InteractiveCommand::Response(response)) => {
+                        // Inject response into state
+                        let mut new_state = checkpoint_state.clone();
+                        inject_response(&mut new_state, &response_key, &response);
+                        current_state = new_state;
+                    }
+                    Ok(InteractiveCommand::Timeout) => {
+                        // Input timeout occurred
+                        eprintln!();
+                        eprintln!("------------------------------------------------------------");
+                        eprintln!(" Input timeout");
+                        eprintln!("------------------------------------------------------------");
+                        eprintln!();
+                        eprintln!(
+                            "No input received within {} seconds.",
+                            input_timeout.unwrap()
+                        );
+                        eprintln!("Checkpoint saved: {:?}", checkpoint_path);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        // Input error
+                        eprintln!();
+                        eprintln!("Input error: {}", e);
+                        return Err(e);
+                    }
+                }
+
+                // Update options to resume from checkpoint
+                // Note: The next execute call will use the updated current_state
+            }
+            Err(e) => {
+                // Other errors propagate up
+                return Err(e.into());
+            }
+        }
     }
 }
 
@@ -679,4 +1026,338 @@ fn parse_secrets(
     }
 
     Ok(result)
+}
+
+// ============================================================================
+// Interactive Mode Helpers (TEA-CLI-005a, TEA-CLI-005b)
+// ============================================================================
+
+/// User command during interactive mode
+#[derive(Debug, PartialEq)]
+enum InteractiveCommand {
+    /// User provided response text
+    Response(String),
+    /// User wants to quit/exit
+    Quit,
+    /// User wants to skip this question
+    Skip,
+    /// Input timeout occurred (TEA-CLI-005b)
+    Timeout,
+}
+
+// ----------------------------------------------------------------------------
+// Display Functions (TEA-CLI-005b)
+// ----------------------------------------------------------------------------
+
+/// Display welcome banner with workflow name (AC-1, AC-2)
+fn display_welcome(workflow_name: &str) {
+    eprintln!();
+    eprintln!("============================================================");
+    eprintln!("   TEA - {} (Interactive Mode)", workflow_name);
+    eprintln!("============================================================");
+    eprintln!();
+    eprintln!("Commands:");
+    eprintln!("  - Type your answer and press Enter twice to send");
+    eprintln!("  - 'quit' or 'exit' to end session");
+    eprintln!("  - 'skip' to skip current question");
+    eprintln!();
+    eprintln!("------------------------------------------------------------");
+}
+
+/// Display question with iteration counter and optional state keys (AC-3, AC-4, AC-7, AC-8, AC-12)
+fn display_question(
+    question: Option<&str>,
+    state: &JsonValue,
+    iteration: usize,
+    display_keys: Option<&[&str]>,
+    format: &str,
+    expected_keys: &[&str],
+) {
+    eprintln!();
+    eprintln!("------------------------------------------------------------");
+    eprintln!(" Question ({})", iteration);
+    eprintln!("------------------------------------------------------------");
+    eprintln!();
+
+    match question {
+        Some(q) => {
+            // AC-15: Handle very long questions (wrap at 80 chars)
+            let wrapped = wrap_text(q, 76);
+            eprintln!("{}", wrapped);
+        }
+        None => {
+            // AC-12: Warning when question key not found with available keys
+            eprintln!("Warning: No question found in state.");
+            eprintln!();
+            eprintln!("Available keys: {:?}", state_keys(state));
+            eprintln!("Expected one of: {:?}", expected_keys);
+        }
+    }
+
+    // Display additional state keys if specified (AC-5, AC-8)
+    if let Some(keys) = display_keys {
+        eprintln!();
+        for key in keys {
+            if let Some(value) = state.get(*key) {
+                match format {
+                    "json" => eprintln!(
+                        "{}: {}",
+                        key,
+                        serde_json::to_string(value).unwrap_or_default()
+                    ),
+                    "raw" => eprintln!("{}: {:?}", key, value),
+                    _ => eprintln!("{}: {}", key, format_value_pretty(value)),
+                }
+            }
+        }
+    }
+
+    eprintln!();
+    eprintln!("------------------------------------------------------------");
+    eprintln!("Your answer (Enter twice to send):");
+}
+
+/// Display final state respecting display filters (AC-9)
+fn display_final_state(state: &JsonValue, display_keys: Option<&[&str]>, format: &str) {
+    eprintln!();
+
+    match display_keys {
+        Some(keys) if !keys.is_empty() => {
+            // Display only specified keys
+            for key in keys {
+                if let Some(value) = state.get(*key) {
+                    match format {
+                        "json" => println!(
+                            "{}: {}",
+                            key,
+                            serde_json::to_string(value).unwrap_or_default()
+                        ),
+                        "raw" => println!("{}: {:?}", key, value),
+                        _ => println!("{}: {}", key, format_value_pretty(value)),
+                    }
+                }
+            }
+        }
+        _ => {
+            // Display full state
+            match format {
+                "json" => println!("{}", serde_json::to_string(state).unwrap_or_default()),
+                "raw" => println!("{:?}", state),
+                _ => println!(
+                    "{}",
+                    serde_json::to_string_pretty(state).unwrap_or_default()
+                ),
+            }
+        }
+    }
+}
+
+/// Format a JSON value in a human-readable way (AC-6)
+fn format_value_pretty(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(s) => {
+            // AC-16: Handle binary/non-UTF8 by checking for replacement chars
+            if s.contains('\u{FFFD}') {
+                format!("<binary data, {} bytes>", s.len())
+            } else {
+                s.clone()
+            }
+        }
+        JsonValue::Array(arr) => {
+            // Format arrays nicely
+            let items: Vec<String> = arr
+                .iter()
+                .map(|v| match v {
+                    JsonValue::String(s) => s.clone(),
+                    _ => v.to_string(),
+                })
+                .collect();
+            items.join(", ")
+        }
+        JsonValue::Object(_) => serde_json::to_string_pretty(value).unwrap_or_default(),
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Number(n) => n.to_string(),
+        JsonValue::Null => "null".to_string(),
+    }
+}
+
+/// Wrap text at specified width (AC-15)
+fn wrap_text(text: &str, width: usize) -> String {
+    let mut result = String::new();
+    for line in text.lines() {
+        if line.len() <= width {
+            result.push_str(line);
+            result.push('\n');
+        } else {
+            let mut current_line = String::new();
+            for word in line.split_whitespace() {
+                if current_line.is_empty() {
+                    current_line = word.to_string();
+                } else if current_line.len() + 1 + word.len() <= width {
+                    current_line.push(' ');
+                    current_line.push_str(word);
+                } else {
+                    result.push_str(&current_line);
+                    result.push('\n');
+                    current_line = word.to_string();
+                }
+            }
+            if !current_line.is_empty() {
+                result.push_str(&current_line);
+                result.push('\n');
+            }
+        }
+    }
+    result.trim_end().to_string()
+}
+
+/// Read multiline input from stdin, double-enter (empty line) to send.
+/// Returns InteractiveCommand indicating user intent.
+fn read_multiline_input() -> Result<InteractiveCommand> {
+    let stdin = io::stdin();
+    let mut lines = Vec::new();
+
+    for line_result in stdin.lock().lines() {
+        let line = line_result.context("Failed to read input line")?;
+
+        // Check for quit/exit commands (only on first line if empty so far)
+        if lines.is_empty() {
+            let trimmed = line.trim().to_lowercase();
+            if trimmed == "quit" || trimmed == "exit" {
+                return Ok(InteractiveCommand::Quit);
+            }
+            if trimmed == "skip" {
+                return Ok(InteractiveCommand::Skip);
+            }
+        }
+
+        // Check for double-enter (empty line after content or another empty line)
+        if line.is_empty() {
+            if lines.is_empty() {
+                // First line is empty - wait for another empty to send nothing
+                lines.push(String::new());
+            } else if lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+                // Double empty line - done
+                lines.pop(); // Remove the first empty line
+                break;
+            } else {
+                // Single empty line after content - mark it
+                lines.push(String::new());
+            }
+        } else {
+            lines.push(line);
+        }
+    }
+
+    // Join lines and trim
+    let response = lines.join("\n").trim().to_string();
+    Ok(InteractiveCommand::Response(response))
+}
+
+/// Read multiline input with timeout (AC-11)
+/// Uses a separate thread to read input and a channel with timeout.
+fn read_multiline_input_with_timeout(timeout: std::time::Duration) -> Result<InteractiveCommand> {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let (tx, rx) = mpsc::channel();
+
+    // Spawn thread to read input
+    thread::spawn(move || {
+        let result = read_multiline_input();
+        let _ = tx.send(result);
+    });
+
+    // Wait for result with timeout
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(InteractiveCommand::Timeout),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            // Thread died unexpectedly
+            anyhow::bail!("Input thread disconnected unexpectedly")
+        }
+    }
+}
+
+/// Extract question from state using configurable keys (tries each in order)
+fn extract_question(state: &JsonValue, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(value) = state.get(*key) {
+            if let Some(s) = value.as_str() {
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+            // Also handle arrays of strings (multiple questions)
+            if let Some(arr) = value.as_array() {
+                let texts: Vec<&str> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !texts.is_empty() {
+                    return Some(texts.join("\n"));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check if workflow is complete using configurable keys
+fn is_complete(state: &JsonValue, keys: &[&str]) -> bool {
+    for key in keys {
+        if let Some(value) = state.get(*key) {
+            if value.as_bool().unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Inject response into state under the specified key
+fn inject_response(state: &mut JsonValue, key: &str, response: &str) {
+    if let JsonValue::Object(ref mut map) = state {
+        map.insert(key.to_string(), JsonValue::String(response.to_string()));
+    }
+}
+
+/// Get list of all keys in state (for debugging when question not found)
+fn state_keys(state: &JsonValue) -> Vec<String> {
+    match state {
+        JsonValue::Object(map) => map.keys().cloned().collect(),
+        _ => vec![],
+    }
+}
+
+/// Find the most recent checkpoint file in directory
+fn find_latest_checkpoint(dir: &PathBuf) -> Result<Option<PathBuf>> {
+    if !dir.exists() {
+        return Ok(None);
+    }
+
+    let mut latest: Option<(PathBuf, std::time::SystemTime)> = None;
+
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        // Only consider .bin files (checkpoint files)
+        if path.extension().map(|e| e == "bin").unwrap_or(false) {
+            if let Ok(metadata) = entry.metadata() {
+                if let Ok(modified) = metadata.modified() {
+                    match &latest {
+                        None => latest = Some((path, modified)),
+                        Some((_, prev_time)) if modified > *prev_time => {
+                            latest = Some((path, modified));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(latest.map(|(path, _)| path))
 }

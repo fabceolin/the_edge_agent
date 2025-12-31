@@ -1,0 +1,25 @@
+name: interactive-interview
+description: A simple interview workflow for testing interactive mode
+
+nodes:
+  - name: ask_name
+    language: lua
+    run: |
+      return { question = "What is your name?", step = "ask_name" }
+    interrupt: after
+
+  - name: greet
+    language: lua
+    run: |
+      local name = state.response or "stranger"
+      return { greeting = "Hello, " .. name .. "!", step = "greet", complete = true }
+
+edges:
+  - from: __start__
+    to: ask_name
+
+  - from: ask_name
+    to: greet
+
+  - from: greet
+    to: __end__

@@ -1,0 +1,31 @@
+name: parity-test-interactive
+description: Test workflow for CLI parity testing between Rust and Python
+
+state_schema:
+  test_id: str
+  question: str
+  response: str
+  complete: bool
+
+nodes:
+  - name: ask
+    language: lua
+    run: |
+      return {question = "What is your test input?"}
+    interrupt: after
+
+  - name: process
+    language: lua
+    run: |
+      return {
+        complete = true,
+        result = "Received: " .. (state.response or "nothing")
+      }
+
+edges:
+  - from: __start__
+    to: ask
+  - from: ask
+    to: process
+  - from: process
+    to: __end__

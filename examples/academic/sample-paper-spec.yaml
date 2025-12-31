@@ -1,0 +1,104 @@
+# =============================================================================
+# SAMPLE PAPER SPECIFICATION
+# =============================================================================
+# This is an example specification file for the kiroku-document-writer.yaml agent.
+# Use this as a template for your own academic paper generation workflows.
+#
+# USAGE:
+#   cd python
+#   python -m the_edge_agent.cli run ../examples/academic/kiroku-document-writer.yaml \
+#     --spec ../examples/academic/sample-paper-spec.yaml
+#
+# See docs/examples/langraph-to-tea-migration.md for the full migration guide.
+# =============================================================================
+
+# =============================================================================
+# METADATA
+# Required fields that define the paper's identity
+# =============================================================================
+
+# title: The working title of your paper (may be revised by AI if suggest_title_flag is true)
+title: "Edge Computing for Machine Learning Inference"
+
+# hypothesis: The main claim or research question your paper addresses
+# This guides the AI's research and content generation
+hypothesis: |
+  Edge computing can significantly reduce latency in machine learning
+  inference while maintaining acceptable accuracy levels, making it
+  suitable for real-time applications in IoT environments.
+
+# area_of_paper: The academic field or domain
+# Used to contextualize research queries and writing style
+area_of_paper: "Computer Science / Edge Computing / Machine Learning"
+
+# type_of_document: The document format (Technical Report, Research Paper, Survey, etc.)
+# Affects tone, structure, and formatting expectations
+type_of_document: "Technical Report"
+
+# =============================================================================
+# STRUCTURE
+# Define the sections and their lengths
+# =============================================================================
+
+# section_names: Ordered list of section titles
+# The AI will create these sections in order
+section_names:
+  - Introduction
+  - Background
+  - Methodology
+  - Results
+  - Conclusion
+
+# number_of_paragraphs: Number of paragraphs for each section
+# Must have same length as section_names
+# Each paragraph will contain topic sentences expanded to full paragraphs
+number_of_paragraphs:
+  Introduction: 3
+  Background: 4
+  Methodology: 3
+  Results: 3
+  Conclusion: 2
+
+# =============================================================================
+# CONTENT CONTROL
+# Parameters that affect generation quality and length
+# =============================================================================
+
+# sentences_per_paragraph: Minimum sentences per generated paragraph
+# Higher values produce more detailed content
+sentences_per_paragraph: 4
+
+# max_revisions: Number of AI reflection/revision cycles
+# Higher values improve quality but increase API costs and time
+max_revisions: 2
+
+# number_of_queries: How many web search queries to generate for research
+# More queries = more research content but higher latency
+number_of_queries: 5
+
+# =============================================================================
+# OPTIONAL FLAGS
+# Enable/disable features
+# =============================================================================
+
+# suggest_title_flag: Let AI suggest a title based on hypothesis
+# If true, the AI will propose a title that you can accept or modify
+suggest_title_flag: true
+
+# generate_citations_flag: Generate references section
+# If true, creates academic citations from research content
+generate_citations_flag: true
+
+# =============================================================================
+# OPTIONAL: Pre-defined Results
+# If your paper reports experimental results, include them here
+# =============================================================================
+
+# results: Known findings or experimental data to incorporate
+# Leave empty if the paper is theoretical or exploratory
+results: |
+  Experimental findings from our edge computing deployment:
+  - Latency reduced by 60% compared to cloud-based inference
+  - Model accuracy maintained at 95% of the original cloud model
+  - Power consumption reduced by 40% on edge devices
+  - Supported real-time inference at 30 FPS on Raspberry Pi 4
