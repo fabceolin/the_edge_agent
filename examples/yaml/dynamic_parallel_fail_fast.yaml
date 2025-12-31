@@ -1,0 +1,85 @@
+# Dynamic Parallel Fan-Out Example: Fail-Fast Mode
+# This example demonstrates fail_fast behavior where processing stops on first error
+# Useful when all items must succeed or none should be processed
+
+name: batch-validator
+description: Validate data items with fail-fast behavior
+
+nodes:
+  # Initialize items with one that will fail validation
+  - name: setup
+    run: |
+      return {
+          "items_to_validate": [
+              {"id": 1, "value": 100, "type": "valid"},
+              {"id": 2, "value": 200, "type": "valid"},
+              {"id": 3, "value": -50, "type": "invalid"},  # This will fail
+              {"id": 4, "value": 400, "type": "valid"},
+              {"id": 5, "value": 500, "type": "valid"}
+          ]
+      }
+
+  # Validate all items - will stop on first failure
+  - name: validate_all
+    type: dynamic_parallel
+    items: "{{ state.items_to_validate }}"
+    item_var: item
+    index_var: idx
+    max_concurrency: 2
+    fail_fast: true  # Stop processing when first validation fails
+    steps:
+      - name: check_value
+        run: |
+          item = state.get("item", {})
+          value = item.get("value", 0)
+
+          if value < 0:
+              raise ValueError(f"Invalid value {value} for item {item.get('id')}")
+
+          return {
+              "validated_item": {
+                  "id": item.get("id"),
+                  "value": value,
+                  "validation_status": "passed"
+              }
+          }
+
+      - name: log_success
+        run: |
+          item = state.get("validated_item", {})
+          return {
+              "log_entry": f"Item {item.get('id')} validated successfully"
+          }
+    output: validation_results
+
+  # This node may not be reached if fail_fast triggers
+  - name: report
+    run: |
+      results = state.get("validation_results", [])
+
+      passed = []
+      failed = []
+
+      for result in results:
+          if "error" in str(result):
+              failed.append(result)
+          else:
+              passed.append(result.state.get("validated_item", {}))
+
+      return {
+          "report": {
+              "passed_count": len(passed),
+              "failed_count": len(failed),
+              "passed_items": passed
+          }
+      }
+
+edges:
+  - from: __start__
+    to: setup
+  - from: setup
+    to: validate_all
+  - from: validate_all
+    to: report
+  - from: report
+    to: __end__

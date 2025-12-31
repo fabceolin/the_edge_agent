@@ -11,6 +11,7 @@ in YAML agent configurations. It supports:
 - Multi-step execution (steps:)
 - Expression evaluation
 - While-loop nodes for autonomous iteration
+- Dynamic parallel nodes for runtime fan-out (TEA-YAML-006)
 
 TEA-PY-008.2: Extracted from yaml_engine.py for modularity.
 
@@ -24,15 +25,20 @@ Example usage:
     {'x': 1}
 """
 
+import copy
 import json
+import os
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .stategraph import StateGraph
     from .yaml_engine import YAMLEngine
+
+from .parallel import ParallelFlowResult, ParallelConfig, CancellationToken
 
 
 class NodeFactory:
@@ -91,6 +97,28 @@ class NodeFactory:
         # Handle while_loop node type (TEA-PY-003)
         if node_type == "while_loop":
             run_func = self._create_while_loop_function(node_config)
+            # Wrap with auto-trace if enabled
+            if (
+                run_func is not None
+                and self._engine._auto_trace
+                and self._engine._trace_context is not None
+            ):
+                run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+            # TEA-OBS-001.1: Wrap with observability if enabled
+            if (
+                run_func is not None
+                and self._engine._enable_observability
+                and self._engine._observability_context is not None
+            ):
+                run_func = self._wrap_with_observability(
+                    run_func, node_name, node_config
+                )
+            graph.add_node(node_name, run=run_func)
+            return
+
+        # Handle dynamic_parallel node type (TEA-YAML-006)
+        if node_type == "dynamic_parallel":
+            run_func = self._create_dynamic_parallel_function(node_config)
             # Wrap with auto-trace if enabled
             if (
                 run_func is not None
@@ -655,9 +683,13 @@ class NodeFactory:
                 extra_context = {"result": result}
                 for key, template in output_config.items():
                     if isinstance(template, str):
-                        output_result[key] = engine._process_template(
+                        value = engine._process_template(
                             template, state, extra_context=extra_context
                         )
+                        # Convert None to empty string to prevent downstream
+                        # "argument of type 'NoneType' is not iterable" errors
+                        # when using `in` operator on output values
+                        output_result[key] = value if value is not None else ""
                     else:
                         output_result[key] = template
                 return output_result
@@ -876,3 +908,443 @@ class NodeFactory:
             return current_state
 
         return run_while_loop
+
+    def _create_dynamic_parallel_function(
+        self, node_config: Dict[str, Any]
+    ) -> Callable:
+        """
+        Create a function that executes dynamic parallel fan-out.
+
+        TEA-YAML-006: Dynamic parallel node for runtime fan-out.
+
+        Args:
+            node_config: Node configuration with:
+                - name: Node name
+                - type: 'dynamic_parallel'
+                - items: Jinja2 expression returning iterable
+                - item_var: Variable name for current item (default: 'item')
+                - index_var: Variable name for current index (default: 'index')
+                - action: Action configuration (Option A)
+                - steps: Steps list (Option B)
+                - subgraph: Subgraph path (Option C)
+                - input: State mapping for subgraph
+                - fan_in: Target node name for results
+                - parallel_config: Concurrency configuration
+                  - max_concurrency: Max parallel executions
+                  - fail_fast: Cancel on first failure
+
+        Returns:
+            Callable that executes the dynamic parallel fan-out
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        node_name = node_config["name"]
+        items_expr = node_config.get("items")
+        item_var = node_config.get("item_var", "item")
+        index_var = node_config.get("index_var", "index")
+        action_config = node_config.get("action")
+        steps_config = node_config.get("steps")
+        subgraph_path = node_config.get("subgraph")
+        input_mapping = node_config.get("input", {})
+        fan_in_target = node_config.get("fan_in")
+        parallel_config = node_config.get("parallel_config", {})
+        max_concurrency = parallel_config.get("max_concurrency")
+        fail_fast = parallel_config.get("fail_fast", False)
+
+        # Parse-time validation (AC: 9)
+        if not items_expr:
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}' requires 'items' expression"
+            )
+
+        # Validate exactly one execution mode
+        mode_count = sum(
+            [
+                action_config is not None,
+                steps_config is not None,
+                subgraph_path is not None,
+            ]
+        )
+        if mode_count != 1:
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}' requires exactly one of: "
+                f"action, steps, subgraph"
+            )
+
+        if not fan_in_target:
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}' requires 'fan_in' target node"
+            )
+
+        # Validate max_concurrency if specified (AC: 10)
+        if max_concurrency is not None:
+            if not isinstance(max_concurrency, int) or max_concurrency < 1:
+                raise ValueError(
+                    f"dynamic_parallel node '{node_name}': max_concurrency must be "
+                    f"positive integer, got {max_concurrency}"
+                )
+
+        # Determine execution mode and prepare branch function
+        if action_config:
+            mode = "action"
+            branch_func = self._create_dynamic_parallel_action_branch(
+                node_name, action_config, item_var, index_var
+            )
+        elif steps_config:
+            mode = "steps"
+            branch_func = self._create_dynamic_parallel_steps_branch(
+                node_name, steps_config, item_var, index_var
+            )
+        else:
+            mode = "subgraph"
+            branch_func = self._create_dynamic_parallel_subgraph_branch(
+                node_name, subgraph_path, input_mapping, item_var, index_var
+            )
+
+        # Capture references for closure
+        engine = self._engine
+        trace_context = engine._trace_context
+        enable_tracing = engine._enable_tracing
+
+        def run_dynamic_parallel(state, **kwargs):
+            """Execute the dynamic parallel fan-out."""
+            import time as time_module
+
+            start_time = time_module.time()
+
+            # Evaluate items expression at runtime (AC: 1)
+            try:
+                items = engine._process_template(items_expr, state)
+            except Exception as e:
+                raise ValueError(
+                    f"dynamic_parallel node '{node_name}': failed to evaluate "
+                    f"items expression '{items_expr}': {e}"
+                ) from e
+
+            # Validate items is iterable (AC: 10)
+            if items is None:
+                items = []
+            elif not hasattr(items, "__iter__") or isinstance(items, (str, bytes)):
+                raise ValueError(
+                    f"dynamic_parallel node '{node_name}': items expression must "
+                    f"return an iterable, got {type(items).__name__}"
+                )
+
+            # Convert to list for indexing
+            items_list = list(items)
+            item_count = len(items_list)
+
+            # Emit DynamicParallelStart event (AC: 13)
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "DynamicParallelStart",
+                        "node_name": node_name,
+                        "item_count": item_count,
+                        "mode": mode,
+                    }
+                )
+
+            # Handle empty items (AC: 1)
+            if item_count == 0:
+                if enable_tracing and trace_context is not None:
+                    end_time = time_module.time()
+                    trace_context.log_event(
+                        event={
+                            "event_type": "DynamicParallelEnd",
+                            "node_name": node_name,
+                            "completed": 0,
+                            "failed": 0,
+                            "total_timing_ms": int((end_time - start_time) * 1000),
+                        }
+                    )
+                return {"parallel_results": []}
+
+            # Create parallel flow results
+            parallel_results: List[ParallelFlowResult] = []
+            completed_count = 0
+            failed_count = 0
+
+            # Create cancellation token for fail_fast (AC: 8)
+            cancellation_token = CancellationToken()
+
+            # Create semaphore for max_concurrency (AC: 7)
+            semaphore = None
+            if max_concurrency is not None:
+                import threading
+
+                semaphore = threading.Semaphore(max_concurrency)
+
+            def execute_branch(index: int, item: Any) -> ParallelFlowResult:
+                """Execute a single branch with item context."""
+                branch_start = time_module.time()
+                branch_name = f"{node_name}[{index}]"
+
+                # Check cancellation before starting
+                if fail_fast and cancellation_token.is_cancelled():
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=False,
+                        state={},
+                        error="Cancelled due to fail_fast",
+                        timing_ms=0,
+                    )
+
+                # Acquire semaphore if max_concurrency is set
+                if semaphore is not None:
+                    semaphore.acquire()
+
+                try:
+                    # Emit branch start event (AC: 13)
+                    if enable_tracing and trace_context is not None:
+                        trace_context.log_event(
+                            event={
+                                "event_type": "DynamicParallelBranchStart",
+                                "node_name": node_name,
+                                "index": index,
+                                "item": (
+                                    repr(item)
+                                    if not isinstance(item, (dict, list))
+                                    else item
+                                ),
+                            }
+                        )
+
+                    # Deep copy state and inject item context (AC: 2)
+                    branch_state = copy.deepcopy(state)
+                    branch_state[item_var] = item
+                    branch_state[index_var] = index
+
+                    # Execute branch function
+                    result_state = branch_func(branch_state, **kwargs)
+
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    # Emit branch end event (AC: 13)
+                    if enable_tracing and trace_context is not None:
+                        trace_context.log_event(
+                            event={
+                                "event_type": "DynamicParallelBranchEnd",
+                                "node_name": node_name,
+                                "index": index,
+                                "success": True,
+                                "timing_ms": timing_ms,
+                            }
+                        )
+
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=True,
+                        state=result_state if isinstance(result_state, dict) else {},
+                        error=None,
+                        timing_ms=timing_ms,
+                    )
+
+                except Exception as e:
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    # Trigger cancellation on failure if fail_fast (AC: 8)
+                    if fail_fast:
+                        cancellation_token.cancel()
+
+                    # Emit branch end event with failure (AC: 13)
+                    if enable_tracing and trace_context is not None:
+                        trace_context.log_event(
+                            event={
+                                "event_type": "DynamicParallelBranchEnd",
+                                "node_name": node_name,
+                                "index": index,
+                                "success": False,
+                                "timing_ms": timing_ms,
+                                "error": str(e),
+                            }
+                        )
+
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=False,
+                        state={},
+                        error=str(e),
+                        timing_ms=timing_ms,
+                    )
+                finally:
+                    # Release semaphore
+                    if semaphore is not None:
+                        semaphore.release()
+
+            # Execute branches in parallel using ThreadPoolExecutor (AC: 11)
+            max_workers = max_concurrency if max_concurrency else min(32, item_count)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(execute_branch, idx, item): idx
+                    for idx, item in enumerate(items_list)
+                }
+
+                for future in as_completed(futures):
+                    result = future.result()
+                    parallel_results.append(result)
+                    if result.success:
+                        completed_count += 1
+                    else:
+                        failed_count += 1
+
+            # Sort results by branch index for deterministic order
+            parallel_results.sort(key=lambda r: int(r.branch.split("[")[1].rstrip("]")))
+
+            end_time = time_module.time()
+            total_timing_ms = int((end_time - start_time) * 1000)
+
+            # Emit DynamicParallelEnd event (AC: 13)
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "DynamicParallelEnd",
+                        "node_name": node_name,
+                        "completed": completed_count,
+                        "failed": failed_count,
+                        "total_timing_ms": total_timing_ms,
+                    }
+                )
+
+            # Return parallel_results for fan-in node (AC: 6)
+            return {"parallel_results": parallel_results}
+
+        return run_dynamic_parallel
+
+    def _create_dynamic_parallel_action_branch(
+        self,
+        node_name: str,
+        action_config: Dict[str, Any],
+        item_var: str,
+        index_var: str,
+    ) -> Callable:
+        """
+        Create a branch function for action mode (Option A).
+
+        Args:
+            node_name: Parent node name
+            action_config: Action configuration with 'uses' and 'with'
+            item_var: Variable name for current item
+            index_var: Variable name for current index
+
+        Returns:
+            Callable that executes the action with item context
+        """
+        action_name = action_config.get("uses")
+        action_params = action_config.get("with", {})
+        output_key = action_config.get("output")
+
+        if not action_name:
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}' action requires 'uses' field"
+            )
+
+        # Create action function
+        action_func = self._create_action_function(
+            action_name, action_params, output_key
+        )
+
+        def run_branch(state, **kwargs):
+            """Execute action with item in state context."""
+            return action_func(state, **kwargs)
+
+        return run_branch
+
+    def _create_dynamic_parallel_steps_branch(
+        self,
+        node_name: str,
+        steps_config: List[Dict[str, Any]],
+        item_var: str,
+        index_var: str,
+    ) -> Callable:
+        """
+        Create a branch function for steps mode (Option B).
+
+        Args:
+            node_name: Parent node name
+            steps_config: List of step configurations
+            item_var: Variable name for current item
+            index_var: Variable name for current index
+
+        Returns:
+            Callable that executes steps sequentially with item context
+        """
+        # Reuse existing steps infrastructure
+        steps_func = self._create_steps_function(steps_config)
+
+        def run_branch(state, **kwargs):
+            """Execute steps with item in state context."""
+            return steps_func(state, **kwargs)
+
+        return run_branch
+
+    def _create_dynamic_parallel_subgraph_branch(
+        self,
+        node_name: str,
+        subgraph_path: str,
+        input_mapping: Dict[str, Any],
+        item_var: str,
+        index_var: str,
+    ) -> Callable:
+        """
+        Create a branch function for subgraph mode (Option C).
+
+        Args:
+            node_name: Parent node name
+            subgraph_path: Path to subgraph YAML (local or fsspec URI)
+            input_mapping: Mapping from current state to subgraph input
+            item_var: Variable name for current item
+            index_var: Variable name for current index
+
+        Returns:
+            Callable that executes subgraph with item context
+        """
+        engine = self._engine
+
+        # Cache for compiled subgraph (thread-safe with lock)
+        _cache_lock = threading.Lock()
+        _cached_subgraph = {"graph": None, "path": None}
+
+        def run_branch(state, **kwargs):
+            """Execute subgraph with mapped input state."""
+
+            # Resolve subgraph path (relative to parent YAML if applicable)
+            resolved_path = subgraph_path
+            yaml_dir = getattr(engine, "_current_yaml_dir", None)
+            if yaml_dir and not subgraph_path.startswith(
+                ("s3://", "gs://", "az://", "http://", "https://", "/")
+            ):
+                resolved_path = os.path.join(yaml_dir, subgraph_path)
+
+            # Load and cache subgraph (compile once, execute many)
+            # Thread-safe caching with lock
+            with _cache_lock:
+                if _cached_subgraph["path"] != resolved_path:
+                    subgraph = engine._load_subgraph(resolved_path)
+                    _cached_subgraph["graph"] = subgraph
+                    _cached_subgraph["path"] = resolved_path
+
+                cached_graph = _cached_subgraph["graph"]
+
+            # Map input state using template processing
+            subgraph_state = {}
+            for key, expr in input_mapping.items():
+                if isinstance(expr, str):
+                    subgraph_state[key] = engine._process_template(expr, state)
+                else:
+                    subgraph_state[key] = expr
+
+            # Execute subgraph
+            final_state = {}
+            for event in cached_graph.invoke(subgraph_state):
+                if event.get("type") == "final":
+                    final_state = event.get("state", {})
+                elif event.get("type") == "error":
+                    raise RuntimeError(event.get("error", "Subgraph execution failed"))
+
+            return final_state
+
+        return run_branch

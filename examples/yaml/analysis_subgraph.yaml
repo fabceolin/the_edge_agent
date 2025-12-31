@@ -1,0 +1,86 @@
+# Analysis Subgraph
+# This subgraph is invoked by dynamic_parallel_subgraph_mode.yaml for each data source
+# It receives: data_source, config, source_index from the parent workflow
+
+name: analysis-workflow
+description: Analyze a single data source
+
+nodes:
+  # Validate input and extract source info
+  - name: validate_input
+    run: |
+      source = state.get("data_source", {})
+      config = state.get("config", {})
+      source_index = state.get("source_index", 0)
+
+      if not source.get("name"):
+          return {"error": "Missing source name", "analysis_complete": False}
+
+      return {
+          "source_name": source.get("name"),
+          "source_type": source.get("type"),
+          "source_path": source.get("path"),
+          "include_stats": config.get("include_statistics", False),
+          "calc_trends": config.get("calculate_trends", False),
+          "index": source_index
+      }
+
+  # Simulate reading the data source
+  - name: read_source
+    run: |
+      import random
+      # Simulate reading data - in production would use file.read or http.get
+      source_type = state.get("source_type", "unknown")
+
+      # Simulate different row counts based on source
+      row_count = random.randint(100, 10000)
+
+      return {
+          "row_count": row_count,
+          "columns": ["id", "value", "timestamp"],
+          "data_loaded": True
+      }
+
+  # Perform analysis
+  - name: analyze
+    run: |
+      row_count = state.get("row_count", 0)
+      include_stats = state.get("include_stats", False)
+
+      analysis = {
+          "total_rows": row_count,
+      }
+
+      if include_stats:
+          analysis["statistics"] = {
+              "mean": 42.5,
+              "median": 40.0,
+              "std_dev": 12.3
+          }
+
+      return {"analysis": analysis}
+
+  # Generate summary
+  - name: summarize
+    run: |
+      source_name = state.get("source_name", "unknown")
+      analysis = state.get("analysis", {})
+
+      summary = f"Analyzed {source_name}: {analysis.get('total_rows', 0)} rows processed"
+
+      return {
+          "summary": summary,
+          "analysis_complete": True
+      }
+
+edges:
+  - from: __start__
+    to: validate_input
+  - from: validate_input
+    to: read_source
+  - from: read_source
+    to: analyze
+  - from: analyze
+    to: summarize
+  - from: summarize
+    to: __end__

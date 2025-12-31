@@ -1,6 +1,6 @@
 # YAML Agent Reference
 
-Version: 0.8.17
+Version: 0.8.18
 
 Complete reference for declarative agent configuration in The Edge Agent using YAML files.
 
@@ -33,6 +33,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
   - [Memory Actions](#memory-actions)
   - [Long-Term Memory Actions](#long-term-memory-actions)
   - [Cache and Memoization Actions](#cache-and-memoization-actions)
+  - [Rate Limiting Actions](#rate-limiting-actions)
   - [Firebase Agent Memory Actions](#firebase-agent-memory-actions)
   - [Tabular Data Actions](#tabular-data-actions)
   - [Graph Database Actions](#graph-database-actions)
@@ -959,6 +960,193 @@ edges:
 - Loop runs 5 iterations (count goes 0→1→2→3→4→5)
 - Final state: `{count: 5, sum: 15}`
 - Exit reason: `condition_false` (count is no longer < 5)
+
+#### Method 7: Dynamic Parallel Fan-Out (`type: dynamic_parallel`)
+
+Execute branches in parallel over a runtime-evaluated collection, with built-in fan-in:
+
+```yaml
+- name: process_items
+  type: dynamic_parallel
+  items: "{{ state.urls }}"           # Jinja2 expression → list at runtime
+  item_var: url                        # Variable name for each item (default: "item")
+  index_var: idx                       # Variable name for index (default: "index")
+  max_concurrency: 5                   # Optional: throttle parallel execution
+  fail_fast: true                      # Optional: cancel remaining on first failure
+  action:                              # Option A: single action per item
+    uses: http.get
+    with:
+      url: "{{ url }}"
+    output: response
+  output: all_responses                # Results collected here
+```
+
+**Three execution modes (mutually exclusive):**
+
+1. **Action mode** (`action:`): Execute a single action per item
+2. **Steps mode** (`steps:`): Execute sequential steps per item
+3. **Subgraph mode** (`subgraph:`): Load and execute an external YAML file per item
+
+**Required fields:**
+- `items`: Jinja2 expression that evaluates to an iterable at runtime
+- One of: `action:`, `steps:`, or `subgraph:`
+
+**Optional fields:**
+- `item_var`: Name of the variable holding each item (default: `"item"`)
+- `index_var`: Name of the variable holding the 0-based index (default: `"index"`)
+- `max_concurrency`: Maximum parallel branches (default: unlimited)
+- `fail_fast`: Stop remaining branches on first error (default: `false`)
+- `output`: State key to store collected results (default: `"parallel_results"`)
+
+**Action mode example:**
+
+```yaml
+- name: fetch_all_urls
+  type: dynamic_parallel
+  items: "{{ state.urls }}"
+  item_var: url
+  max_concurrency: 10
+  action:
+    uses: http.get
+    with:
+      url: "{{ url }}"
+    output: response
+  output: responses
+```
+
+**Steps mode example:**
+
+```yaml
+- name: process_documents
+  type: dynamic_parallel
+  items: "{{ state.documents }}"
+  item_var: doc
+  index_var: i
+  steps:
+    - name: extract
+      uses: llm.call
+      with:
+        model: gpt-4o
+        messages:
+          - role: user
+            content: "Extract key points from: {{ doc.content }}"
+      output: extraction
+
+    - name: summarize
+      uses: llm.call
+      with:
+        model: gpt-4o
+        messages:
+          - role: user
+            content: "Summarize: {{ state.extraction.content }}"
+      output: summary
+  output: processed_docs
+```
+
+**Subgraph mode example:**
+
+```yaml
+- name: run_analysis_per_item
+  type: dynamic_parallel
+  items: "{{ state.data_sources }}"
+  item_var: source
+  max_concurrency: 3
+  fail_fast: true
+  subgraph: "./analysis-workflow.yaml"  # Supports local, s3://, gs://, az://, http://
+  input:
+    data_source: "{{ source }}"
+    config: "{{ state.analysis_config }}"
+  output: analysis_results
+```
+
+**Behavior:**
+1. Evaluate `items` expression to get the collection
+2. For each item, spawn a parallel branch with `item_var` and `index_var` injected
+3. Execute branches concurrently (throttled by `max_concurrency` if set)
+4. Collect results from all branches into `output` as a list of `ParallelFlowResult`
+5. If `fail_fast: true`, cancel remaining branches on first failure
+
+**Result format:**
+
+Each result in the output list is a `ParallelFlowResult` with:
+- `state`: The final state from that branch
+- `source_node`: The dynamic_parallel node name
+- `index`: The branch index (0-based)
+
+**Safety guards:**
+- `items` must evaluate to a list/iterable (runtime error otherwise)
+- Empty `items` list results in empty output (no branches executed)
+- `max_concurrency` must be positive integer if specified
+- Branch errors are captured in results unless `fail_fast` cancels execution
+
+**Events emitted:**
+
+| Event | Payload |
+|-------|---------|
+| `DynamicParallelStart` | `{node_name, item_count, max_concurrency}` |
+| `DynamicParallelBranchStart` | `{node_name, index, item}` |
+| `DynamicParallelBranchEnd` | `{node_name, index, success, error?}` |
+| `DynamicParallelEnd` | `{node_name, total_branches, successful, failed}` |
+
+**Use cases:**
+- Process a batch of URLs, files, or API endpoints in parallel
+- Run the same analysis workflow on multiple data sources
+- Fan-out LLM calls across a list of prompts with rate limiting
+- Parallel document processing pipelines with controlled concurrency
+
+**Comparison with static parallel edges:**
+
+| Feature | Static Parallel (edges) | Dynamic Parallel |
+|---------|------------------------|------------------|
+| Branch count | Fixed at YAML parse time | Determined at runtime |
+| Fan-in | Explicit fan-in node | Built-in, automatic |
+| Item iteration | Manual | Automatic with item_var/index_var |
+| Concurrency control | None | max_concurrency + fail_fast |
+| Subgraph loading | Not supported | Supported with fsspec |
+
+**Complete example with all options:**
+
+```yaml
+name: batch-processor
+description: Process items with dynamic parallelism
+
+nodes:
+  - name: get_items
+    run: |
+      return {"items_to_process": ["item1", "item2", "item3"]}
+
+  - name: parallel_process
+    type: dynamic_parallel
+    items: "{{ state.items_to_process }}"
+    item_var: current_item
+    index_var: current_index
+    max_concurrency: 2
+    fail_fast: false
+    steps:
+      - name: log_start
+        run: |
+          print(f"Processing {state['current_item']} at index {state['current_index']}")
+          return {}
+      - name: transform
+        run: |
+          return {"result": state["current_item"].upper()}
+    output: batch_results
+
+  - name: aggregate
+    run: |
+      results = [r.state.get("result") for r in state.get("batch_results", [])]
+      return {"final_output": results}
+
+edges:
+  - from: __start__
+    to: get_items
+  - from: get_items
+    to: parallel_process
+  - from: parallel_process
+    to: aggregate
+  - from: aggregate
+    to: __end__
+```
 
 ### Fan-In Nodes
 
@@ -2910,6 +3098,193 @@ key: "cache:{{ state.query | lower | sha256 }}"
 ```
 
 All cache actions are available via dual namespaces: `cache.*` and `actions.cache_*`.
+
+---
+
+### Rate Limiting Actions
+
+Enforce rate limits across parallel nodes using named limiters. Prevents API throttling when making concurrent calls to rate-limited services (LLM providers, web APIs).
+
+**Key Features:**
+- Named limiters shared across parallel branches
+- RPM (requests per minute) or RPS (requests per second) configuration
+- Thread-safe implementation with proper timing
+- Response metadata (wait time, limiter name)
+- Timeout support for bounded waiting
+- Composable with `cache.wrap` for cache-before-ratelimit optimization
+
+#### `ratelimit.wrap`
+
+Wrap any action with rate limiting:
+
+```yaml
+# Basic rate limiting
+- name: call_api
+  uses: ratelimit.wrap
+  with:
+    action: llm.call
+    limiter: openai                          # Named limiter (shared across nodes)
+    rpm: 60                                  # 60 requests per minute = 1 req/sec
+    args:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "{{ state.prompt }}"
+  output: api_result
+
+# Multiple parallel nodes share the same limiter
+# Thread 1: wait(0s) → execute
+# Thread 2: wait(1s) → execute
+# Thread 3: wait(2s) → execute
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `action` | string | Yes | - | Action to wrap (e.g., `llm.call`, `http.get`) |
+| `args` | dict | Yes | - | Arguments to pass to wrapped action |
+| `limiter` | string | Yes | - | Name of the rate limiter (shared across nodes) |
+| `rpm` | float | No | - | Requests per minute limit |
+| `rps` | float | No | - | Requests per second limit (takes precedence over rpm) |
+| `timeout` | float | No | - | Maximum wait time in seconds. Returns error if exceeded. |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "result": {...},              // Wrapped action result
+  "_ratelimit_waited_ms": 1000, // Time spent waiting in milliseconds
+  "_ratelimit_limiter": "openai" // Name of the limiter used
+}
+```
+
+**Timeout Error:**
+```json
+{
+  "success": false,
+  "error": "Rate limit wait would exceed timeout (5s). Wait required: 10.00s",
+  "error_type": "ratelimit_timeout",
+  "_ratelimit_waited_ms": 10000,
+  "_ratelimit_limiter": "openai"
+}
+```
+
+#### Parallel Rate Limiting
+
+When using parallel fan-out, all nodes sharing the same limiter name will coordinate:
+
+```yaml
+name: parallel_rate_limited
+
+edges:
+  - from: start
+    to: [query_1, query_2, query_3]
+  - from: [query_1, query_2, query_3]
+    to: aggregate
+
+nodes:
+  - name: query_1
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # All 3 share this limiter
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q1 }}" }]
+
+  - name: query_2
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # Same limiter = sequential at 1 req/sec
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q2 }}" }]
+
+  - name: query_3
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q3 }}" }]
+```
+
+#### Cache + Rate Limit Composition
+
+Wrap rate limiting inside cache for optimal performance (cache hit skips rate limit):
+
+```yaml
+# OPTIMIZED: Cache checks BEFORE rate limit
+# Cache hit = no rate limit token consumed
+- name: smart_call
+  uses: cache.wrap
+  with:
+    action: ratelimit.wrap
+    key_strategy: args
+    ttl_days: 7
+    args:
+      action: llm.call
+      limiter: openai
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: "{{ state.messages }}"
+  output: result
+
+# Flow:
+# 1. cache.wrap checks cache
+# 2. Cache HIT? → Returns result (no rate limit consumed!)
+# 3. Cache MISS? → ratelimit.wrap.wait() → llm.call → cache.store
+```
+
+#### Settings-Based Configuration
+
+Pre-configure rate limiters in settings for multiple providers:
+
+```yaml
+name: multi_provider_agent
+
+settings:
+  rate_limiters:
+    openai:
+      rpm: 60                      # 60 requests per minute
+    anthropic:
+      rpm: 40                      # 40 requests per minute
+    local_llm:
+      rps: 10                      # 10 requests per second
+
+nodes:
+  - name: call_openai
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # Uses settings: 60 rpm
+      args:
+        model: gpt-4
+        messages: "{{ state.messages }}"
+
+  - name: call_claude
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: anthropic           # Uses settings: 40 rpm
+      args:
+        model: claude-3
+        messages: "{{ state.messages }}"
+```
+
+**Notes:**
+- Limiter configuration is "first-config-wins": if a limiter is already configured (either from settings or a previous node), subsequent configurations with different values log a warning but reuse the existing limiter
+- Rate limiters are stored at the engine level and survive across node executions
+- Thread-safe: uses `threading.Lock` internally for correct timing across concurrent calls
+
+All rate limit actions are available via dual namespaces: `ratelimit.*` and `actions.ratelimit_*`.
 
 ---
 
