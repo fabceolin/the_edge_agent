@@ -248,6 +248,7 @@ See [YAML Reference](../shared/YAML_REFERENCE.md#shell-provider-tea-llm-004) for
 |--------|--------|-------------|
 | `academic.pubmed` | `academic_actions.py` | Search PubMed via NCBI E-utilities |
 | `academic.arxiv` | `academic_actions.py` | Search ArXiv preprint server |
+| `academic.crossref` | `academic_actions.py` | Query CrossRef for DOI metadata |
 
 #### academic.pubmed
 
@@ -382,9 +383,123 @@ Search the ArXiv preprint server for research papers.
 
 **Rate Limiting:** 1 request per 3 seconds (per ArXiv terms of service)
 
+#### academic.crossref
+
+Query the CrossRef API for DOI metadata or search by query string. CrossRef provides comprehensive metadata for over 100 million scholarly works across all publishers.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `doi` | string | optional | DOI for direct lookup (e.g., "10.1038/nature12373") |
+| `query` | string | optional | Search query string |
+| `max_results` | int | 5 | Maximum results to return (for search) |
+| `timeout` | int | 30 | Request timeout in seconds |
+| `mailto` | string | optional | Email for polite pool access (recommended) |
+
+*Note: Either `doi` or `query` must be provided.*
+
+**Returns:**
+
+```python
+{
+    "success": True,
+    "results": [
+        {
+            "doi": "10.1038/nature12373",
+            "title": "Article Title",
+            "authors": ["Smith, John", "Doe, Alice"],
+            "abstract": "Abstract text (JATS XML stripped)...",
+            "container_title": "Nature",  # journal/book name
+            "published_date": "2023-01-15",
+            "type": "journal-article",  # journal-article, book-chapter, etc.
+            "url": "https://doi.org/10.1038/nature12373"
+        }
+    ],
+    "query": "10.1038/nature12373",
+    "total_results": 1
+}
+```
+
+**YAML Examples:**
+
+```yaml
+# Direct DOI lookup
+- name: resolve_doi
+  uses: academic.crossref
+  with:
+    doi: "{{ state.doi }}"
+    mailto: "researcher@university.edu"  # recommended for polite pool
+  output:
+    metadata: "{{ result.results[0] }}"
+
+# Search by query
+- name: search_crossref
+  uses: academic.crossref
+  with:
+    query: "machine learning cancer diagnosis"
+    max_results: 10
+    mailto: "researcher@university.edu"
+  output:
+    articles: "{{ result.results }}"
+```
+
+**Complete DOI Resolution Workflow:**
+
+```yaml
+name: resolve-dois
+state_schema:
+  dois: list
+  resolved: list
+
+nodes:
+  - name: resolve_each
+    uses: academic.crossref
+    with:
+      doi: "{{ state.current_doi }}"
+      mailto: "your@email.com"
+    output:
+      resolved: "{{ state.resolved + result.results }}"
+
+edges:
+  - from: __start__
+    to: resolve_each
+  - from: resolve_each
+    to: __end__
+```
+
+**Rate Limiting:**
+- Without `mailto`: 1 request/second
+- With `mailto` (polite pool): 50 requests/second
+
+**Polite Pool Access:**
+
+CrossRef provides higher rate limits for "polite" API users. Include your email in the `mailto` parameter:
+
+```yaml
+- name: crossref_lookup
+  uses: academic.crossref
+  with:
+    doi: "10.1038/nature12373"
+    mailto: "researcher@university.edu"  # enables 50 req/s
+```
+
+This sets the `User-Agent` header to: `TEA-Agent/1.0 (mailto:researcher@university.edu)`
+
+**Error Codes:**
+
+| Error Code | Description |
+|------------|-------------|
+| `empty_query` | Neither doi nor query provided |
+| `not_found` | DOI not found in CrossRef database |
+| `network` | Network connection error |
+| `timeout` | Request timed out |
+| `rate_limit_exhausted` | Rate limit exceeded after retries |
+| `api_error` | Other API errors |
+
 **Error Handling:**
 
-Both actions return structured errors:
+All academic actions return structured errors:
 
 ```python
 {

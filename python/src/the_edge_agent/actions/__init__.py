@@ -23,6 +23,8 @@ Actions are organized by domain:
 - retry_actions: General-purpose retry loop with correction (TEA-YAML-005)
 - academic_actions: Academic research via PubMed and ArXiv APIs (TEA-KIROKU-001)
 - text_actions: Text processing including citation insertion (TEA-KIROKU-002)
+- neo4j_trigger_actions: Neo4j APOC trigger management (TEA-BUILTIN-001.7.5)
+- neo4j_gds_actions: Neo4j GDS graph analytics algorithms (TEA-BUILTIN-001.7.4)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -78,6 +80,12 @@ from .academic_actions import register_actions as register_academic
 
 # TEA-KIROKU-002: Text Processing Actions (Citation Insertion)
 from .text_actions import register_actions as register_text
+
+# TEA-BUILTIN-001.7.5: Neo4j APOC Trigger Actions
+from .neo4j_trigger_actions import register_actions as register_neo4j_triggers
+
+# TEA-BUILTIN-001.7.4: Neo4j GDS Actions
+from .neo4j_gds_actions import register_actions as register_neo4j_gds
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -144,6 +152,12 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-KIROKU-002: Text Processing Actions
     register_text(registry, engine)
+
+    # TEA-BUILTIN-001.7.5: Neo4j APOC Trigger Actions
+    register_neo4j_triggers(registry, engine)
+
+    # TEA-BUILTIN-001.7.4: Neo4j GDS Actions
+    register_neo4j_gds(registry, engine)
 
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)

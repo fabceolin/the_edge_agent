@@ -1,6 +1,6 @@
 # Story TEA-KIROKU-006: Academic Actions Resilience Improvements
 
-## Status: Ready for Development
+## Status: Done
 
 ## Story
 
@@ -41,33 +41,33 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Implement thread-safe rate limiting** (AC: 1, 2, 3)
-  - [ ] Create `RateLimiter` class with threading.Lock
-  - [ ] Replace module-level `_last_pubmed_request` with RateLimiter instance
-  - [ ] Replace module-level `_last_arxiv_request` with RateLimiter instance
-  - [ ] Ensure lock is held during rate check and update
+- [x] **Task 1: Implement thread-safe rate limiting** (AC: 1, 2, 3)
+  - [x] Create `RateLimiter` class with threading.Lock
+  - [x] Replace module-level `_last_pubmed_request` with RateLimiter instance
+  - [x] Replace module-level `_last_arxiv_request` with RateLimiter instance
+  - [x] Ensure lock is held during rate check and update
 
-- [ ] **Task 2: Implement exponential backoff for PubMed** (AC: 4, 5, 7)
-  - [ ] Add `_request_with_backoff()` helper function
-  - [ ] Configure: base_delay=2s, max_retries=3, backoff_factor=2
-  - [ ] Apply to esearch request
-  - [ ] Apply to efetch request
-  - [ ] Return `rate_limit_exhausted` error code after max retries
+- [x] **Task 2: Implement exponential backoff for PubMed** (AC: 4, 5, 7)
+  - [x] Add `_request_with_backoff()` helper function
+  - [x] Configure: base_delay=2s, max_retries=3, backoff_factor=2
+  - [x] Apply to esearch request
+  - [x] Apply to efetch request
+  - [x] Return `rate_limit_exhausted` error code after max retries
 
-- [ ] **Task 3: Implement exponential backoff for ArXiv** (AC: 4, 6, 7)
-  - [ ] Apply `_request_with_backoff()` to ArXiv API request
-  - [ ] Ensure backoff respects ArXiv's 3-second base rate limit
+- [x] **Task 3: Implement exponential backoff for ArXiv** (AC: 4, 6, 7)
+  - [x] Apply `_request_with_backoff()` to ArXiv API request
+  - [x] Ensure backoff respects ArXiv's 3-second base rate limit
 
-- [ ] **Task 4: Unit tests for thread-safety** (AC: 8, 9)
-  - [ ] Test concurrent PubMed calls with ThreadPoolExecutor
-  - [ ] Test concurrent ArXiv calls with ThreadPoolExecutor
-  - [ ] Verify rate limits are respected across threads
+- [x] **Task 4: Unit tests for thread-safety** (AC: 8, 9)
+  - [x] Test concurrent PubMed calls with ThreadPoolExecutor
+  - [x] Test concurrent ArXiv calls with ThreadPoolExecutor
+  - [x] Verify rate limits are respected across threads
 
-- [ ] **Task 5: Unit tests for exponential backoff** (AC: 10)
-  - [ ] Test single 429 response triggers retry
-  - [ ] Test multiple 429 responses with increasing delays
-  - [ ] Test max retries returns rate_limit_exhausted
-  - [ ] Test successful response after initial 429
+- [x] **Task 5: Unit tests for exponential backoff** (AC: 10)
+  - [x] Test single 429 response triggers retry
+  - [x] Test multiple 429 responses with increasing delays
+  - [x] Test max retries returns rate_limit_exhausted
+  - [x] Test successful response after initial 429
 
 ## Dev Notes
 
@@ -198,9 +198,120 @@ def test_concurrent_pubmed_respects_rate_limit():
 
 Full test design document: `docs/qa/assessments/TEA-KIROKU-006-test-design-20251229.md`
 
+## Dev Agent Record
+
+### Agent Model Used
+
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### Debug Log References
+
+No debug log entries needed - implementation proceeded without blockers.
+
+### Completion Notes
+
+1. **RateLimiter class** implemented at module level with `threading.Lock` for thread-safe rate limiting
+2. **`_request_with_backoff()` helper** added with exponential backoff (2s, 4s, 8s delays)
+3. **Module-level rate limiters** replaced old timestamp variables:
+   - `_pubmed_rate_limiter` - 0.34s interval (3 req/s), adjusts to 0.1s with API key
+   - `_arxiv_rate_limiter` - 3.0s interval (ArXiv terms of service)
+4. **New error code** `rate_limit_exhausted` returned after max retries (instead of `rate_limit`)
+5. **Test coverage expanded** from 25 to 36 tests (+11 new tests for thread-safety and backoff)
+6. All existing tests updated to match new behavior (error_code change, rate limiter access)
+
+### File List
+
+| File | Change Type | Description |
+|------|-------------|-------------|
+| `python/src/the_edge_agent/actions/academic_actions.py` | Modified | Added RateLimiter class, _request_with_backoff helper, replaced module-level rate limiting |
+| `python/tests/test_academic_actions.py` | Modified | Added 11 new tests for thread-safety and exponential backoff, updated existing test for new error code |
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2025-12-27 | 0.1 | Initial story creation from QA recommendations | Sarah (PO Agent) |
 | 2025-12-29 | 0.2 | Added QA Notes with test design analysis | Quinn (Test Architect) |
+| 2025-12-30 | 1.0 | Implementation complete - all tasks done, 36 tests passing | James (Dev Agent) |
+
+## QA Results
+
+### Review Date: 2025-12-30
+
+### Reviewed By: Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall: Excellent** - The implementation is clean, well-documented, and follows the recommended patterns from the Dev Notes exactly. The `RateLimiter` class is well-designed with proper encapsulation and the `_request_with_backoff()` helper is reusable across both API actions.
+
+**Strengths:**
+- Thread-safe design with `threading.Lock` properly protects shared state
+- Exponential backoff follows the exact spec (2s, 4s, 8s delays)
+- Docstrings are comprehensive with clear examples
+- Module-level rate limiters correctly scoped for independent API rate limits
+- Debug logging included for backoff retries
+
+### Refactoring Performed
+
+None required - the implementation is clean and follows best practices.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows Python conventions, proper docstrings, type hints
+- Project Structure: ✓ Changes confined to `actions/` module as expected
+- Testing Strategy: ✓ Unit tests with mocking, integration tests with ThreadPoolExecutor
+- All ACs Met: ✓ All 10 acceptance criteria verified (see traceability below)
+
+### Requirements Traceability
+
+| AC | Description | Test Coverage |
+|----|-------------|---------------|
+| AC1 | Rate limiting uses threading.Lock | `test_rate_limiter_uses_threading_lock` |
+| AC2 | Concurrent PubMed respects limits | `test_concurrent_pubmed_calls_respect_rate_limit` |
+| AC3 | Concurrent ArXiv respects limits | `test_concurrent_arxiv_calls_respect_rate_limit` |
+| AC4 | 429 triggers exponential backoff | `test_backoff_single_429_then_success`, `test_backoff_multiple_429_with_increasing_delays` |
+| AC5 | Backoff on PubMed esearch/efetch | `test_pubmed_efetch_429_triggers_backoff` |
+| AC6 | Backoff on ArXiv | `test_arxiv_backoff_on_429` |
+| AC7 | Returns rate_limit_exhausted | `test_backoff_max_retries_returns_rate_limit_exhausted`, `test_arxiv_rate_limit_exhausted` |
+| AC8 | Existing tests pass | 25 original tests pass |
+| AC9 | Thread-safety tests | 5 new tests in `TestRateLimiterThreadSafety` |
+| AC10 | Backoff tests | 6 new tests in `TestExponentialBackoff` |
+
+### Improvements Checklist
+
+All items handled by developer:
+
+- [x] Implemented `RateLimiter` class with `threading.Lock`
+- [x] Implemented `_request_with_backoff()` with exponential backoff
+- [x] Applied to PubMed esearch and efetch requests
+- [x] Applied to ArXiv API requests
+- [x] Added comprehensive test suite (11 new tests)
+- [x] Updated existing test to expect `rate_limit_exhausted`
+
+No additional improvements required.
+
+### Security Review
+
+**No concerns.**
+- Rate limiting protects external APIs from abuse
+- Exponential backoff is a defensive pattern
+- No secrets exposed in code
+
+### Performance Considerations
+
+**Acceptable.**
+- Lock acquisition is fast (`threading.Lock`)
+- Sleep inside lock is intentional to serialize requests per API
+- ArXiv 3-second rate limit is API-mandated, not a bottleneck
+
+### Files Modified During Review
+
+None - no refactoring needed.
+
+### Gate Status
+
+**Gate: PASS** → `docs/qa/gates/TEA-KIROKU-006-academic-actions-resilience.yml`
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, 36 tests passing, no issues found.

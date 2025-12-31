@@ -2,11 +2,12 @@
 Academic Research Actions for YAMLEngine.
 
 This module provides actions for searching academic databases including
-PubMed (NCBI) and ArXiv for research papers and articles.
+PubMed (NCBI), ArXiv, and CrossRef for research papers and articles.
 
 Actions:
     - academic.pubmed: Search PubMed database via NCBI E-utilities API
     - academic.arxiv: Search ArXiv preprint server via ArXiv API
+    - academic.crossref: Query CrossRef API for DOI metadata and search
 
 Required Environment Variables:
     - NCBI_API_KEY: Optional API key for PubMed (increases rate limit from 3 to 10 req/s)
@@ -14,6 +15,7 @@ Required Environment Variables:
 Rate Limits:
     - PubMed: 3 requests/second (10/s with API key)
     - ArXiv: 1 request/3 seconds
+    - CrossRef: 1 request/second (50/s with mailto for polite pool)
 
 Example:
     >>> # Search PubMed
@@ -33,11 +35,20 @@ Example:
     ... )
     >>> for paper in result['results']:
     ...     print(f"{paper['title']} - {paper['pdf_url']}")
+
+    >>> # Lookup DOI via CrossRef
+    >>> result = registry['academic.crossref'](
+    ...     state={},
+    ...     doi="10.1038/nature12373",
+    ... )
+    >>> if result['success']:
+    ...     print(f"{result['results'][0]['title']} - {result['results'][0]['container_title']}")
 """
 
 import logging
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Callable, Dict, List, Optional
@@ -45,9 +56,89 @@ from urllib.parse import quote_plus, urlencode
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting state (module-level)
-_last_pubmed_request: float = 0.0
-_last_arxiv_request: float = 0.0
+
+class RateLimiter:
+    """
+    Thread-safe rate limiter using a lock to ensure correct timing.
+
+    This ensures that concurrent calls from parallel YAML nodes
+    respect the rate limit correctly.
+    """
+
+    def __init__(self, min_interval: float):
+        """
+        Initialize the rate limiter.
+
+        Args:
+            min_interval: Minimum time in seconds between requests.
+        """
+        self._lock = threading.Lock()
+        self._last_request: float = 0.0
+        self._min_interval = min_interval
+
+    def wait(self) -> None:
+        """
+        Wait if necessary to respect the rate limit.
+
+        This method is thread-safe and ensures only one thread
+        can update the timing at a time.
+        """
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_request
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_request = time.time()
+
+    def update_interval(self, new_interval: float) -> None:
+        """Update the minimum interval (thread-safe)."""
+        with self._lock:
+            self._min_interval = new_interval
+
+
+def _request_with_backoff(
+    url: str,
+    params: Dict[str, Any],
+    timeout: int,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
+    headers: Optional[Dict[str, str]] = None,
+) -> "requests.Response":
+    """
+    Make an HTTP GET request with exponential backoff on 429 responses.
+
+    Args:
+        url: The URL to request.
+        params: Query parameters.
+        timeout: Request timeout in seconds.
+        max_retries: Maximum number of retries on 429. Default: 3.
+        base_delay: Base delay in seconds. Default: 2.0.
+        headers: Optional HTTP headers to include in the request.
+
+    Returns:
+        The response object (may be 429 if retries exhausted).
+    """
+    import requests
+
+    response = None
+    for attempt in range(max_retries + 1):
+        response = requests.get(url, params=params, timeout=timeout, headers=headers)
+        if response.status_code != 429:
+            return response
+        if attempt < max_retries:
+            delay = base_delay * (2**attempt)  # 2s, 4s, 8s
+            logger.debug(
+                f"Rate limited (429), retrying in {delay}s (attempt {attempt + 1}/{max_retries})"
+            )
+            time.sleep(delay)
+    return response  # Return last 429 response
+
+
+# Thread-safe rate limiters for each API
+# PubMed: 3 req/s without key (0.34s), 10 req/s with key (0.1s)
+_pubmed_rate_limiter = RateLimiter(0.34)
+# ArXiv: 1 request per 3 seconds per terms of service
+_arxiv_rate_limiter = RateLimiter(3.0)
 
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
@@ -125,7 +216,6 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             ...     for article in result['results']:
             ...         print(f"[{article['pmid']}] {article['title']}")
         """
-        global _last_pubmed_request
         import requests
 
         # Validate query
@@ -141,12 +231,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Get API key (optional, increases rate limit)
         api_key = os.environ.get("NCBI_API_KEY")
 
-        # Rate limiting: 3 req/s without key, 10 req/s with key
+        # Update rate limiter interval based on API key presence
         rate_limit_delay = 0.1 if api_key else 0.34  # ~10/s or ~3/s
-        now = time.time()
-        elapsed = now - _last_pubmed_request
-        if elapsed < rate_limit_delay:
-            time.sleep(rate_limit_delay - elapsed)
+        _pubmed_rate_limiter.update_interval(rate_limit_delay)
 
         # Map sort_by to PubMed sort parameter
         sort_param = "relevance" if sort_by == "relevance" else "pub_date"
@@ -164,19 +251,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             esearch_params["api_key"] = api_key
 
         try:
-            _last_pubmed_request = time.time()
-            esearch_response = requests.get(
+            # Thread-safe rate limiting
+            _pubmed_rate_limiter.wait()
+
+            # Make request with exponential backoff on 429
+            esearch_response = _request_with_backoff(
                 esearch_url,
                 params=esearch_params,
                 timeout=timeout,
             )
 
-            # Handle rate limiting (HTTP 429)
+            # Handle rate limiting exhausted (still 429 after retries)
             if esearch_response.status_code == 429:
                 return {
                     "success": False,
-                    "error": "PubMed rate limit exceeded. Please wait and try again.",
-                    "error_code": "rate_limit",
+                    "error": "PubMed rate limit exceeded after retries. Please wait and try again.",
+                    "error_code": "rate_limit_exhausted",
                 }
 
             # Handle HTTP errors
@@ -218,11 +308,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "returned_results": 0,
                 }
 
-            # Rate limiting before efetch
-            now = time.time()
-            elapsed = now - _last_pubmed_request
-            if elapsed < rate_limit_delay:
-                time.sleep(rate_limit_delay - elapsed)
+            # Thread-safe rate limiting before efetch
+            _pubmed_rate_limiter.wait()
 
             # Step 2: efetch - Get article details
             efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
@@ -235,18 +322,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             if api_key:
                 efetch_params["api_key"] = api_key
 
-            _last_pubmed_request = time.time()
-            efetch_response = requests.get(
+            # Make request with exponential backoff on 429
+            efetch_response = _request_with_backoff(
                 efetch_url,
                 params=efetch_params,
                 timeout=timeout,
             )
 
+            # Handle rate limiting exhausted (still 429 after retries)
             if efetch_response.status_code == 429:
                 return {
                     "success": False,
-                    "error": "PubMed rate limit exceeded during fetch. Please wait and try again.",
-                    "error_code": "rate_limit",
+                    "error": "PubMed rate limit exceeded during fetch after retries. Please wait and try again.",
+                    "error_code": "rate_limit_exhausted",
                 }
 
             if efetch_response.status_code >= 400:
@@ -513,7 +601,6 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             ...     arxiv_id="2301.00001"
             ... )
         """
-        global _last_arxiv_request
         import requests
 
         # Validate input
@@ -524,11 +611,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "error_code": "empty_query",
             }
 
-        # Rate limiting: 1 request per 3 seconds per ArXiv terms of service
-        now = time.time()
-        elapsed = now - _last_arxiv_request
-        if elapsed < 3.0:
-            time.sleep(3.0 - elapsed)
+        # Thread-safe rate limiting: 1 request per 3 seconds per ArXiv terms of service
+        _arxiv_rate_limiter.wait()
 
         # Build ArXiv API URL
         base_url = "http://export.arxiv.org/api/query"
@@ -569,12 +653,20 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         }
 
         try:
-            _last_arxiv_request = time.time()
-            response = requests.get(
+            # Make request with exponential backoff on 429
+            response = _request_with_backoff(
                 base_url,
                 params=params,
                 timeout=timeout,
             )
+
+            # Handle rate limiting exhausted (still 429 after retries)
+            if response.status_code == 429:
+                return {
+                    "success": False,
+                    "error": "ArXiv rate limit exceeded after retries. Please wait and try again.",
+                    "error_code": "rate_limit_exhausted",
+                }
 
             # ArXiv returns 200 even for errors, need to check content
             if response.status_code >= 400:
@@ -738,3 +830,366 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     registry["academic.arxiv"] = academic_arxiv
     registry["actions.academic_arxiv"] = academic_arxiv
+
+    # ============================================================
+    # academic.crossref - CrossRef API
+    # ============================================================
+
+    # CrossRef rate limiter: 1 req/s default, 50 req/s with mailto (polite pool)
+    _crossref_rate_limiter = RateLimiter(1.0)
+
+    def academic_crossref(
+        state,
+        doi: Optional[str] = None,
+        query: Optional[str] = None,
+        max_results: int = 5,
+        timeout: int = 30,
+        mailto: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Query CrossRef API for DOI metadata or search by query string.
+
+        Supports two modes:
+        1. Direct DOI lookup via `https://api.crossref.org/works/{doi}`
+        2. Search by query via `https://api.crossref.org/works?query={query}`
+
+        Args:
+            state: Current workflow state
+            doi: DOI for direct lookup (e.g., "10.1038/nature12373")
+            query: Search query string for text search
+            max_results: Maximum number of results to return. Default: 5
+            timeout: Request timeout in seconds. Default: 30
+            mailto: Email for polite pool access (recommended for higher rate limits)
+
+        Returns:
+            On success:
+            {
+                "success": True,
+                "results": [
+                    {
+                        "doi": str,
+                        "title": str,
+                        "authors": List[str],
+                        "abstract": str,
+                        "container_title": str,  # journal/book name
+                        "published_date": str,
+                        "type": str,  # journal-article, book-chapter, etc.
+                        "url": str
+                    },
+                    ...
+                ],
+                "query": str,
+                "total_results": int
+            }
+
+            On failure:
+            {
+                "success": False,
+                "error": str,
+                "error_code": str  # empty_query, not_found, network, rate_limit_exhausted, timeout, api_error
+            }
+
+        Example:
+            >>> # Direct DOI lookup
+            >>> result = academic_crossref(
+            ...     state={},
+            ...     doi="10.1038/nature12373"
+            ... )
+            >>> if result['success']:
+            ...     print(f"Title: {result['results'][0]['title']}")
+
+            >>> # Search by query
+            >>> result = academic_crossref(
+            ...     state={},
+            ...     query="machine learning cancer",
+            ...     max_results=10,
+            ...     mailto="your@email.com"
+            ... )
+        """
+        import requests
+
+        # Validate input
+        if not doi and not query:
+            return {
+                "success": False,
+                "error": "Either doi or query must be provided",
+                "error_code": "empty_query",
+            }
+
+        # Build User-Agent header (polite pool requires mailto)
+        headers = {}
+        if mailto:
+            headers["User-Agent"] = f"TEA-Agent/1.0 (mailto:{mailto})"
+            # Use polite pool rate limit (50 req/s = 0.02s interval)
+            _crossref_rate_limiter.update_interval(0.02)
+        else:
+            headers["User-Agent"] = "TEA-Agent/1.0"
+            # Default rate limit (1 req/s)
+            _crossref_rate_limiter.update_interval(1.0)
+
+        # Thread-safe rate limiting
+        _crossref_rate_limiter.wait()
+
+        base_url = "https://api.crossref.org/works"
+
+        try:
+            if doi:
+                # Direct DOI lookup
+                doi = doi.strip()
+                if not doi:
+                    return {
+                        "success": False,
+                        "error": "DOI string cannot be empty",
+                        "error_code": "empty_query",
+                    }
+
+                # URL-encode the DOI for the path
+                encoded_doi = quote_plus(doi)
+                url = f"{base_url}/{encoded_doi}"
+
+                response = _request_with_backoff(
+                    url,
+                    params={},
+                    timeout=timeout,
+                    headers=headers,
+                )
+
+                if response.status_code == 429:
+                    return {
+                        "success": False,
+                        "error": "CrossRef rate limit exceeded after retries. Please wait and try again.",
+                        "error_code": "rate_limit_exhausted",
+                    }
+
+                if response.status_code == 404:
+                    return {
+                        "success": False,
+                        "error": f"DOI not found: {doi}",
+                        "error_code": "not_found",
+                    }
+
+                if response.status_code >= 400:
+                    return {
+                        "success": False,
+                        "error": f"CrossRef API error: {response.status_code}",
+                        "error_code": "api_error",
+                    }
+
+                try:
+                    data = response.json()
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Failed to parse CrossRef response: {str(e)}",
+                        "error_code": "api_error",
+                    }
+
+                if data.get("status") != "ok":
+                    return {
+                        "success": False,
+                        "error": f"CrossRef API returned status: {data.get('status')}",
+                        "error_code": "api_error",
+                    }
+
+                # Parse single result
+                message = data.get("message", {})
+                parsed = _parse_crossref_work(message)
+                if parsed:
+                    return {
+                        "success": True,
+                        "results": [parsed],
+                        "query": doi,
+                        "total_results": 1,
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "results": [],
+                        "query": doi,
+                        "total_results": 0,
+                    }
+
+            else:
+                # Search by query
+                query = query.strip()
+                if not query:
+                    return {
+                        "success": False,
+                        "error": "Query string cannot be empty",
+                        "error_code": "empty_query",
+                    }
+
+                params = {
+                    "query": query,
+                    "rows": str(max_results),
+                }
+
+                response = _request_with_backoff(
+                    base_url,
+                    params=params,
+                    timeout=timeout,
+                    headers=headers,
+                )
+
+                if response.status_code == 429:
+                    return {
+                        "success": False,
+                        "error": "CrossRef rate limit exceeded after retries. Please wait and try again.",
+                        "error_code": "rate_limit_exhausted",
+                    }
+
+                if response.status_code >= 400:
+                    return {
+                        "success": False,
+                        "error": f"CrossRef API error: {response.status_code}",
+                        "error_code": "api_error",
+                    }
+
+                try:
+                    data = response.json()
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": f"Failed to parse CrossRef response: {str(e)}",
+                        "error_code": "api_error",
+                    }
+
+                if data.get("status") != "ok":
+                    return {
+                        "success": False,
+                        "error": f"CrossRef API returned status: {data.get('status')}",
+                        "error_code": "api_error",
+                    }
+
+                message = data.get("message", {})
+                total_results = message.get("total-results", 0)
+                items = message.get("items", [])
+
+                results = []
+                for item in items:
+                    parsed = _parse_crossref_work(item)
+                    if parsed:
+                        results.append(parsed)
+
+                return {
+                    "success": True,
+                    "results": results,
+                    "query": query,
+                    "total_results": total_results,
+                }
+
+        except requests.exceptions.Timeout:
+            return {
+                "success": False,
+                "error": f"Request timed out after {timeout}s",
+                "error_code": "timeout",
+            }
+        except requests.exceptions.ConnectionError as e:
+            return {
+                "success": False,
+                "error": f"Network connection error: {str(e)}",
+                "error_code": "network",
+            }
+        except Exception as e:
+            logger.exception("Unexpected error in academic.crossref")
+            return {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "error_code": "api_error",
+            }
+
+    def _parse_crossref_work(work: dict) -> Optional[Dict[str, Any]]:
+        """
+        Parse a CrossRef work item into a structured dict.
+
+        Handles the CrossRef API response format which includes:
+        - DOI, title (array), author (array with given/family)
+        - abstract (may contain JATS XML), container-title (array)
+        - published date-parts, type
+
+        Args:
+            work: CrossRef work dictionary from API response
+
+        Returns:
+            Parsed work dictionary or None if parsing fails
+        """
+        try:
+            # DOI
+            doi = work.get("DOI", "")
+
+            # Title - CrossRef returns as array
+            title_list = work.get("title", [])
+            title = title_list[0] if title_list else ""
+
+            # Authors - format: [{"given": "John", "family": "Smith"}, ...]
+            authors = []
+            author_list = work.get("author", [])
+            for author in author_list:
+                family = author.get("family", "")
+                given = author.get("given", "")
+                if family:
+                    if given:
+                        authors.append(f"{family}, {given}")
+                    else:
+                        authors.append(family)
+                elif author.get("name"):
+                    # Some entries use "name" for organizations
+                    authors.append(author.get("name"))
+
+            # Abstract - may contain JATS XML tags, strip them
+            abstract = work.get("abstract", "")
+            if abstract:
+                # Remove JATS XML tags like <jats:p>, <jats:italic>, etc.
+                abstract = re.sub(r"<[^>]+>", "", abstract)
+                abstract = abstract.strip()
+
+            # Container title (journal/book name) - array
+            container_list = work.get("container-title", [])
+            container_title = container_list[0] if container_list else ""
+
+            # Published date - format: {"date-parts": [[2023, 1, 15]]}
+            published_date = ""
+            published = (
+                work.get("published", {})
+                or work.get("published-print", {})
+                or work.get("published-online", {})
+            )
+            if published:
+                date_parts = published.get("date-parts", [[]])
+                if date_parts and date_parts[0]:
+                    parts = date_parts[0]
+                    if len(parts) >= 1:
+                        published_date = str(parts[0])  # Year
+                    if len(parts) >= 2:
+                        published_date = (
+                            f"{published_date}-{str(parts[1]).zfill(2)}"  # Month
+                        )
+                    if len(parts) >= 3:
+                        published_date = (
+                            f"{published_date}-{str(parts[2]).zfill(2)}"  # Day
+                        )
+
+            # Type
+            work_type = work.get("type", "")
+
+            # URL
+            url = f"https://doi.org/{doi}" if doi else ""
+
+            return {
+                "doi": doi,
+                "title": title,
+                "authors": authors,
+                "abstract": abstract,
+                "container_title": container_title,
+                "published_date": published_date,
+                "type": work_type,
+                "url": url,
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to parse CrossRef work: {e}")
+            return None
+
+    registry["academic.crossref"] = academic_crossref
+    registry["actions.academic_crossref"] = academic_crossref

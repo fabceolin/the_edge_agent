@@ -2,17 +2,21 @@
 
 ## Status
 
-**Draft**
+**Ready for Development**
+
+> All substories have passed QA validation with comprehensive test designs. Development should proceed in order: 001.7.1 → 001.7.2 → (001.7.3, 001.7.4, 001.7.5 can parallelize).
 
 ## Substories
 
-| Substory | Status | Description |
-|----------|--------|-------------|
-| [TEA-BUILTIN-001.7.1](TEA-BUILTIN-001.7.1-neo4j-core-connection.md) | Draft | Core Connection & Authentication |
-| [TEA-BUILTIN-001.7.2](TEA-BUILTIN-001.7.2-neo4j-extended-crud.md) | Draft | Extended CRUD Operations |
-| [TEA-BUILTIN-001.7.3](TEA-BUILTIN-001.7.3-neo4j-vector-index.md) | Draft | Vector Index Integration |
-| [TEA-BUILTIN-001.7.4](TEA-BUILTIN-001.7.4-neo4j-gds.md) | Draft | Graph Data Science Integration |
-| [TEA-BUILTIN-001.7.5](TEA-BUILTIN-001.7.5-neo4j-triggers.md) | Draft | APOC Triggers Support |
+| Substory | Status | Test Scenarios | Description |
+|----------|--------|----------------|-------------|
+| [TEA-BUILTIN-001.7.1](TEA-BUILTIN-001.7.1-neo4j-core-connection.md) | ✅ Ready | 67 (P0:24) | Core Connection & Authentication |
+| [TEA-BUILTIN-001.7.2](TEA-BUILTIN-001.7.2-neo4j-extended-crud.md) | ✅ Ready | 52 (P0:18) | Extended CRUD Operations |
+| [TEA-BUILTIN-001.7.3](TEA-BUILTIN-001.7.3-neo4j-vector-index.md) | ✅ Ready | 55 (P0:18) | Vector Index Integration |
+| [TEA-BUILTIN-001.7.4](TEA-BUILTIN-001.7.4-neo4j-gds.md) | ✅ Ready (Optional) | 78 (P0:26) | Graph Data Science Integration |
+| [TEA-BUILTIN-001.7.5](TEA-BUILTIN-001.7.5-neo4j-triggers.md) | ✅ Ready (Optional) | 47 (P0:18) | APOC Triggers Support |
+
+**Total Test Coverage:** 299 scenarios (P0: 104 critical path tests)
 
 ## Epic Goal
 
@@ -194,6 +198,39 @@ All Neo4j connection schemes must be supported:
 - [ ] **Optional for GDS**: Neo4j Enterprise + GDS plugin
 - [ ] **Optional for Triggers**: APOC plugin installed
 
+## Local Development Setup
+
+A Docker Compose configuration is provided for local testing:
+
+```bash
+# Start Neo4j Enterprise (with APOC, supports GDS)
+docker compose --profile neo4j up -d
+
+# Or start Neo4j Community (lighter, no GDS support)
+docker compose --profile neo4j-community up -d
+
+# Check health
+docker compose ps
+
+# View logs
+docker compose logs -f neo4j_enterprise
+```
+
+**Environment Variables** (see `.env.example`):
+
+```bash
+export NEO4J_URI="bolt://localhost:7687"
+export NEO4J_USERNAME="neo4j"
+export NEO4J_PASSWORD="tea-test-password"
+```
+
+**Run Integration Tests**:
+
+```bash
+cd python
+pytest tests/test_neo4j_backend.py -v
+```
+
 ## YAML Configuration Example
 
 ```yaml
@@ -288,4 +325,6 @@ The epic should maintain system integrity while delivering enterprise Neo4j grap
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
+| 2025-12-30 | 0.3 | Status updated to Ready for Development; added Docker Compose setup; marked GDS/Triggers as optional | PO (Sarah) |
+| 2025-12-30 | 0.2 | All substories QA validated with test designs (299 total scenarios) | Quinn (QA) |
 | 2024-12-30 | 0.1 | Initial epic creation | PO (Sarah) |

@@ -1,6 +1,6 @@
 # Story TEA-KIROKU-007: CrossRef API Integration
 
-## Status: Approved
+## Status: Done
 
 ## Story
 
@@ -46,39 +46,39 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Implement `academic.crossref` action** (AC: 1, 3, 4, 7, 10)
-  - [ ] Add `academic_crossref()` function to academic_actions.py
-  - [ ] Implement DOI lookup via `https://api.crossref.org/works/{doi}`
-  - [ ] Parse JSON response to structured dict
-  - [ ] Handle authors array (given, family name format)
-  - [ ] Extract abstract from abstract field (may contain JATS XML)
-  - [ ] Implement error handling with structured responses
+- [x] **Task 1: Implement `academic.crossref` action** (AC: 1, 3, 4, 7, 10)
+  - [x] Add `academic_crossref()` function to academic_actions.py
+  - [x] Implement DOI lookup via `https://api.crossref.org/works/{doi}`
+  - [x] Parse JSON response to structured dict
+  - [x] Handle authors array (given, family name format)
+  - [x] Extract abstract from abstract field (may contain JATS XML)
+  - [x] Implement error handling with structured responses
 
-- [ ] **Task 2: Implement search functionality** (AC: 2, 5, 6)
-  - [ ] Add query search via `https://api.crossref.org/works?query={query}`
-  - [ ] Support `rows` parameter for max_results
-  - [ ] Parse multiple results from items array
+- [x] **Task 2: Implement search functionality** (AC: 2, 5, 6)
+  - [x] Add query search via `https://api.crossref.org/works?query={query}`
+  - [x] Support `rows` parameter for max_results
+  - [x] Parse multiple results from items array
 
-- [ ] **Task 3: Implement rate limiting** (AC: 8, 9)
-  - [ ] Add `mailto` parameter (optional but recommended)
-  - [ ] Set User-Agent header with mailto for polite pool
-  - [ ] Implement appropriate rate limiting (1 req/s default, 50/s with mailto)
+- [x] **Task 3: Implement rate limiting** (AC: 8, 9)
+  - [x] Add `mailto` parameter (optional but recommended)
+  - [x] Set User-Agent header with mailto for polite pool
+  - [x] Implement appropriate rate limiting (1 req/s default, 50/s with mailto)
 
-- [ ] **Task 4: Register action** (AC: 1)
-  - [ ] Register as `academic.crossref` and `actions.academic_crossref`
+- [x] **Task 4: Register action** (AC: 1)
+  - [x] Register as `academic.crossref` and `actions.academic_crossref`
 
-- [ ] **Task 5: Unit tests** (AC: 11)
-  - [ ] Test DOI lookup success
-  - [ ] Test search by query success
-  - [ ] Test empty/not found DOI
-  - [ ] Test network error handling
-  - [ ] Test timeout handling
-  - [ ] Test rate limiting with mailto
+- [x] **Task 5: Unit tests** (AC: 11)
+  - [x] Test DOI lookup success
+  - [x] Test search by query success
+  - [x] Test empty/not found DOI
+  - [x] Test network error handling
+  - [x] Test timeout handling
+  - [x] Test rate limiting with mailto
 
-- [ ] **Task 6: Documentation** (AC: 12)
-  - [ ] Add `academic.crossref` section to actions-reference.md
-  - [ ] Document parameters and return structure
-  - [ ] Add YAML usage examples
+- [x] **Task 6: Documentation** (AC: 12)
+  - [x] Add `academic.crossref` section to actions-reference.md
+  - [x] Document parameters and return structure
+  - [x] Add YAML usage examples
 
 ## Dev Notes
 
@@ -237,9 +237,115 @@ CROSSREF_DOI_SUCCESS = {
 
 ---
 
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### File List
+
+| File | Status | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/actions/academic_actions.py` | Modified | Added `academic.crossref` action with DOI lookup, search, rate limiting |
+| `python/tests/test_academic_actions.py` | Modified | Added 23 CrossRef tests in 4 test classes |
+| `docs/python/actions-reference.md` | Modified | Added documentation for `academic.crossref` action |
+| `docs/stories/TEA-KIROKU-007-crossref-api-integration.md` | Modified | Updated status and task checkboxes |
+
+### Debug Log References
+None - implementation proceeded without issues.
+
+### Completion Notes
+- All 6 tasks completed successfully
+- 23 new unit tests added covering all acceptance criteria
+- All 59 tests in test_academic_actions.py pass
+- Documentation includes parameters, return structure, YAML examples, and error codes
+- Rate limiting with polite pool (mailto) implemented per CrossRef API guidelines
+- Updated `_request_with_backoff` to accept optional headers parameter
+- JATS XML stripping implemented for abstract field
+- Author parsing handles given/family format and organization names
+
+### Implementation Review (2025-12-30)
+
+**Reviewer:** Quinn (Test Architect)
+
+### Code Quality Assessment
+
+The implementation is **high quality** and follows established patterns in the codebase. The `academic.crossref` action integrates seamlessly with the existing `academic_actions.py` module, following the same architectural patterns used by `academic.pubmed` and `academic.arxiv` actions.
+
+**Strengths:**
+- Clean, well-documented code with comprehensive docstrings
+- Thread-safe rate limiting using `RateLimiter` class with `threading.Lock`
+- Proper error handling with structured error responses and specific error codes
+- JATS XML stripping from abstracts using regex
+- Flexible author parsing handling both person names (given/family) and organizations
+- Multiple date field fallbacks (published → published-print → published-online)
+- URL encoding of DOIs for path safety
+- Exponential backoff on 429 responses with configurable retries
+
+### Refactoring Performed
+
+No refactoring was necessary. The implementation is clean and follows existing patterns.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows existing module patterns, proper typing, docstrings
+- Project Structure: ✓ Correctly placed in `actions/academic_actions.py`
+- Testing Strategy: ✓ 23 new tests covering all ACs (59 total tests pass)
+- All ACs Met: ✓ All 12 acceptance criteria implemented and tested
+
+### Improvements Checklist
+
+All items were addressed by the developer:
+
+- [x] DOI lookup with structured metadata return (AC1)
+- [x] Search by query string with max_results (AC2)
+- [x] All required output fields: doi, title, authors, abstract, container_title, published_date, type, url (AC3)
+- [x] DOI parameter support with URL encoding (AC4)
+- [x] Query parameter support (AC5)
+- [x] max_results parameter with default of 5 (AC6)
+- [x] timeout parameter with default of 30 (AC7)
+- [x] Polite pool rate limiting (50 req/s with mailto, 1 req/s without) (AC8)
+- [x] mailto parameter for User-Agent header (AC9)
+- [x] Structured error responses with error_code field (AC10)
+- [x] Comprehensive unit tests (23 tests) (AC11)
+- [x] Documentation in actions-reference.md (AC12)
+
+### Security Review
+
+**No security concerns identified.**
+
+- DOI input is URL-encoded before use in API path
+- No user-provided data is executed or evaluated
+- Rate limiting prevents API abuse
+- Timeout prevents hung connections
+
+### Performance Considerations
+
+- Rate limiting is appropriate for CrossRef API guidelines
+- Exponential backoff on 429 prevents thundering herd
+- Request timeout of 30s is reasonable default
+- Connection pooling via `requests` library is used
+
+### Files Modified During Review
+
+None - no changes required.
+
+### Gate Status
+
+Gate: **PASS** → docs/qa/gates/TEA-KIROKU-007-crossref-api-integration.yml
+Test design: docs/qa/assessments/TEA-KIROKU-007-test-design-20251229.md
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, all tests pass (59/59), documentation complete, implementation follows established patterns.
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
+| 2025-12-30 | 0.4 | QA review complete - PASS | Quinn (Test Architect) |
+| 2025-12-30 | 0.3 | Implementation complete - all tasks done | James (Dev Agent) |
 | 2025-12-29 | 0.2 | Added QA test design review | Quinn (QA Agent) |
 | 2025-12-27 | 0.1 | Initial story creation from QA recommendations | Sarah (PO Agent) |

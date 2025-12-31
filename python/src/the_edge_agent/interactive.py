@@ -29,6 +29,33 @@ from enum import Enum
 from datetime import datetime, timezone
 
 
+def _sanitize_state_name(name: str) -> str:
+    """
+    Sanitize a state name for use as a filename.
+
+    Security-critical: Prevents path traversal attacks (UNIT-003).
+
+    Args:
+        name: User-provided state name
+
+    Returns:
+        Sanitized name safe for use as filename
+    """
+    # Remove path separators and dangerous characters
+    sanitized = re.sub(r'[/\\:*?"<>|]', "", name)
+    # Remove leading/trailing dots and spaces
+    sanitized = sanitized.strip(". ")
+    # Replace multiple spaces/underscores with single underscore
+    sanitized = re.sub(r"[\s_]+", "_", sanitized)
+    # Limit length
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    # Ensure non-empty
+    if not sanitized:
+        sanitized = "unnamed"
+    return sanitized
+
+
 class InteractiveCommand(Enum):
     """User command during interactive mode."""
 
@@ -41,6 +68,11 @@ class InteractiveCommand(Enum):
     STATUS = "status"
     REFERENCES = "references"
     HELP = "help"
+    # State management commands (TEA-KIROKU-008)
+    SAVE_STATE = "save_state"
+    LOAD_STATE = "load_state"
+    LIST_STATES = "list_states"
+    DELETE_STATE = "delete_state"
 
 
 class InteractiveRunner:
@@ -264,6 +296,261 @@ class InteractiveRunner:
         self._print_stderr("")
         return True
 
+    # =========================================================================
+    # State Management Commands (TEA-KIROKU-008)
+    # =========================================================================
+
+    def _handle_save_state_command(self, args: str, state: Dict[str, Any]) -> bool:
+        """
+        Handle /save-state command - save current workflow state to a named checkpoint.
+
+        AC1: /save-state [name] command saves current workflow state to a named checkpoint
+        AC4: Named checkpoints are saved in the checkpoint directory with human-readable names
+        AC6: Default name uses timestamp if no name provided
+
+        Args:
+            args: Command arguments (optional name)
+            state: Current workflow state
+
+        Returns:
+            True if command was handled
+        """
+        # Generate name (AC6: timestamp default if not provided)
+        if args.strip():
+            name = _sanitize_state_name(args.strip())
+        else:
+            now = datetime.now()
+            name = now.strftime("state-%Y%m%d-%H%M%S")
+
+        # Build filename (AC4: human-readable format)
+        filename = f"{name}.state.pkl"
+        checkpoint_path = self.checkpoint_dir / filename
+
+        # Build checkpoint data with enhanced metadata
+        timestamp_ms = int(time.time() * 1000)
+        checkpoint_data = {
+            "state": state,
+            "node": self._current_node,
+            "config": {},
+            "timestamp": timestamp_ms,
+            "version": "1.1",  # Enhanced version for TEA-KIROKU-008
+            "name": name,
+            "nodes_visited": self._nodes_visited.copy(),
+        }
+
+        try:
+            # Ensure checkpoint directory exists
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+            with open(checkpoint_path, "wb") as f:
+                pickle.dump(checkpoint_data, f, protocol=4)
+
+            self._print_stderr(
+                f"State saved: {name} (node: {self._current_node or 'unknown'})"
+            )
+            return True
+
+        except Exception as e:
+            self._print_stderr(f"Error saving state: {e}")
+            return True
+
+    def _handle_load_state_command(
+        self,
+        args: str,
+        confirm_callback: Optional[Callable[[], bool]] = None,
+    ) -> tuple:
+        """
+        Handle /load-state command - load a saved checkpoint and continue from that point.
+
+        AC2: /load-state [name] command loads a saved checkpoint
+        AC5: Loading a state replaces current state and continues workflow from that node
+        AC7: Confirmation prompt before loading state
+
+        Args:
+            args: Command arguments (state name)
+            confirm_callback: Optional callback for confirmation (for testing)
+
+        Returns:
+            Tuple of (success: bool, loaded_state: dict or None, loaded_node: str or None)
+        """
+        name = args.strip()
+        if not name:
+            self._print_stderr("Usage: /load-state <name>")
+            self._print_stderr("Use /states to list available checkpoints.")
+            return (False, None, None)
+
+        # Sanitize and build filename
+        sanitized_name = _sanitize_state_name(name)
+        filename = f"{sanitized_name}.state.pkl"
+        checkpoint_path = self.checkpoint_dir / filename
+
+        if not checkpoint_path.exists():
+            self._print_stderr(f"State not found: {name}")
+            self._print_stderr("Use /states to list available checkpoints.")
+            return (False, None, None)
+
+        # AC7: Confirmation prompt
+        self._print_stderr("")
+        self._print_stderr("\u26a0\ufe0f  Loading state will replace current progress.")
+
+        if confirm_callback:
+            confirmed = confirm_callback()
+        else:
+            confirmed = self._confirm_prompt("Continue?")
+
+        if not confirmed:
+            self._print_stderr("Load cancelled.")
+            return (False, None, None)
+
+        try:
+            with open(checkpoint_path, "rb") as f:
+                checkpoint_data = pickle.load(f)
+
+            loaded_state = checkpoint_data.get("state", {})
+            loaded_node = checkpoint_data.get("node")
+            loaded_name = checkpoint_data.get("name", name)
+
+            # Restore node tracking
+            if "nodes_visited" in checkpoint_data:
+                self._nodes_visited = checkpoint_data["nodes_visited"].copy()
+            self._current_node = loaded_node
+
+            self._print_stderr(
+                f"State loaded: {loaded_name} (resuming from: {loaded_node or 'start'})"
+            )
+            return (True, loaded_state, loaded_node)
+
+        except Exception as e:
+            self._print_stderr(f"Error loading state: {e}")
+            return (False, None, None)
+
+    def _handle_list_states_command(self) -> bool:
+        """
+        Handle /states command - list all saved checkpoints with timestamps.
+
+        AC3: /states or /checkpoints command lists all saved checkpoints with timestamps
+
+        Returns:
+            True if command was handled
+        """
+        self._print_stderr("")
+        self._print_stderr("=" * 60)
+        self._print_stderr(" Saved States")
+        self._print_stderr("=" * 60)
+        self._print_stderr("")
+
+        if not self.checkpoint_dir.exists():
+            self._print_stderr("No states saved yet.")
+            self._print_stderr("")
+            return True
+
+        # Find all .state.pkl files
+        state_files = list(self.checkpoint_dir.glob("*.state.pkl"))
+
+        if not state_files:
+            self._print_stderr("No states saved yet.")
+            self._print_stderr("")
+            return True
+
+        # Sort by modification time (newest first)
+        state_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+        for i, filepath in enumerate(state_files, 1):
+            try:
+                # Get file metadata
+                stat = filepath.stat()
+                mtime = datetime.fromtimestamp(stat.st_mtime)
+                size_kb = stat.st_size / 1024
+
+                # Try to read checkpoint metadata
+                node = "unknown"
+                try:
+                    with open(filepath, "rb") as f:
+                        data = pickle.load(f)
+                    node = data.get("node", "unknown") or "start"
+                except Exception:
+                    pass
+
+                # Extract name from filename
+                name = filepath.stem.replace(".state", "")
+
+                # Format output
+                timestamp_str = mtime.strftime("%Y-%m-%d %H:%M:%S")
+                self._print_stderr(f"  {i}. {name:<20} {timestamp_str}  node: {node}")
+
+            except OSError:
+                continue
+
+        self._print_stderr("")
+        return True
+
+    def _handle_delete_state_command(
+        self,
+        args: str,
+        confirm_callback: Optional[Callable[[], bool]] = None,
+    ) -> bool:
+        """
+        Handle /delete-state command - remove a saved checkpoint.
+
+        AC8: /delete-state [name] removes a saved checkpoint
+
+        Args:
+            args: Command arguments (state name)
+            confirm_callback: Optional callback for confirmation (for testing)
+
+        Returns:
+            True if command was handled
+        """
+        name = args.strip()
+        if not name:
+            self._print_stderr("Usage: /delete-state <name>")
+            self._print_stderr("Use /states to list available checkpoints.")
+            return True
+
+        # Sanitize and build filename
+        sanitized_name = _sanitize_state_name(name)
+        filename = f"{sanitized_name}.state.pkl"
+        checkpoint_path = self.checkpoint_dir / filename
+
+        if not checkpoint_path.exists():
+            self._print_stderr(f"State not found: {name}")
+            return True
+
+        # Confirmation prompt
+        if confirm_callback:
+            confirmed = confirm_callback()
+        else:
+            confirmed = self._confirm_prompt(f"Delete checkpoint '{name}'?")
+
+        if not confirmed:
+            self._print_stderr("Delete cancelled.")
+            return True
+
+        try:
+            checkpoint_path.unlink()
+            self._print_stderr(f"State deleted: {name}")
+        except Exception as e:
+            self._print_stderr(f"Error deleting state: {e}")
+
+        return True
+
+    def _confirm_prompt(self, message: str) -> bool:
+        """
+        Display a confirmation prompt and get user response.
+
+        Args:
+            message: Prompt message
+
+        Returns:
+            True if user confirmed, False otherwise
+        """
+        print(f"{message} [y/N]: ", end="", flush=True)
+        try:
+            response = sys.stdin.readline().strip().lower()
+            return response in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False
+
     def _handle_help_command(self) -> bool:
         """
         Handle /help command - show available commands.
@@ -281,6 +568,15 @@ class InteractiveRunner:
         )
         self._print_stderr("  /status           - Show current workflow status")
         self._print_stderr("  /references       - Show references list")
+        self._print_stderr("")
+        self._print_stderr("State Management:")
+        self._print_stderr(
+            "  /save-state [name] - Save workflow state to named checkpoint"
+        )
+        self._print_stderr("  /load-state <name> - Load a saved checkpoint and resume")
+        self._print_stderr("  /states            - List all saved checkpoints")
+        self._print_stderr("  /delete-state <name> - Delete a saved checkpoint")
+        self._print_stderr("")
         self._print_stderr("  /help             - Show this help message")
         self._print_stderr("  quit, exit, q     - Save checkpoint and exit")
         self._print_stderr(
@@ -334,6 +630,15 @@ class InteractiveRunner:
             return (InteractiveCommand.HELP, args)
         elif cmd == "quit" or cmd == "exit" or cmd == "q":
             return (InteractiveCommand.QUIT, args)
+        # State management commands (TEA-KIROKU-008)
+        elif cmd == "save-state":
+            return (InteractiveCommand.SAVE_STATE, args)
+        elif cmd == "load-state":
+            return (InteractiveCommand.LOAD_STATE, args)
+        elif cmd == "states" or cmd == "checkpoints":
+            return (InteractiveCommand.LIST_STATES, args)
+        elif cmd == "delete-state":
+            return (InteractiveCommand.DELETE_STATE, args)
 
         return (None, None)
 
@@ -525,7 +830,7 @@ class InteractiveRunner:
                                 question, checkpoint_state, iteration, node
                             )
 
-                            # Input loop with special command handling (TEA-KIROKU-004)
+                            # Input loop with special command handling (TEA-KIROKU-004, TEA-KIROKU-008)
                             while True:
                                 command, response = self._read_input()
 
@@ -548,9 +853,43 @@ class InteractiveRunner:
                                     self._handle_help_command()
                                     print("> ", end="", flush=True)
                                     continue
+                                # State management commands (TEA-KIROKU-008)
+                                elif command == InteractiveCommand.SAVE_STATE:
+                                    self._handle_save_state_command(
+                                        response, checkpoint_state
+                                    )
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.LIST_STATES:
+                                    self._handle_list_states_command()
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.DELETE_STATE:
+                                    self._handle_delete_state_command(response)
+                                    print("> ", end="", flush=True)
+                                    continue
+                                elif command == InteractiveCommand.LOAD_STATE:
+                                    # Load state is special - it changes the current state
+                                    success, loaded_state, loaded_node = (
+                                        self._handle_load_state_command(response)
+                                    )
+                                    if success and loaded_state is not None:
+                                        # Replace current state and continue from loaded checkpoint
+                                        current_state = loaded_state
+                                        resume_checkpoint = (
+                                            None  # Start fresh from loaded state
+                                        )
+                                        # Break both loops to restart workflow from loaded state
+                                        break
+                                    print("> ", end="", flush=True)
+                                    continue
                                 else:
                                     # Not a special command, exit input loop
                                     break
+
+                            # Check if we loaded a state - if so, restart workflow
+                            if command == InteractiveCommand.LOAD_STATE:
+                                break  # Break stream loop to restart with loaded state
 
                             if command == InteractiveCommand.QUIT:
                                 self._print_stderr("")
