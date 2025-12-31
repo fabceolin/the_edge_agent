@@ -388,8 +388,12 @@ class TestInterviewConfig(unittest.TestCase):
         )
 
         self.assertEqual(runner.interview_config, {})
-        self.assertEqual(runner._max_lines, 50)
-        self.assertEqual(runner._truncate_message, "... [truncated]")
+        # Default to 0 (no truncation) - user can scroll in terminal
+        self.assertEqual(runner._max_lines, 0)
+        self.assertEqual(
+            runner._truncate_message,
+            "... [truncated, use /save to export full draft]",
+        )
 
     def test_template_rendering(self):
         """Test Jinja2 template rendering with state."""

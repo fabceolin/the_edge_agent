@@ -72,7 +72,7 @@ class TestShellProviderLlmCall(unittest.TestCase):
 
     @patch("subprocess.Popen")
     def test_shell_provider_stdin_input(self, mock_popen):
-        """Test that messages are sent via stdin."""
+        """Test that messages are sent via stdin for providers using stdin_mode=pipe."""
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.communicate.return_value = ("Response", "")
@@ -83,12 +83,13 @@ class TestShellProviderLlmCall(unittest.TestCase):
             {"role": "user", "content": "What is 2+2?"},
         ]
 
+        # Use gemini provider which uses stdin_mode=pipe (unlike claude which uses {prompt} in args)
         self.llm_call(
             state={},
             model="ignored",
             messages=messages,
             provider="shell",
-            shell_provider="claude",
+            shell_provider="gemini",
         )
 
         # Verify stdin was used
@@ -410,12 +411,13 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
             mock_proc.communicate.return_value = ("Response", "")
             mock_popen.return_value = mock_proc
 
+            # Use gemini provider which uses stdin_mode=pipe
             registry["llm.call"](
                 state={},
                 model="ignored",
                 messages=[{"role": "user", "content": "Test message"}],
                 provider="shell",
-                shell_provider="claude",
+                shell_provider="gemini",
             )
 
             # Check the input passed to communicate
@@ -445,6 +447,7 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
             mock_proc.communicate.return_value = ("Response", "")
             mock_popen.return_value = mock_proc
 
+            # Use gemini provider which uses stdin_mode=pipe
             registry["llm.call"](
                 state={},
                 model="ignored",
@@ -453,7 +456,7 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
                     {"role": "user", "content": "Hello"},
                 ],
                 provider="shell",
-                shell_provider="claude",
+                shell_provider="gemini",
             )
 
             input_text = mock_proc.communicate.call_args[1].get(
