@@ -1,0 +1,53 @@
+# Quality Gate: TEA-BUILTIN-012.3
+# YAML Engine Integration & Actions for Secrets
+
+schema: 1
+story: "012.3"
+story_title: "YAML Engine Integration & Actions"
+gate: PASS
+status_reason: "All 7 acceptance criteria validated. 17 integration tests passing. Implementation follows established patterns. Security-critical checkpoint exclusion verified."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-01T15:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Cloud provider tests require SDK dependencies - expected in clean environments"
+
+quality_score: 100
+expires: "2026-01-15T00:00:00Z"
+
+evidence:
+  tests_reviewed: 17
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Secrets backend not serialized to checkpoints. Verified by test_secrets_backend_not_in_checkpoint."
+  performance:
+    status: PASS
+    notes: "Secrets cached at engine load time. No per-request overhead."
+  reliability:
+    status: PASS
+    notes: "Invalid backend type handled gracefully with warning log."
+  maintainability:
+    status: PASS
+    notes: "Standard action registration pattern. Well-documented in specialized.md."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider _transient_ prefix convention for auto-excluding secrets from checkpoints"
+      refs: ["python/src/the_edge_agent/actions/secrets_actions.py"]
+    - action: "Add moto-based AWS tests when AWS SDK is available in CI"
+      refs: ["python/tests/test_secrets_cloud.py"]

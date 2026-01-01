@@ -21,6 +21,7 @@ Nodes are the fundamental building blocks of YAML agents. Each node represents a
   - [Method 4: Expression](#method-4-expression)
   - [Method 5: Multi-Step](#method-5-multi-step-steps)
   - [Method 6: While-Loop](#method-6-while-loop)
+  - [Method 7: Dynamic Parallel Fan-Out](#method-7-dynamic-parallel-fan-out)
 - [Fan-In Nodes](#fan-in-nodes)
 
 ---
@@ -68,6 +69,8 @@ nodes:
 
 **Available in execution context:**
 - `state` - Current state dictionary
+- `variables` - Global variables from YAML `variables:` section
+- `secrets` - Secrets from configured backend (see [Secrets Actions](./actions/specialized.md#secrets-actions))
 - `json` - Python json module
 - `requests` - Auto-imported if referenced
 - `datetime` - Auto-imported if referenced
@@ -276,6 +279,151 @@ edges:
 - Loop runs 5 iterations (count goes 0→1→2→3→4→5)
 - Final state: `{count: 5, sum: 15}`
 - Exit reason: `condition_false` (count is no longer < 5)
+
+---
+
+### Method 7: Dynamic Parallel Fan-Out
+
+Execute branches in parallel over a runtime-evaluated collection, with built-in fan-in:
+
+```yaml
+- name: process_items
+  type: dynamic_parallel
+  items: "{{ state.urls }}"           # Jinja2 expression → list at runtime
+  item_var: url                        # Variable name for each item (default: "item")
+  index_var: idx                       # Variable name for index (default: "index")
+  max_concurrency: 5                   # Optional: throttle parallel execution
+  fail_fast: true                      # Optional: cancel remaining on first failure
+  action:                              # Option A: single action per item
+    uses: http.get
+    with:
+      url: "{{ url }}"
+    output: response
+  output: all_responses                # Results collected here
+```
+
+**Three execution modes (mutually exclusive):**
+
+1. **Action mode** (`action:`): Execute a single action per item
+2. **Steps mode** (`steps:`): Execute sequential steps per item
+3. **Subgraph mode** (`subgraph:`): Load and execute an external YAML file per item
+
+**Required fields:**
+- `items`: Jinja2 expression that evaluates to an iterable at runtime
+- One of: `action:`, `steps:`, or `subgraph:`
+
+**Optional fields:**
+- `item_var`: Name of the variable holding each item (default: `"item"`)
+- `index_var`: Name of the variable holding the 0-based index (default: `"index"`)
+- `max_concurrency`: Maximum parallel branches (default: unlimited)
+- `fail_fast`: Stop remaining branches on first error (default: `false`)
+- `output`: State key to store collected results (default: `"parallel_results"`)
+
+**Action mode example:**
+
+```yaml
+- name: fetch_all_urls
+  type: dynamic_parallel
+  items: "{{ state.urls }}"
+  item_var: url
+  max_concurrency: 10
+  action:
+    uses: http.get
+    with:
+      url: "{{ url }}"
+    output: response
+  output: responses
+```
+
+**Steps mode example:**
+
+```yaml
+- name: process_documents
+  type: dynamic_parallel
+  items: "{{ state.documents }}"
+  item_var: doc
+  index_var: i
+  steps:
+    - name: extract
+      uses: llm.call
+      with:
+        model: gpt-4o
+        messages:
+          - role: user
+            content: "Extract key points from: {{ doc.content }}"
+      output: extraction
+
+    - name: summarize
+      uses: llm.call
+      with:
+        model: gpt-4o
+        messages:
+          - role: user
+            content: "Summarize: {{ state.extraction.content }}"
+      output: summary
+  output: processed_docs
+```
+
+**Subgraph mode example:**
+
+```yaml
+- name: run_analysis_per_item
+  type: dynamic_parallel
+  items: "{{ state.data_sources }}"
+  item_var: source
+  max_concurrency: 3
+  fail_fast: true
+  subgraph: "./analysis-workflow.yaml"  # Supports local, s3://, gs://, az://, http://
+  input:
+    data_source: "{{ source }}"
+    config: "{{ state.analysis_config }}"
+  output: analysis_results
+```
+
+**Behavior:**
+1. Evaluate `items` expression to get the collection
+2. For each item, spawn a parallel branch with `item_var` and `index_var` injected
+3. Execute branches concurrently (throttled by `max_concurrency` if set)
+4. Collect results from all branches into `output` as a list of `ParallelFlowResult`
+5. If `fail_fast: true`, cancel remaining branches on first failure
+
+**Result format:**
+
+Each result in the output list is a `ParallelFlowResult` with:
+- `state`: The final state from that branch
+- `source_node`: The dynamic_parallel node name
+- `index`: The branch index (0-based)
+
+**Safety guards:**
+- `items` must evaluate to a list/iterable (runtime error otherwise)
+- Empty `items` list results in empty output (no branches executed)
+- `max_concurrency` must be positive integer if specified
+- Branch errors are captured in results unless `fail_fast` cancels execution
+
+**Events emitted:**
+
+| Event | Payload |
+|-------|---------|
+| `DynamicParallelStart` | `{node_name, item_count, max_concurrency}` |
+| `DynamicParallelBranchStart` | `{node_name, index, item}` |
+| `DynamicParallelBranchEnd` | `{node_name, index, success, error?}` |
+| `DynamicParallelEnd` | `{node_name, total_branches, successful, failed}` |
+
+**Use cases:**
+- Process a batch of URLs, files, or API endpoints in parallel
+- Run the same analysis workflow on multiple data sources
+- Fan-out LLM calls across a list of prompts with rate limiting
+- Parallel document processing pipelines with controlled concurrency
+
+**Comparison with static parallel edges:**
+
+| Feature | Static Parallel (edges) | Dynamic Parallel |
+|---------|------------------------|------------------|
+| Branch count | Fixed at YAML parse time | Determined at runtime |
+| Fan-in | Explicit fan-in node | Built-in, automatic |
+| Item iteration | Manual | Automatic with item_var/index_var |
+| Concurrency control | None | max_concurrency + fail_fast |
+| Subgraph loading | Not supported | Supported with fsspec |
 
 ---
 

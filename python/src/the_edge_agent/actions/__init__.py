@@ -20,6 +20,7 @@ Actions are organized by domain:
 - llamaextract_actions: Document extraction via LlamaExtract (TEA-BUILTIN-008.1)
 - cache_actions: Cache and memoization with LTM backend (TEA-BUILTIN-010)
 - ratelimit_actions: Rate limiting with shared named limiters (TEA-BUILTIN-011)
+- secrets_actions: Secrets access via secrets.get and secrets.has (TEA-BUILTIN-012.3)
 - validation_actions: Generic extraction validation with Prolog/probes (TEA-YAML-004)
 - retry_actions: General-purpose retry loop with correction (TEA-YAML-005)
 - academic_actions: Academic research via PubMed and ArXiv APIs (TEA-KIROKU-001)
@@ -85,6 +86,9 @@ from .text_actions import register_actions as register_text
 # TEA-BUILTIN-011: Rate Limiting Actions
 from .ratelimit_actions import register_actions as register_ratelimit
 from .ratelimit_actions import configure_rate_limiters_from_settings
+
+# TEA-BUILTIN-012.3: Secrets Actions
+from .secrets_actions import register_actions as register_secrets
 
 # TEA-BUILTIN-001.7.5: Neo4j APOC Trigger Actions
 from .neo4j_trigger_actions import register_actions as register_neo4j_triggers
@@ -160,6 +164,9 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-BUILTIN-011: Rate Limiting Actions
     register_ratelimit(registry, engine)
+
+    # TEA-BUILTIN-012.3: Secrets Actions
+    register_secrets(registry, engine)
 
     # TEA-BUILTIN-001.7.5: Neo4j APOC Trigger Actions
     register_neo4j_triggers(registry, engine)

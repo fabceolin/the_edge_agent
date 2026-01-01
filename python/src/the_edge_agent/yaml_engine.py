@@ -442,6 +442,9 @@ class YAMLEngine:
         self._prolog_sandbox = prolog_sandbox
         self._prolog_runtime: Optional[Any] = None  # Lazy-initialized
 
+        # TEA-BUILTIN-012.1: Secrets backend (initialized from settings.secrets)
+        self._secrets_backend: Optional[Any] = None
+
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
 
@@ -983,6 +986,36 @@ class YAMLEngine:
                     logger.debug(f"Configured LTM backend from YAML: {backend_type}")
                 except Exception as e:
                     logger.warning(f"Failed to configure LTM backend from YAML: {e}")
+
+        # TEA-BUILTIN-012.3: Configure secrets backend from YAML settings
+        secrets_settings = settings.get("secrets", {})
+        if secrets_settings:
+            secrets_settings = expand_env_vars(secrets_settings)
+            backend_type = secrets_settings.get("backend", "env")
+            try:
+                from .secrets import create_secrets_backend
+
+                # Extract backend-specific kwargs from provider-specific section
+                # e.g., settings.secrets.aws -> {region: ..., secret_name: ...}
+                kwargs = {}
+                if backend_type in secrets_settings and isinstance(
+                    secrets_settings[backend_type], dict
+                ):
+                    kwargs = secrets_settings[backend_type]
+                else:
+                    # Fallback: use flat kwargs (exclude 'backend' and provider sections)
+                    provider_keys = {"backend", "aws", "azure", "gcp", "vault", "env"}
+                    kwargs = {
+                        k: v
+                        for k, v in secrets_settings.items()
+                        if k not in provider_keys
+                    }
+                self._secrets_backend = create_secrets_backend(backend_type, **kwargs)
+                # Populate self.secrets from backend for template access
+                self.secrets = self._secrets_backend.get_all()
+                logger.debug(f"Configured secrets backend from YAML: {backend_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure secrets backend from YAML: {e}")
 
         # TEA-OBS-001.1: Configure ObservabilityContext from YAML settings
         observability_config = config.get("observability", {})

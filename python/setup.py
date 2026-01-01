@@ -100,6 +100,16 @@ setup(
         "storage-gcs": ["gcsfs"],
         "storage-azure": ["adlfs"],
         "storage-all": ["s3fs", "gcsfs", "adlfs"],
+        # TEA-BUILTIN-012.2: Cloud secrets backends
+        "aws": ["boto3>=1.26"],
+        "azure": ["azure-identity>=1.12", "azure-keyvault-secrets>=4.7"],
+        "gcp": ["google-cloud-secret-manager>=2.16"],
+        "secrets": [
+            "boto3>=1.26",
+            "azure-identity>=1.12",
+            "azure-keyvault-secrets>=4.7",
+            "google-cloud-secret-manager>=2.16",
+        ],
         "all": [
             "openai>=1.13.3",
             "litellm>=1.0.0",  # TEA-LLM-003: LiteLLM multi-provider support

@@ -34,6 +34,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
   - [Long-Term Memory Actions](#long-term-memory-actions)
   - [Cache and Memoization Actions](#cache-and-memoization-actions)
   - [Rate Limiting Actions](#rate-limiting-actions)
+  - [Secrets Actions](#secrets-actions)
   - [Firebase Agent Memory Actions](#firebase-agent-memory-actions)
   - [Tabular Data Actions](#tabular-data-actions)
   - [Graph Database Actions](#graph-database-actions)
@@ -87,7 +88,7 @@ This reference is organized into focused modules for easier navigation:
 | Data Processing | [yaml-reference/actions/data.md](./yaml-reference/actions/data.md) |
 | Memory Actions | [yaml-reference/actions/memory.md](./yaml-reference/actions/memory.md) |
 | Integrations | [yaml-reference/actions/integrations.md](./yaml-reference/actions/integrations.md) |
-| Specialized | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
+| Specialized (incl. Secrets) | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
 
 ---
 
