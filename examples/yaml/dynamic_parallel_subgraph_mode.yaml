@@ -1,0 +1,69 @@
+# Dynamic Parallel Fan-Out Example: Subgraph Mode
+# This example demonstrates loading and executing an external YAML workflow for each item
+# Useful for complex per-item processing that benefits from separate workflow definition
+
+name: batch-analyzer
+description: Run analysis workflow on multiple data sources using subgraph mode
+
+nodes:
+  # Initialize data sources to analyze
+  - name: setup
+    run: |
+      return {
+          "data_sources": [
+              {"name": "source_a", "type": "csv", "path": "/data/sales.csv"},
+              {"name": "source_b", "type": "json", "path": "/data/inventory.json"},
+              {"name": "source_c", "type": "csv", "path": "/data/customers.csv"}
+          ],
+          "analysis_config": {
+              "include_statistics": True,
+              "calculate_trends": True
+          }
+      }
+
+  # Run analysis subgraph on each data source
+  - name: analyze_sources
+    type: dynamic_parallel
+    items: "{{ state.data_sources }}"
+    item_var: source
+    index_var: source_index
+    max_concurrency: 2
+    fail_fast: true
+    subgraph: "./analysis_subgraph.yaml"
+    input:
+      data_source: "{{ source }}"
+      config: "{{ state.analysis_config }}"
+      source_index: "{{ source_index }}"
+    output: analysis_results
+
+  # Aggregate analysis results
+  - name: aggregate_analyses
+    run: |
+      results = state.get("analysis_results", [])
+
+      all_analyses = []
+      for result in results:
+          s = result.state
+          all_analyses.append({
+              "source_name": s.get("source_name"),
+              "analysis_complete": s.get("analysis_complete", False),
+              "row_count": s.get("row_count", 0),
+              "summary": s.get("summary", "No summary available")
+          })
+
+      return {
+          "final_report": {
+              "sources_analyzed": len(all_analyses),
+              "analyses": all_analyses
+          }
+      }
+
+edges:
+  - from: __start__
+    to: setup
+  - from: setup
+    to: analyze_sources
+  - from: analyze_sources
+    to: aggregate_analyses
+  - from: aggregate_analyses
+    to: __end__

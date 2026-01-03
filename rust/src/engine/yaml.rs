@@ -55,6 +55,40 @@ pub struct YamlConfig {
     /// Observability configuration (TEA-OBS-001.2)
     #[serde(default)]
     pub observability: ObsConfig,
+
+    /// Settings configuration (rate limiters, etc.)
+    #[serde(default)]
+    pub settings: Option<SettingsConfig>,
+}
+
+/// Settings configuration for the workflow
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SettingsConfig {
+    /// Pre-configured rate limiters
+    ///
+    /// Each entry defines a named limiter with rpm or rps settings:
+    /// ```yaml
+    /// settings:
+    ///   rate_limiters:
+    ///     openai:
+    ///       rpm: 60
+    ///     anthropic:
+    ///       rps: 2
+    /// ```
+    #[serde(default)]
+    pub rate_limiters: HashMap<String, RateLimiterConfig>,
+}
+
+/// Configuration for a single rate limiter
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimiterConfig {
+    /// Requests per minute
+    #[serde(default)]
+    pub rpm: Option<f64>,
+
+    /// Requests per second (takes precedence over rpm)
+    #[serde(default)]
+    pub rps: Option<f64>,
 }
 
 /// Import configuration for external modules
@@ -497,7 +531,25 @@ impl YamlEngine {
         // Infer entry/finish if not explicit
         self.infer_entry_finish(&mut graph, &config)?;
 
+        // TEA-RUST-RL-001: Initialize rate limiters from settings
+        if let Some(settings) = &config.settings {
+            self.initialize_rate_limiters(&settings.rate_limiters);
+        }
+
         Ok(graph)
+    }
+
+    /// TEA-RUST-RL-001: Initialize rate limiters from settings configuration
+    ///
+    /// Pre-configures rate limiters defined in the `settings.rate_limiters` section.
+    /// This allows setting default configurations before any nodes execute.
+    fn initialize_rate_limiters(&self, rate_limiters: &HashMap<String, RateLimiterConfig>) {
+        use crate::actions::ratelimit::{calculate_interval, global_registry};
+
+        for (name, config) in rate_limiters {
+            let interval = calculate_interval(config.rpm, config.rps);
+            global_registry().initialize(name, interval);
+        }
     }
 
     /// TEA-YAML-002: Process goto properties and implicit chaining for nodes

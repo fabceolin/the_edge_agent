@@ -1,0 +1,77 @@
+# Dynamic Parallel Fan-Out Example: Action Mode
+# This example demonstrates using dynamic_parallel to fetch multiple URLs in parallel
+# Each URL is processed with a single HTTP GET action
+
+name: url-fetcher
+description: Fetch multiple URLs in parallel with rate limiting
+
+nodes:
+  # Initialize the list of URLs to fetch
+  - name: setup
+    run: |
+      return {
+          "urls": [
+              "https://httpbin.org/get?id=1",
+              "https://httpbin.org/get?id=2",
+              "https://httpbin.org/get?id=3",
+              "https://httpbin.org/get?id=4",
+              "https://httpbin.org/get?id=5"
+          ]
+      }
+
+  # Process all URLs in parallel with max 3 concurrent requests
+  - name: fetch_all
+    type: dynamic_parallel
+    items: "{{ state.urls }}"
+    item_var: url
+    index_var: i
+    max_concurrency: 3
+    fail_fast: false
+    action:
+      uses: http.get
+      with:
+        url: "{{ url }}"
+        timeout: 10
+      output: response
+    output: fetch_results
+
+  # Aggregate the results
+  - name: aggregate
+    run: |
+      results = state.get("fetch_results", [])
+      successful = []
+      failed = []
+
+      for result in results:
+          if result.state.get("response", {}).get("status_code") == 200:
+              successful.append({
+                  "index": result.index,
+                  "url": result.state.get("url"),
+                  "status": "success"
+              })
+          else:
+              failed.append({
+                  "index": result.index,
+                  "url": result.state.get("url"),
+                  "status": "failed"
+              })
+
+      return {
+          "summary": {
+              "total": len(results),
+              "successful": len(successful),
+              "failed": len(failed)
+          },
+          "successful_fetches": successful,
+          "failed_fetches": failed
+      }
+
+edges:
+  - from: __start__
+    to: setup
+  - from: setup
+    to: fetch_all
+  - from: fetch_all
+    to: aggregate
+  - from: aggregate
+    to: __end__

@@ -442,6 +442,9 @@ class YAMLEngine:
         self._prolog_sandbox = prolog_sandbox
         self._prolog_runtime: Optional[Any] = None  # Lazy-initialized
 
+        # TEA-BUILTIN-012.1: Secrets backend (initialized from settings.secrets)
+        self._secrets_backend: Optional[Any] = None
+
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
 
@@ -909,6 +912,13 @@ class YAMLEngine:
                                 processed_config[key] = value
                         self.shell_providers[provider_name] = processed_config
 
+        # TEA-BUILTIN-011: Configure rate limiters from YAML settings
+        rate_limiters_config = settings.get("rate_limiters", {})
+        if isinstance(rate_limiters_config, dict) and rate_limiters_config:
+            from .actions import configure_rate_limiters_from_settings
+
+            configure_rate_limiters_from_settings(self, rate_limiters_config)
+
         # TEA-BUILTIN-005.3: Resolve Opik configuration from YAML settings
         # Settings can be nested under 'opik' key or flat under 'settings'
         opik_yaml_settings = settings.get("opik", {})
@@ -976,6 +986,36 @@ class YAMLEngine:
                     logger.debug(f"Configured LTM backend from YAML: {backend_type}")
                 except Exception as e:
                     logger.warning(f"Failed to configure LTM backend from YAML: {e}")
+
+        # TEA-BUILTIN-012.3: Configure secrets backend from YAML settings
+        secrets_settings = settings.get("secrets", {})
+        if secrets_settings:
+            secrets_settings = expand_env_vars(secrets_settings)
+            backend_type = secrets_settings.get("backend", "env")
+            try:
+                from .secrets import create_secrets_backend
+
+                # Extract backend-specific kwargs from provider-specific section
+                # e.g., settings.secrets.aws -> {region: ..., secret_name: ...}
+                kwargs = {}
+                if backend_type in secrets_settings and isinstance(
+                    secrets_settings[backend_type], dict
+                ):
+                    kwargs = secrets_settings[backend_type]
+                else:
+                    # Fallback: use flat kwargs (exclude 'backend' and provider sections)
+                    provider_keys = {"backend", "aws", "azure", "gcp", "vault", "env"}
+                    kwargs = {
+                        k: v
+                        for k, v in secrets_settings.items()
+                        if k not in provider_keys
+                    }
+                self._secrets_backend = create_secrets_backend(backend_type, **kwargs)
+                # Populate self.secrets from backend for template access
+                self.secrets = self._secrets_backend.get_all()
+                logger.debug(f"Configured secrets backend from YAML: {backend_type}")
+            except Exception as e:
+                logger.warning(f"Failed to configure secrets backend from YAML: {e}")
 
         # TEA-OBS-001.1: Configure ObservabilityContext from YAML settings
         observability_config = config.get("observability", {})
@@ -1403,3 +1443,63 @@ class YAMLEngine:
         TEA-PY-008.4: Exposes ImportLoader's loaded modules set.
         """
         return self._import_loader._loaded_modules
+
+    def _load_subgraph(self, path: str) -> "StateGraph":
+        """
+        Load a subgraph from a local or remote path using fsspec.
+
+        TEA-YAML-006: Subgraph loading for dynamic_parallel nodes.
+
+        Args:
+            path: Path to the subgraph YAML file. Supports:
+                  - Local paths: './subgraph.yaml', '/abs/path/subgraph.yaml'
+                  - S3: 's3://bucket/path/subgraph.yaml' (requires s3fs)
+                  - GCS: 'gs://bucket/path/subgraph.yaml' (requires gcsfs)
+                  - Azure: 'az://container/path/subgraph.yaml' (requires adlfs)
+                  - HTTP: 'https://example.com/subgraph.yaml' (requires aiohttp)
+
+        Returns:
+            Compiled StateGraph instance from the subgraph YAML.
+
+        Raises:
+            FileNotFoundError: If the subgraph file does not exist.
+            ValueError: If the subgraph YAML is invalid.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> subgraph = engine._load_subgraph('./agents/researcher.yaml')
+            >>> # Or from S3:
+            >>> subgraph = engine._load_subgraph('s3://my-bucket/agents/researcher.yaml')
+        """
+        from .actions.core_actions import _get_filesystem
+
+        # Get filesystem and path
+        fs, fs_path, err = _get_filesystem(path)
+        if err:
+            raise FileNotFoundError(
+                f"Subgraph not found: {path} - {err.get('error', 'Unknown error')}"
+            )
+
+        try:
+            # Read YAML content
+            with fs.open(fs_path, "r") as f:
+                content = f.read()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Subgraph not found: {path}")
+        except Exception as e:
+            raise ValueError(f"Failed to load subgraph '{path}': {e}") from e
+
+        # Parse YAML
+        config = yaml.safe_load(content)
+        if not config:
+            raise ValueError(f"Empty subgraph configuration: {path}")
+
+        # Get directory for relative imports within subgraph
+        if path.startswith(("s3://", "gs://", "az://", "http://", "https://")):
+            # For remote paths, use parent directory
+            subgraph_dir = "/".join(path.rsplit("/", 1)[:-1]) if "/" in path else ""
+        else:
+            subgraph_dir = os.path.dirname(os.path.abspath(path))
+
+        # Load subgraph using same engine settings
+        return self.load_from_dict(config, yaml_dir=subgraph_dir)

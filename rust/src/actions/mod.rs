@@ -7,6 +7,7 @@ pub mod file;
 pub mod http;
 pub mod llm;
 pub mod memory;
+pub mod ratelimit;
 
 use crate::engine::executor::ActionRegistry;
 
@@ -16,6 +17,7 @@ pub fn register_defaults(registry: &ActionRegistry) {
     file::register(registry);
     memory::register(registry);
     data::register(registry);
+    ratelimit::register(registry);
 
     #[cfg(feature = "llm")]
     llm::register(registry);

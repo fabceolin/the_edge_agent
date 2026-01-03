@@ -10,6 +10,16 @@ This directory contains example workflows for The Edge Agent. All YAML agents in
 | `yaml_customer_support_example.yaml` | Customer support chatbot with LLM |
 | `yaml_perplexity_example.yaml` | Research agent using web search |
 
+### Dynamic Parallel Examples (`yaml/`)
+
+| File | Description |
+|------|-------------|
+| `yaml/dynamic_parallel_action_mode.yaml` | Fetch multiple URLs in parallel with rate limiting |
+| `yaml/dynamic_parallel_steps_mode.yaml` | Process documents through multiple sequential steps |
+| `yaml/dynamic_parallel_subgraph_mode.yaml` | Run external YAML workflows per item |
+| `yaml/analysis_subgraph.yaml` | Subgraph used by the subgraph mode example |
+| `yaml/dynamic_parallel_fail_fast.yaml` | Validation with fail-fast behavior |
+
 ## Python Examples
 
 | File | Description |

@@ -33,6 +33,16 @@ Specialized actions provide checkpoint persistence, schema manipulation, documen
   - [Validation Logging](#validation-logging)
 - [Retry Actions](#retry-actions)
   - [retry.loop](#retryloop)
+- [Rate Limiting Actions](#rate-limiting-actions)
+  - [ratelimit.wrap](#ratelimitwrap)
+  - [Parallel Rate Limiting](#parallel-rate-limiting)
+  - [Cache + Rate Limit Composition](#cache--rate-limit-composition)
+  - [Settings-Based Configuration](#settings-based-configuration)
+- [Secrets Actions](#secrets-actions)
+  - [secrets.get](#secretsget)
+  - [secrets.has](#secretshas)
+  - [Secrets Configuration](#secrets-configuration)
+  - [Cloud Provider Backends](#cloud-provider-backends)
 - [Custom Actions](#custom-actions)
 
 ---
@@ -624,6 +634,373 @@ edges:
 
 ---
 
+## Rate Limiting Actions
+
+Enforce rate limits across parallel nodes using named limiters. Prevents API throttling when making concurrent calls to rate-limited services (LLM providers, web APIs).
+
+**Key Features:**
+- Named limiters shared across parallel branches
+- RPM (requests per minute) or RPS (requests per second) configuration
+- Thread-safe implementation with proper timing
+- Response metadata (wait time, limiter name)
+- Timeout support for bounded waiting
+- Composable with `cache.wrap` for cache-before-ratelimit optimization
+
+### `ratelimit.wrap`
+
+Wrap any action with rate limiting:
+
+```yaml
+# Basic rate limiting
+- name: call_api
+  uses: ratelimit.wrap
+  with:
+    action: llm.call
+    limiter: openai                          # Named limiter (shared across nodes)
+    rpm: 60                                  # 60 requests per minute = 1 req/sec
+    args:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "{{ state.prompt }}"
+  output: api_result
+
+# Multiple parallel nodes share the same limiter
+# Thread 1: wait(0s) → execute
+# Thread 2: wait(1s) → execute
+# Thread 3: wait(2s) → execute
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `action` | string | Yes | - | Action to wrap (e.g., `llm.call`, `http.get`) |
+| `args` | dict | Yes | - | Arguments to pass to wrapped action |
+| `limiter` | string | Yes | - | Name of the rate limiter (shared across nodes) |
+| `rpm` | float | No | - | Requests per minute limit |
+| `rps` | float | No | - | Requests per second limit (takes precedence over rpm) |
+| `timeout` | float | No | - | Maximum wait time in seconds. Returns error if exceeded. |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "result": {...},              // Wrapped action result
+  "_ratelimit_waited_ms": 1000, // Time spent waiting in milliseconds
+  "_ratelimit_limiter": "openai" // Name of the limiter used
+}
+```
+
+**Timeout Error:**
+```json
+{
+  "success": false,
+  "error": "Rate limit wait would exceed timeout (5s). Wait required: 10.00s",
+  "error_type": "ratelimit_timeout",
+  "_ratelimit_waited_ms": 10000,
+  "_ratelimit_limiter": "openai"
+}
+```
+
+### Parallel Rate Limiting
+
+When using parallel fan-out, all nodes sharing the same limiter name will coordinate:
+
+```yaml
+name: parallel_rate_limited
+
+edges:
+  - from: start
+    to: [query_1, query_2, query_3]
+  - from: [query_1, query_2, query_3]
+    to: aggregate
+
+nodes:
+  - name: query_1
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # All 3 share this limiter
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q1 }}" }]
+
+  - name: query_2
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # Same limiter = sequential at 1 req/sec
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q2 }}" }]
+
+  - name: query_3
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: [{ role: user, content: "{{ state.q3 }}" }]
+```
+
+### Cache + Rate Limit Composition
+
+Wrap rate limiting inside cache for optimal performance (cache hit skips rate limit):
+
+```yaml
+# OPTIMIZED: Cache checks BEFORE rate limit
+# Cache hit = no rate limit token consumed
+- name: smart_call
+  uses: cache.wrap
+  with:
+    action: ratelimit.wrap
+    key_strategy: args
+    ttl_days: 7
+    args:
+      action: llm.call
+      limiter: openai
+      rpm: 60
+      args:
+        model: gpt-4
+        messages: "{{ state.messages }}"
+  output: result
+
+# Flow:
+# 1. cache.wrap checks cache
+# 2. Cache HIT? → Returns result (no rate limit consumed!)
+# 3. Cache MISS? → ratelimit.wrap.wait() → llm.call → cache.store
+```
+
+### Settings-Based Configuration
+
+Pre-configure rate limiters in settings for multiple providers:
+
+```yaml
+name: multi_provider_agent
+
+settings:
+  rate_limiters:
+    openai:
+      rpm: 60                      # 60 requests per minute
+    anthropic:
+      rpm: 40                      # 40 requests per minute
+    local_llm:
+      rps: 10                      # 10 requests per second
+
+nodes:
+  - name: call_openai
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: openai              # Uses settings: 60 rpm
+      args:
+        model: gpt-4
+        messages: "{{ state.messages }}"
+
+  - name: call_claude
+    uses: ratelimit.wrap
+    with:
+      action: llm.call
+      limiter: anthropic           # Uses settings: 40 rpm
+      args:
+        model: claude-3
+        messages: "{{ state.messages }}"
+```
+
+**Notes:**
+- Limiter configuration is "first-config-wins": if a limiter is already configured (either from settings or a previous node), subsequent configurations with different values log a warning but reuse the existing limiter
+- Rate limiters are stored at the engine level and survive across node executions
+- Thread-safe: uses `threading.Lock` internally for correct timing across concurrent calls
+
+---
+
+## Secrets Actions
+
+Access secrets from cloud providers (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager) or environment variables through a unified interface.
+
+> **Epic:** [TEA-BUILTIN-012](../../../stories/TEA-BUILTIN-012-secrets-backend-epic.md)
+> **Status:** Implemented (Python-only)
+
+### `secrets.get`
+
+Retrieve a secret value by key:
+
+```yaml
+- name: get_api_key
+  uses: secrets.get
+  with:
+    key: API_KEY                    # Required: secret key name
+    default: null                   # Optional: fallback value if not found
+  output: api_key
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `key` | string | Yes | Secret key to retrieve |
+| `default` | any | No | Default value if secret not found |
+
+**Returns:**
+```python
+{
+  "value": str | any  # The secret value, or default if not found
+}
+```
+
+Access via `output`: `{{ state.api_key.value }}` or use Jinja2 filter `{{ state.api_key | first }}`
+
+**Example with template syntax:**
+
+```yaml
+# Alternative: use template syntax directly
+- name: call_api
+  uses: http.get
+  with:
+    url: "{{ variables.api_url }}"
+    headers:
+      Authorization: "Bearer {{ secrets.API_KEY }}"
+```
+
+### `secrets.has`
+
+Check if a secret exists:
+
+```yaml
+- name: check_secret
+  uses: secrets.has
+  with:
+    key: OPTIONAL_FEATURE_KEY       # Required: secret key to check
+  output: has_feature_key
+```
+
+**Returns:**
+```python
+{
+  "exists": bool  # True if secret exists, False otherwise
+}
+```
+
+**Example with conditional logic:**
+
+```yaml
+- name: check_feature
+  uses: secrets.has
+  with:
+    key: PREMIUM_API_KEY
+  output: has_premium
+
+- name: use_premium_api
+  when: "{{ state.has_premium.exists }}"
+  uses: http.get
+  with:
+    url: "{{ variables.premium_api_url }}"
+    headers:
+      Authorization: "Bearer {{ secrets.PREMIUM_API_KEY }}"
+```
+
+### Secrets Configuration
+
+Configure secrets backends in the `settings.secrets` section:
+
+```yaml
+settings:
+  secrets:
+    backend: aws                    # aws | azure | gcp | vault | env (default)
+
+    # Environment variables (default backend)
+    env:
+      prefix: MYAPP_                # Optional: filter env vars by prefix
+
+    # AWS Secrets Manager
+    aws:
+      region: us-east-1
+      secret_name: myapp/production # Single JSON secret with multiple keys
+      # OR
+      secret_prefix: myapp/         # Multiple secrets by prefix
+
+    # Azure Key Vault
+    azure:
+      vault_url: https://myvault.vault.azure.net/
+
+    # GCP Secret Manager
+    gcp:
+      project_id: my-project
+      secret_prefix: myapp-         # Optional: filter by prefix
+
+    # HashiCorp Vault (via Dynaconf)
+    vault:
+      url: https://vault.example.com
+      token: ${VAULT_TOKEN}
+      mount: secret
+```
+
+**Backend Selection:**
+
+| Backend | Provider | Install Extra |
+|---------|----------|---------------|
+| `env` | Environment variables | Built-in (default) |
+| `aws` | AWS Secrets Manager | `pip install the-edge-agent[aws]` |
+| `azure` | Azure Key Vault | `pip install the-edge-agent[azure]` |
+| `gcp` | Google Secret Manager | `pip install the-edge-agent[gcp]` |
+| `vault` | HashiCorp Vault | `pip install the-edge-agent[secrets]` |
+
+### Cloud Provider Backends
+
+#### AWS Secrets Manager
+
+```yaml
+settings:
+  secrets:
+    backend: aws
+    aws:
+      region: us-east-1
+      # Option 1: Single JSON secret containing multiple keys
+      secret_name: myapp/production
+      # Option 2: Multiple secrets with common prefix
+      # secret_prefix: myapp/
+```
+
+**Authentication:** Uses AWS default credential chain (environment variables, IAM role, instance profile).
+
+#### Azure Key Vault
+
+```yaml
+settings:
+  secrets:
+    backend: azure
+    azure:
+      vault_url: https://myvault.vault.azure.net/
+```
+
+**Authentication:** Uses `DefaultAzureCredential` (environment variables, managed identity, Azure CLI).
+
+#### GCP Secret Manager
+
+```yaml
+settings:
+  secrets:
+    backend: gcp
+    gcp:
+      project_id: my-gcp-project
+      secret_prefix: myapp-         # Optional filter
+```
+
+**Authentication:** Uses Application Default Credentials (ADC).
+
+**Security Notes:**
+- Secrets are loaded at engine initialization and cached in memory
+- Secrets are **never** serialized to checkpoints
+- Use provider's default credential chain for production (avoid hardcoded tokens)
+- Template syntax `{{ secrets.KEY }}` is evaluated at runtime
+
+---
+
 ## Custom Actions
 
 Register custom actions in Python:
@@ -676,6 +1053,7 @@ All specialized actions are available via dual namespaces:
 - `llamaextract.*` and `actions.llamaextract_*`
 - `validate.*` and `actions.validate_*`
 - `retry.*` and `actions.retry_*`
+- `ratelimit.*` and `actions.ratelimit_*`
 
 ---
 

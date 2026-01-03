@@ -15,6 +15,7 @@ state_schema:
   review_story_task: str      # review-story task definition
   dev_output: str             # Output from dev agent
   qa_output: str              # Output from qa agent
+  qa_gate_status: str         # QA gate status: PASS | CONCERNS | FAIL | WAIVED
   sm_output: str              # Output from sm agent
   final_status: str           # Final story status
 
@@ -146,6 +147,115 @@ nodes:
     output:
       qa_output: "{{ result.content }}"
 
+  - name: check_qa_gate
+    description: Parse QA gate status from story file using grep
+    run: |
+      import subprocess
+      import os
+      import glob
+
+      arg = state.get("arg", "")
+      qa_gate_status = "UNKNOWN"
+
+      # Find story file
+      story_file = None
+      patterns = [f"docs/stories/{arg}.md", f"docs/stories/{arg.upper()}.md"]
+      for p in patterns:
+          matches = glob.glob(p)
+          if matches:
+              story_file = matches[0]
+              break
+
+      if story_file and os.path.exists(story_file):
+          # Use grep to find "Gate:" lines, then filter out "Previous QA Gate:"
+          # grep -E "Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)" | grep -v "Previous"
+          try:
+              result = subprocess.run(
+                  ["grep", "-E", r"Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", story_file],
+                  capture_output=True,
+                  text=True
+              )
+              if result.returncode == 0:
+                  lines = result.stdout.strip().split('\n')
+                  for line in lines:
+                      # Skip historical entries like "Previous QA Gate:"
+                      if "Previous" in line:
+                          continue
+                      # Extract gate status
+                      for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                          if status in line.upper():
+                              qa_gate_status = status
+                              break
+                      if qa_gate_status != "UNKNOWN":
+                          break
+          except Exception as e:
+              print(f"grep error: {e}")
+
+      # Fallback: check gate YAML file
+      if qa_gate_status == "UNKNOWN":
+          gate_patterns = [
+              f"docs/qa/gates/{arg}.yml",
+              f"docs/qa/gates/{arg}.yaml",
+          ]
+          for pattern in gate_patterns:
+              if os.path.exists(pattern):
+                  try:
+                      result = subprocess.run(
+                          ["grep", "-E", r"^gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", pattern],
+                          capture_output=True,
+                          text=True
+                      )
+                      if result.returncode == 0:
+                          line = result.stdout.strip()
+                          for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                              if status in line.upper():
+                                  qa_gate_status = status
+                                  break
+                  except Exception:
+                      pass
+                  break
+
+      print(f"QA Gate Status: {qa_gate_status}")
+      return {"qa_gate_status": qa_gate_status}
+
+  - name: run_dev_review_qa
+    description: Execute Dev agent *review-qa command to address QA concerns
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 1800  # 30 minutes for addressing concerns
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.dev_persona }}
+
+            TASK: Execute *review-qa for story {{ state.arg }}.
+
+            The QA review returned CONCERNS. You must address them.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write code. Run tests.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Read the "## QA Results" section to understand the concerns
+            3. Address each concern raised by the QA agent:
+               - Fix code issues
+               - Add missing tests
+               - Update documentation as needed
+            4. Run ALL tests and confirm they pass
+            5. Update the Dev Agent Record section with your fixes
+
+            CRITICAL: Address ALL QA concerns before completing.
+            CRITICAL: Do NOT skip any concerns. Fix them all.
+
+            When done print: DEV_REVIEW_QA_COMPLETED
+    output:
+      dev_output: "{{ result.content }}"
+
   - name: load_sm_context
     description: Load SM agent persona
     run: |
@@ -241,7 +351,23 @@ edges:
   - from: load_qa_context
     to: run_qa_review
   - from: run_qa_review
+    to: check_qa_gate
+
+  # Conditional routing based on QA gate status
+  # If CONCERNS: route back to dev to fix issues, then re-run QA
+  - from: check_qa_gate
+    to: run_dev_review_qa
+    when: "state.get('qa_gate_status') == 'CONCERNS'"
+
+  # If NOT CONCERNS (PASS, FAIL, WAIVED, or UNKNOWN): proceed to SM
+  - from: check_qa_gate
     to: load_sm_context
+    when: "state.get('qa_gate_status') != 'CONCERNS'"
+
+  # After dev fixes concerns, re-run QA review
+  - from: run_dev_review_qa
+    to: load_qa_context
+
   - from: load_sm_context
     to: run_sm_status_update
   - from: run_sm_status_update

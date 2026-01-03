@@ -385,6 +385,16 @@ def run(
     secrets_env: Optional[str] = typer.Option(
         None, "--secrets-env", help="Load secrets from env vars with prefix"
     ),
+    secrets_backend: Optional[str] = typer.Option(
+        None,
+        "--secrets-backend",
+        help="Secrets backend: env, aws, azure, gcp, vault (default: env)",
+    ),
+    secrets_backend_opts: Optional[str] = typer.Option(
+        None,
+        "--secrets-backend-opts",
+        help='Backend options as JSON (e.g., \'{"region": "us-east-1"}\')',
+    ),
     stream: bool = typer.Option(
         False, "--stream", "-s", help="Output events as NDJSON"
     ),
@@ -481,7 +491,32 @@ def run(
 
     # Create engine
     engine = YAMLEngine(actions_registry=cli_actions or {})
-    if secrets_dict:
+
+    # TEA-BUILTIN-012.3: Configure secrets backend from CLI flags
+    if secrets_backend:
+        try:
+            from the_edge_agent.secrets import create_secrets_backend
+
+            backend_opts = {}
+            if secrets_backend_opts:
+                try:
+                    backend_opts = json.loads(secrets_backend_opts)
+                except json.JSONDecodeError as e:
+                    typer.echo(
+                        f"Error: Invalid JSON in --secrets-backend-opts: {e}", err=True
+                    )
+                    raise typer.Exit(1)
+            engine._secrets_backend = create_secrets_backend(
+                secrets_backend, **backend_opts
+            )
+            engine.secrets = engine._secrets_backend.get_all()
+            logging.getLogger(__name__).debug(
+                f"Configured secrets backend from CLI: {secrets_backend}"
+            )
+        except Exception as e:
+            typer.echo(f"Error: Failed to configure secrets backend: {e}", err=True)
+            raise typer.Exit(1)
+    elif secrets_dict:
         engine.secrets = secrets_dict
 
     try:
@@ -685,6 +720,16 @@ def resume(
     secrets_env: Optional[str] = typer.Option(
         None, "--secrets-env", help="Load secrets from env vars with prefix"
     ),
+    secrets_backend: Optional[str] = typer.Option(
+        None,
+        "--secrets-backend",
+        help="Secrets backend: env, aws, azure, gcp, vault (default: env)",
+    ),
+    secrets_backend_opts: Optional[str] = typer.Option(
+        None,
+        "--secrets-backend-opts",
+        help='Backend options as JSON (e.g., \'{"region": "us-east-1"}\')',
+    ),
     stream: bool = typer.Option(
         False, "--stream", "-s", help="Output events as NDJSON"
     ),
@@ -730,7 +775,29 @@ def resume(
 
     # Create engine and load workflow
     engine = YAMLEngine(actions_registry={})
-    if secrets_dict:
+
+    # TEA-BUILTIN-012.3: Configure secrets backend from CLI flags
+    if secrets_backend:
+        try:
+            from the_edge_agent.secrets import create_secrets_backend
+
+            backend_opts = {}
+            if secrets_backend_opts:
+                try:
+                    backend_opts = json.loads(secrets_backend_opts)
+                except json.JSONDecodeError as e:
+                    typer.echo(
+                        f"Error: Invalid JSON in --secrets-backend-opts: {e}", err=True
+                    )
+                    raise typer.Exit(1)
+            engine._secrets_backend = create_secrets_backend(
+                secrets_backend, **backend_opts
+            )
+            engine.secrets = engine._secrets_backend.get_all()
+        except Exception as e:
+            typer.echo(f"Error: Failed to configure secrets backend: {e}", err=True)
+            raise typer.Exit(1)
+    elif secrets_dict:
         engine.secrets = secrets_dict
 
     try:

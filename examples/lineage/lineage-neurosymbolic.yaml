@@ -1,0 +1,150 @@
+# Hero Example: Neurosymbolic Lineage Depth
+#
+# RUN: tea run examples/prolog/neurosymbolic/lineage-neurosymbolic.yaml \
+#        --input '{"text": "The matriarch Queen Victoria...", "ancestor": "queen_victoria", "descendant": "prince_george"}'
+#
+# EXPECTED: N=7 (Great-Great-Great-Great-Great-Grandmother)
+
+name: lineage-neurosymbolic
+description: Extracts genealogy facts and calculates generational distance using Prolog
+
+state_schema:
+  text: str
+  ancestor: str
+  descendant: str
+  facts: str
+  generations: int
+  answer: str
+
+nodes:
+  # Step 1: LLM extracts direct parent-child links
+  - name: extract
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            <system_prompt>
+                <role>You are a Genealogical Fact Extractor.</role>
+                <objective>
+                    Extract ALL biological parent-child relationships as Prolog facts.
+                    You MUST extract EVERY person mentioned as someone's parent or child.
+                </objective>
+
+                <rules>
+                    - Extract: father(parent_name, child_name). for male parents
+                    - Extract: mother(parent_name, child_name). for female parents
+                    - Normalize: Remove titles, use snake_case: 'Queen Elizabeth II' -> 'elizabeth_ii'
+                    - CRITICAL: Extract EVERY generation. Do NOT skip anyone in the lineage.
+                    - If X is parent of Y, and Y is parent of Z, you MUST have TWO separate facts.
+                    - Each fact MUST end with a period.
+                </rules>
+
+                <example>
+                    Input: Queen Victoria's son was King Edward VII. Edward's son was King George V.
+                    Output:
+                    <prolog_facts>
+                    mother(victoria, edward_vii).
+                    father(edward_vii, george_v).
+                    </prolog_facts>
+                </example>
+
+                <critical_instruction>
+                    BEFORE outputting facts, mentally list every person mentioned.
+                    For each person, identify their parent(s) and child(ren).
+                    Extract a fact for EACH direct parent-child relationship.
+                    Do NOT skip generations - if A begat B begat C, output TWO facts.
+                </critical_instruction>
+
+                <response_trigger>
+                    Return ONLY the Prolog facts inside <prolog_facts> tags.
+                </response_trigger>
+            </system_prompt>
+        - role: user
+          content: |
+            <input_text>
+                {{ state.text }}
+            </input_text>
+      temperature: 0.0
+    output: llm_response
+
+  # Step 2: Parse facts
+  - name: parse
+    language: lua
+    run: |
+      local content = state.llm_response.content or ""
+      local facts = content:match("<prolog_facts>(.-)%s*</prolog_facts>") or content
+      -- Remove markdown code blocks
+      facts = facts:gsub("```prolog", ""):gsub("```xml", ""):gsub("```", "")
+      -- Trim whitespace
+      facts = facts:match("^%s*(.-)%s*$") or facts
+      -- Defensive: ensure facts end with period (fixes syntax_error(end_of_file))
+      if facts ~= "" and not facts:match("%.$") then
+        facts = facts .. "."
+      end
+      return {facts = facts}
+
+  # Step 3: Prolog calculates recursion depth
+  - name: reason
+    language: prolog
+    run: |
+      :- dynamic mother/2, father/2.
+
+      % Unify parent concept
+      parent(X, Y) :- mother(X, Y).
+      parent(X, Y) :- father(X, Y).
+
+      % Recursive generation counter
+      % Base case: Direct parent (Distance 1)
+      generation_gap(Anc, Desc, 1) :- 
+          parent(Anc, Desc).
+      
+      % Recursive case: Parent of ancestor to descendant
+      generation_gap(Anc, Desc, N) :- 
+          parent(Anc, Mid), 
+          generation_gap(Mid, Desc, Nsub), 
+          N is Nsub + 1.
+
+      % Execution
+      state(facts, Facts),
+      state(ancestor, AncRaw),
+      state(descendant, DescRaw),
+      
+      % Load facts
+      (Facts \= '' -> tea_load_code(Facts) ; true),
+      
+      downcase_atom(AncRaw, Anc),
+      downcase_atom(DescRaw, Desc),
+      
+      % Find distance
+      (generation_gap(Anc, Desc, N) -> Result = N ; Result = 0),
+      return(generations, Result).
+
+  # Step 4: Lua formats the "Greats" string
+  - name: format
+    language: lua
+    run: |
+      local n = state.generations
+      local anc = state.ancestor
+      local desc = state.descendant
+      local title = ""
+
+      if n == 0 then
+        title = "No relation found"
+      elseif n == 1 then
+        title = "Mother/Father"
+      elseif n == 2 then
+        title = "Grandmother/Grandfather"
+      else
+        -- Calculate number of 'Greats'
+        local greats_count = n - 2
+        local prefix = string.rep("Great-", greats_count)
+        title = prefix .. "Grandmother/Grandfather"
+      end
+
+      return {answer = anc .. " is the " .. title .. " of " .. desc .. " (" .. n .. " generations)"}
+
+# Implicit flow: extract -> parse -> reason -> format -> __end__
+

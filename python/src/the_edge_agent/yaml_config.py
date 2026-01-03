@@ -303,6 +303,14 @@ class EngineConfig:
             except Exception:
                 pass
 
+        # TEA-BUILTIN-012.1: Close secrets backend
+        if engine._secrets_backend is not None:
+            try:
+                engine._secrets_backend.close()
+            except Exception:
+                pass
+            engine._secrets_backend = None
+
         # TEA-BUILTIN-006: Close Firebase Agent Memory Infrastructure backends
         if engine._query_engine is not None:
             try:

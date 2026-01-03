@@ -110,7 +110,7 @@ pub use engine::executor::{
     StreamIterator,
 };
 pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, NodeType, StateGraph};
-pub use engine::yaml::{YamlConfig, YamlEngine};
+pub use engine::yaml::{RateLimiterConfig, SettingsConfig, YamlConfig, YamlEngine};
 pub use error::{TeaError, TeaResult};
 
 /// Special constant for the END node

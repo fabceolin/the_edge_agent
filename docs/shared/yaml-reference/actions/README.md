@@ -6,7 +6,7 @@
 
 ## Overview
 
-The Edge Agent provides **50+ built-in actions** organized into 6 categories. Actions are the building blocks for YAML agent workflows, providing capabilities from LLM calls to file I/O, data processing, memory persistence, and external integrations.
+The Edge Agent provides **55+ built-in actions** organized into 6 categories. Actions are the building blocks for YAML agent workflows, providing capabilities from LLM calls to file I/O, data processing, memory persistence, and external integrations.
 
 ---
 
@@ -28,6 +28,9 @@ The Edge Agent provides **50+ built-in actions** organized into 6 categories. Ac
 | `vector.query` | Semantic search | [Integrations](./integrations.md#vectorquery) |
 | `web.scrape` | Web scraping | [Integrations](./integrations.md#webscrape) |
 | `retry.loop` | Retry with correction | [Specialized](./specialized.md#retryloop) |
+| `ratelimit.wrap` | Rate limit any action | [Specialized](./specialized.md#ratelimitwrap) |
+| `secrets.get` | Get secret value | [Specialized](./specialized.md#secretsget) |
+| `secrets.has` | Check secret exists | [Specialized](./specialized.md#secretshas) |
 
 ---
 
@@ -150,9 +153,9 @@ External services, web scraping, RAG, and observability.
 
 ---
 
-### [Specialized Actions](./specialized.md) (12 actions)
+### [Specialized Actions](./specialized.md) (15 actions)
 
-Checkpoints, schema manipulation, document extraction, and validation.
+Checkpoints, schema manipulation, document extraction, validation, rate limiting, and secrets management.
 
 | Action | Description |
 |--------|-------------|
@@ -167,9 +170,12 @@ Checkpoints, schema manipulation, document extraction, and validation.
 | `validate.extraction` | 3-layer extraction validation |
 | `validate.generate_prompt` | Generate extraction prompt |
 | `retry.loop` | Retry with correction node |
+| `ratelimit.wrap` | Rate limit any action (RPM/RPS) |
+| `secrets.get` | Get secret from cloud provider |
+| `secrets.has` | Check if secret exists |
 | Custom Actions | Register Python functions |
 
-**Features:** Prolog constraints, semantic probes, checkpoint persistence
+**Features:** Prolog constraints, semantic probes, checkpoint persistence, rate limiting, cloud secrets (AWS, Azure, GCP)
 
 ---
 

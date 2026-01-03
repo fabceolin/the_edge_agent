@@ -1,0 +1,103 @@
+# Dynamic Parallel Fan-Out Example: Steps Mode
+# This example demonstrates processing documents through multiple sequential steps per item
+# Each document goes through extraction and summarization
+
+name: document-processor
+description: Process multiple documents with extraction and summarization steps
+
+nodes:
+  # Initialize documents to process
+  - name: setup
+    run: |
+      return {
+          "documents": [
+              {
+                  "id": "doc1",
+                  "title": "Introduction to AI",
+                  "content": "Artificial intelligence is transforming industries..."
+              },
+              {
+                  "id": "doc2",
+                  "title": "Machine Learning Basics",
+                  "content": "Machine learning is a subset of AI that focuses on..."
+              },
+              {
+                  "id": "doc3",
+                  "title": "Deep Learning",
+                  "content": "Deep learning uses neural networks with many layers..."
+              }
+          ]
+      }
+
+  # Process each document through multiple steps
+  - name: process_documents
+    type: dynamic_parallel
+    items: "{{ state.documents }}"
+    item_var: doc
+    index_var: doc_index
+    max_concurrency: 2
+    steps:
+      # Step 1: Extract key points (simulated - would use LLM in production)
+      - name: extract_keywords
+        run: |
+          doc = state.get("doc", {})
+          content = doc.get("content", "")
+          # Simulate keyword extraction
+          words = content.lower().split()
+          keywords = [w for w in words if len(w) > 5][:5]
+          return {
+              "doc_id": doc.get("id"),
+              "title": doc.get("title"),
+              "keywords": keywords
+          }
+
+      # Step 2: Calculate word count
+      - name: calculate_stats
+        run: |
+          doc = state.get("doc", {})
+          content = doc.get("content", "")
+          return {
+              "word_count": len(content.split()),
+              "char_count": len(content)
+          }
+
+      # Step 3: Generate a processing timestamp
+      - name: add_metadata
+        run: |
+          import time
+          return {
+              "processed_at": time.time(),
+              "processing_status": "complete"
+          }
+    output: processed_documents
+
+  # Combine all processed documents
+  - name: combine_results
+    run: |
+      processed = state.get("processed_documents", [])
+
+      summaries = []
+      for result in processed:
+          s = result.state
+          summaries.append({
+              "id": s.get("doc_id"),
+              "title": s.get("title"),
+              "keywords": s.get("keywords", []),
+              "word_count": s.get("word_count", 0),
+              "status": s.get("processing_status")
+          })
+
+      return {
+          "document_summaries": summaries,
+          "total_processed": len(summaries)
+      }
+
+edges:
+  - from: __start__
+    to: setup
+  - from: setup
+    to: process_documents
+  - from: process_documents
+    to: combine_results
+  - from: combine_results
+    to: __end__

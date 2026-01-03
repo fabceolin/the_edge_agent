@@ -1,0 +1,79 @@
+# LLM-Only Lineage Reasoning
+#
+# RUN: tea run examples/llm-only/lineage-llm-only.yaml \
+#        --input '{"text": "The matriarch Queen Victoria...", "ancestor": "Queen Victoria", "descendant": "Prince George"}'
+
+name: lineage-llm-only
+description: Uses Chain-of-Thought to trace deep lineage
+
+state_schema:
+  text: str
+  ancestor: str
+  descendant: str
+  answer: str
+
+nodes:
+  - name: reason
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            <system_prompt>
+                <role>You are a Precision Genealogist.</role>
+                <objective>
+                    Determine the exact relationship title between two people in a royal lineage.
+                    You must account for generational depth accurately to assign the correct number of "Great-" prefixes.
+                </objective>
+
+                <rules>
+                    1. Trace the lineage step-by-step: Person A -> Person B -> ... -> Target.
+                    2. Count the generations (N).
+                    3. Convert N to title:
+                       - N=1: Parent
+                       - N=2: Grandparent
+                       - N=3: Great-Grandparent
+                       - N=4: Great-Great-Grandparent
+                       - N=5: Great-Great-Great-Grandparent
+                       - etc.
+                </rules>
+
+                <output_format>
+                    Return ONLY a JSON object:
+                    {
+                        "trace": "Name1 -> Name2 -> Name3...",
+                        "generations": integer,
+                        "relationship": "Exact Title"
+                    }
+                </output_format>
+            </system_prompt>
+        - role: user
+          content: |
+            Input Text:
+            {{ state.text }}
+
+            Query: What is the relationship of {{ state.ancestor }} to {{ state.descendant }}?
+            
+            Think step-by-step.
+      temperature: 0.0
+    output: llm_response
+
+  - name: format
+    language: lua
+    run: |
+      local content = state.llm_response.content or ""
+      local json_str = content:match("%{.+%}")
+      local answer = "Could not parse JSON"
+      
+      if json_str then
+        local rel = json_str:match('"relationship"%s*:%s*"([^"]+)"')
+        local gen = json_str:match('"generations"%s*:%s*(%d+)')
+        if rel and gen then
+            answer = rel .. " (" .. gen .. " generations)"
+        end
+      end
+      
+      return {answer = answer}
+
