@@ -28,20 +28,93 @@ nodes:
       messages:
         - role: system
           content: |
-            Extract family relationships as Prolog facts. Output ONLY these formats:
-            mother(mother_name, child_name).
-            father(father_name, child_name).
-            affair(person1, person2, start_year, end_year).
-            birth_year(person_name, year).
-
-            IMPORTANT RULES:
-            - ALL names must be lowercase with underscores (alice, bob_smith)
-            - ONLY extract explicit relationships from the text
-            - Do NOT invent unknown/unspecified values
-            - If father is not mentioned, do NOT add a father fact
-            - Output raw Prolog facts only, no explanation or markdown
+            <system_prompt>
+                <context>
+                    <role>You are a Precision Genealogical Data Extractor.</role>
+                    <objective>
+                        Extract biological relationships from text and convert them into strict Prolog facts. 
+                        You must prioritize biological accuracy over proximity of words.
+                    </objective>
+                </context>
+            
+                <rules_and_constraints>
+                    <rule_1_predicates>
+                        Only use these specific predicates:
+                        - mother(mother_name, child_name).    (Must be female)
+                        - father(father_name, child_name).    (Must be male)
+                        - affair(p1, p2, start, end).         (Only if explicit affair)
+                        - birth_year(person, year).
+                    </rule_1_predicates>
+            
+                    <rule_2_lineage>
+                        STRICT GENERATION CHECK:
+                        - Do NOT list grandparents as parents. 
+                        - If X is the father of Y, and Y is the father of Z, do NOT write father(X, Z).
+                    </rule_2_lineage>
+            
+                    <rule_3_marriage_vs_biology>
+                        - Marriage does NOT equal parenthood. 
+                        - Being a "wife" does not make someone a "mother" of her husband's existing children.
+                        - Only output mother/father facts if the text explicitly states "son of", "daughter of", "born to", or "children of".
+                    </rule_3_marriage_vs_biology>
+            
+                    <rule_4_missing_data>
+                        - Use 'unknown' for missing years. 
+                        - Do not invent end years for affairs if not stated.
+                    </rule_4_missing_data>
+                </rules_and_constraints>
+            
+                <few_shot_examples>
+                    <example_1>
+                        <input>
+                            John married Alice in 1990. They have a son, Mike. 
+                            Mike's grandfather is Bob.
+                        </input>
+                        <scratchpad>
+                            - John married Alice -> Marriage (ignore for Prolog facts).
+                            - John/Alice have son Mike -> father(john, mike), mother(alice, mike).
+                            - Mike's grandfather is Bob -> Bob is 2 generations up. STOP. Do not output father(bob, mike).
+                        </scratchpad>
+                        <output>
+                            father(john, mike).
+                            mother(alice, mike).
+                        </output>
+                    </example_1>
+                    <example_2>
+                        <input>
+                            King Eric married Queen Sarah. Eric has a son, Prince John, from a previous relationship.
+                        </input>
+                        <scratchpad>
+                            - Sarah is married to Eric, but John is from a "previous relationship".
+                            - Sarah is the stepmother, not biological mother. 
+                            - DO NOT output mother(sarah, john).
+                        </scratchpad>
+                        <output>
+                            father(eric, john).
+                        </output>
+                    </example_2>
+                </few_shot_examples>
+            
+                <task_instructions>
+                    1. Open a <scratchpad> tag.
+                    2. List every person found.
+                    3. For each potential child, identify the BIOLOGICAL mother and BIOLOGICAL father explicitly.
+                    4. Cross-reference genders (father must be male, mother must be female).
+                    5. Verify that grandparents are not listed as parents.
+                    6. Close the scratchpad.
+                    7. Output the final facts inside a <prolog_facts> tag.
+                </task_instructions>
+            
+                
+                <response_trigger>
+                    Start your response immediately with: <scratchpad>
+                </response_trigger>
+            </system_prompt>
         - role: user
-          content: "{{ state.text }}"
+          content: |
+            <input_text>
+                {{ state.text }}
+            </input_text>
       temperature: 0.0
     output: llm_response
 
@@ -51,8 +124,17 @@ nodes:
     run: |
       local response = state.llm_response
       local content = response.content or response or ""
+      -- Remove markdown code blocks
       content = content:gsub("```prolog", ""):gsub("```", "")
-      return {facts = content}
+      -- Extract only the content between <prolog_facts> tags
+      local facts = content:match("<prolog_facts>(.-)%s*</prolog_facts>")
+      if not facts then
+        -- Fallback: try to extract any Prolog-like content
+        facts = content
+      end
+      -- Clean up whitespace
+      facts = facts:gsub("^%s+", ""):gsub("%s+$", "")
+      return {facts = facts}
 
   # Step 3: Prolog derives half-siblings via temporal reasoning
   - name: reason
@@ -75,9 +157,14 @@ nodes:
           ).
 
       % Half-sibling: shares one parent but not both
+      % Case 1: Same mother, different father
       half_sibling(X, Y) :-
           mother(M, X), mother(M, Y), X \= Y,
           \+ (father(F, X), father(F, Y)).
+      % Case 2: Same father, different mother
+      half_sibling(X, Y) :-
+          father(F, X), father(F, Y), X \= Y,
+          \+ (mother(M, X), mother(M, Y)).
 
       % Load facts and query
       state(facts, Facts),
