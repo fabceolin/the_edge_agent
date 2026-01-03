@@ -1,5 +1,17 @@
 # TEA-BUILTIN-014: Semantic Search Integration - Epic
 
+> **STATUS UPDATE**: This epic has been **unified with RAG actions** (TEA-BUILTIN-002.x).
+>
+> Instead of creating a separate `search.*` namespace, semantic file search is now
+> integrated as extensions to the existing `vector.*` namespace for consistency.
+>
+> **New Stories (replacing 014.1-014.3):**
+> - TEA-BUILTIN-002.3: `vector.index_files` action
+> - TEA-BUILTIN-002.4: `model2vec` embedding provider
+> - TEA-BUILTIN-002.5: `lancedb` vector store backend
+>
+> The original stories (014.1, 014.2, 014.3) are marked as **Superseded**.
+
 ## Epic Overview
 
 | Field | Value |
@@ -7,12 +19,14 @@
 | **ID** | TEA-BUILTIN-014 |
 | **Type** | Epic |
 | **Priority** | Medium |
-| **Status** | Draft |
-| **Estimated Stories** | 3 |
+| **Status** | Superseded → See TEA-BUILTIN-002.3/002.4/002.5 |
+| **Estimated Stories** | 3 (now under 002.x) |
 
 ## Epic Goal
 
-Provide built-in semantic search actions for both Python and Rust runtimes, enabling workflows to find semantically similar content within files or directory trees using the `minishlab/potion-multilingual-128M` embedding model.
+~~Provide built-in semantic search actions for both Python and Rust runtimes, enabling workflows to find semantically similar content within files or directory trees using the `minishlab/potion-multilingual-128M` embedding model.~~
+
+**Revised Goal:** Extend the existing RAG actions (`vector.*` namespace) with file indexing capabilities and local embedding support, enabling semantic file search without creating a parallel namespace.
 
 ## Epic Description
 

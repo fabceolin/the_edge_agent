@@ -1,7 +1,14 @@
 # Story TEA-BUILTIN-014.1: Python Semantic Search Actions
 
+> **DEPRECATED**: This story has been superseded by unified RAG extensions:
+> - TEA-BUILTIN-002.3 (vector.index_files action)
+> - TEA-BUILTIN-002.4 (model2vec embedding provider)
+>
+> The `search.*` namespace has been unified with `vector.*` for consistency.
+> See TEA-BUILTIN-014-semantic-search-epic.md for rationale.
+
 ## Status
-**Draft**
+**Superseded**
 
 ## Story
 
