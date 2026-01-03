@@ -1,7 +1,15 @@
 # Story TEA-BUILTIN-014.3: Python Workspace with LanceDB Persistence
 
+> **DEPRECATED**: This story has been superseded by:
+> - TEA-BUILTIN-002.5 (lancedb vector store backend)
+>
+> LanceDB is now integrated as a pluggable vector store backend in the
+> unified RAG system rather than a separate workspace module.
+>
+> See TEA-BUILTIN-014-semantic-search-epic.md for rationale.
+
 ## Status
-**Draft**
+**Superseded**
 
 ## Story
 

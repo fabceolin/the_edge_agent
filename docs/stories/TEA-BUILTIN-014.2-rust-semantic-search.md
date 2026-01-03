@@ -1,7 +1,12 @@
 # Story TEA-BUILTIN-014.2: Rust Semantic Search Actions
 
+> **DEPRECATED**: This story has been superseded by unified RAG extensions.
+> Rust parity will be addressed when porting the unified `vector.*` actions.
+>
+> See TEA-BUILTIN-014-semantic-search-epic.md for rationale.
+
 ## Status
-**Draft**
+**Superseded**
 
 ## Story
 
