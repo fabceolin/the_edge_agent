@@ -8,11 +8,15 @@ Tests cover:
 - YAMLEngine integration with settings.secrets (AC-4)
 - get_all() for Jinja2 context (AC-5)
 - Lazy import behavior for cloud backends (AC-6)
+
+Note: Tests for cloud backends (AWS, Azure, GCP) are skipped if the
+      corresponding SDK dependencies are not installed.
 """
 
 import os
 import pytest
 from unittest import TestCase
+from unittest.mock import patch
 
 
 class TestSecretsBackendProtocol(TestCase):
@@ -222,6 +226,40 @@ class TestEnvSecretsBackend(TestCase):
         self.assertIn("MYAPP_", repr_str)
 
 
+def _check_boto3():
+    """Check if boto3 and botocore are available."""
+    try:
+        import boto3
+        import botocore
+
+        return True
+    except ImportError:
+        return False
+
+
+def _check_azure():
+    """Check if Azure SDK packages are available."""
+    try:
+        import azure.identity
+        import azure.keyvault.secrets
+        import azure.core.exceptions
+
+        return True
+    except ImportError:
+        return False
+
+
+def _check_gcp():
+    """Check if Google Cloud Secret Manager is available."""
+    try:
+        from google.cloud import secretmanager
+        from google.api_core import exceptions
+
+        return True
+    except ImportError:
+        return False
+
+
 class TestSecretsFactory(TestCase):
     """Test create_secrets_backend factory function (AC-3, AC-6)."""
 
@@ -269,18 +307,21 @@ class TestSecretsFactory(TestCase):
         result = backend.get("KEY")
         self.assertEqual(result, "value")
 
+    @pytest.mark.skipif(not _check_boto3(), reason="boto3 not installed")
     def test_factory_aws_requires_config(self):
         """GIVEN 'aws' type without required args, WHEN factory called, THEN ValueError (TEA-BUILTIN-012.2)."""
+        import boto3
         from the_edge_agent.secrets import create_secrets_backend
         from unittest.mock import patch
 
         # Mock boto3 to avoid real AWS calls
-        with patch("boto3.client"):
+        with patch.object(boto3, "client"):
             with self.assertRaises(ValueError) as ctx:
                 create_secrets_backend("aws")  # Missing secret_name or secret_prefix
 
             self.assertIn("Must specify either", str(ctx.exception))
 
+    @pytest.mark.skipif(not _check_azure(), reason="azure packages not installed")
     def test_factory_azure_requires_config(self):
         """GIVEN 'azure' type without vault_url, WHEN factory called, THEN ValueError (TEA-BUILTIN-012.2)."""
         from the_edge_agent.secrets import create_secrets_backend
@@ -291,6 +332,9 @@ class TestSecretsFactory(TestCase):
 
         self.assertIn("vault_url is required", str(ctx.exception))
 
+    @pytest.mark.skipif(
+        not _check_gcp(), reason="google-cloud-secret-manager not installed"
+    )
     def test_factory_gcp_requires_config(self):
         """GIVEN 'gcp' type without project_id, WHEN factory called, THEN ValueError (TEA-BUILTIN-012.2)."""
         from the_edge_agent.secrets import create_secrets_backend
