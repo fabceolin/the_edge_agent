@@ -1,0 +1,69 @@
+# Table of contents for sphinx-book-theme
+# https://sphinx-book-theme.readthedocs.io/en/stable/
+
+format: jb-book
+root: index
+
+parts:
+  - caption: Getting Started
+    chapters:
+      - file: installation
+      - file: python/getting-started
+        title: Python Quickstart
+      - file: rust/getting-started
+        title: Rust Quickstart
+
+  - caption: Guides
+    chapters:
+      - file: shared/YAML_REFERENCE
+        title: YAML Reference
+      - file: shared/cli-reference
+        title: CLI Reference
+      - file: guides/human-in-the-loop
+        title: Human-in-the-Loop
+      - file: python/prolog-guide
+        title: Prolog Guide (Python)
+      - file: rust/prolog-guide
+        title: Prolog Guide (Rust)
+
+  - caption: Capabilities
+    chapters:
+      - file: capabilities/README
+        title: Overview
+      - file: capabilities/neurosymbolic
+        title: Neurosymbolic AI
+      - file: capabilities/parallel-workflows
+        title: Parallel Workflows
+      - file: capabilities/llm-orchestration
+        title: LLM Orchestration
+      - file: capabilities/rag-memory
+        title: RAG & Memory
+      - file: capabilities/edge-deployment
+        title: Edge Deployment
+      - file: capabilities/observability
+        title: Observability
+      - file: capabilities/web-automation
+        title: Web Automation
+
+  - caption: Python Development
+    chapters:
+      - file: python/development-guide
+        title: Development Guide
+      - file: python/actions-reference
+        title: Actions Reference
+      - file: python/custom-actions
+        title: Custom Actions
+      - file: python/api-usage
+        title: API Usage
+
+  - caption: Rust Development
+    chapters:
+      - file: rust/development-guide
+        title: Development Guide
+      - file: rust/actions-reference
+        title: Actions Reference
+
+  - caption: Articles
+    chapters:
+      - file: articles/medium-neurosymbolic-ai
+        title: Neurosymbolic AI with TEA

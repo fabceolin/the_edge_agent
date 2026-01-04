@@ -1,0 +1,8 @@
+# Sphinx documentation dependencies
+sphinx>=7.0
+sphinx-book-theme>=1.1.0
+myst-parser>=3.0
+sphinx-external-toc>=1.0
+sphinx-copybutton>=0.5
+sphinx-togglebutton>=0.3
+linkify-it-py>=2.0

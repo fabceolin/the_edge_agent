@@ -250,6 +250,32 @@ Automatic caching of action results in Long-Term Memory with configurable TTL.
 - LTM backend configured (SQLite by default)
 - `pip install fsspec` - For remote file hashing
 
+### Agent-Prefixed Cache Keys
+
+Cache keys are automatically prefixed with the agent name to enable agent-specific cache management:
+
+```
+cache:{agent_name}:{user_key}
+```
+
+**Agent name resolution (in priority order):**
+1. `settings.name` from YAML config
+2. Top-level `name` field from YAML
+3. YAML filename (without extension)
+4. Fallback to `unknown_agent`
+
+This enables targeted cache invalidation without affecting other agents:
+
+```yaml
+# Invalidate only file_extraction_agent cache
+- name: clear_agent_cache
+  uses: cache.invalidate
+  with:
+    pattern: "cache:file_extraction_agent:*"
+```
+
+Use `key_prefix: false` to disable automatic prefixing for shared caches.
+
 ### `cache.wrap`
 
 Wrap any action with automatic caching:
@@ -268,6 +294,7 @@ Wrap any action with automatic caching:
         - role: user
           content: "Translate to Spanish: {{ state.text }}"
   output: translation_result
+  # Final key: cache:my_agent:llm.call:abc123...
 
 # Cache document extraction by file content hash
 - name: extract_cached
@@ -292,6 +319,21 @@ Wrap any action with automatic caching:
     args:
       query: "{{ state.query }}"
   output: search_result
+
+# Shared cache without agent prefix
+- name: shared_translate
+  uses: cache.wrap
+  with:
+    action: llm.call
+    key: "shared:translate:{{ state.text | sha256 }}"
+    key_prefix: false                      # Disable agent prefix
+    args:
+      model: gpt-4o
+      messages:
+        - role: user
+          content: "Translate: {{ state.text }}"
+  output: shared_result
+  # Final key: cache:shared:translate:xyz789 (no agent prefix)
 ```
 
 **Parameters:**
@@ -303,6 +345,7 @@ Wrap any action with automatic caching:
 | `key` | string | No | - | Custom cache key or Jinja expression |
 | `key_strategy` | string | No | `args` | One of: `sha256`, `args`, `custom`, `file_content` |
 | `key_source` | string | No | - | Argument name for `file_content`/`sha256` strategy |
+| `key_prefix` | bool | No | true | Auto-prefix keys with agent name |
 | `ttl_days` | int | No | 60 | Cache TTL in days |
 | `ttl_hours` | int | No | - | TTL in hours (overrides `ttl_days`) |
 | `ttl_seconds` | int | No | - | TTL in seconds (overrides `ttl_hours`) |
@@ -316,7 +359,7 @@ Wrap any action with automatic caching:
   "success": true,
   "result": {...},
   "_cache_hit": true,
-  "_cache_key": "cache:llm.call:abc123...",
+  "_cache_key": "cache:my_agent:llm.call:abc123...",
   "_cache_created_at": "2025-01-15T10:30:00+00:00"
 }
 ```
@@ -329,8 +372,8 @@ Retrieve cached value without executing action:
 - name: check_cache
   uses: cache.get
   with:
-    key: "cache:llm.call:abc123..."        # Cache key to retrieve
-    include_metadata: true                  # Include cache metadata
+    key: "cache:my_agent:llm.call:abc123..."  # Full cache key with agent prefix
+    include_metadata: true                     # Include cache metadata
   output: cache_entry
 ```
 
@@ -345,15 +388,29 @@ Delete cached entries by key or pattern:
 - name: clear_entry
   uses: cache.invalidate
   with:
-    key: "cache:llm.call:abc123..."
+    key: "cache:my_agent:llm.call:abc123..."
   output: invalidate_result
 
-# Invalidate by pattern
+# Invalidate all cache for a specific agent
+- name: clear_agent_cache
+  uses: cache.invalidate
+  with:
+    pattern: "cache:file_extraction_agent:*"
+  output: agent_invalidate
+
+# Invalidate by pattern (all agents)
 - name: clear_all_llm_cache
   uses: cache.invalidate
   with:
-    pattern: "cache:llm.call:*"
+    pattern: "cache:*:llm.call:*"
   output: bulk_invalidate
+
+# Invalidate ALL cache entries
+- name: clear_everything
+  uses: cache.invalidate
+  with:
+    pattern: "cache:*"
+  output: full_invalidate
 
 # Invalidate by metadata filter
 - name: clear_extraction_cache

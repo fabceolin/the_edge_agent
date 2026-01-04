@@ -92,10 +92,13 @@ Both share the same YAML syntax. Write once, run anywhere.
 
 ## Featured Article
 
-!!! info "Why LLMs Can't Count"
-    Learn how neurosymbolic AI solves the fundamental limitations of LLMs with mathematical precision.
+```{admonition} Why LLMs Can't Count
+:class: tip
 
-    **[Read the article →](articles/medium-neurosymbolic-ai.md)**
+Learn how neurosymbolic AI solves the fundamental limitations of LLMs with mathematical precision.
+
+**[Read the article →](articles/medium-neurosymbolic-ai.md)**
+```
 
 ## License
 

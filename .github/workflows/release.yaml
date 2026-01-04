@@ -48,7 +48,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv && \
              pip install -e . --no-deps && \
              pyinstaller --onefile --name tea-python-linux-x86_64 \
                --hidden-import=the_edge_agent \
@@ -58,6 +58,7 @@ jobs:
                --hidden-import=json \
                --hidden-import=jinja2 \
                --hidden-import=typer \
+               --hidden-import=dotenv \
                --collect-all the_edge_agent \
                --exclude-module tkinter \
                --exclude-module matplotlib \
@@ -104,7 +105,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu && \
@@ -117,6 +118,7 @@ jobs:
                --hidden-import=json \
                --hidden-import=jinja2 \
                --hidden-import=typer \
+               --hidden-import=dotenv \
                --hidden-import=openai \
                --hidden-import=numpy \
                --hidden-import=chromadb \
@@ -178,7 +180,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -193,6 +195,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --collect-all the_edge_agent \
             --exclude-module tkinter \
             --exclude-module matplotlib \
@@ -203,6 +206,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64
           ./python/dist/tea-python-linux-arm64 --version
           impl=$(./python/dist/tea-python-linux-arm64 --impl)
           if [ "$impl" != "python" ]; then
@@ -242,7 +246,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -260,6 +264,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -282,6 +287,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64-full
           ./python/dist/tea-python-linux-arm64-full --version
           impl=$(./python/dist/tea-python-linux-arm64-full --impl)
           if [ "$impl" != "python" ]; then
@@ -320,7 +326,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -335,6 +341,7 @@ jobs:
             --hidden-import=json `
             --hidden-import=jinja2 `
             --hidden-import=typer `
+            --hidden-import=dotenv `
             --collect-all the_edge_agent `
             --exclude-module tkinter `
             --exclude-module matplotlib `
@@ -383,7 +390,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer `
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv `
                       openai "numpy<2" chromadb requests RestrictedPython `
                       "pycozo[embedded]" pandas `
                       s3fs gcsfs adlfs lupa kuzu
@@ -401,6 +408,7 @@ jobs:
             --hidden-import=json `
             --hidden-import=jinja2 `
             --hidden-import=typer `
+            --hidden-import=dotenv `
             --hidden-import=openai `
             --hidden-import=numpy `
             --hidden-import=chromadb `
@@ -460,7 +468,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -475,6 +483,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --collect-all the_edge_agent \
             --exclude-module tkinter \
             --exclude-module matplotlib \
@@ -485,6 +494,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-darwin-arm64
           ./python/dist/tea-python-darwin-arm64 --version
           impl=$(./python/dist/tea-python-darwin-arm64 --impl)
           if [ "$impl" != "python" ]; then
@@ -524,7 +534,7 @@ jobs:
       - name: Install dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -542,6 +552,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -564,6 +575,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-darwin-arm64-full
           ./python/dist/tea-python-darwin-arm64-full --version
           impl=$(./python/dist/tea-python-darwin-arm64-full --impl)
           if [ "$impl" != "python" ]; then
@@ -582,6 +594,615 @@ jobs:
         with:
           name: python-darwin-arm64-full
           path: python/dist/tea-python-darwin-arm64-full
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux x86_64 Prolog (Native runner)
+  # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # Uses glibc dynamic linking for libswipl.so compatibility
+  # ============================================================
+  build-python-linux-prolog-x86_64:
+    runs-on: ubuntu-22.04
+    name: Python linux-x86_64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SWI-Prolog 9.1+
+        run: |
+          # Official PPA required for 9.1+
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          sudo apt-get install -y swi-prolog-nox pkg-config
+
+          # Verify version (must be 9.1+)
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-x86_64-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=janus_swi \
+            --collect-all the_edge_agent \
+            --collect-all janus_swi \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-x86_64-prolog
+          ./python/dist/tea-python-linux-x86_64-prolog --version
+          impl=$(./python/dist/tea-python-linux-x86_64-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-x86_64-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-x86_64/lib
+          mkdir -p python-swipl-runtime-x86_64/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-x86_64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-x86_64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-x86_64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-x86_64.tar.gz python-swipl-runtime-x86_64
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-x86_64/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64-prolog
+          path: python/dist/tea-python-linux-x86_64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64
+          path: python-swipl-runtime-x86_64.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 Prolog (Native runner)
+  # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-prolog-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SWI-Prolog 9.1+ (build from source)
+        run: |
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
+
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-arm64-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=janus_swi \
+            --collect-all the_edge_agent \
+            --collect-all janus_swi \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64-prolog
+          ./python/dist/tea-python-linux-arm64-prolog --version
+          impl=$(./python/dist/tea-python-linux-arm64-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-arm64-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-aarch64/lib
+          mkdir -p python-swipl-runtime-aarch64/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-arm64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-aarch64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-aarch64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-aarch64.tar.gz python-swipl-runtime-aarch64
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-aarch64/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64-prolog
+          path: python/dist/tea-python-linux-arm64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64
+          path: python-swipl-runtime-aarch64.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux x86_64 Full Prolog (Native runner)
+  # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-full-prolog-x86_64:
+    runs-on: ubuntu-22.04
+    name: Python linux-x86_64-full-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SWI-Prolog 9.1+
+        run: |
+          # Official PPA required for 9.1+
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          sudo apt-get install -y swi-prolog-nox pkg-config
+
+          # Verify version (must be 9.1+)
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies (full + janus-swi)
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full + prolog)
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-x86_64-full-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=janus_swi \
+            --collect-all the_edge_agent \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all janus_swi \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-x86_64-full-prolog
+          ./python/dist/tea-python-linux-x86_64-full-prolog --version
+          impl=$(./python/dist/tea-python-linux-x86_64-full-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-x86_64-full-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64-full-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-x86_64-full/lib
+          mkdir -p python-swipl-runtime-x86_64-full/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64-full/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64-full/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-x86_64-full-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-x86_64-full/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-x86_64-full/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-x86_64-full.tar.gz python-swipl-runtime-x86_64-full
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-x86_64-full/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: python/dist/tea-python-linux-x86_64-full-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: python-swipl-runtime-x86_64-full.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 Full Prolog (Native runner)
+  # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-full-prolog-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64-full-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SWI-Prolog 9.1+ (build from source)
+        run: |
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
+
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies (full + janus-swi)
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full + prolog)
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-arm64-full-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=janus_swi \
+            --collect-all the_edge_agent \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all janus_swi \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64-full-prolog
+          ./python/dist/tea-python-linux-arm64-full-prolog --version
+          impl=$(./python/dist/tea-python-linux-arm64-full-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-arm64-full-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64-full-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-aarch64-full/lib
+          mkdir -p python-swipl-runtime-aarch64-full/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64-full/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64-full/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-arm64-full-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-aarch64-full/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-aarch64-full/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-aarch64-full.tar.gz python-swipl-runtime-aarch64-full
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-aarch64-full/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: python/dist/tea-python-linux-arm64-full-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: python-swipl-runtime-aarch64-full.tar.gz
           retention-days: 1
 
   # ============================================================
@@ -662,6 +1283,12 @@ jobs:
           cp rust/target/${{ matrix.target }}/release/tea${{ matrix.ext }} ${{ matrix.artifact }}${{ matrix.ext }}
         shell: bash
 
+      - name: Set executable permission
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ${{ matrix.artifact }}${{ matrix.ext }}
+        shell: bash
+
       - name: Smoke test - version
         if: matrix.target != 'x86_64-apple-darwin'
         run: |
@@ -736,7 +1363,7 @@ jobs:
   # These require SWI-Prolog installed on the system
   # ============================================================
   build-rust-prolog-linux-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Rust linux-x86_64-prolog
 
     steps:
@@ -783,6 +1410,9 @@ jobs:
       - name: Copy binary
         run: |
           cp rust/target/release/tea tea-rust-linux-x86_64-prolog
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-x86_64-prolog
 
       - name: Smoke test - version
         run: ./tea-rust-linux-x86_64-prolog --version
@@ -920,6 +1550,9 @@ jobs:
         run: |
           cp rust/target/release/tea tea-rust-linux-arm64-prolog
 
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-arm64-prolog
+
       - name: Smoke test - version
         run: ./tea-rust-linux-arm64-prolog --version
 
@@ -1012,7 +1645,7 @@ jobs:
   # Uses linuxdeploy for automatic dependency bundling
   # ============================================================
   build-appimage-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [build-rust-prolog-linux-x86_64]
     name: Rust AppImage x86_64 with Prolog
 
@@ -1165,7 +1798,7 @@ jobs:
 
       - name: Test AppImage on clean Ubuntu container
         run: |
-          docker run --rm -v $(pwd):/work ubuntu:22.04 bash -c '
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
             chmod +x /work/tea-*-x86_64.AppImage
             # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
             # Only test --version here; full agent test runs natively with FUSE in smoke test
@@ -1357,6 +1990,362 @@ jobs:
           retention-days: 1
 
   # ============================================================
+  # Python AppImage Distribution (Linux only - self-contained with Prolog)
+  # Uses tea-python-linux-{arch}-full-prolog as base binary
+  # Bundles ALL optional dependencies + janus-swi + libswipl.so + SWI-Prolog runtime
+  # ============================================================
+  build-python-appimage-x86_64:
+    runs-on: ubuntu-22.04
+    needs: [build-python-linux-full-prolog-x86_64]
+    name: Python AppImage x86_64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent (Python)
+          Comment=Lightweight state graph workflow engine - Python implementation
+          Exec=tea
+          Icon=tea-python
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256) with Python colors
+          cat > tea-python.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#306998"/>
+            <text x="128" y="160" font-family="monospace" font-size="100" fill="#FFD43B" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python.AppDir/usr/bin
+          mkdir -p tea-python.AppDir/usr/lib/swipl
+          chmod +x tea-python-linux-x86_64-full-prolog
+          cp tea-python-linux-x86_64-full-prolog tea-python.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf python-swipl-runtime-x86_64-full.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r python-swipl-runtime-x86_64-full/home/* tea-python.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea-python.AppDir/usr/lib
+          cp -L python-swipl-runtime-x86_64-full/lib/libswipl.so* tea-python.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea-python.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea-python.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea-python.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea-python.AppDir/usr/lib/swipl/
+          ls -la tea-python.AppDir/usr/lib/libswipl*
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea-python.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-python.AppDir \
+            --executable tea-python.AppDir/usr/bin/tea \
+            --desktop-file tea-python.desktop \
+            --icon-file tea-python.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR and Python env
+          rm -f tea-python.AppDir/AppRun
+          cat > tea-python.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          # Python-specific settings
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-python.AppDir "tea-python-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-*-x86_64.AppImage
+          ./tea-python-*-x86_64.AppImage --version
+          impl=$(./tea-python-*-x86_64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage on clean Ubuntu container
+        run: |
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
+            chmod +x /work/tea-python-*-x86_64.AppImage
+            # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
+            /work/tea-python-*-x86_64.AppImage --appimage-extract-and-run --version
+            # Functional test: Run Prolog example (same as aarch64)
+            /work/tea-python-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/prolog/simple-prolog-agent.yaml --input "{\"value\": 21}"
+          '
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-appimage-x86_64
+          path: tea-python-*-x86_64.AppImage
+          retention-days: 1
+
+  build-python-appimage-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: [build-python-linux-full-prolog-arm64]
+    name: Python AppImage aarch64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent (Python)
+          Comment=Lightweight state graph workflow engine - Python implementation
+          Exec=tea
+          Icon=tea-python
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256) with Python colors
+          cat > tea-python.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#306998"/>
+            <text x="128" y="160" font-family="monospace" font-size="100" fill="#FFD43B" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python.AppDir/usr/bin
+          mkdir -p tea-python.AppDir/usr/lib/swipl
+          chmod +x tea-python-linux-arm64-full-prolog
+          cp tea-python-linux-arm64-full-prolog tea-python.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf python-swipl-runtime-aarch64-full.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r python-swipl-runtime-aarch64-full/home/* tea-python.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea-python.AppDir/usr/lib
+          cp -L python-swipl-runtime-aarch64-full/lib/libswipl.so* tea-python.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea-python.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea-python.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea-python.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea-python.AppDir/usr/lib/swipl/
+          ls -la tea-python.AppDir/usr/lib/libswipl*
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea-python.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-python.AppDir \
+            --executable tea-python.AppDir/usr/bin/tea \
+            --desktop-file tea-python.desktop \
+            --icon-file tea-python.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR and Python env
+          rm -f tea-python.AppDir/AppRun
+          cat > tea-python.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          # Python-specific settings
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-python.AppDir "tea-python-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-*-aarch64.AppImage
+          ./tea-python-*-aarch64.AppImage --version
+          impl=$(./tea-python-*-aarch64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage - run Prolog example
+        run: |
+          # Verify the AppImage runs natively with Prolog support
+          ./tea-python-*-aarch64.AppImage run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-appimage-aarch64
+          path: tea-python-*-aarch64.AppImage
+          retention-days: 1
+
+  # ============================================================
   # Python Wheel (existing)
   # ============================================================
   build-wheel:
@@ -1389,7 +2378,7 @@ jobs:
   # ============================================================
   release:
     needs:
-      # Python binaries
+      # Python binaries (base)
       - build-python-linux
       - build-python-linux-full
       - build-python-linux-arm64
@@ -1398,12 +2387,20 @@ jobs:
       - build-python-windows-full
       - build-python-macos
       - build-python-macos-full
+      # Python binaries (with Prolog)
+      - build-python-linux-prolog-x86_64
+      - build-python-linux-prolog-arm64
+      - build-python-linux-full-prolog-x86_64
+      - build-python-linux-full-prolog-arm64
+      # Python AppImages (self-contained with Prolog)
+      - build-python-appimage-x86_64
+      - build-python-appimage-aarch64
       # Rust binaries (base)
       - build-rust
       # Rust binaries (with Prolog)
       - build-rust-prolog-linux-x86_64
       - build-rust-prolog-linux-arm64
-      # AppImages (self-contained with Prolog)
+      # Rust AppImages (self-contained with Prolog)
       - build-appimage-x86_64
       - build-appimage-aarch64
       # Python wheel
