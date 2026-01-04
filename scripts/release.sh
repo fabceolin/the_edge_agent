@@ -69,10 +69,25 @@ else
     echo "Warning: $INIT_PY not found"
 fi
 
+# Update docs/conf.py (Sphinx documentation copyright year)
+CONF_PY="$PROJECT_ROOT/docs/conf.py"
+CURRENT_YEAR=$(date +%Y)
+if [ -f "$CONF_PY" ]; then
+    CURRENT_DOC_YEAR=$(grep -oP 'copyright = "\K[0-9]+' "$CONF_PY")
+    if [ "$CURRENT_DOC_YEAR" != "$CURRENT_YEAR" ]; then
+        echo "docs/conf.py copyright: $CURRENT_DOC_YEAR -> $CURRENT_YEAR"
+        sed -i "s/copyright = \"$CURRENT_DOC_YEAR,/copyright = \"$CURRENT_YEAR,/" "$CONF_PY"
+    else
+        echo "docs/conf.py copyright: already $CURRENT_YEAR (no change)"
+    fi
+else
+    echo "Warning: $CONF_PY not found"
+fi
+
 echo ""
 
 # Commit and tag
-git add "$SETUP_PY" "$CARGO_TOML" "$YAML_REF" "$INIT_PY"
+git add "$SETUP_PY" "$CARGO_TOML" "$YAML_REF" "$INIT_PY" "$CONF_PY"
 git commit -m "chore: bump version to $VERSION"
 git tag -a "v$VERSION" -m "$MESSAGE"
 

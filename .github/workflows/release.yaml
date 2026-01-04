@@ -677,9 +677,9 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime for AppImage
         run: |
-          # Get the exact SWI-Prolog paths
+          # Get the exact SWI-Prolog paths from swipl itself
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          SWIPL_LIBDIR=$(dirname $(ldd python/dist/tea-python-linux-x86_64-prolog | grep libswipl | awk '{print $3}') 2>/dev/null || echo "/usr/lib/x86_64-linux-gnu")
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
 
           echo "SWI-Prolog home: $SWIPL_HOME"
           echo "SWI-Prolog lib: $SWIPL_LIBDIR"
@@ -688,9 +688,8 @@ jobs:
           mkdir -p python-swipl-runtime-x86_64/lib
           mkdir -p python-swipl-runtime-x86_64/home
 
-          # Copy libswipl.so
-          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64/lib/ 2>/dev/null || \
-          cp -L /usr/lib/x86_64-linux-gnu/libswipl.so* python-swipl-runtime-x86_64/lib/
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64/lib/
 
           # Copy the SWI-Prolog home directory
           cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64/home/
@@ -737,7 +736,7 @@ jobs:
   # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-prolog-arm64:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.10-arm
     name: Python linux-arm64-prolog
 
     steps:
@@ -745,8 +744,7 @@ jobs:
 
       - name: Install SWI-Prolog 9.1+
         run: |
-          # Official PPA required for 9.1+
-          sudo apt-add-repository -y ppa:swi-prolog/stable
+          # Ubuntu 24.10 has SWI-Prolog 9.2+ which meets janus-swi requirements
           sudo apt-get update
           sudo apt-get install -y swi-prolog-nox pkg-config
 
@@ -812,9 +810,9 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime for AppImage
         run: |
-          # Get the exact SWI-Prolog paths
+          # Get the exact SWI-Prolog paths from swipl itself
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          SWIPL_LIBDIR=$(dirname $(ldd python/dist/tea-python-linux-arm64-prolog | grep libswipl | awk '{print $3}') 2>/dev/null || echo "/usr/lib/aarch64-linux-gnu")
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
 
           echo "SWI-Prolog home: $SWIPL_HOME"
           echo "SWI-Prolog lib: $SWIPL_LIBDIR"
@@ -823,9 +821,8 @@ jobs:
           mkdir -p python-swipl-runtime-aarch64/lib
           mkdir -p python-swipl-runtime-aarch64/home
 
-          # Copy libswipl.so
-          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64/lib/ 2>/dev/null || \
-          cp -L /usr/lib/aarch64-linux-gnu/libswipl.so* python-swipl-runtime-aarch64/lib/
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64/lib/
 
           # Copy the SWI-Prolog home directory
           cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64/home/
@@ -962,9 +959,9 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime for AppImage
         run: |
-          # Get the exact SWI-Prolog paths
+          # Get the exact SWI-Prolog paths from swipl itself
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          SWIPL_LIBDIR=$(dirname $(ldd python/dist/tea-python-linux-x86_64-full-prolog | grep libswipl | awk '{print $3}') 2>/dev/null || echo "/usr/lib/x86_64-linux-gnu")
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
 
           echo "SWI-Prolog home: $SWIPL_HOME"
           echo "SWI-Prolog lib: $SWIPL_LIBDIR"
@@ -973,9 +970,8 @@ jobs:
           mkdir -p python-swipl-runtime-x86_64-full/lib
           mkdir -p python-swipl-runtime-x86_64-full/home
 
-          # Copy libswipl.so
-          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64-full/lib/ 2>/dev/null || \
-          cp -L /usr/lib/x86_64-linux-gnu/libswipl.so* python-swipl-runtime-x86_64-full/lib/
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64-full/lib/
 
           # Copy the SWI-Prolog home directory
           cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64-full/home/
@@ -1022,7 +1018,7 @@ jobs:
   # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-full-prolog-arm64:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.10-arm
     name: Python linux-arm64-full-prolog
 
     steps:
@@ -1030,8 +1026,7 @@ jobs:
 
       - name: Install SWI-Prolog 9.1+
         run: |
-          # Official PPA required for 9.1+
-          sudo apt-add-repository -y ppa:swi-prolog/stable
+          # Ubuntu 24.10 has SWI-Prolog 9.2+ which meets janus-swi requirements
           sudo apt-get update
           sudo apt-get install -y swi-prolog-nox pkg-config
 
@@ -1112,9 +1107,9 @@ jobs:
 
       - name: Bundle SWI-Prolog runtime for AppImage
         run: |
-          # Get the exact SWI-Prolog paths
+          # Get the exact SWI-Prolog paths from swipl itself
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
-          SWIPL_LIBDIR=$(dirname $(ldd python/dist/tea-python-linux-arm64-full-prolog | grep libswipl | awk '{print $3}') 2>/dev/null || echo "/usr/lib/aarch64-linux-gnu")
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
 
           echo "SWI-Prolog home: $SWIPL_HOME"
           echo "SWI-Prolog lib: $SWIPL_LIBDIR"
@@ -1123,9 +1118,8 @@ jobs:
           mkdir -p python-swipl-runtime-aarch64-full/lib
           mkdir -p python-swipl-runtime-aarch64-full/home
 
-          # Copy libswipl.so
-          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64-full/lib/ 2>/dev/null || \
-          cp -L /usr/lib/aarch64-linux-gnu/libswipl.so* python-swipl-runtime-aarch64-full/lib/
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64-full/lib/
 
           # Copy the SWI-Prolog home directory
           cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64-full/home/
