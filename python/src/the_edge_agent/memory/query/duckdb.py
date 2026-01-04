@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     import duckdb
+
     DUCKDB_AVAILABLE = True
 except ImportError:
     DUCKDB_AVAILABLE = False
@@ -49,8 +50,9 @@ try:
         stop_after_attempt,
         wait_exponential,
         retry_if_exception_type,
-        before_sleep_log
+        before_sleep_log,
     )
+
     TENACITY_AVAILABLE = True
 except ImportError:
     TENACITY_AVAILABLE = False
@@ -70,7 +72,9 @@ GCS_ACCESS_KEY_ID = os.environ.get("GCS_ACCESS_KEY_ID", "")
 GCS_SECRET_ACCESS_KEY = os.environ.get("GCS_SECRET_ACCESS_KEY", "")
 
 # Default bucket
-DEFAULT_BUCKET = os.environ.get("FIREBASE_STORAGE_BUCKET", "rankellix-law.firebasestorage.app")
+DEFAULT_BUCKET = os.environ.get(
+    "FIREBASE_STORAGE_BUCKET", "rankellix-law.firebasestorage.app"
+)
 
 # Connection pool settings
 DEFAULT_MAX_CONNECTIONS = 3
@@ -84,24 +88,29 @@ EMBEDDING_DIMENSIONS = 1536  # OpenAI text-embedding-3-small
 # EXCEPTIONS
 # =============================================================================
 
+
 class HttpfsError(Exception):
     """Exception for httpfs-related failures."""
+
     pass
 
 
 class CircuitOpenError(Exception):
     """Exception when circuit breaker is open."""
+
     pass
 
 
 class QueryTimeoutError(Exception):
     """Exception when query times out."""
+
     pass
 
 
 # =============================================================================
 # CIRCUIT BREAKER
 # =============================================================================
+
 
 @dataclass
 class CircuitBreaker:
@@ -113,6 +122,7 @@ class CircuitBreaker:
     - OPEN: Blocking all requests, waiting for recovery timeout
     - HALF_OPEN: Allowing one test request
     """
+
     config: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
 
     # Internal state
@@ -202,6 +212,7 @@ class CircuitBreaker:
 # CONNECTION POOL
 # =============================================================================
 
+
 @dataclass
 class ConnectionPool:
     """
@@ -212,6 +223,7 @@ class ConnectionPool:
     - Optional warmup for reduced cold start latency
     - Thread-safe connection management
     """
+
     max_connections: int = DEFAULT_MAX_CONNECTIONS
     enable_httpfs: bool = True
     enable_vss: bool = False
@@ -224,7 +236,7 @@ class ConnectionPool:
 
     def _create_connection(self) -> Any:
         """Create a new DuckDB connection."""
-        conn = duckdb.connect(':memory:')
+        conn = duckdb.connect(":memory:")
 
         # Load httpfs extension for GCS access
         if self.enable_httpfs:
@@ -347,15 +359,23 @@ class ConnectionPool:
 # DUCKDB QUERY ENGINE
 # =============================================================================
 
+
 def _is_httpfs_error(exception: Exception) -> bool:
     """Check if an exception is an httpfs-related error."""
     error_msg = str(exception).lower()
     httpfs_indicators = [
-        "httpfs", "http",
-        "connection", "timeout",
-        "s3", "gcs", "storage",
-        "network", "socket",
-        "ssl", "tls", "certificate"
+        "httpfs",
+        "http",
+        "connection",
+        "timeout",
+        "s3",
+        "gcs",
+        "storage",
+        "network",
+        "socket",
+        "ssl",
+        "tls",
+        "certificate",
     ]
     return any(indicator in error_msg for indicator in httpfs_indicators)
 
@@ -374,7 +394,7 @@ class DuckDBQueryEngine(QueryEngine):
         circuit_config: Optional[CircuitBreakerConfig] = None,
         enable_httpfs: bool = True,
         enable_vss: bool = False,
-        fallback_bucket: Optional[str] = None
+        fallback_bucket: Optional[str] = None,
     ):
         """
         Initialize DuckDB query engine.
@@ -398,12 +418,10 @@ class DuckDBQueryEngine(QueryEngine):
         self._pool = ConnectionPool(
             max_connections=max_connections,
             enable_httpfs=enable_httpfs,
-            enable_vss=enable_vss
+            enable_vss=enable_vss,
         )
 
-        self._circuit = CircuitBreaker(
-            config=circuit_config or CircuitBreakerConfig()
-        )
+        self._circuit = CircuitBreaker(config=circuit_config or CircuitBreakerConfig())
 
         self._fallback_bucket = fallback_bucket or DEFAULT_BUCKET
         self._enable_httpfs = enable_httpfs
@@ -418,7 +436,7 @@ class DuckDBQueryEngine(QueryEngine):
         self,
         sql: str,
         params: Optional[List[Any]] = None,
-        config: Optional[QueryConfig] = None
+        config: Optional[QueryConfig] = None,
     ) -> Dict[str, Any]:
         """Execute a SQL query with resilience."""
         config = config or QueryConfig()
@@ -437,7 +455,7 @@ class DuckDBQueryEngine(QueryEngine):
             return {
                 "success": False,
                 "error": "Circuit breaker is open",
-                "error_type": "circuit_open"
+                "error_type": "circuit_open",
             }
 
         # Acquire connection
@@ -449,7 +467,7 @@ class DuckDBQueryEngine(QueryEngine):
             return {
                 "success": False,
                 "error": "No available connections",
-                "error_type": "connection_error"
+                "error_type": "connection_error",
             }
 
         try:
@@ -465,29 +483,17 @@ class DuckDBQueryEngine(QueryEngine):
             if config.enable_fallback and "gs://" in sql:
                 return self._execute_with_fallback(sql, params, config)
 
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": "connection_error"
-            }
+            return {"success": False, "error": str(e), "error_type": "connection_error"}
 
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": "query_error"
-            }
+            return {"success": False, "error": str(e), "error_type": "query_error"}
 
         finally:
             self._pool.release(conn)
 
     def _execute_with_retry(
-        self,
-        conn: Any,
-        sql: str,
-        params: Optional[List[Any]],
-        config: QueryConfig
+        self, conn: Any, sql: str, params: Optional[List[Any]], config: QueryConfig
     ) -> Dict[str, Any]:
         """Execute query with retry logic."""
         last_error = None
@@ -499,7 +505,11 @@ class DuckDBQueryEngine(QueryEngine):
                 else:
                     result = conn.execute(sql)
 
-                columns = [desc[0] for desc in result.description] if result.description else []
+                columns = (
+                    [desc[0] for desc in result.description]
+                    if result.description
+                    else []
+                )
                 rows = result.fetchall()
 
                 return {
@@ -507,7 +517,7 @@ class DuckDBQueryEngine(QueryEngine):
                     "columns": columns,
                     "rows": rows,
                     "row_count": len(rows),
-                    "fallback": False
+                    "fallback": False,
                 }
 
             except Exception as e:
@@ -515,10 +525,11 @@ class DuckDBQueryEngine(QueryEngine):
                 if _is_httpfs_error(e):
                     if attempt < config.max_retries:
                         wait_time = min(
-                            config.retry_max_wait,
-                            config.retry_min_wait * (2 ** attempt)
+                            config.retry_max_wait, config.retry_min_wait * (2**attempt)
                         )
-                        logger.warning(f"httpfs error, retry {attempt + 1}/{config.max_retries} after {wait_time}s")
+                        logger.warning(
+                            f"httpfs error, retry {attempt + 1}/{config.max_retries} after {wait_time}s"
+                        )
                         time.sleep(wait_time)
                     else:
                         raise HttpfsError(str(e)) from e
@@ -528,10 +539,7 @@ class DuckDBQueryEngine(QueryEngine):
         raise last_error
 
     def _execute_with_fallback(
-        self,
-        sql: str,
-        params: Optional[List[Any]],
-        config: QueryConfig
+        self, sql: str, params: Optional[List[Any]], config: QueryConfig
     ) -> Dict[str, Any]:
         """Execute query using local fallback (download Parquet first)."""
         logger.info("Using fallback: local Parquet download")
@@ -542,12 +550,13 @@ class DuckDBQueryEngine(QueryEngine):
 
             # Extract Parquet path from SQL
             import re
+
             match = re.search(r"gs://([^/]+)/([^'\"]+\.parquet)", sql)
             if not match:
                 return {
                     "success": False,
                     "error": "Cannot extract Parquet path for fallback",
-                    "error_type": "validation_error"
+                    "error_type": "validation_error",
                 }
 
             bucket_name = match.group(1)
@@ -561,30 +570,31 @@ class DuckDBQueryEngine(QueryEngine):
                 return {
                     "success": False,
                     "error": "Parquet file not found. Run sync first.",
-                    "error_type": "not_found"
+                    "error_type": "not_found",
                 }
 
             # Download to temp file
-            with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
                 tmp_path = tmp.name
                 blob.download_to_filename(tmp_path)
 
             try:
                 # Create local connection and execute
-                conn = duckdb.connect(':memory:')
+                conn = duckdb.connect(":memory:")
 
                 # Replace remote URL with local path
-                local_sql = sql.replace(
-                    f"gs://{bucket_name}/{parquet_path}",
-                    tmp_path
-                )
+                local_sql = sql.replace(f"gs://{bucket_name}/{parquet_path}", tmp_path)
 
                 if params:
                     result = conn.execute(local_sql, params)
                 else:
                     result = conn.execute(local_sql)
 
-                columns = [desc[0] for desc in result.description] if result.description else []
+                columns = (
+                    [desc[0] for desc in result.description]
+                    if result.description
+                    else []
+                )
                 rows = result.fetchall()
 
                 conn.close()
@@ -594,7 +604,7 @@ class DuckDBQueryEngine(QueryEngine):
                     "columns": columns,
                     "rows": rows,
                     "row_count": len(rows),
-                    "fallback": True
+                    "fallback": True,
                 }
 
             finally:
@@ -608,21 +618,17 @@ class DuckDBQueryEngine(QueryEngine):
             return {
                 "success": False,
                 "error": "firebase-admin required for fallback mode",
-                "error_type": "backend_not_installed"
+                "error_type": "backend_not_installed",
             }
         except Exception as e:
             logger.error(f"Fallback query failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": "query_error"
-            }
+            return {"success": False, "error": str(e), "error_type": "query_error"}
 
     def execute_many(
         self,
         sql: str,
         params_list: List[List[Any]],
-        config: Optional[QueryConfig] = None
+        config: Optional[QueryConfig] = None,
     ) -> Dict[str, Any]:
         """Execute a SQL statement with multiple parameter sets."""
         config = config or QueryConfig()
@@ -632,7 +638,7 @@ class DuckDBQueryEngine(QueryEngine):
             return {
                 "success": False,
                 "error": "No available connections",
-                "error_type": "connection_error"
+                "error_type": "connection_error",
             }
 
         try:
@@ -641,18 +647,11 @@ class DuckDBQueryEngine(QueryEngine):
                 conn.execute(sql, params)
                 affected += 1
 
-            return {
-                "success": True,
-                "affected_rows": affected
-            }
+            return {"success": True, "affected_rows": affected}
 
         except Exception as e:
             logger.error(f"execute_many failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": "query_error"
-            }
+            return {"success": False, "error": str(e), "error_type": "query_error"}
 
         finally:
             self._pool.release(conn)
@@ -707,42 +706,71 @@ class DuckDBQueryEngine(QueryEngine):
                 "max_connections": self._pool.max_connections,
                 "enable_httpfs": self._enable_httpfs,
                 "enable_vss": self._enable_vss,
-            }
+            },
         }
 
     # =========================================================================
     # EXTENSIONS
     # =========================================================================
 
-    def load_extension(self, name: str) -> Dict[str, Any]:
-        """Load a DuckDB extension."""
+    # Community extensions that require 'FROM community' syntax
+    COMMUNITY_EXTENSIONS = {"duckpgq", "fts", "vss"}
+
+    def load_extension(self, name: str, from_community: bool = None) -> Dict[str, Any]:
+        """
+        Load a DuckDB extension.
+
+        Args:
+            name: Extension name (e.g., 'httpfs', 'duckpgq', 'vss')
+            from_community: If True, install from community repository.
+                           If None, auto-detect based on known community extensions.
+
+        Returns:
+            {"success": True, "extension": name} or error dict
+        """
         conn = self._pool.acquire()
         if not conn:
             return {
                 "success": False,
                 "error": "No available connections",
-                "error_type": "connection_error"
+                "error_type": "connection_error",
             }
 
-        try:
-            conn.execute(f"INSTALL {name}; LOAD {name};")
-            if name not in self._loaded_extensions:
-                self._loaded_extensions.append(name)
-            return {"success": True, "extension": name}
+        # Auto-detect community extensions
+        is_community = (
+            from_community
+            if from_community is not None
+            else name in self.COMMUNITY_EXTENSIONS
+        )
 
-        except Exception as e:
-            # Try just loading (might already be installed)
+        try:
+            # Try loading first (might already be installed)
             try:
                 conn.execute(f"LOAD {name};")
                 if name not in self._loaded_extensions:
                     self._loaded_extensions.append(name)
-                return {"success": True, "extension": name}
-            except Exception as e2:
-                return {
-                    "success": False,
-                    "error": str(e2),
-                    "error_type": "extension_error"
-                }
+                return {"success": True, "extension": name, "already_installed": True}
+            except Exception:
+                pass
+
+            # Install extension
+            if is_community:
+                conn.execute(f"INSTALL {name} FROM community; LOAD {name};")
+            else:
+                conn.execute(f"INSTALL {name}; LOAD {name};")
+
+            if name not in self._loaded_extensions:
+                self._loaded_extensions.append(name)
+            return {"success": True, "extension": name, "already_installed": False}
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.warning(f"Failed to load extension {name}: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "error_type": "extension_error",
+            }
 
         finally:
             self._pool.release(conn)
