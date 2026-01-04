@@ -3,7 +3,7 @@
 
 # -- Project information -----------------------------------------------------
 project = "The Edge Agent"
-copyright = "2024, Fabricio Ceolin"
+copyright = "2026, Fabricio Ceolin"
 author = "Fabricio Ceolin"
 
 # -- General configuration ---------------------------------------------------
