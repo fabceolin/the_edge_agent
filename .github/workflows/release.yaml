@@ -48,7 +48,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv && \
              pip install -e . --no-deps && \
              pyinstaller --onefile --name tea-python-linux-x86_64 \
                --hidden-import=the_edge_agent \
@@ -58,6 +58,7 @@ jobs:
                --hidden-import=json \
                --hidden-import=jinja2 \
                --hidden-import=typer \
+               --hidden-import=dotenv \
                --collect-all the_edge_agent \
                --exclude-module tkinter \
                --exclude-module matplotlib \
@@ -104,7 +105,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu && \
@@ -117,6 +118,7 @@ jobs:
                --hidden-import=json \
                --hidden-import=jinja2 \
                --hidden-import=typer \
+               --hidden-import=dotenv \
                --hidden-import=openai \
                --hidden-import=numpy \
                --hidden-import=chromadb \
@@ -178,7 +180,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -193,6 +195,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --collect-all the_edge_agent \
             --exclude-module tkinter \
             --exclude-module matplotlib \
@@ -203,6 +206,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64
           ./python/dist/tea-python-linux-arm64 --version
           impl=$(./python/dist/tea-python-linux-arm64 --impl)
           if [ "$impl" != "python" ]; then
@@ -242,7 +246,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -260,6 +264,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -282,6 +287,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64-full
           ./python/dist/tea-python-linux-arm64-full --version
           impl=$(./python/dist/tea-python-linux-arm64-full --impl)
           if [ "$impl" != "python" ]; then
@@ -320,7 +326,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -335,6 +341,7 @@ jobs:
             --hidden-import=json `
             --hidden-import=jinja2 `
             --hidden-import=typer `
+            --hidden-import=dotenv `
             --collect-all the_edge_agent `
             --exclude-module tkinter `
             --exclude-module matplotlib `
@@ -383,7 +390,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer `
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv `
                       openai "numpy<2" chromadb requests RestrictedPython `
                       "pycozo[embedded]" pandas `
                       s3fs gcsfs adlfs lupa kuzu
@@ -401,6 +408,7 @@ jobs:
             --hidden-import=json `
             --hidden-import=jinja2 `
             --hidden-import=typer `
+            --hidden-import=dotenv `
             --hidden-import=openai `
             --hidden-import=numpy `
             --hidden-import=chromadb `
@@ -460,7 +468,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -475,6 +483,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --collect-all the_edge_agent \
             --exclude-module tkinter \
             --exclude-module matplotlib \
@@ -485,6 +494,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-darwin-arm64
           ./python/dist/tea-python-darwin-arm64 --version
           impl=$(./python/dist/tea-python-darwin-arm64 --impl)
           if [ "$impl" != "python" ]; then
@@ -524,7 +534,7 @@ jobs:
       - name: Install dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -542,6 +552,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -564,6 +575,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-darwin-arm64-full
           ./python/dist/tea-python-darwin-arm64-full --version
           impl=$(./python/dist/tea-python-darwin-arm64-full --impl)
           if [ "$impl" != "python" ]; then
@@ -616,7 +628,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -632,6 +644,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=janus_swi \
             --collect-all the_edge_agent \
             --collect-all janus_swi \
@@ -644,6 +657,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-x86_64-prolog
           ./python/dist/tea-python-linux-x86_64-prolog --version
           impl=$(./python/dist/tea-python-linux-x86_64-prolog --impl)
           if [ "$impl" != "python" ]; then
@@ -749,7 +763,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -765,6 +779,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=janus_swi \
             --collect-all the_edge_agent \
             --collect-all janus_swi \
@@ -777,6 +792,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64-prolog
           ./python/dist/tea-python-linux-arm64-prolog --version
           impl=$(./python/dist/tea-python-linux-arm64-prolog --impl)
           if [ "$impl" != "python" ]; then
@@ -882,7 +898,7 @@ jobs:
       - name: Install Python dependencies (full + janus-swi)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -901,6 +917,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -925,6 +942,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-x86_64-full-prolog
           ./python/dist/tea-python-linux-x86_64-full-prolog --version
           impl=$(./python/dist/tea-python-linux-x86_64-full-prolog --impl)
           if [ "$impl" != "python" ]; then
@@ -1030,7 +1048,7 @@ jobs:
       - name: Install Python dependencies (full + janus-swi)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu
@@ -1049,6 +1067,7 @@ jobs:
             --hidden-import=json \
             --hidden-import=jinja2 \
             --hidden-import=typer \
+            --hidden-import=dotenv \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -1073,6 +1092,7 @@ jobs:
 
       - name: Smoke test
         run: |
+          chmod +x python/dist/tea-python-linux-arm64-full-prolog
           ./python/dist/tea-python-linux-arm64-full-prolog --version
           impl=$(./python/dist/tea-python-linux-arm64-full-prolog --impl)
           if [ "$impl" != "python" ]; then
@@ -1225,6 +1245,12 @@ jobs:
           cp rust/target/${{ matrix.target }}/release/tea${{ matrix.ext }} ${{ matrix.artifact }}${{ matrix.ext }}
         shell: bash
 
+      - name: Set executable permission
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ${{ matrix.artifact }}${{ matrix.ext }}
+        shell: bash
+
       - name: Smoke test - version
         if: matrix.target != 'x86_64-apple-darwin'
         run: |
@@ -1346,6 +1372,9 @@ jobs:
       - name: Copy binary
         run: |
           cp rust/target/release/tea tea-rust-linux-x86_64-prolog
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-x86_64-prolog
 
       - name: Smoke test - version
         run: ./tea-rust-linux-x86_64-prolog --version
@@ -1482,6 +1511,9 @@ jobs:
       - name: Copy binary
         run: |
           cp rust/target/release/tea tea-rust-linux-arm64-prolog
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-arm64-prolog
 
       - name: Smoke test - version
         run: ./tea-rust-linux-arm64-prolog --version
