@@ -602,7 +602,7 @@ jobs:
   # Uses glibc dynamic linking for libswipl.so compatibility
   # ============================================================
   build-python-linux-prolog-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Python linux-x86_64-prolog
 
     steps:
@@ -891,7 +891,7 @@ jobs:
   # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-full-prolog-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Python linux-x86_64-full-prolog
 
     steps:
@@ -1363,7 +1363,7 @@ jobs:
   # These require SWI-Prolog installed on the system
   # ============================================================
   build-rust-prolog-linux-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     name: Rust linux-x86_64-prolog
 
     steps:
@@ -1645,7 +1645,7 @@ jobs:
   # Uses linuxdeploy for automatic dependency bundling
   # ============================================================
   build-appimage-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [build-rust-prolog-linux-x86_64]
     name: Rust AppImage x86_64 with Prolog
 
@@ -1798,7 +1798,7 @@ jobs:
 
       - name: Test AppImage on clean Ubuntu container
         run: |
-          docker run --rm -v $(pwd):/work ubuntu:22.04 bash -c '
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
             chmod +x /work/tea-*-x86_64.AppImage
             # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
             # Only test --version here; full agent test runs natively with FUSE in smoke test
@@ -1995,7 +1995,7 @@ jobs:
   # Bundles ALL optional dependencies + janus-swi + libswipl.so + SWI-Prolog runtime
   # ============================================================
   build-python-appimage-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [build-python-linux-full-prolog-x86_64]
     name: Python AppImage x86_64 with Prolog
 
@@ -2151,7 +2151,7 @@ jobs:
 
       - name: Test AppImage on clean Ubuntu container
         run: |
-          docker run --rm -v $(pwd):/work ubuntu:22.04 bash -c '
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
             chmod +x /work/tea-python-*-x86_64.AppImage
             # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
             /work/tea-python-*-x86_64.AppImage --appimage-extract-and-run --version
