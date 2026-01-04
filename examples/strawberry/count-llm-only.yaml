@@ -1,0 +1,59 @@
+# LLM-Only Letter Counting Agent
+# This agent attempts to count letters using only an LLM.
+# It consistently fails on words like "strawberry" due to tokenization.
+
+name: count-letters-llm-only
+
+state_schema:
+  word: str
+  letter: str
+  answer: str
+
+nodes:
+  - name: count
+    uses: llm.call
+    with:
+      model: "gemma3n:e4b"
+      temperature: 1
+      messages:
+        - role: system
+          content: |
+            You are a precise counting assistant. Count carefully.
+            Think step by step:
+            1. Write out each character with its position
+            2. Mark which ones match the target letter
+            3. Count the matches
+            Return ONLY a JSON object: {"count": N, "explanation": "..."}
+        - role: user
+          content: |
+            How many times does the letter "{{ state.letter }}" appear in "{{ state.word }}"?
+    output: llm_response
+
+  - name: format
+    run: |
+      import json
+      try:
+          # Handle both dict response (with content field) and raw string
+          llm_resp = state.get("llm_response", {})
+          if isinstance(llm_resp, dict):
+              content = llm_resp.get("content", "{}")
+          else:
+              content = llm_resp
+          result = json.loads(content)
+          count = result.get("count", "unknown")
+          explanation = result.get("explanation", "")
+      except Exception as e:
+          count = "error"
+          explanation = str(e)
+      return {
+          "answer": f"The letter '{state['letter']}' appears {count} time(s) in '{state['word']}'",
+          "explanation": explanation
+      }
+
+edges:
+  - from: __start__
+    to: count
+  - from: count
+    to: format
+  - from: format
+    to: __end__

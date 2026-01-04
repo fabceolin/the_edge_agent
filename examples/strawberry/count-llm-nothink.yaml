@@ -1,0 +1,42 @@
+# LLM-Only Letter Counting Agent (No Thinking)
+# Uses think: false to disable chain-of-thought reasoning.
+# Small models without thinking typically fail at counting.
+
+name: count-letters-llm-nothink
+
+state_schema:
+  word: str
+  letter: str
+  answer: str
+
+nodes:
+  - name: count
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "llama3.2:1b"
+      messages:
+        - role: user
+          content: |
+            How many times does the letter "{{ state.letter }}" appear in the word "{{ state.word }}"?
+            Answer with just the number.
+    output: llm_response
+
+  - name: format
+    run: |
+      llm_resp = state.get("llm_response", {})
+      if isinstance(llm_resp, dict):
+          content = llm_resp.get("content", "unknown")
+      else:
+          content = str(llm_resp)
+      return {
+          "answer": f"The letter '{state['letter']}' appears {content.strip()} time(s) in '{state['word']}'"
+      }
+
+edges:
+  - from: __start__
+    to: count
+  - from: count
+    to: format
+  - from: format
+    to: __end__

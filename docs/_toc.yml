@@ -67,3 +67,5 @@ parts:
     chapters:
       - file: articles/medium-neurosymbolic-ai
         title: Neurosymbolic AI with TEA
+      - file: articles/strawberry-counting
+        title: How Many R's in Strawberry?

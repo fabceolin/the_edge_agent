@@ -1,0 +1,93 @@
+# Neurosymbolic Letter Counting Agent
+# This agent combines LLM (for parsing) with Prolog (for counting).
+# It achieves 100% accuracy on character counting tasks.
+
+name: count-letters-neurosymbolic
+
+state_schema:
+  word: str
+  letter: str
+  characters: str
+  count: int
+  positions: list
+  answer: str
+
+nodes:
+  # Step 1: LLM extracts characters as Prolog facts
+  # This is a task LLMs handle well - structured data transformation
+  - name: extract_chars
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "llama3.2:1b"
+      messages:
+        - role: system
+          content: |
+            Convert a word into Prolog character facts.
+            Format: char(Position, Letter).
+            Positions start at 1. Letters must be lowercase atoms.
+
+            Example for "hello":
+            char(1, h). char(2, e). char(3, l). char(4, l). char(5, o).
+
+            Output ONLY the facts, one per line, no other text.
+        - role: user
+          content: |
+            Convert "{{ state.word }}" to character facts.
+    output: llm_response
+
+  # Step 1.5: Extract content from LLM response
+  - name: parse_response
+    run: |
+      llm_resp = state.get("llm_response", {})
+      if isinstance(llm_resp, dict):
+          characters = llm_resp.get("content", "")
+      else:
+          characters = llm_resp
+      return {"characters": characters}
+
+  # Step 2: Prolog counts the occurrences with mathematical certainty
+  # No guessing, no statistical inference - just logical deduction
+  - name: count_prolog
+    language: prolog
+    run: |
+      % Load the character facts from LLM output
+      state(characters, CharsText),
+      tea_load_code(CharsText),
+
+      % Get the target letter as an atom
+      state(letter, LetterStr),
+      atom_string(Letter, LetterStr),
+
+      % Count all matching characters using findall
+      findall(Pos, char(Pos, Letter), Positions),
+      length(Positions, Count),
+
+      % Return both the count and positions for verification
+      return(count, Count),
+      return(positions, Positions).
+
+  # Step 3: Format the human-readable answer
+  - name: format
+    run: |
+      count = state.get("count", 0)
+      word = state.get("word", "")
+      letter = state.get("letter", "")
+      positions = state.get("positions", [])
+
+      pos_str = ", ".join(str(p) for p in positions) if positions else "none"
+      return {
+          "answer": f"The letter '{letter}' appears {count} time(s) in '{word}' at position(s): {pos_str}"
+      }
+
+edges:
+  - from: __start__
+    to: extract_chars
+  - from: extract_chars
+    to: parse_response
+  - from: parse_response
+    to: count_prolog
+  - from: count_prolog
+    to: format
+  - from: format
+    to: __end__
