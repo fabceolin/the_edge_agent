@@ -736,19 +736,41 @@ jobs:
   # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-prolog-arm64:
-    runs-on: ubuntu-24.10-arm
+    runs-on: ubuntu-24.04-arm
     name: Python linux-arm64-prolog
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog 9.1+
+      - name: Install SWI-Prolog 9.1+ (build from source)
         run: |
-          # Ubuntu 24.10 has SWI-Prolog 9.2+ which meets janus-swi requirements
-          sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
 
-          # Verify version (must be 9.1+)
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
           swipl --version
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
           echo "SWI-Prolog home: $SWIPL_HOME"
@@ -1018,19 +1040,41 @@ jobs:
   # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-full-prolog-arm64:
-    runs-on: ubuntu-24.10-arm
+    runs-on: ubuntu-24.04-arm
     name: Python linux-arm64-full-prolog
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog 9.1+
+      - name: Install SWI-Prolog 9.1+ (build from source)
         run: |
-          # Ubuntu 24.10 has SWI-Prolog 9.2+ which meets janus-swi requirements
-          sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
 
-          # Verify version (must be 9.1+)
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
           swipl --version
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
           echo "SWI-Prolog home: $SWIPL_HOME"
