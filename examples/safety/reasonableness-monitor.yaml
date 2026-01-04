@@ -1,0 +1,225 @@
+# Reasonableness Monitor: Common-Sense Validation for Neural Network Outputs
+#
+# This agent acts as a "sanity check" layer that validates perception outputs
+# from neural networks against physical laws and common-sense knowledge.
+#
+# Example: Catching the "moon as traffic light" mistake
+#   tea run examples/safety/reasonableness-monitor.yaml \
+#     --input '{"detection": {"label": "traffic_light", "confidence": 0.87, "bbox": [450, 120, 30, 45], "position_3d": [0, 0, 384400000], "velocity": 0}, "current_zone": "highway", "sensor_data": {"lidar_confirms": false}}'
+#
+# Example: Catching human-sized traffic cone
+#   tea run examples/safety/reasonableness-monitor.yaml \
+#     --input '{"detection": {"label": "traffic_cone", "confidence": 0.72, "bbox": [320, 200, 60, 180], "position_3d": [5, 2, 0], "velocity": 1.2}, "current_zone": "urban", "sensor_data": {"lidar_confirms": true}}'
+
+name: reasonableness-monitor
+
+state_schema:
+  # Input from neural network
+  detection:
+    type: object
+    properties:
+      label: str
+      confidence: float
+      bbox: list  # [x, y, width, height] in pixels
+      position_3d: list  # [x, y, z] in meters from vehicle
+      velocity: float  # m/s
+
+  # Environmental context
+  current_zone: str  # school_zone, residential, urban, highway
+  sensor_data:
+    type: object
+    properties:
+      lidar_confirms: bool
+      radar_distance: float
+
+  # Outputs
+  is_reasonable: bool
+  explanation: str
+  action: str
+  confidence_adjusted: float
+  safety_report: str
+
+nodes:
+  # =========================================================
+  # Node 1: Parse detection and estimate physical properties
+  # =========================================================
+  - name: analyze_detection
+    run: |
+      detection = state.get("detection", {})
+      label = detection.get("label", "unknown")
+      confidence = detection.get("confidence", 0.0)
+      bbox = detection.get("bbox", [0, 0, 0, 0])
+      position_3d = detection.get("position_3d", [0, 0, 0])
+      velocity = detection.get("velocity", 0.0)
+
+      # Calculate distance from vehicle
+      import math
+      x, y, z = position_3d
+      distance = math.sqrt(x**2 + y**2 + z**2)
+
+      # Estimate object height from bounding box (simplified)
+      # In real systems, this uses camera intrinsics
+      bbox_height = bbox[3] if len(bbox) > 3 else 0
+      estimated_height = (bbox_height / 100) * max(distance / 10, 0.1)
+
+      return {
+          "parsed_label": label,
+          "parsed_confidence": confidence,
+          "parsed_distance": distance,
+          "parsed_height": estimated_height,
+          "parsed_velocity": velocity,
+          "parsed_z": z
+      }
+
+  # =========================================================
+  # Node 2: Apply reasonableness rules using Prolog
+  # =========================================================
+  - name: check_reasonableness
+    language: prolog
+    run: |
+      % =============================================================
+      % KNOWLEDGE BASE: Physical Properties of Common Road Objects
+      % =============================================================
+      tea_load_code("
+        % Traffic lights: mounted on poles at intersections
+        object_property(traffic_light, max_height_m, 8.0).
+        object_property(traffic_light, max_distance_m, 50).
+
+        % Traffic cones: small road markers
+        object_property(traffic_cone, max_height_m, 1.0).
+        object_property(traffic_cone, is_static, true).
+
+        % Pedestrians: dynamic, high threat
+        object_property(pedestrian, max_height_m, 2.1).
+        object_property(pedestrian, is_static, false).
+
+        % Speed limit signs
+        object_property(speed_sign, max_height_m, 4.0).
+      "),
+
+      % Get parsed detection data from state
+      state(parsed_label, LabelStr),
+      state(parsed_confidence, Confidence),
+      state(parsed_distance, Distance),
+      state(parsed_height, Height),
+      state(parsed_velocity, Velocity),
+      state(parsed_z, Z),
+      state(sensor_data, SensorData),
+
+      % Convert label string to atom for matching
+      atom_string(Label, LabelStr),
+
+      % Initialize failure list
+      Failures0 = [],
+
+      % --- CHECK 1: Astronomical distance (Moon case) ---
+      (   Label = traffic_light,
+          Z > 1000
+      ->  Failures1 = ["Traffic light at astronomical distance - likely moon or star"|Failures0]
+      ;   Failures1 = Failures0
+      ),
+
+      % --- CHECK 2: Object too large for its type ---
+      (   object_property(Label, max_height_m, MaxH),
+          Height > MaxH
+      ->  format(atom(Msg2), "~w height ~1fm exceeds maximum ~1fm", [Label, Height, MaxH]),
+          Failures2 = [Msg2|Failures1]
+      ;   Failures2 = Failures1
+      ),
+
+      % --- CHECK 3: Static object with velocity ---
+      (   object_property(Label, is_static, true),
+          Velocity > 0.5
+      ->  format(atom(Msg3), "Static object ~w moving at ~1f m/s", [Label, Velocity]),
+          Failures3 = [Msg3|Failures2]
+      ;   Failures3 = Failures2
+      ),
+
+      % --- CHECK 4: LiDAR disagreement ---
+      (   is_dict(SensorData),
+          get_dict(lidar_confirms, SensorData, LidarConfirms),
+          LidarConfirms = false,
+          Confidence < 0.95
+      ->  Failures4 = ["LiDAR does not confirm visual detection"|Failures3]
+      ;   Failures4 = Failures3
+      ),
+
+      % Determine final reasonableness
+      length(Failures4, NumFailures),
+      (NumFailures > 0 -> Reasonable = false ; Reasonable = true),
+
+      % Join all failure messages
+      (   Failures4 = []
+      ->  Explanation = "All checks passed"
+      ;   reverse(Failures4, FailuresOrdered),
+          atomic_list_concat(FailuresOrdered, "; ", Explanation)
+      ),
+
+      % Return results
+      return(is_reasonable, Reasonable),
+      return(explanation, Explanation).
+
+  # =========================================================
+  # Node 3: Determine safety action
+  # =========================================================
+  - name: decide_action
+    run: |
+      is_reasonable = state.get("is_reasonable", True)
+      parsed_velocity = state.get("parsed_velocity", 0.0)
+      parsed_confidence = state.get("parsed_confidence", 0.0)
+      sensor_data = state.get("sensor_data", {})
+      lidar_confirms = sensor_data.get("lidar_confirms", False)
+
+      if is_reasonable:
+          action = "PROCEED"
+          adjusted_confidence = parsed_confidence
+      else:
+          adjusted_confidence = parsed_confidence * 0.1
+
+          if lidar_confirms and parsed_velocity > 0:
+              action = "CAUTION_SLOW"
+          elif lidar_confirms:
+              action = "SLOW_VERIFY"
+          else:
+              action = "IGNORE_PHANTOM"
+
+      return {
+          "action": action,
+          "confidence_adjusted": round(adjusted_confidence, 3)
+      }
+
+  # =========================================================
+  # Node 4: Generate human-readable safety report
+  # =========================================================
+  - name: generate_report
+    run: |
+      detection = state.get("detection", {})
+      label = detection.get("label", "unknown")
+      original_confidence = detection.get("confidence", 0.0)
+      position = detection.get("position_3d", [0, 0, 0])
+
+      is_reasonable = state.get("is_reasonable", True)
+      explanation = state.get("explanation", "")
+      action = state.get("action", "UNKNOWN")
+      adjusted_confidence = state.get("confidence_adjusted", 0.0)
+
+      pos_str = f"({position[0]:.1f}, {position[1]:.1f}, {position[2]:.1f})m"
+
+      if is_reasonable:
+          report = f"ACCEPTED: {label} at {pos_str} (confidence: {original_confidence:.0%}). {explanation}. Action: {action}."
+      else:
+          report = f"REJECTED: {label} at {pos_str}. {explanation}. Original confidence {original_confidence:.0%} reduced to {adjusted_confidence:.1%}. Action: {action}."
+
+      return {"safety_report": report}
+
+edges:
+  - from: __start__
+    to: analyze_detection
+  - from: analyze_detection
+    to: check_reasonableness
+  - from: check_reasonableness
+    to: decide_action
+  - from: decide_action
+    to: generate_report
+  - from: generate_report
+    to: __end__
