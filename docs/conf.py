@@ -14,6 +14,7 @@ extensions = [
     "sphinx.ext.viewcode",  # Source code links
     "sphinx_copybutton",  # Copy button for code blocks
     "sphinx_togglebutton",  # Collapsible content
+    "sphinxcontrib.mermaid",  # Mermaid diagram support
 ]
 
 # External TOC configuration
@@ -37,6 +38,9 @@ myst_enable_extensions = [
 ]
 
 myst_heading_anchors = 3
+
+# Enable mermaid code fences in MyST
+myst_fence_as_directive = ["mermaid"]
 
 # Source file settings
 source_suffix = {
