@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 from the_edge_agent.actions.cache_actions import (
     _compute_cache_key,
     _compute_ttl_seconds,
+    _get_agent_name,
     _is_expired,
     _pattern_matches,
     _run_cleanup,
@@ -895,6 +896,388 @@ class TestCleanupProbability(unittest.TestCase):
 
         # Expired entry should still exist
         self.assertIn("cache:expired:test", ltm.storage)
+
+
+class TestAgentNameResolution(unittest.TestCase):
+    """Tests for agent name resolution (TEA-BUILTIN-010.1 AC-2)."""
+
+    def test_settings_name_priority(self):
+        """settings.name should have highest priority."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = {
+            "name": "top_level_name",
+            "settings": {"name": "settings_name"},
+        }
+        engine.workflow_name = "workflow_name"
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "settings_name")
+
+    def test_top_level_name_fallback(self):
+        """Top-level name should be used if settings.name not present."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = {"name": "top_level_name", "settings": {}}
+        engine.workflow_name = "workflow_name"
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "top_level_name")
+
+    def test_workflow_name_fallback(self):
+        """workflow_name should be used if no name in config."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = {"settings": {}}
+        engine.workflow_name = "my_workflow"
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "my_workflow")
+
+    def test_unknown_agent_fallback(self):
+        """Should fall back to unknown_agent when no name sources available."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = None
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "unknown_agent")
+
+    def test_no_config_attribute(self):
+        """Should handle engine without _config attribute."""
+        engine = MockEngine(ltm_backend=None)
+        # engine has no _config attribute (not set by default in MockEngine)
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "unknown_agent")
+
+    def test_empty_settings_name(self):
+        """Empty settings.name should fallback to next option."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = {"name": "fallback", "settings": {"name": ""}}
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "fallback")
+
+    def test_none_settings_name(self):
+        """None settings.name should fallback to next option."""
+        engine = MockEngine(ltm_backend=None)
+        engine._config = {"name": "fallback", "settings": {"name": None}}
+
+        name = _get_agent_name(engine)
+        self.assertEqual(name, "fallback")
+
+
+class TestAgentPrefixedCacheKey(unittest.TestCase):
+    """Tests for automatic agent prefix in cache keys (TEA-BUILTIN-010.1 AC-1, AC-3)."""
+
+    def setUp(self):
+        self.engine = MockEngine(ltm_backend=None)
+        self.engine._config = {"name": "my_agent"}
+
+    def test_args_strategy_with_prefix(self):
+        """Args strategy should include agent prefix."""
+        key = _compute_cache_key(
+            action="llm.call",
+            args={"text": "hello"},
+            key=None,
+            key_strategy="args",
+            key_source=None,
+            registry={},
+            state={},
+            engine=self.engine,
+            key_prefix=True,
+        )
+        self.assertTrue(key.startswith("cache:my_agent:llm.call:"))
+
+    def test_custom_key_with_prefix(self):
+        """Custom key should get agent prefix."""
+        key = _compute_cache_key(
+            action="test.action",
+            args={},
+            key="custom:key",
+            key_strategy="args",
+            key_source=None,
+            registry={},
+            state={},
+            engine=self.engine,
+            key_prefix=True,
+        )
+        self.assertEqual(key, "cache:my_agent:custom:key")
+
+    def test_key_prefix_false_no_prefix(self):
+        """key_prefix=False should not add agent prefix."""
+        key = _compute_cache_key(
+            action="llm.call",
+            args={"text": "hello"},
+            key=None,
+            key_strategy="args",
+            key_source=None,
+            registry={},
+            state={},
+            engine=self.engine,
+            key_prefix=False,
+        )
+        self.assertTrue(key.startswith("cache:llm.call:"))
+        self.assertNotIn("my_agent", key)
+
+    def test_no_engine_no_prefix(self):
+        """No engine should result in no prefix."""
+        key = _compute_cache_key(
+            action="llm.call",
+            args={"text": "hello"},
+            key=None,
+            key_strategy="args",
+            key_source=None,
+            registry={},
+            state={},
+            engine=None,
+            key_prefix=True,
+        )
+        self.assertTrue(key.startswith("cache:llm.call:"))
+        self.assertNotIn("my_agent", key)
+
+    def test_sha256_strategy_with_prefix(self):
+        """SHA256 strategy should include agent prefix."""
+        key = _compute_cache_key(
+            action="test.action",
+            args={"content": "hello world"},
+            key=None,
+            key_strategy="sha256",
+            key_source="content",
+            registry={},
+            state={},
+            engine=self.engine,
+            key_prefix=True,
+        )
+        self.assertTrue(key.startswith("cache:my_agent:test.action:"))
+
+    def test_key_format_matches_spec(self):
+        """Key format should be cache:{agent_name}:{user_key}."""
+        key = _compute_cache_key(
+            action="llm.call",
+            args={"text": "test"},
+            key=None,
+            key_strategy="args",
+            key_source=None,
+            registry={},
+            state={},
+            engine=self.engine,
+            key_prefix=True,
+        )
+        # Format: cache:my_agent:llm.call:{hash}
+        parts = key.split(":")
+        self.assertEqual(parts[0], "cache")
+        self.assertEqual(parts[1], "my_agent")
+        self.assertEqual(parts[2], "llm.call")
+        self.assertEqual(len(parts), 4)  # cache:agent:action:hash
+
+
+class TestAgentPrefixInCacheWrap(unittest.TestCase):
+    """Integration tests for agent prefix in cache.wrap action (TEA-BUILTIN-010.1)."""
+
+    def setUp(self):
+        self.ltm = MockLTMBackend()
+        self.engine = MockEngine(ltm_backend=self.ltm)
+        self.engine._config = {"name": "test_agent"}
+        self.registry = {}
+        register_actions(self.registry, self.engine)
+
+        self.call_count = 0
+
+        def test_action(state, **kwargs):
+            self.call_count += 1
+            return {"success": True, "data": "result"}
+
+        self.registry["test.action"] = test_action
+
+    def test_cache_key_includes_agent_prefix(self):
+        """cache.wrap should produce keys with agent prefix."""
+        result = self.registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"value": "hello"},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["_cache_key"].startswith("cache:test_agent:"))
+
+    def test_cache_hit_with_prefixed_key(self):
+        """Cache hit should work with prefixed keys."""
+        # First call
+        result1 = self.registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"value": "hello"},
+        )
+
+        # Second call
+        result2 = self.registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"value": "hello"},
+        )
+
+        self.assertTrue(result2["_cache_hit"])
+        self.assertEqual(result2["_cache_key"], result1["_cache_key"])
+        self.assertTrue(result2["_cache_key"].startswith("cache:test_agent:"))
+        self.assertEqual(self.call_count, 1)  # Action called only once
+
+    def test_key_prefix_false_no_agent_prefix(self):
+        """key_prefix=False should not include agent prefix."""
+        result = self.registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"value": "hello"},
+            key_prefix=False,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertFalse(result["_cache_key"].startswith("cache:test_agent:"))
+        self.assertTrue(result["_cache_key"].startswith("cache:test.action:"))
+
+
+class TestAgentSpecificInvalidation(unittest.TestCase):
+    """Integration tests for agent-specific cache invalidation (TEA-BUILTIN-010.1 AC-8, AC-9)."""
+
+    def setUp(self):
+        self.ltm = MockLTMBackend()
+        self.engine = MockEngine(ltm_backend=self.ltm)
+        self.registry = {}
+        register_actions(self.registry, self.engine)
+
+        # Pre-populate cache with entries from different "agents"
+        # Simulating keys from agent1
+        self.ltm.store(
+            key="cache:agent1:llm.call:hash1",
+            value={"result": "value1"},
+            metadata={"_cache_type": "action_result"},
+        )
+        self.ltm.store(
+            key="cache:agent1:llm.call:hash2",
+            value={"result": "value2"},
+            metadata={"_cache_type": "action_result"},
+        )
+        # Simulating keys from agent2
+        self.ltm.store(
+            key="cache:agent2:llm.call:hash3",
+            value={"result": "value3"},
+            metadata={"_cache_type": "action_result"},
+        )
+        # Old-style key (no agent prefix)
+        self.ltm.store(
+            key="cache:llm.call:hash4",
+            value={"result": "value4"},
+            metadata={"_cache_type": "action_result"},
+        )
+
+    def test_invalidate_agent_specific_pattern(self):
+        """Pattern cache:agent1:* should only delete agent1 entries."""
+        result = self.registry["cache.invalidate"](
+            state={},
+            pattern="cache:agent1:*",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["deleted_count"], 2)
+
+        # agent1 entries should be gone
+        self.assertNotIn("cache:agent1:llm.call:hash1", self.ltm.storage)
+        self.assertNotIn("cache:agent1:llm.call:hash2", self.ltm.storage)
+
+        # agent2 and old-style entries should remain
+        self.assertIn("cache:agent2:llm.call:hash3", self.ltm.storage)
+        self.assertIn("cache:llm.call:hash4", self.ltm.storage)
+
+    def test_invalidate_all_pattern(self):
+        """Pattern cache:* should delete all entries."""
+        result = self.registry["cache.invalidate"](
+            state={},
+            pattern="cache:*",
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["deleted_count"], 4)
+        self.assertEqual(len(self.ltm.storage), 0)
+
+    def test_invalidate_action_specific_across_agents(self):
+        """Pattern cache:*:llm.call:* should work across agents."""
+        result = self.registry["cache.invalidate"](
+            state={},
+            pattern="cache:*:llm.call:*",
+        )
+
+        self.assertTrue(result["success"])
+        # Should match agent1:llm.call and agent2:llm.call
+        self.assertGreaterEqual(result["deleted_count"], 3)
+
+
+class TestBackwardCompatibility(unittest.TestCase):
+    """Tests for backward compatibility (TEA-BUILTIN-010.1 AC-5, AC-6, AC-7)."""
+
+    def setUp(self):
+        self.ltm = MockLTMBackend()
+        self.engine = MockEngine(ltm_backend=self.ltm)
+        self.engine._config = {"name": "my_agent"}
+        self.registry = {}
+        register_actions(self.registry, self.engine)
+
+        def test_action(state, **kwargs):
+            return {"success": True, "data": "fresh_result"}
+
+        self.registry["test.action"] = test_action
+
+    def test_old_keys_still_readable(self):
+        """Old-style keys (without agent prefix) should still be readable."""
+        # Store an old-style key directly
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat() + "Z"
+        old_key = "cache:test.action:oldhash123"
+        self.ltm.store(
+            key=old_key,
+            value={"result": {"success": True, "data": "old_result"}},
+            metadata={
+                "_cache_type": "action_result",
+                "_cache_expires_at": future,
+            },
+        )
+
+        # Should be retrievable via cache.get
+        result = self.registry["cache.get"](
+            state={},
+            key=old_key,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["found"])
+        self.assertEqual(result["value"]["data"], "old_result")
+
+    def test_new_keys_written_with_prefix(self):
+        """New entries should be written with agent prefix."""
+        result = self.registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"value": "new_value"},
+        )
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["_cache_key"].startswith("cache:my_agent:"))
+
+    def test_agents_without_name_use_fallback(self):
+        """Agents without explicit name should use fallback."""
+        engine = MockEngine(ltm_backend=self.ltm)
+        engine._config = {}  # No name
+        engine.workflow_name = "workflow_from_file"
+        registry = {}
+        register_actions(registry, engine)
+
+        def test_action(state, **kwargs):
+            return {"success": True}
+
+        registry["test.action"] = test_action
+
+        result = registry["cache.wrap"](
+            state={},
+            action="test.action",
+            args={"x": 1},
+        )
+
+        self.assertTrue(result["_cache_key"].startswith("cache:workflow_from_file:"))
 
 
 if __name__ == "__main__":

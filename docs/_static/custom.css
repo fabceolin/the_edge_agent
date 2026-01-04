@@ -1,0 +1,7 @@
+/* Custom CSS for The Edge Agent documentation */
+/* Add your custom styles here */
+
+/* Example: Slightly larger code blocks */
+.highlight pre {
+    font-size: 0.9em;
+}

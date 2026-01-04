@@ -36,7 +36,45 @@ import hashlib
 import json
 import random
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+
+def _get_agent_name(engine: Any) -> str:
+    """
+    Get agent name for cache key prefix (TEA-BUILTIN-010.1).
+
+    Resolution order:
+    1. settings.name from YAML config
+    2. Top-level 'name' field from YAML config
+    3. YAML filename without extension (if available)
+    4. Fallback to 'unknown_agent'
+
+    Args:
+        engine: YAMLEngine instance
+
+    Returns:
+        Agent name string, sanitized for use in cache keys
+    """
+    # Try settings.name first (highest priority)
+    if hasattr(engine, "_config") and engine._config:
+        settings = engine._config.get("settings", {})
+        if isinstance(settings, dict):
+            name = settings.get("name")
+            if name:
+                return str(name)
+
+        # Try top-level 'name' field
+        name = engine._config.get("name")
+        if name:
+            return str(name)
+
+    # Try workflow_name (set by CLI from filename)
+    if hasattr(engine, "workflow_name") and engine.workflow_name:
+        return str(engine.workflow_name)
+
+    # Fallback
+    return "unknown_agent"
 
 
 def _compute_cache_key(
@@ -47,9 +85,11 @@ def _compute_cache_key(
     key_source: Optional[str],
     registry: Dict[str, Callable],
     state: Dict[str, Any],
+    engine: Any = None,
+    key_prefix: bool = True,
 ) -> str:
     """
-    Compute cache key based on strategy.
+    Compute cache key based on strategy with optional agent prefix (TEA-BUILTIN-010.1).
 
     Args:
         action: The action name being cached
@@ -59,16 +99,34 @@ def _compute_cache_key(
         key_source: For file_content strategy, the arg name containing file path
         registry: Action registry for storage.hash access
         state: Current state for template evaluation
+        engine: YAMLEngine instance for agent name resolution
+        key_prefix: If True (default), prepend agent name to cache key
 
     Returns:
-        Cache key string prefixed with 'cache:'
+        Cache key string in format:
+        - With prefix: 'cache:{agent_name}:{user_key}'
+        - Without prefix: 'cache:{user_key}'
     """
+    # Determine agent name for prefix (if enabled)
+    agent_prefix = ""
+    if key_prefix and engine is not None:
+        agent_name = _get_agent_name(engine)
+        agent_prefix = f"{agent_name}:"
+
     if key:
         # Custom key already provided (from Jinja expression)
-        # Add prefix if not already present
+        # Handle keys that already have cache: prefix
         if key.startswith("cache:"):
-            return key
-        return f"cache:{key}"
+            # Check if key already has agent prefix (backward compatibility)
+            # Format: cache:{agent}:{rest} - don't double-prefix
+            parts = key.split(":", 2)
+            if len(parts) >= 3 and key_prefix:
+                # Already has format cache:something:rest - assume it has agent prefix
+                return key
+            # Just has cache:rest format - add agent prefix
+            rest = key[6:]  # Remove 'cache:' prefix
+            return f"cache:{agent_prefix}{rest}"
+        return f"cache:{agent_prefix}{key}"
 
     if key_strategy == "file_content":
         # Hash file content from specified argument
@@ -80,7 +138,7 @@ def _compute_cache_key(
                 state=state, path=file_path, algorithm="sha256"
             )
             if hash_result.get("success"):
-                return f"cache:{action}:{hash_result['hash']}"
+                return f"cache:{agent_prefix}{action}:{hash_result['hash']}"
         # Fallback to args hash if file hashing fails
         key_strategy = "args"
 
@@ -92,7 +150,7 @@ def _compute_cache_key(
                 content_hash = hashlib.sha256(value).hexdigest()
             else:
                 content_hash = hashlib.sha256(str(value).encode()).hexdigest()
-            return f"cache:{action}:{content_hash}"
+            return f"cache:{agent_prefix}{action}:{content_hash}"
         # Fallback to args hash
         key_strategy = "args"
 
@@ -100,7 +158,7 @@ def _compute_cache_key(
     # Sort keys and serialize to JSON for deterministic hashing
     args_json = json.dumps(args, sort_keys=True, default=str)
     args_hash = hashlib.sha256(args_json.encode()).hexdigest()
-    return f"cache:{action}:{args_hash}"
+    return f"cache:{agent_prefix}{action}:{args_hash}"
 
 
 def _is_expired(expires_at: Optional[str]) -> bool:
@@ -179,6 +237,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         cache_enabled: bool = True,
         cleanup_probability: float = 0.05,
         cleanup_limit: int = 5,
+        key_prefix: bool = True,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -186,6 +245,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         Checks cache before execution, stores result after successful execution.
         Uses Long-Term Memory (LTM) for persistence.
+
+        Cache keys are automatically prefixed with the agent name (TEA-BUILTIN-010.1):
+        - Format: cache:{agent_name}:{user_key}
+        - Agent name resolved from settings.name, YAML name field, or filename
+        - Use key_prefix=False to disable automatic prefixing
 
         Args:
             state: Current state dictionary
@@ -201,6 +265,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             cache_enabled: Enable/disable caching entirely (default: True)
             cleanup_probability: Probability of running cleanup after cache miss (0.0-1.0)
             cleanup_limit: Maximum expired entries to delete per cleanup run
+            key_prefix: Auto-prefix keys with agent name (default: True, TEA-BUILTIN-010.1)
 
         Returns:
             Action result with cache metadata:
@@ -241,7 +306,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "_cache_hit": False,
                 }
 
-        # Compute cache key
+        # Compute cache key with optional agent prefix (TEA-BUILTIN-010.1)
         cache_key = _compute_cache_key(
             action=action,
             args=args,
@@ -250,6 +315,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             key_source=key_source,
             registry=registry,
             state=state,
+            engine=engine,
+            key_prefix=key_prefix,
         )
 
         # Check cache (unless skip_cache is True)
