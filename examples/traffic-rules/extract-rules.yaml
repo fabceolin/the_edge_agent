@@ -1,0 +1,68 @@
+# Extract traffic rules from driver's manual text
+# Converts natural language to Prolog rules
+name: extract-traffic-rules
+
+state_schema:
+  manual_text: str
+  jurisdiction: str
+  extracted_rules: str
+
+nodes:
+  - name: extract
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "llama3.2:1b"
+      messages:
+        - role: system
+          content: |
+            You are a traffic law extraction system. Convert driver's manual
+            text into Prolog rules.
+
+            Output format:
+            ```prolog
+            % Rule: description
+            rule_name(Conditions) :- condition1, condition2.
+            ```
+
+            Use these predicates:
+            - detected(Object, Distance) - object detected at distance
+            - speed(Current) - current vehicle speed
+            - signal(Color) - traffic signal color
+            - zone(Type) - current zone (school, construction, residential)
+            - weather(Condition) - weather condition
+            - action(Type, Speed) - proposed action
+            - legal(Action) - action is legal
+            - violation(Action, Rule) - action violates rule
+            - must_stop - vehicle must stop
+
+            Output ONLY Prolog rules, no other text.
+        - role: user
+          content: |
+            Jurisdiction: {{ state.jurisdiction }}
+
+            Manual text:
+            {{ state.manual_text }}
+    output: llm_response
+
+  - name: format
+    run: |
+      content = state.get("llm_response", {}).get("content", "")
+      # Extract code block if present
+      if "```prolog" in content:
+          start = content.find("```prolog") + 9
+          end = content.find("```", start)
+          content = content[start:end].strip()
+      elif "```" in content:
+          start = content.find("```") + 3
+          end = content.find("```", start)
+          content = content[start:end].strip()
+      return {"extracted_rules": content}
+
+edges:
+  - from: __start__
+    to: extract
+  - from: extract
+    to: format
+  - from: format
+    to: __end__
