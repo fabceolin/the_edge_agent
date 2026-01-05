@@ -69,3 +69,19 @@ parts:
         title: Neurosymbolic AI with TEA
       - file: articles/strawberry-counting
         title: How Many R's in Strawberry?
+      - file: articles/atari-pinball-neurosymbolic
+        title: Neurosymbolic AI for Atari Pinball
+      - file: articles/reasonableness-monitors
+        title: Reasonableness Monitors
+      - file: articles/traffic-rules-neurosymbolic
+        title: Traffic Rules with Neurosymbolic AI
+      - file: articles/explanation-synthesis-avs
+        title: Explanation Synthesis for AVs
+      - file: articles/neural-predicate-invention
+        title: Neural Predicate Invention
+      - file: articles/wozniak-coffee-test
+        title: The Wozniak Coffee Test
+      - file: articles/serverless-ai-agents
+        title: Serverless AI Agents
+      - file: articles/symbolic-abstraction-learning-OUTLINE
+        title: Symbolic Abstraction Learning (Outline)
