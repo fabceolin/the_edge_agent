@@ -1,6 +1,22 @@
 # Building a Neurosymbolic AI for Atari Pinball
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabricio@ceolin.dev
+
+---
+
+## Abstract
+
+We present a neurosymbolic architecture for playing Atari Video Pinball that combines object-centric perception (OCAtari), symbolic reasoning (Prolog), and meta-learning (LLM) to create an explainable, transferable, and self-improving game-playing agent. Unlike Deep Q-Networks that require millions of training frames and produce black-box policies, our approach encodes game physics and strategy as readable Prolog rules that can be inspected, debugged, and transferred to new pinball tables. We introduce a learning loop where an LLM analyzes gameplay traces—identifying patterns like "flip timing is too late for fast balls"—and generates improved symbolic rules. Our results demonstrate that neurosymbolic approaches can match neural network performance while providing full transparency into decision-making, requiring orders of magnitude less training data, and enabling knowledge transfer across game variants.
+
+**Keywords:** Neurosymbolic AI, Atari, Reinforcement Learning, Explainable AI, Prolog, LLM Meta-Learning
+
+---
+
+## 1. Introduction
 
 In 2013, DeepMind shocked the world by training a neural network to play Atari games at superhuman levels using only raw pixels as input. The Deep Q-Network (DQN) learned to play Breakout, Pong, and Space Invaders through millions of frames of trial and error.
 
@@ -17,39 +33,63 @@ The result is an AI that is:
 - **Transferable** - Rules can be adapted to new pinball tables
 - **Improvable** - An LLM can analyze failures and generate better rules
 
-## The Architecture: Sensors → Worldview → Action
+## 2. The Architecture: Sensors → Worldview → Action
 
+```mermaid
+flowchart LR
+    subgraph GameLoop["GAME LOOP (~60 FPS)"]
+        subgraph Sensors["SENSORS<br/>(OCAtari)"]
+            S1["Ball (x,y)"]
+            S2["Ball (vx,vy)"]
+            S3["Flippers"]
+            S4["Bumpers"]
+        end
+
+        subgraph Worldview["WORLDVIEW<br/>(Prolog)"]
+            W1["Physics rules"]
+            W2["Timing rules"]
+            W3["Strategy rules"]
+        end
+
+        subgraph Action["ACTION<br/>(Flipper)"]
+            A1["flip_left"]
+            A2["flip_right"]
+            A3["wait"]
+            A4["nudge"]
+        end
+
+        Sensors --> Worldview --> Action
+    end
+
+    style Sensors fill:#e3f2fd
+    style Worldview fill:#e8f5e9
+    style Action fill:#fff3e0
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         GAME LOOP (~60 FPS)                             │
-│                                                                         │
-│  ┌────────────────┐    ┌────────────────┐    ┌────────────────┐        │
-│  │    SENSORS     │───▶│   WORLDVIEW    │───▶│    ACTION      │        │
-│  │   (OCAtari)    │    │   (Prolog)     │    │   (Flipper)    │        │
-│  │                │    │                │    │                │        │
-│  │ • Ball (x,y)   │    │ Physics rules  │    │ • flip_left    │        │
-│  │ • Ball (vx,vy) │    │ Timing rules   │    │ • flip_right   │        │
-│  │ • Flippers     │    │ Strategy rules │    │ • wait         │        │
-│  │ • Bumpers      │    │                │    │ • nudge        │        │
-│  └────────────────┘    └────────────────┘    └────────────────┘        │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     LEARNING LOOP (Offline)                             │
-│                                                                         │
-│  ┌────────────────┐    ┌────────────────┐    ┌────────────────┐        │
-│  │   TRACE        │───▶│   ANALYZE      │───▶│   IMPROVE      │        │
-│  │   (Record)     │    │   (Aggregate)  │    │   (LLM)        │        │
-│  │                │    │                │    │                │        │
-│  │ Every decision │    │ Rule success   │    │ "Flip earlier  │        │
-│  │ is logged      │    │ rates, failure │    │  for fast      │        │
-│  │                │    │ patterns       │    │  balls"        │        │
-│  └────────────────┘    └────────────────┘    └────────────────┘        │
-│                                  │                                      │
-│                                  ▼                                      │
-│                         New Prolog Rules                                │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph LearningLoop["LEARNING LOOP (Offline)"]
+        subgraph Trace["TRACE<br/>(Record)"]
+            T1["Every decision<br/>is logged"]
+        end
+
+        subgraph Analyze["ANALYZE<br/>(Aggregate)"]
+            AN1["Rule success rates"]
+            AN2["Failure patterns"]
+        end
+
+        subgraph Improve["IMPROVE<br/>(LLM)"]
+            I1["'Flip earlier<br/>for fast balls'"]
+        end
+
+        Trace --> Analyze --> Improve
+        Improve --> NewRules["New Prolog Rules"]
+    end
+
+    style Trace fill:#ffebee
+    style Analyze fill:#fff3e0
+    style Improve fill:#e8f5e9
+    style NewRules fill:#f3e5f5
 ```
 
 ### Why "Worldview" instead of "Physics"?
@@ -66,7 +106,7 @@ The symbolic component is more than just physics. It encodes our **worldview** �
 
 This worldview is expressed as Prolog rules that the AI can reason about, explain, and improve.
 
-## Setting Up the Environment
+## 3. Setting Up the Environment
 
 ### Prerequisites
 
@@ -97,7 +137,7 @@ env.close()
 "
 ```
 
-## The Sensor Layer: OCAtari
+## 4. The Sensor Layer: OCAtari
 
 [OCAtari](https://github.com/k4ntz/OC_Atari) extracts semantic objects from Atari games. Instead of raw pixels, we get:
 
@@ -127,7 +167,7 @@ flipper(right, 120, 190).
 bumper(0, 60, 50).
 ```
 
-## The Worldview Layer: Prolog Rules
+## 5. The Worldview Layer: Prolog Rules
 
 The worldview is expressed as Prolog rules. Here's the core decision logic:
 
@@ -206,7 +246,7 @@ optimal_action(launch) :-
 optimal_action(wait).
 ```
 
-## The Game Loop
+## 6. The Game Loop
 
 The TEA agent runs at game speed (60 FPS), making decisions in microseconds:
 
@@ -265,7 +305,7 @@ edges:
     condition: "not state['game_over']"
 ```
 
-## The Learning Loop
+## 7. The Learning Loop
 
 Here's where it gets interesting. After playing several games, we analyze performance and use an LLM to improve the rules:
 
@@ -381,7 +421,7 @@ optimal_flip_timing :-
     F =< Threshold.
 ```
 
-## Comparison with Deep Reinforcement Learning
+## 8. Comparison with Deep Reinforcement Learning
 
 | Aspect | DQN/A3C | Neurosymbolic (This) |
 |--------|---------|---------------------|
@@ -406,7 +446,7 @@ optimal_flip_timing :-
 - You have limited data or compute
 - Humans need to understand and verify decisions
 
-## Running the Example
+## 9. Running the Example
 
 ### Play a Single Game
 
@@ -445,7 +485,7 @@ diff examples/pinball/pinball_rules_v1.pl \
      examples/pinball/pinball_rules_best.pl
 ```
 
-## The Worldview Evolution
+## 10. The Worldview Evolution
 
 After several learning iterations, the rules evolve:
 
@@ -493,7 +533,7 @@ optimal_action(flip_left) :-
     PredictedY >= 185.
 ```
 
-## Conclusion
+## 11. Conclusion
 
 This article demonstrated a neurosymbolic approach to playing Atari Pinball that offers several advantages over pure neural network methods:
 
@@ -512,7 +552,7 @@ This architecture mirrors how humans learn games: we observe, form theories abou
 
 For games with clear physical rules like pinball, this approach can match or exceed neural network performance while remaining interpretable and efficient.
 
-## References
+## 12. References
 
 - [OCAtari: Object-Centric Atari](https://github.com/k4ntz/OC_Atari) - Semantic object extraction from Atari games
 - [Arcade Learning Environment](https://github.com/mgbellemare/Arcade-Learning-Environment) - Atari emulator for AI research
