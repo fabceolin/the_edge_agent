@@ -1629,7 +1629,51 @@ class Neo4jBackend:
         selector: Optional[Dict[str, Any]] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Register a database trigger using APOC."""
+        """Register a database trigger using APOC.
+
+        Creates a trigger that executes a Cypher query when graph mutations occur.
+        Triggers can react to node and relationship changes in real-time.
+
+        Transaction Context Variables:
+            The following variables are available in the trigger query and provide
+            access to the mutated data within the transaction:
+
+            - $createdNodes: List of nodes created in this transaction
+            - $deletedNodes: List of nodes deleted in this transaction
+            - $createdRelationships: List of relationships created in this transaction
+            - $deletedRelationships: List of relationships deleted in this transaction
+            - $assignedLabels: Map of nodes to their newly assigned labels
+            - $removedLabels: Map of nodes to their removed labels
+            - $assignedNodeProperties: Map of nodes to their changed properties
+            - $assignedRelationshipProperties: Map of relationships to their changed properties
+
+        Args:
+            name: Unique name for the trigger
+            query: Cypher query to execute when trigger fires
+            selector: Optional selector dict (deprecated, use query variables)
+            config: Optional configuration dict with:
+                - phase: "before" or "after" (default: "after")
+                - params: Additional parameters available in the query
+
+        Returns:
+            {
+                "success": True,
+                "trigger_name": str,
+                "registered": bool
+            }
+
+        Example:
+            >>> # Log all new Person nodes
+            >>> backend.register_trigger(
+            ...     name="log_new_persons",
+            ...     query=\"\"\"
+            ...         UNWIND $createdNodes AS node
+            ...         WITH node WHERE node:Person
+            ...         CREATE (log:AuditLog {event: 'created', nodeId: id(node)})
+            ...     \"\"\",
+            ...     config={"phase": "after"}
+            ... )
+        """
         if not name:
             return {
                 "success": False,
