@@ -1,6 +1,22 @@
-# From Pixels to Planning: Neural Predicate Invention for Zero-Shot Robot Generalization
+# Neural Predicate Invention: Teaching Robots to Discover Abstract Concepts
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+We present a practical approach to neural predicate invention that enables robots to automatically discover symbolic abstractions from raw sensor transitions. Unlike traditional approaches that require hand-crafted predicate definitions, our method learns concepts like `empty_hand` and `reachable` by observing the effects of actions on sensor states. Using The Edge Agent (TEA) framework, we demonstrate a bilevel learning architecture where an LLM classifies sensor patterns while Prolog validates logical consistency and plans action sequences. Our experiments on a simulated tabletop manipulation task show that invented predicates transfer zero-shot to novel objects never seen during training—achieving the same generalization that allows a chess player who learns "knight moves in L-shape" to play on any board.
+
+**Keywords:** Predicate Invention, Neurosymbolic AI, Zero-Shot Generalization, Robot Learning, Symbol Grounding
+
+---
+
+## 1. Introduction
 
 Imagine teaching a robot to play chess by showing it thousands of photographs of chess boards. It learns to recognize pieces, memorize positions, and even predict what move humans typically make next. But ask it to play on a board with different colored squares, and it fails completely.
 
@@ -10,7 +26,7 @@ With this abstract concept, the robot can play on any board — different colors
 
 This article demonstrates how to build agents that automatically discover symbolic abstractions from raw sensor data, enabling robots to generalize to scenarios they've never seen before.
 
-## The Problem: Why Neural-Only Approaches Fail
+## 2. The Problem: Why Neural-Only Approaches Fail
 
 Traditional machine learning approaches to robotics suffer from a fundamental limitation:
 
@@ -26,7 +42,7 @@ Consider a simple pick-and-place task. A neural network trained on cups, bottles
 
 The missing piece is **abstraction**. Humans don't memorize every object; we learn concepts like "graspable", "fragile", or "within reach" that apply to any object with the relevant properties.
 
-## The Key Insight: Predicates as Action Effects
+## 3. The Key Insight: Predicates as Action Effects
 
 The breakthrough comes from a simple observation:
 
@@ -34,27 +50,31 @@ The breakthrough comes from a simple observation:
 
 Instead of manually programming that "empty_hand means aperture > 0.05 and force < 0.1", we let the system discover this by observing what changes when actions are performed:
 
-```
-┌──────────────────────┐                    ┌──────────────────────┐
-│  BEFORE action       │     ACTION         │  AFTER action        │
-│  (sensor state)      │ ──────────────────>│  (sensor state')     │
-│                      │     "release"      │                      │
-│  gripper: 0.02m      │                    │  gripper: 0.08m      │
-│  force: 2.5N         │                    │  force: 0.02N        │
-└──────────────────────┘                    └──────────────────────┘
-                    │                                   │
-                    │         DISCOVER EFFECT           │
-                    └───────────────┬───────────────────┘
-                                    ▼
-                    ┌───────────────────────────────────┐
-                    │  Effect: release ADDS empty_hand  │
-                    │  (predicate invented from data!)  │
-                    └───────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Before["BEFORE action"]
+        B1["gripper: 0.02m"]
+        B2["force: 2.5N"]
+    end
+
+    subgraph After["AFTER action"]
+        A1["gripper: 0.08m"]
+        A2["force: 0.02N"]
+    end
+
+    Before -->|"release"| After
+
+    Before & After --> Discover["DISCOVER EFFECT"]
+    Discover --> Effect["Effect: release ADDS empty_hand<br/>(predicate invented from data!)"]
+
+    style Before fill:#ffebee
+    style After fill:#e8f5e9
+    style Effect fill:#fff3e0
 ```
 
 The system doesn't need to know what "empty_hand" means philosophically. It discovers that a particular sensor pattern consistently appears after the "release" action and disappears after "pick". That's enough to use it for planning.
 
-## The Neurosymbolic Solution
+## 4. The Neurosymbolic Solution
 
 Our approach combines the strengths of neural and symbolic systems:
 
@@ -81,7 +101,7 @@ flowchart LR
 
 The LLM handles the messy, ambiguous task of interpreting sensor data. Prolog handles the precise, deterministic task of planning. Together, they achieve what neither could alone.
 
-## Prerequisites
+## 5. Prerequisites
 
 ### Install Ollama and Model
 
@@ -102,7 +122,7 @@ wget https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-0.
 chmod +x tea
 ```
 
-## The Three Agents
+## 6. The Three Agents
 
 We implement three agents that work together to demonstrate the full bilevel learning pipeline:
 
@@ -112,7 +132,7 @@ We implement three agents that work together to demonstrate the full bilevel lea
 | **classify-state** | LLM classifies sensors | Prolog validates consistency | Map sensors to predicates |
 | **plan-actions** | LLM classifies current state | Prolog STRIPS planner | Generate action sequences |
 
-## Agent 1: Effect Discovery
+## 7. Agent 1: Effect Discovery
 
 This agent discovers WHAT predicates exist by analyzing action transitions. It's the "learning" phase where the system invents its symbolic vocabulary.
 
@@ -265,7 +285,7 @@ edges:
 
 The LLM discovered that the "pick" action causes `holding(cup)` to become true, based on observing the sensor changes (force increased, aperture decreased, object position moved to gripper).
 
-## Agent 2: State Classifier (Neurosymbolic)
+## 8. Agent 2: State Classifier (Neurosymbolic)
 
 This agent maps raw sensor states to predicate truth values. It demonstrates the power of combining LLM classification with Prolog validation.
 
@@ -441,7 +461,7 @@ The LLM made an error — it claimed both `empty_hand` AND `holding(cup)` are tr
 
 This demonstrates the core strength of neurosymbolic AI: **the symbolic layer acts as a logical safety net for neural errors**.
 
-## Agent 3: Planning with Invented Predicates
+## 9. Agent 3: Planning with Invented Predicates
 
 This is where the magic happens. Using the predicates discovered by Agent 1 and the classification from Agent 2, this agent uses Prolog's STRIPS planner to find action sequences for ANY goal.
 
@@ -610,7 +630,7 @@ The flow:
 1. **Neural (LLM)**: Correctly classified the state as `["empty_hand", "reachable(cup)"]`
 2. **Symbolic (Prolog)**: Found 1-step plan: `pick(cup)`
 
-## Zero-Shot Generalization: The Real Test
+## 10. Zero-Shot Generalization: The Real Test
 
 Now for the crucial test. Can the system handle objects it has **never seen before**?
 
@@ -646,7 +666,7 @@ This is the power of neural predicate invention:
 | `moon_rock` | **No** | `move_to(moon_rock) -> pick(moon_rock)` |
 | `antimatter_cube` | **No** | `move_to(antimatter_cube) -> pick(antimatter_cube)` |
 
-## Why Bilevel Learning Wins
+## 11. Why Bilevel Learning Wins
 
 | Aspect | Neural-Only | Neurosymbolic (Predicate Invention) |
 |--------|-------------|-------------------------------|
@@ -657,7 +677,7 @@ This is the power of neural predicate invention:
 | **Consistency** | Varies with prompt | Deterministic (Prolog) |
 | **Error detection** | Hidden failures | Contradictions caught |
 
-## The Chess Knight Analogy Revisited
+## 12. The Chess Knight Analogy Revisited
 
 Remember our chess robot? By discovering that one piece "moves in an L-shape", it could play on any board.
 
@@ -670,7 +690,7 @@ These predicates work on ANY object with size, weight, and position — includin
 
 That's the power of abstraction: **you don't memorize instances, you learn concepts**.
 
-## Applications Beyond Robotics
+## 13. Applications Beyond Robotics
 
 The same pattern applies across domains:
 
@@ -688,7 +708,7 @@ The key insight:
 
 Without abstractions, every new scenario requires new training data. With abstractions, the planner works on ANY scenario that satisfies the predicates.
 
-## Limitations and Future Work
+## 14. Limitations and Future Work
 
 **Current limitations in our TEA demo:**
 - Uses LLM as "classifier" instead of trained neural networks
@@ -708,7 +728,7 @@ Without abstractions, every new scenario requires new training data. With abstra
 - Hierarchical predicate learning (predicates of predicates)
 - ROS bridge for real robot integration
 
-## Conclusion
+## 15. Conclusion
 
 The core insight from bilevel learning:
 
@@ -730,7 +750,7 @@ Instead of manually defining "empty_hand" or "reachable", the system discovers t
 
 The chess knight doesn't memorize board positions — it learns the concept of "L-shaped movement". Our robot doesn't memorize objects — it learns the concepts of "empty hand" and "reachable". That's the power of neural predicate invention.
 
-## Try It Yourself
+## 16. Try It Yourself
 
 ```bash
 # Clone the repo
@@ -757,7 +777,7 @@ ollama pull gemma3:4b
   --input '{"sensor_state": {...}, "goal": "holding(cup)"}'
 ```
 
-## References
+## 17. References
 
 ### Original Research
 - [Bilevel Learning for Neural Predicate Invention](https://arxiv.org/) - The core research this article is based on

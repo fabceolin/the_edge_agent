@@ -4,7 +4,7 @@
 
 *Independent Researcher*
 
-fabricio@ceolin.dev
+fabceolin@gmail.com
 
 ---
 
