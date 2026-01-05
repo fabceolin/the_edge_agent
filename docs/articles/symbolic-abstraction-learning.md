@@ -1,13 +1,22 @@
-# Article Outline: Neural Predicate Invention for Zero-Shot Robot Generalization
+# From Pixels to Planning: Neural Predicate Invention for Zero-Shot Robot Generalization
 
-## Title Options
-1. "From Pixels to Planning: Neural Predicate Invention with Neurosymbolic AI"
-2. "Teaching Robots to Invent Concepts: Bilevel Learning for Zero-Shot Generalization"
-3. "The Chess Knight Problem: How Robots Learn Abstract Rules from Raw Observations"
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabricio@ceolin.dev
 
 ---
 
-## 1. Introduction (Hook)
+## Abstract
+
+We present a neurosymbolic approach to robot learning that discovers symbolic predicates from raw sensor transitions, enabling zero-shot generalization to novel objects and scenarios. Unlike traditional deep reinforcement learning methods that require extensive retraining for new environments, our bilevel learning architecture alternates between neural classification (using LLMs) and symbolic effect search (using Prolog) to invent compositional abstractions like `empty_hand` and `reachable`. We demonstrate this approach using The Edge Agent (TEA) framework, showing how a robot can learn manipulation operators from a handful of transition examples and then plan for completely unseen objects. Our results suggest that the key to robot generalization lies not in larger neural networks, but in learning the right symbolic abstractions that compose across scenarios—much like a chess player who learns "knight moves in L-shape" can play on any board.
+
+**Keywords:** Neurosymbolic AI, Predicate Invention, Zero-Shot Learning, Robot Planning, Bilevel Optimization
+
+---
+
+## 1. Introduction
 
 **The Chess Analogy:**
 > Imagine a robot learning chess by looking at photos of the board. It sees thousands of images,
@@ -49,23 +58,28 @@ Instead of a human programming "empty_hand means aperture > 0.05 and force < 0.1
 
 **The gap we're closing:**
 
-```
-┌──────────────────────┐                    ┌──────────────────────┐
-│  BEFORE action       │     ACTION         │  AFTER action        │
-│  (sensor state X)    │ ──────────────────▶│  (sensor state X')   │
-│                      │     "release"      │                      │
-│  gripper: 0.02m      │                    │  gripper: 0.08m      │
-│  force: 2.5N         │                    │  force: 0.02N        │
-│  holding: true       │                    │  holding: false      │
-└──────────────────────┘                    └──────────────────────┘
-                    │                                   │
-                    │         DISCOVER EFFECT           │
-                    └───────────────┬───────────────────┘
-                                    ▼
-                    ┌───────────────────────────────────┐
-                    │  Effect Vector: release ADDS P1   │
-                    │  P1 = "empty_hand" (invented!)    │
-                    └───────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Before["BEFORE action (X)"]
+        B1["gripper: 0.02m"]
+        B2["force: 2.5N"]
+        B3["holding: true"]
+    end
+
+    subgraph After["AFTER action (X')"]
+        A1["gripper: 0.08m"]
+        A2["force: 0.02N"]
+        A3["holding: false"]
+    end
+
+    Before -->|"release"| After
+
+    Before & After --> Discover["DISCOVER EFFECT"]
+    Discover --> Effect["Effect Vector: release ADDS P1<br/>P1 = 'empty_hand' (invented!)"]
+
+    style Before fill:#ffebee
+    style After fill:#e8f5e9
+    style Effect fill:#fff3e0
 ```
 
 **The insight:** We don't define predicates—we discover them from action effects!

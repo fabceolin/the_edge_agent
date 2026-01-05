@@ -83,5 +83,5 @@ parts:
         title: The Wozniak Coffee Test
       - file: articles/serverless-ai-agents
         title: Serverless AI Agents
-      - file: articles/symbolic-abstraction-learning-OUTLINE
-        title: Symbolic Abstraction Learning (Outline)
+      - file: articles/symbolic-abstraction-learning
+        title: Neural Predicate Invention for Zero-Shot Generalization
