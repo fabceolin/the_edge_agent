@@ -1,6 +1,22 @@
 # Reasonableness Monitors: Adding Common Sense to Neural Networks
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Neural networks in autonomous vehicles consistently fail in ways humans find baffling—mistaking the moon for a traffic light, failing to recognize pedestrians with bicycles, or being fooled by adversarial stickers on stop signs. These failures stem from a fundamental limitation: neural networks learn correlations, not causation, and lack the common-sense knowledge that traffic lights are attached to poles, not floating in the sky. This article introduces **Reasonableness Monitors**—neurosymbolic components that validate neural network outputs against physical laws and contextual knowledge encoded in Prolog. Using The Edge Agent (TEA) framework, we demonstrate how to build monitors that catch impossible perceptions before they cause harm, provide human-readable explanations for rejections, and integrate seamlessly into perception pipelines with minimal latency overhead.
+
+**Keywords:** Reasonableness Monitors, Autonomous Vehicles, Common Sense AI, Neurosymbolic Safety, Adversarial Defense
+
+---
+
+## 1. Introduction
 
 In 2021, a Tesla vehicle mistook the full moon for a yellow traffic light. In 2018, an Uber autonomous vehicle failed to recognize a pedestrian pushing a bicycle across the road — because its training data didn't include that specific scenario. These aren't rare edge cases; they're symptoms of a fundamental limitation: **neural networks lack common sense**.
 
@@ -12,7 +28,7 @@ This article introduces **Reasonableness Monitors** — neurosymbolic components
 2. Catch impossible or implausible detections before they cause harm
 3. Provide human-readable explanations for why a perception was rejected
 
-## The Problem: Neural Networks Are Confidently Wrong
+## 2. The Problem: Neural Networks Are Confidently Wrong
 
 Neural networks are powerful pattern matchers, but they fail in ways that humans find baffling:
 
@@ -39,7 +55,7 @@ The core issue is that neural networks are **opaque statistical models**. They l
 - Moving objects on roads require caution regardless of classification
 - Context matters (a 100 km/h sign makes no sense in a school zone)
 
-## The Solution: Reasonableness Monitors
+## 3. The Solution: Reasonableness Monitors
 
 A Reasonableness Monitor treats the neural network as a **black box** and validates its outputs against symbolic knowledge:
 
@@ -71,7 +87,7 @@ The monitor operates in three phases:
 2. **Validate**: Query knowledge base for expected properties
 3. **Decide**: Apply logical rules to accept, reject, or flag for review
 
-## Knowledge Representation
+## 4. Knowledge Representation
 
 ### Conceptual Dependency Theory
 
@@ -142,7 +158,7 @@ zone_max_reasonable_speed(urban, 70).
 zone_max_reasonable_speed(highway, 130).
 ```
 
-## Implementation with TEA
+## 5. Implementation with TEA
 
 ### The Reasonableness Monitor Agent
 
@@ -355,7 +371,7 @@ edges:
     to: __end__
 ```
 
-## Case Studies
+## 6. Case Studies
 
 ### Case 1: The Moon vs Traffic Light
 
@@ -458,7 +474,7 @@ edges:
 
 The monitor doesn't need to identify the turkey — it applies the **universal rule** that any moving object on the road requires caution.
 
-## Multi-Sensor Fusion
+## 7. Multi-Sensor Fusion
 
 In real systems, reasonableness monitors integrate data from multiple sensors:
 
@@ -520,7 +536,7 @@ sensor_conflict_resolution(Action) :-
     assert_explanation("Significant velocity disagreement between camera and radar - sensor calibration needed").
 ```
 
-## Adversarial Attack Defense
+## 8. Adversarial Attack Defense
 
 Reasonableness monitors provide natural defense against adversarial attacks:
 
@@ -575,7 +591,7 @@ nodes:
 | Adversarial patch on shirt | Person → "traffic light" | Size/position inconsistent with traffic light |
 | Printed image of person | Detects "pedestrian" | LiDAR shows flat 2D surface, not 3D human |
 
-## Performance Considerations
+## 9. Performance Considerations
 
 Reasonableness monitors must operate in **real-time** (< 50ms latency for autonomous vehicles):
 
@@ -616,7 +632,7 @@ flowchart LR
     T4 -->|"All pass"| ACCEPT[Accept]
 ```
 
-## Integration Patterns
+## 10. Integration Patterns
 
 ### Pattern 1: Inline Monitor (Synchronous)
 
@@ -663,7 +679,7 @@ edges:
     fan_in: true
 ```
 
-## The Broader Vision
+## 11. The Broader Vision
 
 Reasonableness monitors embody a key insight of neurosymbolic AI: **neural networks and symbolic systems have complementary strengths**.
 
@@ -684,7 +700,7 @@ By combining them, we get systems that are:
 - **More trustworthy**: Verifiable safety guarantees
 - **More adaptable**: Handle novel situations safely
 
-## Conclusion
+## 12. Conclusion
 
 The question isn't whether neural networks will make mistakes — they will. The question is whether we'll catch those mistakes before they matter.
 
@@ -698,7 +714,7 @@ These questions have obvious answers — to humans. By encoding that obvious kno
 
 The future of safe AI isn't about making neural networks smarter. It's about making them **humble** — aware of their own limitations, and willing to defer to common sense when their statistical patterns fail.
 
-## Try It Yourself
+## 13. Try It Yourself
 
 ```bash
 # Clone the examples
@@ -727,7 +743,7 @@ chmod +x tea
   }'
 ```
 
-## References
+## 14. References
 
 - [The Edge Agent (TEA)](https://github.com/fabceolin/the_edge_agent) - Neurosymbolic AI framework
 - [Conceptual Dependency Theory](https://en.wikipedia.org/wiki/Conceptual_dependency_theory) - Roger Schank's knowledge representation

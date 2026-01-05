@@ -1,6 +1,22 @@
 # The Wozniak Coffee Test: Why AI Still Can't Make Coffee in Your Kitchen
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Steve Wozniak proposed a deceptively simple AI benchmark: walk into an unfamiliar house, find the coffee, locate the coffee maker, and brew a good cup. Unlike the Turing Test, this demands embodied intelligence—operating in novel environments with incomplete information while executing multi-step physical tasks. This article proposes a neurosymbolic architecture inspired by Kahneman's dual-process theory and recent advances in game-playing agents. We describe a **Blending Module** that dynamically arbitrates between neural perception (System 1) and symbolic planning (System 2), enabling robots to explore unknown kitchens, form hypotheses about object locations, and adapt plans when assumptions fail. Using The Edge Agent (TEA) framework, we demonstrate how Prolog-based world modeling combined with LLM-driven perception could finally enable AI to make coffee in your kitchen.
+
+**Keywords:** Wozniak Coffee Test, Embodied AI, Dual-Process Theory, Neurosymbolic Robotics, Task Planning
+
+---
+
+## 1. Introduction
 
 Steve Wozniak once proposed a deceptively simple benchmark for artificial intelligence: *An AI would be truly intelligent when it could walk into an unfamiliar house, find the coffee, locate the coffee maker, and brew a good cup of coffee.*
 
@@ -8,7 +24,7 @@ This "Wozniak Coffee Test" has remained unsolved for years — not because we la
 
 This article proposes a **neurosymbolic architecture** for solving the Wozniak Coffee Test, inspired by Daniel Kahneman's dual-process theory and recent advances in neurosymbolic game-playing agents. We'll explore how combining neural perception (System 1) with symbolic reasoning (System 2) through a dynamic **Blending Module** could finally enable AI to make coffee in your kitchen.
 
-## The Challenge: Why Can't AI Make Coffee?
+## 2. The Challenge: Why Can't AI Make Coffee?
 
 Let's decompose the Wozniak Coffee Test into its fundamental challenges:
 
@@ -73,7 +89,7 @@ flowchart TB
     Challenge -.-> Gaps
 ```
 
-## The Inspiration: Kahneman's Dual-Process Theory
+## 3. The Inspiration: Kahneman's Dual-Process Theory
 
 Daniel Kahneman's research on human cognition describes two distinct modes of thinking:
 
@@ -108,7 +124,7 @@ Humans don't choose between systems — we **blend** them dynamically based on c
 
 This dynamic blending is what current AI lacks — and what we need to solve the Wozniak Test.
 
-## The Shindo Architecture: Neurosymbolic Game Agents
+## 4. The Shindo Architecture: Neurosymbolic Game Agents
 
 Recent work by Daiki Shindo on neurosymbolic agents for Atari games demonstrates a practical implementation of System 1/System 2 blending:
 
@@ -186,7 +202,7 @@ def blend(state, s1_action, s2_action):
 
 The key finding: **joint training** of all components (CNN, logic policy, blending module) via end-to-end gradient descent produces emergent behaviors that neither system alone could achieve.
 
-## Proposed Architecture: Coffee Agent
+## 5. Proposed Architecture: Coffee Agent
 
 We now apply these insights to the Wozniak Coffee Test. Here's a neurosymbolic architecture that could solve it:
 
@@ -374,7 +390,7 @@ blending_rules:
     weight_override: {monitoring: 0.8, safety: 0.2}
 ```
 
-## Implementation with The Edge Agent
+## 6. Implementation with The Edge Agent
 
 We've implemented two runnable agents that demonstrate these concepts. Unlike conceptual architectures, these actually execute and produce results.
 
@@ -497,7 +513,7 @@ The full implementations are available in the repository:
 - [`examples/wozniak-test/system1-system2-blending.yaml`](https://github.com/fabceolin/the_edge_agent/blob/main/examples/wozniak-test/system1-system2-blending.yaml)
 - [`examples/wozniak-test/coffee-agent-simulation.yaml`](https://github.com/fabceolin/the_edge_agent/blob/main/examples/wozniak-test/coffee-agent-simulation.yaml)
 
-## Try It Yourself
+## 7. Try It Yourself
 
 ### Prerequisites
 
@@ -588,7 +604,7 @@ python -m the_edge_agent.cli run examples/wozniak-test/coffee-agent-simulation.y
 
 This demonstrates realistic failure modes — in a minimalist kitchen with lower item-finding probability, the agent may fail to locate all necessary items, just as a human might struggle in an unfamiliar, sparsely organized kitchen.
 
-## The Ambulance Driver Analogy
+## 8. The Ambulance Driver Analogy
 
 Think of this architecture like an **ambulance driver**:
 
@@ -631,7 +647,7 @@ flowchart LR
     style U2 fill:#90EE90
 ```
 
-## Key Innovations Required
+## 9. Key Innovations Required
 
 To fully solve the Wozniak Test, several research advances are needed:
 
@@ -671,7 +687,7 @@ Solution needed:
 - Few-shot learning of new appliances
 - Human feedback integration
 
-## Conclusion
+## 10. Conclusion
 
 The Wozniak Coffee Test remains unsolved because it requires the integration of capabilities that current AI systems handle in isolation:
 
@@ -690,7 +706,7 @@ The key insight from Kahneman's work is that **intelligence is not choosing betw
 
 When an AI can finally make coffee in Dona Maria's kitchen — finding the coffee in her specific cabinet, using her particular coffee maker, and knowing when it's ready by the same subtle cues she uses — we'll have achieved something profound: not just artificial intelligence, but artificial **wisdom**.
 
-## References
+## 11. References
 
 - Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux.
 - Shindo, D., et al. (2023). "Neurosymbolic Reinforcement Learning with Hybrid Action Spaces."

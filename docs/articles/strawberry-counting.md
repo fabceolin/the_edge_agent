@@ -1,6 +1,22 @@
 # How Many R's in Strawberry? Solving the LLM Counting Problem with Neurosymbolic AI
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+The question "How many R's are in strawberry?" has become a viral test exposing a fundamental limitation of Large Language Models: despite impressive reasoning capabilities, LLMs consistently fail at character counting—often answering "2" when the correct answer is 3. This failure stems from tokenization, where models process subword units rather than individual characters. This article demonstrates a neurosymbolic solution using The Edge Agent (TEA) framework that achieves 100% accuracy by combining LLM-based natural language parsing with Prolog for precise symbolic counting. Our approach shows remarkable robustness: even when the LLM produces malformed output, the Prolog layer correctly counts characters, demonstrating the power of symbolic systems as a reliability backstop for neural networks.
+
+**Keywords:** Neurosymbolic AI, Large Language Models, Character Counting, Prolog, Tokenization Limitations
+
+---
+
+## 1. Introduction
 
 "How many R's are in the word strawberry?"
 
@@ -11,7 +27,7 @@ This article demonstrates how **neurosymbolic AI** solves this problem by combin
 1. Uses an LLM to parse the question and extract the word as individual characters
 2. Uses Prolog to count character occurrences with mathematical certainty
 
-## The Problem: Why Can't LLMs Count Letters?
+## 2. The Problem: Why Can't LLMs Count Letters?
 
 Let's test this with a small LLM (llama3.2:1b):
 
@@ -34,7 +50,7 @@ Why do LLMs get this wrong? Because they don't process text character-by-charact
 
 The model never "sees" individual letters — it sees tokens. Asking an LLM to count characters is like asking someone to count individual bricks in a photograph of a wall: they can estimate, but they can't reliably count.
 
-## The Neurosymbolic Solution
+## 3. The Neurosymbolic Solution
 
 Our approach separates the task into what each system does best:
 
@@ -53,7 +69,7 @@ flowchart LR
     style D fill:#90EE90
 ```
 
-## Prerequisites
+## 4. Prerequisites
 
 ### Install Ollama and Model
 
@@ -74,7 +90,7 @@ wget https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-0.
 chmod +x tea
 ```
 
-## The Agents
+## 5. The Agents
 
 ### Agent 1: LLM-Only Approach
 
@@ -217,7 +233,7 @@ edges:
     to: __end__
 ```
 
-## Running the Agents
+## 6. Running the Agents
 
 ### Test: The Classic "Strawberry" Question
 
@@ -257,7 +273,7 @@ edges:
 | **LLM-Only** | llama3.2:1b | 10 | ❌ |
 | **Neurosymbolic** | llama3.2:1b | 3 | ✅ |
 
-## The Remarkable Robustness of Neurosymbolic AI
+## 7. The Remarkable Robustness of Neurosymbolic AI
 
 Notice something interesting in the neurosymbolic output above? The LLM **scrambled the character positions**:
 
@@ -272,7 +288,7 @@ The small model completely misordered the characters. But the neurosymbolic appr
 
 This demonstrates the power of separation of concerns: even when the LLM makes transformation errors, the symbolic reasoning layer produces correct results for the counting task.
 
-## How It Works
+## 8. How It Works
 
 ### Step 1: LLM Character Extraction
 
@@ -302,7 +318,7 @@ length(Positions, Count).
 
 There's no guessing, no statistical inference — just logical deduction. Prolog counts facts, not estimates.
 
-## Why This Matters
+## 9. Why This Matters
 
 The strawberry problem isn't just a party trick — it represents a class of failures that affect real applications:
 
@@ -316,7 +332,7 @@ The strawberry problem isn't just a party trick — it represents a class of fai
 
 Any application requiring **exact counting** is a candidate for neurosymbolic augmentation.
 
-## Note on Reasoning Models
+## 10. Note on Reasoning Models
 
 Modern reasoning models (like OpenAI's o1/o3 or DeepSeek with thinking enabled) perform significantly better on counting tasks because they use internal chain-of-thought reasoning. However:
 
@@ -326,7 +342,7 @@ Modern reasoning models (like OpenAI's o1/o3 or DeepSeek with thinking enabled) 
 
 The neurosymbolic approach works with **any model**, including tiny 1B parameter models, because the precise computation is offloaded to Prolog.
 
-## The Broader Pattern
+## 11. The Broader Pattern
 
 This article demonstrates a general pattern for building reliable AI agents:
 
@@ -341,7 +357,7 @@ The same pattern applies to:
 - **Graph traversal**: LLM extracts relationships, Prolog finds paths
 - **Constraint satisfaction**: LLM understands requirements, solver finds solutions
 
-## Conclusion
+## 12. Conclusion
 
 The question "How many R's in strawberry?" has become a meme because it exposes a fundamental truth: **LLMs are not computers**. They're sophisticated pattern matchers trained on text, and they process language through tokenization that obscures character-level details.
 
@@ -352,7 +368,7 @@ Neurosymbolic AI provides a practical solution:
 
 The next time someone asks you to build an AI agent that needs to count, calculate, or reason precisely, remember: the answer isn't a bigger model — it's a smarter architecture.
 
-## Try It Yourself
+## 13. Try It Yourself
 
 ```bash
 # Clone the examples
@@ -371,7 +387,7 @@ ollama pull llama3.2:1b
   --input '{"word": "strawberry", "letter": "r"}'
 ```
 
-## References
+## 14. References
 
 - [The Edge Agent (TEA)](https://github.com/fabceolin/the_edge_agent) - Neurosymbolic AI framework
 - [Ollama](https://ollama.com) - Local LLM runtime

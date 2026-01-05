@@ -1,6 +1,22 @@
 # Serverless AI Agents: Running Autonomous Agents on Cloud Functions Without External Dependencies
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Deploying AI agents to serverless cloud functions typically requires expensive external services—vector databases, managed PostgreSQL, graph databases, and Redis caches—each adding cost, latency, and complexity. This article introduces a self-contained architecture where AI agents carry their entire "brain" inside a single cloud function, storing all data in cheap blob storage (S3, GCS, Azure Blob). Using The Edge Agent (TEA) framework with DuckDB and its extensions (VSS for vector search, FTS for full-text search, spatial for geospatial queries), we demonstrate how to build production-ready agents with semantic search, conversation memory, and knowledge graphs—all without external database dependencies. Our benchmarks show 90% cost reduction compared to traditional architectures while maintaining sub-100ms query latency.
+
+**Keywords:** Serverless Computing, AI Agents, DuckDB, Vector Search, Cloud Functions, Edge Computing
+
+---
+
+## 1. Introduction
 
 Cloud functions (AWS Lambda, Google Cloud Functions, Azure Functions) are the ultimate serverless compute platform: you pay only for what you use, scale automatically, and never worry about infrastructure. But deploying AI agents to these environments typically requires a sprawling ecosystem of external services:
 
@@ -19,7 +35,7 @@ What if your AI agent could carry its entire brain inside a single cloud functio
 
 This article introduces **The Edge Agent (TEA)**, a framework that embeds all database capabilities directly in your function, storing data in cheap blob storage (S3, GCS, Azure Blob) instead of expensive managed services.
 
-## The DuckLake Architecture
+## 2. The DuckLake Architecture
 
 TEA implements a **DuckLake** architecture built entirely on DuckDB with powerful extensions:
 
@@ -63,7 +79,7 @@ flowchart TB
     style DuckDB fill:#c8e6c9
 ```
 
-## Why This Matters: Cost Comparison
+## 3. Why This Matters: Cost Comparison
 
 Let's compare the cost of running an AI agent that needs:
 - 1M vector searches/month
@@ -91,7 +107,7 @@ Let's compare the cost of running an AI agent that needs:
 
 That's a **99% cost reduction** for the same capabilities.
 
-## How It Works
+## 4. How It Works
 
 ### 1. Long-Term Memory (LTM) with DuckDB + Blob Storage
 
@@ -314,7 +330,7 @@ nodes:
     output: sales_analysis
 ```
 
-## Deploying to Cloud Functions
+## 5. Deploying to Cloud Functions
 
 ### AWS Lambda Example
 
@@ -369,7 +385,7 @@ def handle_request(request):
     return result
 ```
 
-## Cold Start Optimization
+## 6. Cold Start Optimization
 
 TEA includes several features specifically for serverless environments:
 
@@ -410,7 +426,7 @@ def handler(event, context):
     return engine.invoke(event)
 ```
 
-## Real-World Example: Customer Support Agent
+## 7. Real-World Example: Customer Support Agent
 
 Here's a complete agent that:
 1. Loads conversation history from S3
@@ -583,7 +599,7 @@ edges:
     to: __end__
 ```
 
-## Key Benefits Recap
+## 8. Key Benefits Recap
 
 | Feature | Traditional Stack | TEA + Blob Storage |
 |---------|-------------------|-------------------|
@@ -594,7 +610,7 @@ edges:
 | **Data Location** | Multiple providers | Single blob bucket |
 | **Scaling** | Per-service limits | Infinite (blob storage) |
 
-## Conclusion
+## 9. Conclusion
 
 The serverless promise is "pay only for what you use" - but external database services break that promise with minimum monthly fees and per-connection costs. TEA's DuckLake architecture brings the database *inside* your function, storing data in commodity blob storage at a fraction of the cost.
 
@@ -602,7 +618,7 @@ This isn't just about cost savings. It's about **autonomy**. Your AI agent carri
 
 The future of AI agents isn't in complex orchestration of external services. It's in self-contained, autonomous units that carry their own intelligence.
 
-## Try It Yourself
+## 10. Try It Yourself
 
 ```bash
 # Install TEA with DuckDB support
@@ -631,7 +647,7 @@ Query: "find related to Alice"
 → Context: "Found 5 entities: 3 Person, 2 Skill. Connected by 5 relations."
 ```
 
-## References
+## 11. References
 
 - [The Edge Agent (TEA)](https://github.com/fabceolin/the_edge_agent) - Autonomous AI agent framework
 - [DuckDB](https://duckdb.org/) - In-process analytical database

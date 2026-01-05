@@ -1,6 +1,22 @@
 # Why Did the Tesla Brake for the Moon? Encoding Traffic Rules in Neurosymbolic AI
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Autonomous vehicles trained on millions of miles still make baffling errors—braking for the moon (mistaken for a yellow traffic light), confusing billboards with stop signs, or failing to recognize traffic officers in non-standard uniforms. These failures stem from a fundamental limitation: neural networks learn statistical patterns, not formal rules. This article presents a neurosymbolic approach using The Edge Agent (TEA) framework where traffic laws are encoded as Prolog rules that can be extracted from natural language driver's manuals, validated against driving decisions in real-time, and instantly swapped when crossing jurisdictional boundaries—no retraining required. We demonstrate how formal rule encoding catches violations that pattern-matching misses, while enabling transparent, auditable decision-making required by regulators.
+
+**Keywords:** Autonomous Vehicles, Traffic Rules, Neurosymbolic AI, Prolog, Formal Verification, Jurisdiction Adaptation
+
+---
+
+## 1. Introduction
 
 In 2021, Tesla owners reported a peculiar bug: their cars were braking for the **moon**, mistaking it for a yellow traffic light. In other incidents, vehicles confused billboards displaying red circles with stop signs, or failed to recognize police officers directing traffic because they weren't wearing the expected uniform.
 
@@ -16,7 +32,7 @@ Using The Edge Agent (TEA), we'll build an autonomous driving validator that:
 - Validates driving decisions against formal specifications
 - Swaps rule sets when crossing borders — no retraining needed
 
-## The Problem: Neural Networks Don't Know the Rules
+## 2. The Problem: Neural Networks Don't Know the Rules
 
 ### What Neural Networks Learn
 
@@ -48,7 +64,7 @@ Missing: Explicit knowledge of traffic laws
 
 A neural network that has never seen a sandstorm doesn't know to reduce speed. One trained in California doesn't know that Massachusetts allows right turns on red only at specific intersections. One trained in the US doesn't know that in the UK, you drive on the left.
 
-## The Neurosymbolic Solution
+## 3. The Neurosymbolic Solution
 
 Our approach separates concerns:
 
@@ -88,7 +104,7 @@ flowchart TB
 > The symbolic rules are like the **driver's manual** — explicit and verifiable.
 > Together, they create a system with both agility and accountability.
 
-## Prerequisites
+## 4. Prerequisites
 
 ### Install Ollama and Model
 
@@ -109,7 +125,7 @@ wget https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-li
 chmod +x tea
 ```
 
-## The Agents
+## 5. The Agents
 
 ### Agent 1: Rule Extraction from Driver's Manual
 
@@ -533,7 +549,7 @@ edges:
     to: __end__
 ```
 
-## Running the Examples
+## 6. Running the Examples
 
 ### Example 1: Red Light in Brazil
 
@@ -617,7 +633,7 @@ edges:
 
 The adjusted max speed is 110 × 0.3 = 33 km/h. Driving at 80 km/h in a sandstorm violates safety rules.
 
-## Results Comparison
+## 7. Results Comparison
 
 | Scenario | Neural-Only | Neurosymbolic | Correct |
 |----------|-------------|---------------|---------|
@@ -628,7 +644,7 @@ The adjusted max speed is 110 × 0.3 = 33 km/h. Driving at 80 km/h in a sandstor
 | Sandstorm | No knowledge | Speed reduction enforced | Neurosymbolic |
 | New jurisdiction | Needs retraining | Swap rules instantly | Neurosymbolic |
 
-## Architecture Deep Dive
+## 8. Architecture Deep Dive
 
 ### The Reasonableness Monitor
 
@@ -715,7 +731,7 @@ nodes:
       return(passed, Passed).
 ```
 
-## Why This Matters
+## 9. Why This Matters
 
 ### Current State of AV Licensing
 
@@ -736,7 +752,7 @@ Neurosymbolic AI provides:
 - **Portability**: Update rules for new jurisdictions without retraining
 - **Verification**: Formally prove behavior bounds
 
-## The Broader Pattern
+## 10. The Broader Pattern
 
 This article demonstrates a general pattern for safety-critical AI:
 
@@ -755,7 +771,7 @@ This article demonstrates a general pattern for safety-critical AI:
 | **Industrial Robotics** | Safety standards (ISO) | Verify motion plans |
 | **Legal AI** | Case law, statutes | Explain legal reasoning |
 
-## Conclusion
+## 11. Conclusion
 
 The question isn't whether neural networks can eventually learn all traffic rules from data — it's whether we should trust safety-critical systems that can't explain their decisions.
 
@@ -768,7 +784,7 @@ When your car brakes for the moon, you want to know why. When it crosses a borde
 
 **Neurosymbolic AI makes all of this possible.**
 
-## Try It Yourself
+## 12. Try It Yourself
 
 ```bash
 # Clone the examples
@@ -791,7 +807,7 @@ ollama pull llama3.2:1b
   --input '{"jurisdiction": "BR", "manual_text": "At stop signs, vehicles must come to a complete stop before proceeding. Speed limit in residential areas is 40 km/h. In school zones, maximum speed is 30 km/h."}'
 ```
 
-## References
+## 13. References
 
 - [Tesla Moon Braking Incidents](https://www.reddit.com/r/TeslaModel3/comments/pj29w6/anyone_else_have_the_car_slam_on_the_brakes_when/) - User reports
 - [Encoding Traffic Laws for Autonomous Vehicles](https://arxiv.org/abs/1901.04741) - MIT research

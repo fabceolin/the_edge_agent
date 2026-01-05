@@ -1,6 +1,22 @@
 # Why LLMs Can't Count: Building Neurosymbolic AI Agents with The Edge Agent
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Large Language Models excel at natural language understanding but consistently fail at precise mathematical operations due to their tokenization-based architecture. This article demonstrates this limitation using a genealogical reasoning task—computing "great-great-grandmother" relationships—where LLMs must count generations and apply a simple formula. We present a neurosymbolic solution using The Edge Agent (TEA) framework that combines LLM-based natural language parsing with Prolog for logical inference and Lua for precise arithmetic. Our experiments show that while a 3B parameter LLM fails to correctly count 5 generations, the neurosymbolic approach achieves 100% accuracy by delegating computation to symbolic systems designed for mathematical precision.
+
+**Keywords:** Neurosymbolic AI, Large Language Models, Prolog, Symbolic Reasoning, Genealogical Inference
+
+---
+
+## 1. Introduction
 
 Large Language Models (LLMs) have revolutionized natural language processing, enabling sophisticated text generation, summarization, and reasoning tasks. However, as developers push these models into production environments, a fundamental limitation becomes apparent: **LLMs struggle with precise mathematical operations and counting tasks**.
 
@@ -15,11 +31,11 @@ Following this guide, readers will learn how to:
 - Build a neurosymbolic agent combining LLM, Prolog, and Lua
 - Compare results to understand when neurosymbolic approaches are necessary
 
-## Audience
+## 2. Audience
 
 This guide is intended for developers and AI practitioners interested in building reliable AI agents. Familiarity with YAML configuration, basic command-line operations, and Python environments is helpful. No prior knowledge of Prolog is required — the examples are self-contained and explained step by step.
 
-## The Problem: LLMs and Mathematical Precision
+## 3. The Problem: LLMs and Mathematical Precision
 
 Consider this simple genealogical task:
 
@@ -35,7 +51,7 @@ The solution requires:
 
 This is straightforward for humans, but LLMs consistently fail at step 3 — they recognize patterns but don't actually compute.
 
-## Software Overview
+## 4. Software Overview
 
 For this setup, we use:
 
@@ -50,7 +66,7 @@ The neurosymbolic architecture separates concerns:
 - **Prolog** handles logical reasoning (recursive generation counting)
 - **Lua** handles mathematical calculation (applying the greats formula)
 
-## Prerequisites
+## 5. Prerequisites
 
 ### Step 1: Install Ollama
 
@@ -133,7 +149,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-## Detailed Steps
+## 6. Detailed Steps
 
 ### Step 1: Download the Example Agents
 
@@ -205,7 +221,7 @@ The key difference is that the neurosymbolic agent uses **Prolog for recursive t
 }
 ```
 
-## Results Analysis
+## 7. Results Analysis
 
 | Metric | LLM-Only | Neurosymbolic | Expected |
 |--------|----------|---------------|----------|
@@ -224,7 +240,7 @@ result = "Great-Great-Great-Grandmother"
 
 The LLM-only approach produced **4 greats** instead of the correct **3 greats**. This is a consistent error pattern — LLMs tend to add or subtract one when counting repetitive elements.
 
-## Why LLMs Fail at Counting
+## 8. Why LLMs Fail at Counting
 
 LLMs are **statistical pattern matchers**, not calculators. When processing the prompt, the model:
 
@@ -245,7 +261,7 @@ But struggle with:
 - Recursive logic
 - Deterministic calculations
 
-## The Neurosymbolic Solution
+## 9. The Neurosymbolic Solution
 
 The neurosymbolic approach separates concerns effectively:
 
@@ -260,7 +276,7 @@ This architecture ensures:
 - **Explainability**: Each step produces verifiable intermediate results
 - **Reliability**: The same input always produces the same output
 
-## The Edge Agent (TEA) Features
+## 10. The Edge Agent (TEA) Features
 
 TEA provides several capabilities that make neurosymbolic AI practical:
 
@@ -271,7 +287,7 @@ TEA provides several capabilities that make neurosymbolic AI practical:
 - **State Management**: Automatic state passing between nodes
 - **Checkpoint Persistence**: Save and resume workflow execution
 
-## Next Steps
+## 11. Next Steps
 
 In future work, I plan to:
 
@@ -280,7 +296,7 @@ In future work, I plan to:
 3. **Production deployment**: Integrate with monitoring tools for agent observability
 4. **Complex reasoning tasks**: Apply to mathematical word problems, planning, and constraint satisfaction
 
-## Conclusion
+## 12. Conclusion
 
 Building reliable AI agents requires acknowledging the limitations of LLMs. While they excel at understanding and generating natural language, they are not suitable for tasks requiring mathematical precision or logical consistency.
 
@@ -292,7 +308,7 @@ The Edge Agent (TEA) makes this combination practical with its polyglot runtime 
 
 For developers building AI agents that need to count, calculate, or reason precisely, neurosymbolic AI is not just an option — it's a necessity.
 
-## References
+## 13. References
 
 - [The Edge Agent (TEA)](https://github.com/fabceolin/the_edge_agent) - Lightweight state graph library for edge computing
 - [Ollama](https://ollama.com) - Run LLMs locally

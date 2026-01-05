@@ -1,6 +1,22 @@
 # Explanation Synthesis: The Missing Link in Autonomous Vehicle Safety
 
-## Introduction
+**Fabricio Ceolin**
+
+*Independent Researcher*
+
+fabceolin@gmail.com
+
+---
+
+## Abstract
+
+Autonomous vehicles face a critical challenge: when multiple perception systems disagree—camera sees clear road, LiDAR detects obstacle, radar shows moving object—how does the vehicle decide which to trust, and how can it explain that decision to regulators, investigators, or human operators? Traditional sensor fusion operates on confidence scores, providing no insight into why one sensor's interpretation prevailed. This article introduces **Explanation Synthesis**, a neurosymbolic architecture where every subsystem produces structured justifications that are arbitrated symbolically. Using The Edge Agent (TEA) framework, we demonstrate how Prolog-based arbitration can evaluate competing explanations, produce human-readable audit trails, and enable humans to teach the system through natural language corrections. This approach completes the neurosymbolic autonomous vehicle stack: reasonableness monitors catch impossible perceptions, traffic rules encode jurisdiction-specific laws, and explanation synthesis provides the common language for debugging, redundancy verification, and human-machine collaboration.
+
+**Keywords:** Autonomous Vehicles, Explainable AI, Sensor Fusion, Neurosymbolic AI, Safety-Critical Systems
+
+---
+
+## 1. Introduction
 
 In the previous articles of this series, we explored two critical components of neurosymbolic autonomous vehicles:
 
@@ -25,7 +41,7 @@ This article introduces **Explanation Synthesis** — a neurosymbolic approach w
 
 This is the third pillar of Leilani Gilpin's vision for safe autonomous vehicles: **explanations as a common language for debugging, redundancy, and human-machine collaboration**.
 
-## The Problem: Multi-Sensor Disagreement
+## 2. The Problem: Multi-Sensor Disagreement
 
 Modern autonomous vehicles use sensor fusion, but fusion algorithms typically operate on **confidence scores**, not **reasons**:
 
@@ -59,7 +75,7 @@ The fatal Uber autonomous vehicle crash in Arizona illustrates this perfectly:
 A proper explanation synthesis system would have said:
 > "Object detected at 40m with unstable classification (3 label changes in 2 seconds). Regardless of final classification, instability indicates perception uncertainty. Recommend: reduce speed and prepare for emergency stop."
 
-## The Solution: Explanation-First Architecture
+## 3. The Solution: Explanation-First Architecture
 
 Instead of fusing confidence scores, we fuse **explanations**:
 
@@ -105,7 +121,7 @@ flowchart TB
 > 3. **Recorded** for post-hoc analysis
 > 4. **Understood** by humans
 
-## Implementation with TEA
+## 4. Implementation with TEA
 
 ### Agent 1: Sensor Explainer
 
@@ -1289,7 +1305,7 @@ edges:
     to: __end__
 ```
 
-## Running the Examples
+## 5. Running the Examples
 
 ### Example 1: Sensor Disagreement Resolution
 
@@ -1453,7 +1469,7 @@ Should I add this rule to the knowledge base?
 }
 ```
 
-## Architecture Integration
+## 6. Architecture Integration
 
 Here's how all the agents work together:
 
@@ -1502,7 +1518,7 @@ flowchart TB
     style Learning fill:#fce4ec
 ```
 
-## The Complete Pipeline
+## 7. The Complete Pipeline
 
 ```yaml
 # examples/safety/full-pipeline.yaml
@@ -1658,7 +1674,7 @@ edges:
     to: __end__
 ```
 
-## Why Explanation Synthesis Matters
+## 8. Why Explanation Synthesis Matters
 
 ### For Safety
 
@@ -1688,7 +1704,7 @@ When an AV makes a mistake, explanation synthesis tells engineers:
 3. **What the alternatives were** and why they were rejected
 4. **How to add a rule** to prevent the same mistake
 
-## The Instructor Analogy (Revisited)
+## 9. The Instructor Analogy
 
 Remember Gilpin's analogy:
 
@@ -1700,7 +1716,7 @@ Explanation synthesis adds the crucial third element:
 
 Without that voice, we have a student driver and a silent instructor. The car might drive correctly, but we have no idea why — and no way to improve.
 
-## Conclusion
+## 10. Conclusion
 
 The three pillars of safe autonomous vehicles are:
 
@@ -1718,7 +1734,7 @@ Together, they create a system where:
 
 This is the vision of neurosymbolic AI for safety-critical systems: not replacing human judgment, but **making machine judgment transparent, accountable, and improvable**.
 
-## Try It Yourself
+## 11. Try It Yourself
 
 ```bash
 # Clone the repository
@@ -1745,7 +1761,7 @@ ollama pull llama3.2:3b
   }'
 ```
 
-## References
+## 12. References
 
 - [Explanation as a Common Language](https://www.youtube.com/watch?v=NESI_2024) - Leilani Gilpin, NESI Conference
 - [Reasonableness Monitors](reasonableness-monitors.md) - TEA Article
