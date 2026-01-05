@@ -554,6 +554,11 @@ nodes:
 | TEA-RUST-038 | **Prolog Inline Rule Definitions** (assertz-based rule handling) | 3 | ✅ Done |
 | TEA-RUST-039 | **Prolog-Side Parsing** (tea_load_code/1 for 100% parity) | 3 | ✅ Done |
 | TEA-RUST-040 | **LLM Stream and Tools** (llm.stream SSE, llm.tools function calling) | 5 | ✅ Done |
+| TEA-RUST-041 | **Multi-Agent Collaboration** (agent.dispatch/parallel/sequential, rayon, Ollama) | 5 | 📝 Draft |
+| TEA-RUST-042 | **Reflection Loop** (reflection.loop, Lua/schema/LLM evaluators, circuit breaker) | 5 | 📝 Draft |
+| TEA-RUST-043 | **Planning & Decomposition** (plan.decompose/execute/replan, petgraph DAG) | 5 | 📝 Draft |
+| TEA-RUST-044 | **Reasoning Techniques** (reason.cot/react/self_correct/decompose, NO DSPy) | 5 | 📝 Draft |
+| TEA-RUST-045 | **Inter-Agent Communication** (a2a.send/receive/broadcast/delegate, crossbeam) | 5 | 📝 Draft |
 
 ### Implementation Summary
 
@@ -561,11 +566,30 @@ nodes:
 |--------|-------|--------|
 | ✅ Done | 27 | 98 |
 | 🔍 Ready for Review | 1 | 3 |
-| 📝 Draft | 1 | 13 |
+| 📝 Draft | 6 | 38 |
 | ❌ Not Started | 6 | 32 |
 | ⏸️ Deferred | 1 | 5 |
 | ~~Superseded/Merged~~ | 3 | - |
-| **Total Active** | **36** | **151** |
+| **Total Active** | **41** | **176** |
+
+### Agentic Design Patterns (TEA-RUST-041 to TEA-RUST-045)
+
+These stories implement agentic design patterns optimized for embedded/offline Rust deployment:
+
+| Story | Pattern | Python Equivalent | Key Rust Adaptations |
+|-------|---------|-------------------|---------------------|
+| **041** | Multi-Agent | TEA-AGENT-001.1 | rayon parallelism, Ollama/OpenAI-compat only, NO CrewAI |
+| **042** | Reflection | TEA-AGENT-001.2 | Lua evaluators, jsonschema-rs, atomic circuit breaker |
+| **043** | Planning | TEA-AGENT-001.3 | petgraph DAG, bincode checkpoints |
+| **044** | Reasoning | TEA-AGENT-001.4 | CoT/ReAct/self-correct, NO DSPy |
+| **045** | A2A Comm | TEA-AGENT-001.5 | crossbeam channels, DashMap, single-process |
+
+**Excluded from Rust (Python ecosystem dependencies):**
+- `agent.crewai_delegate` (CrewAI)
+- `reason.dspy.*` (DSPy)
+- MCP/LangChain tool bridges
+
+**Full story documents:** `docs/stories/TEA-AGENT-001.X-rust-*.md`
 
 ### Sub-Story Dependencies
 

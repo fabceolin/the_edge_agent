@@ -1,24 +1,24 @@
 # Test Design: Story TEA-AGENT-001.1 - Multi-Agent Collaboration Primitives
 
-Date: 2026-01-05
+Date: 2026-01-05 (Updated: 2026-01-05)
 Designer: Quinn (Test Architect)
 
 ## Test Strategy Overview
 
 | Metric | Count |
 |--------|-------|
-| Total test scenarios | 54 |
-| Unit tests | 26 (48%) |
-| Integration tests | 20 (37%) |
-| E2E tests | 8 (15%) |
+| Total test scenarios | 63 |
+| Unit tests | 30 (48%) |
+| Integration tests | 24 (38%) |
+| E2E tests | 9 (14%) |
 
 ### Priority Distribution
 
 | Priority | Count | Focus |
 |----------|-------|-------|
 | P0 | 22 | Agent registry, dispatch core, parallel aggregation, error handling |
-| P1 | 20 | Sequential chaining, coordination, tool bridges |
-| P2 | 8 | Edge cases, advanced configuration |
+| P1 | 27 | Sequential chaining, coordination, tool bridges, CrewAI delegation |
+| P2 | 10 | Edge cases, advanced configuration |
 | P3 | 4 | Performance optimization, debug utilities |
 
 ---
@@ -155,6 +155,24 @@ Validates Rust feature parity and module structure.
 
 ---
 
+### AC9: CrewAI Delegation Mode (Optional)
+
+Validates CrewAI delegation for complex multi-agent workflows with fallback behavior.
+
+| ID | Level | Priority | Test | Justification |
+|----|-------|----------|------|---------------|
+| 001.1-UNIT-027 | Unit | P1 | `agent.crewai_delegate` action parses configuration | Config validation |
+| 001.1-UNIT-028 | Unit | P1 | Automatic tool mapping translates TEA tools to CrewAI format | Transform logic |
+| 001.1-UNIT-029 | Unit | P1 | Backend selection defaults to `crewai` when specified | Config parsing |
+| 001.1-UNIT-030 | Unit | P2 | Process mapping handles `sequential` and `hierarchical` | Strategy mapping |
+| 001.1-INT-025 | Integration | P1 | CrewAI delegation executes hierarchical process | Backend integration |
+| 001.1-INT-026 | Integration | P1 | Graceful fallback to native TEA when CrewAI unavailable | Fallback behavior |
+| 001.1-INT-027 | Integration | P1 | Tool bridge maps MCP/LangChain tools to CrewAI definitions | Cross-bridge mapping |
+| 001.1-INT-028 | Integration | P2 | CrewAI unavailable error is distinguishable from execution failure | Error classification |
+| 001.1-E2E-009 | E2E | P2 | YAML crewai_delegate action executes complex workflow | Full delegation path |
+
+---
+
 ## Error Handling Scenarios
 
 Critical error handling tests extracted across all ACs:
@@ -180,6 +198,8 @@ Critical error handling tests extracted across all ACs:
 | Aggregation strategy bugs | 001.1-UNIT-012 to 017 | Full |
 | Tool bridge failures | 001.1-UNIT-025/026, 001.1-INT-018 to 020 | Full |
 | Python/Rust parity drift | 001.1-E2E-008 | Explicit |
+| CrewAI unavailable | 001.1-INT-026, 001.1-INT-028 | Explicit |
+| Tool mapping failures | 001.1-UNIT-028, 001.1-INT-027 | Full |
 
 ---
 
@@ -196,8 +216,10 @@ python/tests/
 ├── test_agent_sequential.py        # AC4 tests
 ├── test_agent_coordinate.py        # AC5 tests
 ├── test_agent_tool_bridges.py      # AC6 tests
+├── test_agent_crewai_delegate.py   # AC9 tests (optional feature)
 └── fixtures/
     ├── multi_agent_config.yaml     # Test fixtures
+    ├── crewai_delegation.yaml      # CrewAI delegation fixtures
     └── mock_responses.py           # LLM mock responses
 ```
 
@@ -215,19 +237,19 @@ rust/tests/
 
 ## Recommended Execution Order
 
-1. **P0 Unit tests** (26 tests) - Fail fast on logic errors
+1. **P0 Unit tests** (16 tests) - Fail fast on logic errors
 2. **P0 Integration tests** (10 tests) - Validate component interaction
 3. **P0 E2E tests** (2 tests) - Critical path validation
-4. **P1 Unit tests** (8 tests) - Secondary logic
-5. **P1 Integration tests** (10 tests) - Extended integration
+4. **P1 Unit tests** (12 tests) - Secondary logic including CrewAI config
+5. **P1 Integration tests** (13 tests) - Extended integration including fallback
 6. **P1 E2E tests** (5 tests) - Secondary paths
-7. **P2+ tests** - As time permits
+7. **P2+ tests** - As time permits (includes CrewAI E2E)
 
 ---
 
 ## Quality Checklist
 
-- [x] Every AC has test coverage
+- [x] Every AC has test coverage (AC1-AC9)
 - [x] Test levels are appropriate (unit for logic, integration for components)
 - [x] No duplicate coverage across levels
 - [x] Priorities align with business risk
@@ -236,6 +258,7 @@ rust/tests/
 - [x] Error handling explicitly covered
 - [x] State isolation in parallel tests confirmed
 - [x] Cross-runtime (Python/Rust) parity tests included
+- [x] Optional feature (AC9 CrewAI) has graceful fallback tests
 
 ---
 
@@ -243,23 +266,28 @@ rust/tests/
 
 ```yaml
 test_design:
-  scenarios_total: 54
+  scenarios_total: 63
   by_level:
-    unit: 26
-    integration: 20
-    e2e: 8
+    unit: 30
+    integration: 24
+    e2e: 9
   by_priority:
     p0: 22
-    p1: 20
-    p2: 8
+    p1: 27
+    p2: 10
     p3: 4
   coverage_gaps: []
   high_risk_scenarios:
     - 001.1-INT-008  # State isolation in parallel
     - 001.1-INT-009  # Timeout enforcement
     - 001.1-UNIT-014 # Vote tie-breaking determinism
+    - 001.1-INT-026  # CrewAI graceful fallback
   cross_runtime_parity_tests:
     - 001.1-E2E-008
+  optional_feature_tests:
+    - 001.1-UNIT-027 to 001.1-UNIT-030  # CrewAI config
+    - 001.1-INT-025 to 001.1-INT-028    # CrewAI integration
+    - 001.1-E2E-009                      # CrewAI E2E
 ```
 
 ---
@@ -269,6 +297,7 @@ test_design:
 ```
 Test design matrix: docs/qa/assessments/TEA-AGENT-001.1-test-design-20260105.md
 P0 tests identified: 22
-Total scenarios: 54
-Coverage: 100% of acceptance criteria
+Total scenarios: 63
+Coverage: 100% of acceptance criteria (AC1-AC9)
+Optional feature (AC9): 9 additional scenarios
 ```

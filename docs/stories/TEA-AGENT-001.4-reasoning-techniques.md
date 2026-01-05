@@ -68,6 +68,19 @@ This story introduces `reason.*` actions that provide battle-tested implementati
 1. New module: `rust/src/engine/actions/reasoning_actions.rs`
 2. Feature parity with Python
 
+### AC9: DSPy Backend Option (Optional)
+1. `reason.dspy.cot` wraps DSPy ChainOfThought module
+2. `reason.dspy.react` wraps DSPy ReAct module with tool bridge
+3. Model-agnostic compiled prompts via DSPy
+4. Graceful fallback to native `reason.*` when DSPy unavailable
+5. Requires `dspy` optional dependency
+
+### AC10: DSPy Compilation Support
+1. `reason.dspy.compile` compiles DSPy module with teleprompter
+2. Compiled prompts persist in checkpoint/state for reuse
+3. Supports custom teleprompters (BootstrapFewShot, etc.)
+4. Validation set support for optimization
+
 ## Tasks / Subtasks
 
 - [ ] **Task 1: `reason.cot` Action** (AC: 1, 5)
@@ -118,6 +131,16 @@ This story introduces `reason.*` actions that provide battle-tested implementati
   - [ ] Create example: cot-problem-solving.yaml
   - [ ] Create example: react-research-agent.yaml
   - [ ] Create example: self-correcting-code-gen.yaml
+
+- [ ] **Task 8: DSPy Backend Integration** (AC: 9, 10)
+  - [ ] Implement `reason.dspy.cot` action
+  - [ ] Implement `reason.dspy.react` action
+  - [ ] Implement `reason.dspy.compile` action
+  - [ ] DSPy module wrapping and configuration
+  - [ ] Teleprompter integration (BootstrapFewShot, etc.)
+  - [ ] Graceful fallback when DSPy unavailable
+  - [ ] Compiled prompt persistence
+  - [ ] Integration tests with mocked DSPy
 
 ## Dev Notes
 
@@ -292,42 +315,48 @@ nodes:
 
 | Metric | Value |
 |--------|-------|
-| Total test scenarios | 62 |
-| Unit tests | 34 (55%) |
-| Integration tests | 20 (32%) |
-| E2E tests | 8 (13%) |
+| Total test scenarios | 72 |
+| Unit tests | 42 (58%) |
+| Integration tests | 22 (31%) |
+| E2E tests | 8 (11%) |
 
 **Priority Distribution:**
-- **P0 (Critical):** 28 tests - Reasoning actions core, tool integration, registry
-- **P1 (High):** 22 tests - Self-correction, decomposition, trace format
-- **P2 (Medium):** 8 tests - Edge cases, documentation examples
-- **P3 (Low):** 4 tests - Rare configurations
+- **P0 (Critical):** 30 tests - Reasoning actions core, infinite loop/recursion prevention, tool integration, registry
+- **P1 (High):** 24 tests - Self-correction, decomposition, trace format, multi-model support
+- **P2 (Medium):** 12 tests - DSPy integration, edge cases, documentation examples
+- **P3 (Low):** 6 tests - DSPy compilation, rare configurations
 
 ### Risk Areas Identified
 
 | Risk ID | Risk | Severity | Mitigation |
 |---------|------|----------|------------|
-| RISK-001 | LLM returns malformed response | High | Unit tests for parsing robustness |
-| RISK-002 | Infinite loop in ReAct | Critical | max_steps enforcement tested |
-| RISK-003 | Infinite recursion in decompose | Critical | max_depth limit tested |
-| RISK-004 | Tool execution failure | Medium | Graceful error handling tests |
-| RISK-005 | State corruption from parallel execution | Medium | State preservation integration tests |
-| RISK-006 | Python/Rust parity drift | High | Cross-runtime E2E parity test |
+| RISK-001 | LLM returns malformed response | High | Unit tests for parsing robustness (001.4-UNIT-006, 001.4-UNIT-015) |
+| RISK-002 | Infinite loop in ReAct | Critical | max_steps enforcement P0 test (001.4-UNIT-012) |
+| RISK-003 | Infinite recursion in decompose | Critical | max_depth limit P0 test (001.4-UNIT-025) |
+| RISK-004 | Tool execution failure | Medium | Graceful error handling tests (001.4-INT-008) |
+| RISK-005 | State corruption from parallel execution | Medium | State preservation integration tests (001.4-INT-014) |
+| RISK-006 | Python/Rust parity drift | High | Cross-runtime parity tests (001.4-UNIT-038 to 041, 001.4-E2E-008) |
 
 ### Recommended Test Scenarios
 
 **Must-Have (P0):**
-1. Registry tests - All 4 reason.* actions discoverable
-2. Output parsing - Structured output extraction from LLM responses
-3. ReAct loop - max_steps termination, early exit on goal achieved
-4. Tool integration - llm.tools infrastructure, MCP bridge
-5. Cross-runtime parity - Same YAML executes identically in Python/Rust
+1. Registry tests - All 4 reason.* actions discoverable in Python and Rust
+2. Infinite loop prevention - ReAct max_steps termination (RISK-002)
+3. Infinite recursion prevention - Decompose max_depth enforcement (RISK-003)
+4. Output parsing - Structured output extraction, malformed response handling
+5. Tool integration - llm.tools infrastructure, MCP bridge
+6. Cross-runtime parity - Same YAML executes identically in Python/Rust
 
 **High Priority (P1):**
 1. Self-correct cycle - Generate → Critique → Improve flow
-2. Decompose recursion - max_depth enforcement
+2. Decompose logic - Sub-problem solving and synthesis
 3. Trace format - Opik compatibility validation
 4. Multi-model support - Different models for generator vs critic
+
+**DSPy Optional (P2/P3):**
+1. DSPy ChainOfThought/ReAct wrapping
+2. Graceful fallback when DSPy unavailable
+3. Teleprompter compilation and checkpoint persistence
 
 ### Concerns / Blockers
 
@@ -336,10 +365,11 @@ nodes:
 | LLM unpredictability | Test reliability | Use mocked LLM responses for deterministic testing |
 | Tool bridge dependencies | Integration complexity | Mock at bridge boundary for unit tests |
 | Trace schema evolution | Observability coupling | Document trace schema contract, version it |
+| DSPy optional dependency | Import complexity | Test graceful fallback with sys.modules mocking |
 
 ### Gate Status
 
-**READY FOR DEVELOPMENT** - Test design complete with 62 scenarios covering all 8 ACs. No blocking issues identified. Recommend implementing P0 tests first (28 scenarios) to establish core functionality validation.
+**READY FOR DEVELOPMENT** - Test design complete with 72 scenarios covering all 10 ACs. No blocking issues identified. Critical safety tests (infinite loop/recursion prevention) are P0. Recommend implementing Phase 1 (P0 unit tests) first to establish core safety and functionality validation.
 
 ## Change Log
 

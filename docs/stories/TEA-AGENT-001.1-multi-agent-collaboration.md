@@ -4,7 +4,7 @@
 
 **Ready for Development**
 
-*Status updated: 2026-01-05 - All checklist criteria passed. QA test design complete with 54 test scenarios covering all 8 acceptance criteria.*
+*Status updated: 2026-01-05 - All checklist criteria passed. QA test design complete with 63 test scenarios covering all 9 acceptance criteria (including AC9: CrewAI Delegation Mode).*
 
 ## Story
 
@@ -77,6 +77,13 @@ This story introduces agent-level abstractions that simplify multi-agent workflo
 2. Feature parity with Python for core actions
 3. `agent.coordinate` may be design-doc only (complex state management)
 
+### AC9: CrewAI Delegation Mode (Optional)
+1. `agent.crewai_delegate` action for complex multi-agent workflows via CrewAI
+2. Bridges to CrewAI's hierarchical process when `backend: crewai` specified
+3. Automatic tool mapping between TEA and CrewAI tool definitions
+4. Graceful fallback to native TEA multi-agent when CrewAI unavailable
+5. Requires `tools-crewai` optional dependency
+
 ## Tasks / Subtasks
 
 - [ ] **Task 1: Agent Registry Implementation** (AC: 1)
@@ -136,6 +143,13 @@ This story introduces agent-level abstractions that simplify multi-agent workflo
   - [ ] Create example: multi-agent-research.yaml
   - [ ] Create example: consensus-voting.yaml
   - [ ] Create example: coordinator-pattern.yaml
+
+- [ ] **Task 9: CrewAI Delegation Bridge** (AC: 9)
+  - [ ] Implement `agent.crewai_delegate` action
+  - [ ] CrewAI process mapping (sequential, hierarchical)
+  - [ ] Tool bridge integration between TEA and CrewAI
+  - [ ] Graceful fallback when CrewAI unavailable
+  - [ ] Integration tests with mocked CrewAI
 
 ## Dev Notes
 
@@ -231,21 +245,21 @@ settings:
 ## QA Notes
 
 **Reviewed by:** Quinn (Test Architect)
-**Review Date:** 2026-01-05
+**Review Date:** 2026-01-05 (Updated)
 **Test Design Reference:** `docs/qa/assessments/TEA-AGENT-001.1-test-design-20260105.md`
 
 ### Test Coverage Summary
 
 | Metric | Value |
 |--------|-------|
-| Total test scenarios | 54 |
-| Unit tests | 26 (48%) |
-| Integration tests | 20 (37%) |
-| E2E tests | 8 (15%) |
+| Total test scenarios | 63 |
+| Unit tests | 30 (48%) |
+| Integration tests | 24 (38%) |
+| E2E tests | 9 (14%) |
 | P0 (Critical) | 22 scenarios |
-| AC coverage | 100% |
+| AC coverage | 100% (AC1-AC9) |
 
-All 8 acceptance criteria have explicit test coverage with appropriate test levels (unit for pure logic, integration for component interaction, E2E for critical paths).
+All 9 acceptance criteria have explicit test coverage with appropriate test levels (unit for pure logic, integration for component interaction, E2E for critical paths). AC9 (CrewAI Delegation Mode) adds 9 scenarios focusing on graceful fallback when CrewAI is unavailable.
 
 ### Risk Areas Identified
 
@@ -256,6 +270,8 @@ All 8 acceptance criteria have explicit test coverage with appropriate test leve
 | **Vote tie-breaking determinism** | MEDIUM | Test 001.1-UNIT-014 validates consistent tie resolution |
 | **Python/Rust parity drift** | MEDIUM | Cross-runtime test (001.1-E2E-008) ensures behavioral consistency |
 | **Tool bridge failure modes** | MEDIUM | Tests distinguish unavailable vs failed states (001.1-INT-ERR-003) |
+| **CrewAI unavailable at runtime** | MEDIUM | Graceful fallback test (001.1-INT-026) ensures native TEA execution |
+| **Tool mapping failures (CrewAI)** | MEDIUM | Tests (001.1-UNIT-028, 001.1-INT-027) validate cross-bridge mapping |
 
 ### Recommended Test Scenarios
 
@@ -272,6 +288,7 @@ All 8 acceptance criteria have explicit test coverage with appropriate test leve
 3. `agent.coordinate` leader/worker pattern
 4. Tool bridge integration (MCP, CrewAI, LangChain)
 5. Rust feature parity validation
+6. `agent.crewai_delegate` configuration and fallback behavior
 
 ### Concerns and Blockers
 
@@ -280,6 +297,7 @@ All 8 acceptance criteria have explicit test coverage with appropriate test leve
 | **Technical Risk** | `agent.coordinate` involves complex state management | Consider design-doc-only for Rust (as noted in AC8) |
 | **Testing Complexity** | LLM calls require mocking infrastructure | Establish mock response fixtures before implementation |
 | **Dependency** | Tool bridges (MCP, CrewAI, LangChain) must be stable | Integration tests should use bridge mocks initially |
+| **Optional Dependency** | AC9 requires `tools-crewai` optional dependency | Ensure graceful import handling when CrewAI unavailable |
 
 ### Quality Gate Criteria
 
@@ -290,3 +308,4 @@ For this story to pass QA gate:
 - [ ] Error messages include agent name and context
 - [ ] Python test coverage >90% for `agent_actions.py`
 - [ ] Rust module compiles and basic parity tests pass
+- [ ] CrewAI fallback works gracefully when dependency unavailable (AC9)
