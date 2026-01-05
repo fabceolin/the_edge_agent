@@ -38,6 +38,7 @@ nodes:
 
   # Step 1.5: Extract content from LLM response
   - name: parse_response
+    language: python
     run: |
       llm_resp = state.get("llm_response", {})
       if isinstance(llm_resp, dict):
@@ -69,6 +70,7 @@ nodes:
 
   # Step 3: Format the human-readable answer
   - name: format
+    language: python
     run: |
       count = state.get("count", 0)
       word = state.get("word", "")

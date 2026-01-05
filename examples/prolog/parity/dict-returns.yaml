@@ -1,0 +1,84 @@
+# TEA-RUST-041: Complex Prolog Dict Returns
+#
+# This fixture tests that Prolog dicts are properly serialized to JSON objects
+# in both Python and Rust implementations. The issue was that SWI-Prolog's
+# term_string/2 outputs tagged dicts like `_3862{...}` which weren't being
+# parsed correctly.
+#
+# Test categories:
+# - Simple dict returns: _{key: value}
+# - Nested dict returns: _{outer: _{inner: value}}
+# - List of dict returns: [_{a: 1}, _{b: 2}]
+# - Complex mixed structures
+
+name: dict-returns
+description: Test complex Prolog dict serialization (TEA-RUST-041)
+
+state_schema:
+  input: int
+  simple_dict: dict
+  nested_dict: dict
+  list_of_dicts: list
+  complex_structure: dict
+
+initial_state:
+  input: 42
+
+nodes:
+  - name: test_simple_dict
+    language: prolog
+    run: |
+      return(simple_dict, _{
+        key: 'value',
+        number: 42,
+        flag: true
+      }).
+
+  - name: test_nested_dict
+    language: prolog
+    run: |
+      return(nested_dict, _{
+        level1: _{
+          level2: _{
+            deep_value: 'found'
+          }
+        },
+        sibling: 'data'
+      }).
+
+  - name: test_list_of_dicts
+    language: prolog
+    run: |
+      return(list_of_dicts, [
+        _{id: 1, name: 'first'},
+        _{id: 2, name: 'second'},
+        _{id: 3, name: 'third'}
+      ]).
+
+  - name: test_complex_structure
+    language: prolog
+    run: |
+      % Mix of dicts, lists, and atoms
+      Items = [alpha, beta, gamma],
+      Config = _{debug: false, timeout: 30},
+      return(complex_structure, _{
+        items: Items,
+        config: Config,
+        status: ready,
+        metadata: _{
+          version: '1.0',
+          tags: [test, parity, rust]
+        }
+      }).
+
+edges:
+  - from: __start__
+    to: test_simple_dict
+  - from: test_simple_dict
+    to: test_nested_dict
+  - from: test_nested_dict
+    to: test_list_of_dicts
+  - from: test_list_of_dicts
+    to: test_complex_structure
+  - from: test_complex_structure
+    to: __end__

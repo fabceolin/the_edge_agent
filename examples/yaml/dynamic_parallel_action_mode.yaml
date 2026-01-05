@@ -1,4 +1,5 @@
 # Dynamic Parallel Fan-Out Example: Action Mode
+# CLI: python (uses Python syntax in run blocks)
 # This example demonstrates using dynamic_parallel to fetch multiple URLs in parallel
 # Each URL is processed with a single HTTP GET action
 
@@ -8,6 +9,7 @@ description: Fetch multiple URLs in parallel with rate limiting
 nodes:
   # Initialize the list of URLs to fetch
   - name: setup
+    language: python
     run: |
       return {
           "urls": [
@@ -37,6 +39,7 @@ nodes:
 
   # Aggregate the results
   - name: aggregate
+    language: python
     run: |
       results = state.get("fetch_results", [])
       successful = []

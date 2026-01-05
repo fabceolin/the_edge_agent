@@ -1,0 +1,186 @@
+# Sensor Explainer Agent
+# Generates structured explanations for sensor detections
+name: sensor-explainer
+
+state_schema:
+  sensor_type: str
+  raw_detection: object
+  weather: str
+  explained_detection: object
+
+nodes:
+  - name: extract_evidence
+    run: |
+      sensor = state["sensor_type"]
+      detection = state["raw_detection"]
+      weather = state.get("weather", "clear")
+
+      evidence = []
+
+      if sensor == "camera":
+          if detection.get("bbox_area", 0) > 1000:
+              evidence.append({
+                  "type": "physical_measurement",
+                  "fact": "large_visual_signature",
+                  "value": detection.get("bbox_area"),
+                  "verified": True
+              })
+          if detection.get("confidence", 0) > 0.9:
+              evidence.append({
+                  "type": "statistical",
+                  "fact": "high_classification_confidence",
+                  "value": detection.get("confidence"),
+                  "verified": False
+              })
+          if weather in ["rain", "fog", "night"]:
+              evidence.append({
+                  "type": "limitation",
+                  "fact": f"reduced_reliability_{weather}",
+                  "value": weather,
+                  "verified": True
+              })
+
+      elif sensor == "lidar":
+          points = detection.get("point_count", 0)
+          if points > 100:
+              evidence.append({
+                  "type": "physical_measurement",
+                  "fact": "substantial_point_cloud",
+                  "value": points,
+                  "verified": True
+              })
+          if detection.get("surface_normal"):
+              evidence.append({
+                  "type": "physical_measurement",
+                  "fact": "3d_surface_detected",
+                  "value": detection.get("surface_normal"),
+                  "verified": True
+              })
+
+      elif sensor == "radar":
+          if detection.get("doppler_velocity") is not None:
+              evidence.append({
+                  "type": "physical_measurement",
+                  "fact": "velocity_measured",
+                  "value": detection.get("doppler_velocity"),
+                  "verified": True
+              })
+          if detection.get("rcs", 0) > 1.0:
+              evidence.append({
+                  "type": "physical_measurement",
+                  "fact": "significant_radar_return",
+                  "value": detection.get("rcs"),
+                  "verified": True
+              })
+
+      return {"evidence_list": evidence}
+
+  - name: validate_physics
+    language: prolog
+    run: |
+      % Load knowledge base
+      tea_load_code("
+        valid_distance(camera, D) :- D > 0, D < 200.
+        valid_distance(lidar, D) :- D > 0, D < 120.
+        valid_distance(radar, D) :- D > 0, D < 250.
+
+        reliability(camera, clear, 0.95).
+        reliability(camera, rain, 0.7).
+        reliability(camera, fog, 0.4).
+        reliability(camera, night, 0.6).
+
+        reliability(lidar, clear, 0.98).
+        reliability(lidar, rain, 0.85).
+        reliability(lidar, fog, 0.5).
+        reliability(lidar, night, 0.98).
+
+        reliability(radar, clear, 0.9).
+        reliability(radar, rain, 0.88).
+        reliability(radar, fog, 0.88).
+        reliability(radar, night, 0.9).
+      "),
+
+      state(sensor_type, SensorStr),
+      state(raw_detection, Detection),
+      state(weather, WeatherStr),
+
+      atom_string(Sensor, SensorStr),
+      atom_string(Weather, WeatherStr),
+
+      (get_dict(distance, Detection, Distance) -> true ; Distance = 50),
+
+      (valid_distance(Sensor, Distance) ->
+          DistanceValid = true
+      ;
+          DistanceValid = false
+      ),
+
+      (reliability(Sensor, Weather, Rel) -> true ; Rel = 0.5),
+
+      Constraints = [
+          constraint(distance_valid, DistanceValid),
+          constraint(base_reliability, Rel)
+      ],
+
+      return(physical_constraints, Constraints),
+      return(adjusted_reliability, Rel).
+
+  - name: generate_explanation
+    run: |
+      sensor = state["sensor_type"]
+      detection = state["raw_detection"]
+      evidence = state.get("evidence_list", [])
+      constraints = state.get("physical_constraints", [])
+      reliability = state.get("adjusted_reliability", 0.5)
+
+      strong = sum(1 for e in evidence if e.get("type") == "physical_measurement")
+      weak = sum(1 for e in evidence if e.get("type") != "physical_measurement")
+
+      label = detection.get("label", "unknown")
+      distance = detection.get("distance", "unknown")
+      confidence = detection.get("confidence", 0)
+
+      explanation_parts = [
+          f"{sensor.upper()} detected '{label}' at {distance}m",
+          f"with {confidence:.0%} confidence.",
+      ]
+
+      if strong > 0:
+          explanation_parts.append(f"Supported by {strong} physical measurement(s).")
+
+      if weak > 0:
+          explanation_parts.append(f"{weak} statistical inference(s) also support this.")
+
+      limitations = [e for e in evidence if e.get("type") == "limitation"]
+      if limitations:
+          lim_facts = [e["fact"] for e in limitations]
+          explanation_parts.append(f"Limitations: {', '.join(lim_facts)}.")
+
+      explanation = " ".join(explanation_parts)
+
+      explained = {
+          "sensor": sensor,
+          "detection": detection,
+          "confidence": confidence * reliability,
+          "evidence": evidence,
+          "explanation": explanation,
+          "physical_constraints": constraints,
+          "uncertainty_sources": limitations,
+          "evidence_strength": {
+              "physical": strong,
+              "statistical": weak,
+              "total": strong + weak
+          }
+      }
+
+      return {"explained_detection": explained}
+
+edges:
+  - from: __start__
+    to: extract_evidence
+  - from: extract_evidence
+    to: validate_physics
+  - from: validate_physics
+    to: generate_explanation
+  - from: generate_explanation
+    to: __end__

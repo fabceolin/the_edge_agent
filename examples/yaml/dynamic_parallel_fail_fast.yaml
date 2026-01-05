@@ -1,4 +1,5 @@
 # Dynamic Parallel Fan-Out Example: Fail-Fast Mode
+# CLI: python (uses Python syntax in run blocks)
 # This example demonstrates fail_fast behavior where processing stops on first error
 # Useful when all items must succeed or none should be processed
 
@@ -8,6 +9,7 @@ description: Validate data items with fail-fast behavior
 nodes:
   # Initialize items with one that will fail validation
   - name: setup
+    language: python
     run: |
       return {
           "items_to_validate": [
@@ -29,6 +31,7 @@ nodes:
     fail_fast: true  # Stop processing when first validation fails
     steps:
       - name: check_value
+        language: python
         run: |
           item = state.get("item", {})
           value = item.get("value", 0)
@@ -45,6 +48,7 @@ nodes:
           }
 
       - name: log_success
+        language: python
         run: |
           item = state.get("validated_item", {})
           return {
@@ -54,6 +58,7 @@ nodes:
 
   # This node may not be reached if fail_fast triggers
   - name: report
+    language: python
     run: |
       results = state.get("validation_results", [])
 

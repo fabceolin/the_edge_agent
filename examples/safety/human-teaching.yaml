@@ -1,0 +1,133 @@
+# Human Teaching Interface Agent
+# Allows humans to correct decisions and teach new rules
+name: human-teaching-interface
+
+state_schema:
+  original_decision: object
+  human_correction: str
+  correction_type: str
+  extracted_rule: str
+  updated_knowledge: object
+  confirmation_needed: bool
+
+nodes:
+  - name: analyze_correction
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "llama3.2:1b"
+      messages:
+        - role: system
+          content: |
+            You are a traffic rule extraction system. Analyze the human's
+            correction and extract structured information.
+
+            Output JSON with these fields:
+            - correction_type: one of misclassification, missing_rule, exception, context_error
+            - original_problem: what the system did wrong
+            - correct_behavior: what should have happened
+            - key_entities: list of relevant objects
+            - conditions: list of conditions for the rule
+            - suggested_rule_name: snake_case_name
+        - role: user
+          content: |
+            Original Decision:
+            {{ state.original_decision | tojson }}
+
+            Human Correction:
+            "{{ state.human_correction }}"
+
+            Extract the structured correction information as JSON.
+    output: correction_analysis
+
+  - name: generate_rule
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "llama3.2:1b"
+      messages:
+        - role: system
+          content: |
+            You are a Prolog rule generator for autonomous vehicles.
+            Generate a valid Prolog rule based on the correction analysis.
+
+            Available predicates:
+            - detected(Object, Distance) - object detected at distance
+            - speed(Current) - current speed in km/h
+            - zone(Type) - current zone type
+            - weather(Condition) - weather condition
+            - signal(Color) - traffic signal state
+            - time_of_day(Period) - morning/afternoon/evening/night
+            - context(Situation) - driving context
+
+            Output ONLY the Prolog rule, no explanation.
+            Format: rule_name(Args) :- condition1, condition2.
+        - role: user
+          content: |
+            Correction Analysis:
+            {{ state.correction_analysis.content }}
+
+            Generate the Prolog rule.
+    output: generated_rule
+
+  - name: validate_and_format
+    run: |
+      import json
+
+      correction_content = state.get("correction_analysis", {}).get("content", "{}")
+      generated_rule = state.get("generated_rule", {}).get("content", "")
+
+      try:
+          analysis = json.loads(correction_content)
+      except:
+          analysis = {"correction_type": "unknown"}
+
+      # Simple validation: check if it looks like Prolog
+      rule_valid = ":-" in generated_rule or generated_rule.strip().endswith(".")
+
+      original_problem = analysis.get("original_problem", "Unknown")
+      correct_behavior = analysis.get("correct_behavior", "Unknown")
+
+      if rule_valid:
+          confirmation_message = (
+              "I understood your correction:\n\n"
+              "Problem: " + original_problem + "\n"
+              "Correct behavior: " + correct_behavior + "\n\n"
+              "I've generated this rule:\n"
+              "```prolog\n" + generated_rule + "\n```\n\n"
+              "Should I add this rule to the knowledge base?"
+          )
+          confirmation_needed = True
+      else:
+          confirmation_message = (
+              "I understood your correction but couldn't generate a valid rule.\n\n"
+              "Problem: " + original_problem + "\n"
+              "Correct behavior: " + correct_behavior + "\n\n"
+              "Please rephrase or provide more details."
+          )
+          confirmation_needed = False
+
+      updated_knowledge = {
+          "type": analysis.get("correction_type", "unknown"),
+          "rule_name": analysis.get("suggested_rule_name", "unnamed_rule"),
+          "conditions": analysis.get("conditions", []),
+          "rule_text": generated_rule if rule_valid else None,
+          "status": "pending_confirmation" if confirmation_needed else "failed_generation"
+      }
+
+      return {
+          "extracted_rule": generated_rule if rule_valid else "",
+          "updated_knowledge": updated_knowledge,
+          "confirmation_needed": confirmation_needed,
+          "confirmation_message": confirmation_message
+      }
+
+edges:
+  - from: __start__
+    to: analyze_correction
+  - from: analyze_correction
+    to: generate_rule
+  - from: generate_rule
+    to: validate_and_format
+  - from: validate_and_format
+    to: __end__

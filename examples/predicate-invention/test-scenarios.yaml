@@ -1,0 +1,147 @@
+# Test Scenarios for Zero-Shot Generalization
+#
+# These scenarios test the planner on objects NEVER seen during training.
+# The discovered predicates should generalize to any object.
+#
+# Usage:
+#   ./tea run examples/predicate-invention/plan-actions.yaml \
+#     --input "$(yq '.scenarios[0]' test-scenarios.yaml -o json)"
+
+scenarios:
+  # === SCENARIO 1: Novel Object (Alien Artifact) ===
+  - name: "Alien Artifact - Never Seen Before"
+    description: "Plan to pick up an object type never seen in training"
+    sensor_state:
+      gripper:
+        position: [0.0, 0.0, 0.3]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: alien_artifact
+          type: unknown
+          position: [0.1, 0.0, 0.0]
+          size: 0.05
+          weight: 0.3
+    goal: "holding(alien_artifact)"
+    expected_plan: ["move_to(alien_artifact)", "pick(alien_artifact)"]
+    expected_success: true
+
+  # === SCENARIO 2: Distant Object ===
+  - name: "Moon Rock - Far Away"
+    description: "Object is too far, need to move first"
+    sensor_state:
+      gripper:
+        position: [0.0, 0.0, 0.3]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: moon_rock
+          type: rock
+          position: [2.0, 2.0, 0.0]
+          size: 0.04
+          weight: 0.8
+    goal: "holding(moon_rock)"
+    expected_plan: ["move_to(moon_rock)", "pick(moon_rock)"]
+    expected_success: true
+
+  # === SCENARIO 3: Hand Already Full ===
+  - name: "Hand Occupied"
+    description: "Robot is already holding something, need to release first"
+    sensor_state:
+      gripper:
+        position: [0.5, 0.5, 0.2]
+        aperture: 0.03
+        force: 1.5
+      objects:
+        - id: cube
+          type: block
+          position: [0.5, 0.5, 0.2]  # In hand
+          size: 0.04
+        - id: sphere
+          type: ball
+          position: [0.8, 0.8, 0.0]
+          size: 0.05
+    goal: "holding(sphere)"
+    expected_plan: ["release", "move_to(sphere)", "pick(sphere)"]
+    expected_success: true
+
+  # === SCENARIO 4: Object Already Reachable ===
+  - name: "Direct Pick"
+    description: "Object is already within reach, just pick it up"
+    sensor_state:
+      gripper:
+        position: [0.5, 0.3, 0.1]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: crystal
+          type: gem
+          position: [0.5, 0.3, 0.0]  # Very close
+          size: 0.03
+    goal: "holding(crystal)"
+    expected_plan: ["pick(crystal)"]
+    expected_success: true
+
+  # === SCENARIO 5: Multiple Objects ===
+  - name: "Choose Correct Object"
+    description: "Multiple objects present, plan for specific one"
+    sensor_state:
+      gripper:
+        position: [0.0, 0.0, 0.3]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: red_gem
+          position: [0.5, 0.0, 0.0]
+          size: 0.04
+        - id: blue_gem
+          position: [0.0, 0.5, 0.0]
+          size: 0.04
+        - id: green_gem
+          position: [0.5, 0.5, 0.0]
+          size: 0.04
+    goal: "holding(green_gem)"
+    expected_plan: ["move_to(green_gem)", "pick(green_gem)"]
+    expected_success: true
+
+  # === SCENARIO 6: Goal Already Satisfied ===
+  - name: "Already Holding"
+    description: "Robot is already holding the target object"
+    sensor_state:
+      gripper:
+        position: [0.3, 0.3, 0.2]
+        aperture: 0.03
+        force: 1.2
+      objects:
+        - id: trophy
+          position: [0.3, 0.3, 0.2]  # At gripper position
+          size: 0.05
+    goal: "holding(trophy)"
+    expected_plan: []  # Empty - goal already satisfied
+    expected_success: true
+
+  # === SCENARIO 7: Release Goal ===
+  - name: "Put Down Object"
+    description: "Goal is to have empty hand (put down current object)"
+    sensor_state:
+      gripper:
+        position: [0.5, 0.5, 0.2]
+        aperture: 0.03
+        force: 1.5
+      objects:
+        - id: package
+          position: [0.5, 0.5, 0.2]
+          size: 0.08
+    goal: "empty_hand"
+    expected_plan: ["release"]
+    expected_success: true
+
+# === SUMMARY ===
+# These scenarios demonstrate that the SAME predicates and operators
+# discovered from training on cups and bottles work on:
+# - alien_artifact (unknown type)
+# - moon_rock (rock)
+# - cube, sphere, crystal, gems (various shapes)
+# - trophy, package (various purposes)
+#
+# This is ZERO-SHOT GENERALIZATION through symbolic abstraction.

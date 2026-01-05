@@ -1,0 +1,337 @@
+# Coffee Agent Simulation: The Wozniak Test
+#
+# This agent simulates the Wozniak Coffee Test - making coffee in an unfamiliar kitchen.
+# It demonstrates:
+# - Commonsense reasoning about typical kitchen layouts
+# - Object search with uncertainty
+# - Process execution with the "Dona Maria Principle" (verify before completing)
+#
+# RUN: tea run examples/wozniak-test/coffee-agent-simulation.yaml \
+#      --input '{"kitchen_type": "modern", "coffee_maker_type": "drip"}'
+#
+# Try different kitchen types: "modern", "traditional", "minimalist"
+# Try different coffee makers: "drip", "pod", "french_press", "espresso"
+
+name: coffee-agent-simulation
+description: Simulates the Wozniak Coffee Test using symbolic reasoning
+
+state_schema:
+  kitchen_type: str
+  coffee_maker_type: str
+  world_model: dict
+  search_results: dict
+  brewing_state: dict
+  verification: dict
+  final_result: str
+
+nodes:
+  # Build world model based on commonsense knowledge
+  - name: build_world_model
+    language: prolog
+    run: |
+      % Commonsense Knowledge Base for Kitchens
+      % This is what the agent "knows" about typical kitchens
+
+      % Typical locations for coffee-related items
+      typical_location(coffee, [cabinet, counter, pantry]).
+      typical_location(coffee_maker, [counter]).
+      typical_location(cups, [cabinet, dish_rack]).
+      typical_location(filters, [drawer, cabinet, near_coffee_maker]).
+      typical_location(water_source, [sink, refrigerator]).
+      typical_location(sugar, [counter, cabinet, pantry]).
+      typical_location(creamer, [refrigerator, counter]).
+
+      % Kitchen type affects layout probabilities
+      layout_modifier(modern, counter, 0.8).
+      layout_modifier(modern, cabinet, 0.6).
+      layout_modifier(traditional, cabinet, 0.9).
+      layout_modifier(traditional, pantry, 0.7).
+      layout_modifier(minimalist, counter, 0.4).
+      layout_modifier(minimalist, drawer, 0.8).
+
+      % Coffee maker requirements
+      requires(drip, [ground_coffee, filter, water, cup]).
+      requires(pod, [coffee_pod, water, cup]).
+      requires(french_press, [coarse_coffee, hot_water, cup]).
+      requires(espresso, [fine_coffee, water, cup]).
+
+      % Process steps by coffee maker type
+      process_steps(drip, [add_filter, add_coffee, add_water, press_start, wait, pour]).
+      process_steps(pod, [insert_pod, place_cup, press_button, wait]).
+      process_steps(french_press, [add_coffee, add_hot_water, wait_4_min, press_plunger, pour]).
+      process_steps(espresso, [grind_beans, tamp, lock_portafilter, extract, serve]).
+
+      % Get kitchen type from state
+      state(kitchen_type, KitchenType),
+      state(coffee_maker_type, CoffeeMakerType),
+
+      % Build world model
+      (requires(CoffeeMakerType, Requirements) -> Reqs = Requirements ; Reqs = []),
+      (process_steps(CoffeeMakerType, Steps) -> ProcSteps = Steps ; ProcSteps = []),
+
+      return(world_model, _{
+        kitchen_type: KitchenType,
+        coffee_maker_type: CoffeeMakerType,
+        required_items: Reqs,
+        process_steps: ProcSteps,
+        commonsense: "Loaded kitchen commonsense knowledge"
+      }).
+
+  # Search for items using commonsense-guided exploration
+  - name: search_items
+    language: lua
+    run: |
+      local world = state.world_model or {}
+      local kitchen = world.kitchen_type or "modern"
+      local required = world.required_items or {}
+
+      -- Simulate searching for items in typical locations
+      local found_items = {}
+      local search_log = {}
+
+      -- Location probabilities by kitchen type
+      local location_probs = {
+        modern = {counter = 0.8, cabinet = 0.6, drawer = 0.5, pantry = 0.3},
+        traditional = {counter = 0.5, cabinet = 0.9, drawer = 0.4, pantry = 0.7},
+        minimalist = {counter = 0.4, cabinet = 0.5, drawer = 0.8, pantry = 0.2}
+      }
+
+      local probs = location_probs[kitchen] or location_probs.modern
+
+      -- Typical locations for each item type
+      local typical = {
+        ground_coffee = {"cabinet", "counter", "pantry"},
+        coarse_coffee = {"cabinet", "pantry"},
+        fine_coffee = {"cabinet", "counter"},
+        coffee_pod = {"counter", "drawer"},
+        filter = {"drawer", "cabinet"},
+        water = {"sink"},  -- Always find water at sink
+        cup = {"cabinet", "dish_rack"},
+        hot_water = {"kettle", "sink"}  -- Need to heat water
+      }
+
+      for _, item in ipairs(required) do
+        local locations = typical[item] or {"counter", "cabinet"}
+        local searched = {}
+        local found = false
+        local found_at = nil
+
+        for _, loc in ipairs(locations) do
+          table.insert(searched, loc)
+          local prob = probs[loc] or 0.5
+
+          -- Simulate finding item (using simple probability)
+          -- In reality, this would be vision-based detection
+          if loc == "sink" or math.random() < prob then
+            found = true
+            found_at = loc
+            break
+          end
+        end
+
+        found_items[item] = {
+          found = found,
+          location = found_at,
+          searched_locations = searched
+        }
+
+        table.insert(search_log, {
+          item = item,
+          found = found,
+          location = found_at or "not_found",
+          attempts = #searched
+        })
+      end
+
+      -- Check if all items found
+      local all_found = true
+      local missing = {}
+      for item, result in pairs(found_items) do
+        if not result.found then
+          all_found = false
+          table.insert(missing, item)
+        end
+      end
+
+      return {
+        search_results = {
+          items = found_items,
+          log = search_log,
+          all_found = all_found,
+          missing = missing,
+          search_strategy = "commonsense_guided"
+        }
+      }
+
+  # Execute brewing process
+  - name: brew_coffee
+    language: lua
+    run: |
+      local world = state.world_model or {}
+      local search = state.search_results or {}
+      local maker_type = world.coffee_maker_type or "drip"
+      local steps = world.process_steps or {}
+
+      if not search.all_found then
+        return {
+          brewing_state = {
+            status = "failed",
+            reason = "Missing items: " .. table.concat(search.missing or {}, ", "),
+            completed_steps = {}
+          }
+        }
+      end
+
+      -- Simulate executing each brewing step
+      local completed = {}
+      local current_step = 1
+      local errors = {}
+
+      for i, step in ipairs(steps) do
+        -- Simulate step execution with possible failures
+        local success = true
+        local note = ""
+
+        -- Some steps have higher failure probability
+        if step == "tamp" then
+          -- Tamping requires skill
+          success = math.random() > 0.1
+          note = success and "Good tamp pressure" or "Uneven tamp"
+        elseif step == "wait_4_min" then
+          -- Waiting is always successful but boring
+          note = "Waited 4 minutes"
+        elseif step == "extract" then
+          -- Extraction can fail
+          success = math.random() > 0.2
+          note = success and "Good extraction" or "Under-extracted"
+        end
+
+        table.insert(completed, {
+          step = step,
+          success = success,
+          note = note
+        })
+
+        if not success then
+          table.insert(errors, step .. ": " .. note)
+        end
+
+        current_step = i
+      end
+
+      return {
+        brewing_state = {
+          status = #errors == 0 and "completed" or "completed_with_issues",
+          completed_steps = completed,
+          errors = errors,
+          coffee_maker = maker_type
+        }
+      }
+
+  # The "Dona Maria Principle": Verify before declaring done
+  - name: verify_completion
+    language: prolog
+    run: |
+      % The Dona Maria Principle: Always verify before declaring done
+      % Even experienced coffee makers check before serving
+
+      % Get brewing state
+      state(brewing_state, BrewState),
+
+      % Extract status
+      (is_dict(BrewState), get_dict(status, BrewState, Status)
+       -> true
+       ; Status = unknown),
+
+      % Verification criteria by status
+      (Status = completed ->
+        % All steps completed successfully
+        VerificationChecks = [
+          "Visual inspection: Coffee appears ready",
+          "Aroma check: Coffee smell detected",
+          "Level check: Cup is adequately filled",
+          "Temperature check: Coffee is hot"
+        ],
+        Passed = true,
+        Confidence = 0.95
+      ; Status = completed_with_issues ->
+        % Some issues occurred
+        VerificationChecks = [
+          "Visual inspection: Coffee may be weak/strong",
+          "Aroma check: Aroma present but may vary",
+          "Level check: Cup filled",
+          "Temperature check: Coffee is hot"
+        ],
+        Passed = true,
+        Confidence = 0.7
+      ;
+        % Failed or unknown
+        VerificationChecks = ["Brewing did not complete"],
+        Passed = false,
+        Confidence = 0.0
+      ),
+
+      % The "Dona Maria" wisdom: When in doubt, check again
+      (Confidence < 0.9 ->
+        ExtraNote = "Recommendation: Visual confirmation before serving"
+      ;
+        ExtraNote = "High confidence - ready to serve"
+      ),
+
+      return(verification, _{
+        passed: Passed,
+        confidence: Confidence,
+        checks: VerificationChecks,
+        dona_maria_note: ExtraNote
+      }).
+
+  # Generate final result
+  - name: finalize
+    language: lua
+    run: |
+      local world = state.world_model or {}
+      local search = state.search_results or {}
+      local brew = state.brewing_state or {}
+      local verify = state.verification or {}
+
+      local result = ""
+
+      if verify.passed then
+        result = "SUCCESS: Coffee ready!\n"
+        result = result .. "Coffee type: " .. (world.coffee_maker_type or "unknown") .. "\n"
+        result = result .. "Kitchen type: " .. (world.kitchen_type or "unknown") .. "\n"
+        result = result .. "Confidence: " .. ((verify.confidence or 0) * 100) .. "%\n"
+        result = result .. "Verification: " .. (verify.dona_maria_note or "Verified")
+      else
+        result = "FAILED: Could not complete coffee\n"
+        if brew.reason then
+          result = result .. "Reason: " .. brew.reason
+        end
+      end
+
+      return {
+        final_result = result,
+        summary = {
+          kitchen_analyzed = world.kitchen_type or "unknown",
+          coffee_maker_used = world.coffee_maker_type or "unknown",
+          items_found = search.all_found or false,
+          brewing_completed = brew.status == "completed" or brew.status == "completed_with_issues",
+          verified = verify.passed or false,
+          confidence = verify.confidence or 0,
+          wozniak_test = verify.passed and verify.confidence > 0.7 and "PASSED" or "NEEDS_IMPROVEMENT"
+        }
+      }
+
+edges:
+  - from: __start__
+    to: build_world_model
+  - from: build_world_model
+    to: search_items
+  - from: search_items
+    to: brew_coffee
+  - from: brew_coffee
+    to: verify_completion
+  - from: verify_completion
+    to: finalize
+  - from: finalize
+    to: __end__

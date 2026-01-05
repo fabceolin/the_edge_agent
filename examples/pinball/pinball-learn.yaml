@@ -1,0 +1,502 @@
+# =============================================================================
+# Video Pinball Meta-Learning Agent
+# =============================================================================
+#
+# This agent implements a learning loop that improves the Prolog rules
+# based on gameplay performance. The architecture is:
+#
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │                     LEARNING CYCLE                                  │
+#   │                                                                     │
+#   │  ┌──────────────┐     ┌──────────────┐     ┌──────────────┐        │
+#   │  │   PLAY       │────▶│   ANALYZE    │────▶│   IMPROVE    │        │
+#   │  │  (Prolog)    │     │   (Python)   │     │   (LLM)      │        │
+#   │  └──────────────┘     └──────────────┘     └──────────────┘        │
+#   │         ▲                                          │                │
+#   │         │                                          │                │
+#   │         └──────────────────────────────────────────┘                │
+#   │                    New Prolog rules                                 │
+#   └─────────────────────────────────────────────────────────────────────┘
+#
+# PLAY: Run pinball-play.yaml for N games
+# ANALYZE: Aggregate traces, compute rule effectiveness
+# IMPROVE: LLM generates improved Prolog rules
+# VALIDATE: Syntax check new rules
+# LOOP: Repeat with new rules
+#
+# Usage:
+#   python -m the_edge_agent.cli run examples/pinball/pinball-learn.yaml \
+#     --input '{
+#       "games_per_iteration": 5,
+#       "max_iterations": 10,
+#       "frames_per_game": 5000,
+#       "render": false
+#     }'
+#
+# =============================================================================
+
+name: pinball-learn
+description: "Meta-learning agent that improves pinball rules using LLM"
+
+state_schema:
+  # Configuration
+  games_per_iteration: int
+  max_iterations: int
+  frames_per_game: int
+  render: bool
+
+  # Learning state
+  iteration: int
+  current_rules: str
+  current_rules_path: str
+
+  # Performance tracking
+  all_analyses: list
+  best_score: int
+  best_rules: str
+
+  # Current iteration results
+  game_traces: list
+  analysis: object
+  improved_rules: str
+  rules_valid: bool
+
+settings:
+  llm:
+    default_provider: "ollama"
+    default_model: "llama3.2:3b"
+
+nodes:
+  # =========================================================================
+  # Node 1: Initialize Learning
+  # =========================================================================
+  - name: init_learning
+    description: "Load initial rules and set up learning state"
+    run: |
+      # Read initial rules
+      with open("examples/pinball/pinball_rules_v1.pl", "r") as f:
+          initial_rules = f.read()
+
+      return {
+          "iteration": 0,
+          "current_rules": initial_rules,
+          "current_rules_path": "examples/pinball/pinball_rules_v1.pl",
+          "all_analyses": [],
+          "best_score": 0,
+          "best_rules": initial_rules,
+          "game_traces": [],
+      }
+
+  # =========================================================================
+  # Node 2: Play Multiple Games
+  # =========================================================================
+  - name: play_games
+    description: "Play N games with current rules and collect traces"
+    run: |
+      import sys
+      sys.path.insert(0, "examples/pinball")
+      from atari_env import VideoPinballEnv, GameTracer
+
+      games_to_play = state.get("games_per_iteration", 5)
+      frames_per_game = state.get("frames_per_game", 5000)
+      render = state.get("render", False)
+
+      # Write current rules to temp file
+      current_rules = state.get("current_rules", "")
+      rules_path = f"examples/pinball/pinball_rules_current.pl"
+      with open(rules_path, "w") as f:
+          f.write(current_rules)
+
+      # Initialize environment and tracer
+      env = VideoPinballEnv(
+          render_mode="human" if render else "rgb_array"
+      )
+      tracer = GameTracer()
+
+      scores = []
+
+      for game_num in range(games_to_play):
+          print(f"\n=== Game {game_num + 1}/{games_to_play} ===")
+
+          game_state = env.reset()
+          frame = 0
+
+          while frame < frames_per_game:
+              # Simple rule-based action selection
+              # (In full implementation, this would use Prolog)
+              action = select_action_simple(game_state)
+
+              prev_score = game_state.score
+              game_state = env.step(action)
+              frame += 1
+
+              # Determine outcome
+              points = game_state.score - prev_score
+              if points > 0:
+                  outcome = "score"
+              elif game_state.lives < 3:
+                  outcome = "ball_lost"
+              else:
+                  outcome = "neutral"
+
+              tracer.record_decision(
+                  state=game_state,
+                  action=action,
+                  rule_fired=f"simple_{action}",
+                  outcome=outcome,
+                  points=points,
+              )
+
+              if game_state.terminated:
+                  break
+
+          tracer.end_game(game_state.score, 3 - game_state.lives)
+          scores.append(game_state.score)
+          print(f"Final score: {game_state.score}")
+
+      env.close()
+
+      avg_score = sum(scores) / len(scores) if scores else 0
+      print(f"\nAverage score: {avg_score:.0f}")
+
+      return {
+          "game_traces": tracer.traces,
+          "current_rules_path": rules_path,
+      }
+
+
+      def select_action_simple(state):
+          """Simple heuristic action selection."""
+          if not state.ball or not state.ball.visible:
+              return "launch"
+
+          ball_y = state.ball.y
+          ball_x = state.ball.x
+          ball_vy = state.ball_vy
+
+          # Ball approaching bottom
+          if ball_y > 180 and ball_vy > 0:
+              if ball_x < 80:
+                  return "flip_left"
+              else:
+                  return "flip_right"
+
+          # Emergency
+          if ball_y > 195:
+              return "flip_both"
+
+          return "wait"
+
+  # =========================================================================
+  # Node 3: Analyze Performance
+  # =========================================================================
+  - name: analyze_performance
+    description: "Aggregate traces and compute rule effectiveness"
+    run: |
+      traces = state.get("game_traces", [])
+
+      if not traces:
+          return {"analysis": {"error": "No traces available"}}
+
+      # Aggregate statistics
+      total_score = sum(g.get("total_score", 0) for g in traces)
+      avg_score = total_score / len(traces)
+      total_balls_lost = sum(g.get("balls_lost", 0) for g in traces)
+
+      # Analyze rule effectiveness
+      rule_stats = {}
+
+      for game in traces:
+          for decision in game.get("decisions", []):
+              rule = decision.get("rule_fired", "unknown")
+
+              if rule not in rule_stats:
+                  rule_stats[rule] = {
+                      "count": 0,
+                      "points_gained": 0,
+                      "outcomes": {"score": 0, "ball_lost": 0, "neutral": 0}
+                  }
+
+              rule_stats[rule]["count"] += 1
+              rule_stats[rule]["points_gained"] += decision.get("points", 0)
+
+              outcome = decision.get("outcome", "neutral")
+              if outcome in rule_stats[rule]["outcomes"]:
+                  rule_stats[rule]["outcomes"][outcome] += 1
+
+      # Compute success rates
+      for rule, stats in rule_stats.items():
+          success = stats["outcomes"].get("score", 0)
+          fail = stats["outcomes"].get("ball_lost", 0)
+          total = success + fail
+          stats["success_rate"] = success / total if total > 0 else None
+
+      # Find failure patterns
+      failures = []
+      for game in traces:
+          for decision in game.get("decisions", []):
+              if decision.get("outcome") == "ball_lost":
+                  failures.append({
+                      "rule": decision.get("rule_fired"),
+                      "ball_x": decision.get("state", {}).get("ball", {}).get("x"),
+                      "ball_y": decision.get("state", {}).get("ball", {}).get("y"),
+                      "ball_vy": decision.get("state", {}).get("ball_vy"),
+                      "action": decision.get("action"),
+                  })
+
+      analysis = {
+          "games_analyzed": len(traces),
+          "average_score": avg_score,
+          "total_balls_lost": total_balls_lost,
+          "rule_effectiveness": rule_stats,
+          "failure_examples": failures[:5],  # Top 5 failures
+      }
+
+      # Track best score
+      best_score = state.get("best_score", 0)
+      best_rules = state.get("best_rules", "")
+      current_rules = state.get("current_rules", "")
+
+      if avg_score > best_score:
+          best_score = avg_score
+          best_rules = current_rules
+          print(f"New best score: {best_score:.0f}")
+
+      # Store analysis history
+      all_analyses = state.get("all_analyses", [])
+      all_analyses.append({
+          "iteration": state.get("iteration", 0),
+          "average_score": avg_score,
+          "analysis": analysis,
+      })
+
+      return {
+          "analysis": analysis,
+          "all_analyses": all_analyses,
+          "best_score": best_score,
+          "best_rules": best_rules,
+      }
+
+  # =========================================================================
+  # Node 4: LLM Improves Rules
+  # =========================================================================
+  - name: improve_rules
+    description: "Use LLM to analyze failures and generate improved rules"
+    action: llm.call
+    config:
+      provider: "ollama"
+      model: "llama3.2:3b"
+      messages:
+        - role: system
+          content: |
+            You are an expert Prolog programmer improving AI rules for playing Atari Video Pinball.
+
+            VIDEO PINBALL PHYSICS:
+            - Screen is 160x210 pixels
+            - Ball falls with gravity (positive Y velocity = moving down)
+            - Left flipper zone: x=20-60, y=180-200
+            - Right flipper zone: x=100-140, y=180-200
+            - Flipper takes ~3 frames to activate
+            - Ball is lost if it passes y=200
+
+            YOUR TASK:
+            1. Analyze the performance data and failure patterns
+            2. Identify WHY balls are being lost (timing? wrong flipper? no action?)
+            3. Generate IMPROVED Prolog rules
+
+            OUTPUT FORMAT:
+            Return ONLY valid Prolog code. Start with a comment explaining your changes.
+            Keep the same predicate names (optimal_action/1, ball_approaching_flipper/1, etc.)
+
+        - role: user
+          content: |
+            CURRENT RULES:
+            ```prolog
+            {{ state.current_rules }}
+            ```
+
+            PERFORMANCE ANALYSIS:
+            - Games analyzed: {{ state.analysis.games_analyzed }}
+            - Average score: {{ state.analysis.average_score }}
+            - Balls lost: {{ state.analysis.total_balls_lost }}
+
+            RULE EFFECTIVENESS:
+            {% for rule, stats in state.analysis.rule_effectiveness.items() %}
+            - {{ rule }}: fired {{ stats.count }} times, success_rate={{ stats.success_rate }}
+            {% endfor %}
+
+            FAILURE EXAMPLES (balls lost):
+            {% for fail in state.analysis.failure_examples %}
+            - Rule={{ fail.rule }}, ball_y={{ fail.ball_y }}, ball_vy={{ fail.ball_vy }}, action={{ fail.action }}
+            {% endfor %}
+
+            Generate improved Prolog rules that will:
+            1. Reduce balls lost
+            2. Improve timing for fast balls
+            3. Better detect when to flip
+
+    output: improved_rules
+
+  # =========================================================================
+  # Node 5: Validate New Rules
+  # =========================================================================
+  - name: validate_rules
+    description: "Check if LLM-generated rules are valid Prolog"
+    run: |
+      improved = state.get("improved_rules", "")
+
+      # Basic validation
+      valid = True
+      errors = []
+
+      # Check for required predicates
+      required = ["optimal_action"]
+      for pred in required:
+          if pred not in improved:
+              valid = False
+              errors.append(f"Missing required predicate: {pred}")
+
+      # Check for obvious syntax errors
+      if improved.count("(") != improved.count(")"):
+          valid = False
+          errors.append("Mismatched parentheses")
+
+      if ":-" not in improved and "." not in improved:
+          valid = False
+          errors.append("No Prolog clauses found")
+
+      # Extract just the Prolog code if wrapped in markdown
+      if "```prolog" in improved:
+          start = improved.find("```prolog") + 9
+          end = improved.find("```", start)
+          if end > start:
+              improved = improved[start:end].strip()
+
+      if valid:
+          print("Rules validated successfully")
+      else:
+          print(f"Rule validation failed: {errors}")
+
+      return {
+          "rules_valid": valid,
+          "improved_rules": improved if valid else state.get("current_rules", ""),
+          "validation_errors": errors,
+      }
+
+  # =========================================================================
+  # Node 6: Update Rules
+  # =========================================================================
+  - name: update_rules
+    description: "Save improved rules if valid"
+    run: |
+      valid = state.get("rules_valid", False)
+      improved = state.get("improved_rules", "")
+      iteration = state.get("iteration", 0) + 1
+
+      if valid and improved:
+          # Save new rules
+          rules_path = f"examples/pinball/pinball_rules_v{iteration}.pl"
+          with open(rules_path, "w") as f:
+              f.write(improved)
+
+          print(f"Saved improved rules to: {rules_path}")
+
+          return {
+              "current_rules": improved,
+              "current_rules_path": rules_path,
+              "iteration": iteration,
+          }
+      else:
+          # Keep old rules
+          print("Keeping previous rules due to validation failure")
+          return {
+              "iteration": iteration,
+          }
+
+  # =========================================================================
+  # Node 7: Check Termination
+  # =========================================================================
+  - name: check_termination
+    description: "Decide whether to continue learning"
+    run: |
+      iteration = state.get("iteration", 0)
+      max_iterations = state.get("max_iterations", 10)
+
+      should_continue = iteration < max_iterations
+
+      if not should_continue:
+          print(f"\n{'='*60}")
+          print("LEARNING COMPLETE")
+          print(f"{'='*60}")
+          print(f"Total iterations: {iteration}")
+          print(f"Best score achieved: {state.get('best_score', 0):.0f}")
+          print(f"\nBest rules saved in: examples/pinball/pinball_rules_best.pl")
+
+          # Save best rules
+          best_rules = state.get("best_rules", "")
+          if best_rules:
+              with open("examples/pinball/pinball_rules_best.pl", "w") as f:
+                  f.write(best_rules)
+
+      return {"should_continue": should_continue}
+
+  # =========================================================================
+  # Node 8: Summary Report
+  # =========================================================================
+  - name: summary_report
+    description: "Generate final learning summary"
+    run: |
+      all_analyses = state.get("all_analyses", [])
+
+      print("\n" + "="*60)
+      print("LEARNING PROGRESS SUMMARY")
+      print("="*60)
+
+      for entry in all_analyses:
+          print(f"Iteration {entry['iteration']}: avg_score = {entry['average_score']:.0f}")
+
+      print(f"\nFinal best score: {state.get('best_score', 0):.0f}")
+
+      return {
+          "learning_complete": True,
+          "final_best_score": state.get("best_score", 0),
+      }
+
+# =============================================================================
+# Edges - Learning Loop
+# =============================================================================
+edges:
+  # Start -> Initialize
+  - from: __start__
+    to: init_learning
+
+  # Main learning loop
+  - from: init_learning
+    to: play_games
+
+  - from: play_games
+    to: analyze_performance
+
+  - from: analyze_performance
+    to: improve_rules
+
+  - from: improve_rules
+    to: validate_rules
+
+  - from: validate_rules
+    to: update_rules
+
+  - from: update_rules
+    to: check_termination
+
+  # Continue or finish
+  - from: check_termination
+    to: play_games
+    condition: "state.get('should_continue', False)"
+
+  - from: check_termination
+    to: summary_report
+    condition: "not state.get('should_continue', True)"
+
+  - from: summary_report
+    to: __end__

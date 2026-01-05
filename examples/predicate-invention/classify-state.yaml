@@ -1,0 +1,271 @@
+# Neural Predicate Invention: State Classifier (Neurosymbolic)
+#
+# TRUE NEUROSYMBOLIC AGENT:
+#   - NEURAL: LLM classifies raw sensor data into predicates
+#   - SYMBOLIC: Prolog validates and infers additional facts
+#
+# Input: Sensor state
+# Output: Boolean predicate values + Prolog facts for reasoning
+#
+# Usage:
+#   ./tea run examples/predicate-invention/classify-state.yaml \
+#     --input '{"sensor_state": {...}}'
+
+name: classify-state-neurosymbolic
+
+state_schema:
+  sensor_state: dict          # Raw sensor readings
+  llm_classification: list    # LLM's predicate classification
+  predicate_values: dict      # Structured predicate values
+  prolog_facts: str           # Prolog facts for reasoning
+  inferred_facts: list        # Facts inferred by Prolog
+
+nodes:
+  # ==========================================================================
+  # Step 1: Compute features for LLM (Lua for fast numeric processing)
+  # ==========================================================================
+  - name: compute_features
+    language: lua
+    run: |
+      local sensor = state.sensor_state or {}
+      local gripper = sensor.gripper or {}
+      local objects = sensor.objects or {}
+
+      -- Compute distances from gripper to each object
+      local distances = {}
+      local gx = gripper.position and gripper.position[1] or 0
+      local gy = gripper.position and gripper.position[2] or 0
+      local gz = gripper.position and gripper.position[3] or 0
+
+      for _, obj in ipairs(objects) do
+        if obj.position then
+          local dx = gx - obj.position[1]
+          local dy = gy - obj.position[2]
+          local dz = gz - obj.position[3]
+          local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+          distances[obj.id] = string.format("%.4f", dist)
+        end
+      end
+
+      return {
+        computed_distances = distances,
+        gripper_aperture = gripper.aperture or 0,
+        gripper_force = gripper.force or 0
+      }
+
+  # ==========================================================================
+  # Step 2: NEURAL LEVEL - LLM classifies sensor state into predicates
+  # ==========================================================================
+  - name: neural_classify
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "gemma3:4b"
+      messages:
+        - role: system
+          content: |
+            You are a robot state classifier. Given sensor readings, determine which predicates are TRUE.
+
+            PREDICATE DEFINITIONS:
+            - empty_hand: Gripper is open and not holding anything
+              TRUE when: aperture > 0.05 AND force < 0.1
+              FALSE when: aperture <= 0.05 OR force >= 0.1
+
+            - holding(X): Gripper is grasping object X
+              TRUE when: aperture < 0.05 AND force > 0.5 AND object X is at gripper position (distance < 0.05)
+              FALSE otherwise
+
+            - reachable(X): Object X is within reach
+              TRUE when: distance from gripper to object X < 0.15 meters
+              FALSE when: distance >= 0.15 meters
+
+            REASONING RULES:
+            - You cannot have both empty_hand AND holding(X) - they are mutually exclusive
+            - If holding something, empty_hand MUST be false
+            - Check each object for reachable status independently
+
+            OUTPUT FORMAT:
+            Return a JSON object with this exact structure:
+            {
+              "classification": ["predicate1", "predicate2(arg)", ...],
+              "reasoning": "brief explanation of your classification"
+            }
+
+            IMPORTANT: Output ONLY valid JSON, no markdown formatting.
+        - role: user
+          content: |
+            Gripper position: {{ state.sensor_state.gripper.position | tojson }}
+            Gripper aperture: {{ state.gripper_aperture }}
+            Gripper force: {{ state.gripper_force }}
+
+            Objects and distances:
+            {% for obj in state.sensor_state.objects %}
+            - {{ obj.id }} ({{ obj.type | default("unknown") }}): distance={{ state.computed_distances[obj.id] }}m, size={{ obj.size }}
+            {% endfor %}
+
+            What predicates are TRUE for this state?
+    output: llm_response
+
+  # ==========================================================================
+  # Step 3: Parse LLM classification
+  # ==========================================================================
+  - name: parse_classification
+    run: |
+      import json
+      import re
+
+      response = state.get("llm_response", {})
+      content = response.get("content", "{}")
+
+      # Clean markdown if present
+      if isinstance(content, str):
+          content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
+          content = re.sub(r'^```\s*$', '', content, flags=re.MULTILINE)
+          content = content.strip()
+
+          try:
+              parsed = json.loads(content)
+              classification = parsed.get("classification", [])
+              reasoning = parsed.get("reasoning", "")
+          except:
+              # Try to extract array
+              match = re.search(r'\[.*?\]', content, re.DOTALL)
+              if match:
+                  try:
+                      classification = json.loads(match.group())
+                      reasoning = "Extracted from partial response"
+                  except:
+                      classification = []
+                      reasoning = "Failed to parse"
+              else:
+                  classification = []
+                  reasoning = "Failed to parse"
+      else:
+          classification = []
+          reasoning = "No response"
+
+      # Structure the predicates
+      predicate_values = {
+          "empty_hand": "empty_hand" in classification,
+          "holding": None,
+          "reachable": []
+      }
+
+      for pred in classification:
+          if pred.startswith("holding("):
+              obj = pred[8:-1]  # Extract object from holding(X)
+              predicate_values["holding"] = obj
+          elif pred.startswith("reachable("):
+              obj = pred[10:-1]  # Extract object from reachable(X)
+              predicate_values["reachable"].append(obj)
+
+      return {
+          "llm_classification": classification,
+          "predicate_values": predicate_values,
+          "classification_reasoning": reasoning
+      }
+
+  # ==========================================================================
+  # Step 4: SYMBOLIC LEVEL - Prolog validates and infers additional facts
+  # ==========================================================================
+  - name: symbolic_validate
+    language: prolog
+    run: |
+      % Get the classified predicates from state
+      state(llm_classification, ClassList),
+
+      % Convert string predicates to terms for reasoning
+      maplist(term_string, PredTerms, ClassList),
+
+      % Check for mutual exclusion violation
+      (   (member(empty_hand, PredTerms), member(holding(_), PredTerms))
+      ->  Validation = "WARNING: Contradiction - both empty_hand and holding detected"
+      ;   Validation = "Valid: No contradictions detected"
+      ),
+
+      % Infer additional facts based on state
+      findall(Fact, (
+          (member(empty_hand, PredTerms), Fact = ready_to_grasp) ;
+          (member(holding(Obj), PredTerms), atom_concat('can_release_', Obj, Fact)) ;
+          (member(reachable(Obj), PredTerms), atom_concat('can_pick_', Obj, Fact))
+      ), InferredList),
+
+      % Remove duplicates
+      sort(InferredList, UniqueInferred),
+
+      % Convert to strings for output
+      maplist(term_string, UniqueInferred, InferredStrings),
+
+      return(inferred_facts, InferredStrings),
+      return(validation, Validation).
+
+  # ==========================================================================
+  # Step 5: Generate Prolog facts for downstream reasoning
+  # ==========================================================================
+  - name: generate_facts
+    run: |
+      preds = state.get("predicate_values", {})
+      sensor = state.get("sensor_state", {})
+      inferred = state.get("inferred_facts", [])
+      reasoning = state.get("classification_reasoning", "")
+
+      facts = []
+      facts.append("% === State classified by LLM ===")
+
+      # Empty hand predicate
+      if preds.get("empty_hand"):
+          facts.append("empty_hand.")
+
+      # Holding predicate
+      if preds.get("holding"):
+          facts.append(f"holding({preds['holding']}).")
+
+      # Reachable predicates
+      for obj_id in preds.get("reachable", []):
+          facts.append(f"reachable({obj_id}).")
+
+      # Object facts
+      facts.append("")
+      facts.append("% === Object knowledge ===")
+      for obj in sensor.get("objects", []):
+          facts.append(f"object({obj['id']}, {obj.get('type', 'unknown')}).")
+          facts.append(f"size({obj['id']}, {obj.get('size', 0)}).")
+
+      # Inferred facts
+      if inferred:
+          facts.append("")
+          facts.append("% === Inferred by Prolog ===")
+          for fact in inferred:
+              facts.append(f"{fact}.")
+
+      prolog_facts = "\n".join(facts)
+
+      summary_parts = []
+      if preds.get("empty_hand"):
+          summary_parts.append("empty_hand")
+      if preds.get("holding"):
+          summary_parts.append(f"holding({preds['holding']})")
+      for obj in preds.get("reachable", []):
+          summary_parts.append(f"reachable({obj})")
+
+      return {
+          "prolog_facts": prolog_facts,
+          "summary": f"Classified: {', '.join(summary_parts) or 'none'}",
+          "neurosymbolic": True,
+          "neural_component": "LLM semantic classification",
+          "symbolic_component": "Prolog validation and inference"
+      }
+
+edges:
+  - from: __start__
+    to: compute_features
+  - from: compute_features
+    to: neural_classify
+  - from: neural_classify
+    to: parse_classification
+  - from: parse_classification
+    to: symbolic_validate
+  - from: symbolic_validate
+    to: generate_facts
+  - from: generate_facts
+    to: __end__

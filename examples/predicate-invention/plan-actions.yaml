@@ -1,0 +1,194 @@
+# Neural Predicate Invention: Planning Agent (Neurosymbolic)
+#
+# TRUE NEUROSYMBOLIC AGENT:
+#   - NEURAL: LLM classifies sensor state into predicates
+#   - SYMBOLIC: Prolog STRIPS planner finds action sequence
+#
+# Input: Current sensor state + goal predicate
+# Output: Action plan to achieve the goal
+#
+# Usage:
+#   ./tea run examples/predicate-invention/plan-actions.yaml \
+#     --input '{"sensor_state": {...}, "goal": "holding(cup)"}'
+
+name: plan-actions-neurosymbolic
+
+state_schema:
+  sensor_state: dict      # Current sensor readings
+  goal: str               # Goal predicate (e.g., "holding(cup)")
+  current_predicates: list  # Classified predicates (from LLM)
+  plan: list              # Output: action sequence
+  explanation: str        # Output: plan explanation
+
+nodes:
+  # ==========================================================================
+  # NEURAL LEVEL: LLM classifies sensor data into symbolic predicates
+  # ==========================================================================
+  - name: neural_classify
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "gemma3:4b"
+      messages:
+        - role: system
+          content: |
+            You are a predicate classifier for robot state.
+
+            Given sensor readings, classify into these predicates:
+            - empty_hand: TRUE if gripper.aperture > 0.05 AND gripper.force < 0.1
+            - holding(X): TRUE if gripper.aperture < 0.05 AND gripper.force > 0.5
+            - reachable(X): TRUE if distance from gripper to object X < 0.15 meters
+
+            Calculate distances using: sqrt((gx-ox)^2 + (gy-oy)^2 + (gz-oz)^2)
+
+            Output a JSON array of predicate strings that are TRUE.
+            Example: ["empty_hand", "reachable(cup)"]
+
+            Output ONLY the JSON array, nothing else.
+        - role: user
+          content: |
+            Gripper position: {{ state.sensor_state.gripper.position | tojson }}
+            Gripper aperture: {{ state.sensor_state.gripper.aperture }}
+            Gripper force: {{ state.sensor_state.gripper.force }}
+
+            Objects:
+            {% for obj in state.sensor_state.objects %}
+            - {{ obj.id }}: position={{ obj.position | tojson }}, size={{ obj.size }}
+            {% endfor %}
+
+            Which predicates are TRUE?
+    output: llm_response
+
+  # Parse LLM response to extract predicates
+  - name: parse_predicates
+    run: |
+      import json
+      import re
+
+      response = state.get("llm_response", {})
+      content = response.get("content", "[]")
+
+      # Clean up response
+      if isinstance(content, str):
+          # Remove markdown
+          content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
+          content = re.sub(r'^```\s*$', '', content, flags=re.MULTILINE)
+          content = content.strip()
+
+          try:
+              predicates = json.loads(content)
+              if not isinstance(predicates, list):
+                  predicates = []
+          except:
+              # Try to extract array from response
+              match = re.search(r'\[.*?\]', content, re.DOTALL)
+              if match:
+                  try:
+                      predicates = json.loads(match.group())
+                  except:
+                      predicates = []
+              else:
+                  predicates = []
+      else:
+          predicates = []
+
+      return {"current_predicates": predicates}
+
+  # ==========================================================================
+  # SYMBOLIC LEVEL: Prolog STRIPS planner finds action sequence
+  # ==========================================================================
+  - name: symbolic_plan
+    language: prolog
+    run: |
+      % === STRIPS OPERATORS (discovered from training) ===
+      operator(pick(X), [empty_hand, reachable(X)], [holding(X)], [empty_hand]).
+      operator(release, [holding(_)], [empty_hand], [holding(_)]).
+      operator(move_to(X), [], [reachable(X)], []).
+
+      % === PLANNING HELPERS ===
+      preconditions_met([], _).
+      preconditions_met([P|Ps], State) :-
+          member(P, State),
+          preconditions_met(Ps, State).
+
+      % === SIMPLE GOAL-DIRECTED PLANNER ===
+      % Case 1: Goal already satisfied
+      find_plan(State, Goal, []) :-
+          member(Goal, State), !.
+
+      % Case 2: Can achieve goal in one step
+      find_plan(State, Goal, [Action]) :-
+          operator(Action, Pre, Add, _),
+          member(Goal, Add),
+          preconditions_met(Pre, State), !.
+
+      % Case 3: Need to move first (for holding goals)
+      find_plan(State, holding(Obj), [move_to(Obj), pick(Obj)]) :-
+          member(empty_hand, State),
+          \+ member(reachable(Obj), State), !.
+
+      % Case 4: Need to release first (hand occupied)
+      find_plan(State, holding(Obj), [release, move_to(Obj), pick(Obj)]) :-
+          member(holding(_), State), !.
+
+      % Case 5: Release goal
+      find_plan(State, empty_hand, [release]) :-
+          member(holding(_), State), !.
+
+      % === MAIN QUERY ===
+      state(current_predicates, PredStrings),
+      state(goal, GoalStr),
+
+      % Convert string inputs to Prolog terms
+      maplist(term_string, PredTerms, PredStrings),
+      term_string(GoalTerm, GoalStr),
+
+      % Find plan using symbolic reasoning
+      (find_plan(PredTerms, GoalTerm, Plan) ->
+        (length(Plan, Len),
+         format(atom(Explanation), "Prolog planner found ~w-step plan", [Len]))
+      ;
+        (Plan = [], Explanation = "No plan found by Prolog planner")
+      ),
+
+      % Convert plan terms back to strings for output
+      maplist(term_string, Plan, PlanStrings),
+
+      return(plan, PlanStrings),
+      return(explanation, Explanation).
+
+  # ==========================================================================
+  # OUTPUT: Format results
+  # ==========================================================================
+  - name: format_output
+    run: |
+      plan = state.get("plan", [])
+      goal = state.get("goal", "")
+      predicates = state.get("current_predicates", [])
+      explanation = state.get("explanation", "")
+
+      if plan:
+          plan_str = " -> ".join(plan)
+          answer = f"Goal: {goal}\nCurrent: {predicates}\nPlan: {plan_str}\n{explanation}"
+          success = True
+      else:
+          answer = f"Goal: {goal}\nCurrent: {predicates}\nNo plan found.\n{explanation}"
+          success = False
+
+      return {
+          "answer": answer,
+          "success": success,
+          "neurosymbolic": True
+      }
+
+edges:
+  - from: __start__
+    to: neural_classify
+  - from: neural_classify
+    to: parse_predicates
+  - from: parse_predicates
+    to: symbolic_plan
+  - from: symbolic_plan
+    to: format_output
+  - from: format_output
+    to: __end__

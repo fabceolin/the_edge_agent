@@ -1,4 +1,5 @@
 # Example: Extraction with Retry Loop (TEA-YAML-005)
+# CLI: python (uses Python syntax in run blocks)
 #
 # This example demonstrates the retry.loop action for self-correcting
 # extraction workflows. When validation fails, the agent automatically
@@ -76,6 +77,7 @@ nodes:
 
   # Step 2: Parse the JSON response
   - name: parse_extraction
+    language: python
     run: |
       import json
       extraction = state.get("extraction", {})
@@ -138,6 +140,7 @@ nodes:
 
   # Step 5: Parse the corrected extraction
   - name: parse_correction
+    language: python
     run: |
       import json
       correction = state.get("correction", {})
@@ -153,6 +156,7 @@ nodes:
 
   # Step 6: Handle successful validation
   - name: process_success
+    language: python
     run: |
       return {
           "status": "success",
@@ -163,6 +167,7 @@ nodes:
 
   # Step 7: Handle max retries exceeded
   - name: handle_failure
+    language: python
     run: |
       return {
           "status": "failed",

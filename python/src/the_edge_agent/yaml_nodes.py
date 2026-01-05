@@ -474,12 +474,15 @@ class NodeFactory:
         """
         Get or create the Prolog runtime.
 
-        TEA-PROLOG: Prolog uses thread-local predicates (state/2, return_value/2)
-        for parallel branch isolation rather than separate engines. This is because
-        SWI-Prolog engine creation is heavy (~50-100ms) compared to LuaJIT (~1-5ms).
+        TEA-PROLOG-006: PrologRuntime uses a global lock + attach/detach_engine
+        to serialize all janus-swi access. This allows safe execution from any
+        thread, though Prolog operations run sequentially (not in parallel).
+
+        Future: TEA-PROLOG-007 will implement process-based parallelism for
+        true parallel Prolog execution.
 
         Returns:
-            PrologRuntime: Shared runtime with thread-local state isolation
+            PrologRuntime: Shared runtime with thread-safe access
         """
         from .prolog_runtime import (
             PrologRuntime,
@@ -491,7 +494,7 @@ class NodeFactory:
             raise ImportError(_get_install_instructions())
 
         # Lazy initialize the shared Prolog runtime
-        # Thread-local predicates handle isolation for parallel branches
+        # Global lock in PrologRuntime handles thread safety
         if self._prolog_runtime is None:
             self._prolog_runtime = PrologRuntime(
                 timeout=self._engine._prolog_timeout,

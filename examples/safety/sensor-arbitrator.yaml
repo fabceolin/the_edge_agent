@@ -1,0 +1,253 @@
+# Sensor Arbitrator Agent
+# Resolves conflicts between multiple sensor explanations
+name: sensor-arbitrator
+
+state_schema:
+  camera_explained: object
+  lidar_explained: object
+  radar_explained: object
+  weather: str
+  driving_context: str
+  arbitration_result: object
+
+nodes:
+  - name: check_consensus
+    run: |
+      def sensors_agree(d1, d2):
+          """Check if two detections agree on label and distance."""
+          if not d1 or not d2:
+              return False
+          label1 = d1.get("label", "")
+          label2 = d2.get("label", "")
+          if label1 != label2:
+              return False
+          dist1 = d1.get("distance", 0) or 0
+          dist2 = d2.get("distance", 0) or 0
+          return abs(dist1 - dist2) < 5  # Within 5 meters
+
+      cam_exp = state.get("camera_explained", {})
+      lid_exp = state.get("lidar_explained", {})
+      rad_exp = state.get("radar_explained", {})
+
+      cam_det = cam_exp.get("detection", {})
+      lid_det = lid_exp.get("detection", {})
+      rad_det = rad_exp.get("detection", {})
+
+      cam_lid = sensors_agree(cam_det, lid_det)
+      lid_rad = sensors_agree(lid_det, rad_det)
+      cam_rad = sensors_agree(cam_det, rad_det)
+
+      if cam_lid and lid_rad:
+          consensus = "full"
+      elif cam_lid or lid_rad or cam_rad:
+          consensus = "partial"
+      else:
+          consensus = "none"
+
+      return {
+          "consensus_level": consensus,
+          "agreements": {
+              "cam_lid": cam_lid,
+              "lid_rad": lid_rad,
+              "cam_rad": cam_rad
+          }
+      }
+
+  - name: evaluate_explanations
+    run: |
+      weather = state.get("weather", "clear")
+      context = state.get("driving_context", "urban")
+
+      # Sensor priority tables
+      priorities = {
+          ("lidar", "highway", "clear"): 0.95,
+          ("camera", "highway", "clear"): 0.85,
+          ("radar", "highway", "clear"): 0.80,
+          ("camera", "urban", "clear"): 0.90,
+          ("lidar", "urban", "clear"): 0.88,
+          ("radar", "urban", "clear"): 0.70,
+          ("lidar", "parking", "clear"): 0.95,
+          ("camera", "parking", "clear"): 0.85,
+          ("radar", "parking", "clear"): 0.60,
+          # Adverse weather
+          ("lidar", None, "fog"): 0.50,
+          ("camera", None, "fog"): 0.40,
+          ("radar", None, "fog"): 0.90,
+          ("lidar", None, "rain"): 0.75,
+          ("camera", None, "rain"): 0.60,
+          ("radar", None, "rain"): 0.88,
+          ("lidar", None, "night"): 0.95,
+          ("camera", None, "night"): 0.50,
+          ("radar", None, "night"): 0.90,
+      }
+
+      def get_priority(sensor, ctx, wthr):
+          # Try specific match first
+          key = (sensor, ctx, wthr)
+          if key in priorities:
+              return priorities[key]
+          # Try weather-only match
+          key = (sensor, None, wthr)
+          if key in priorities:
+              return priorities[key]
+          return 0.5
+
+      def evidence_strength(explained):
+          es = explained.get("evidence_strength", {})
+          physical = es.get("physical", 0)
+          total = es.get("total", 1)
+          return physical / total if total > 0 else 0
+
+      cam_exp = state.get("camera_explained", {})
+      lid_exp = state.get("lidar_explained", {})
+      rad_exp = state.get("radar_explained", {})
+
+      cam_priority = get_priority("camera", context, weather)
+      lid_priority = get_priority("lidar", context, weather)
+      rad_priority = get_priority("radar", context, weather)
+
+      cam_evidence = evidence_strength(cam_exp)
+      lid_evidence = evidence_strength(lid_exp)
+      rad_evidence = evidence_strength(rad_exp)
+
+      cam_conf = cam_exp.get("confidence", 0)
+      lid_conf = lid_exp.get("confidence", 0)
+      rad_conf = rad_exp.get("confidence", 0)
+
+      cam_score = cam_priority * cam_evidence * cam_conf
+      lid_score = lid_priority * lid_evidence * lid_conf
+      rad_score = rad_priority * rad_evidence * rad_conf
+
+      scores = {"camera": cam_score, "lidar": lid_score, "radar": rad_score}
+      max_score = max(scores.values())
+      winner = max(scores, key=scores.get)
+
+      return {
+          "scores": scores,
+          "preliminary_winner": winner,
+          "max_score": max_score
+      }
+
+  - name: safety_check
+    run: |
+      def safety_override(detection):
+          """Check if detection requires safety override."""
+          if not detection:
+              return False
+          label = detection.get("label", "")
+          distance = detection.get("distance", 999)
+          danger_labels = ["pedestrian", "cyclist", "vehicle", "obstacle", "unknown_moving"]
+          return label in danger_labels and distance < 30
+
+      cam_exp = state.get("camera_explained", {})
+      lid_exp = state.get("lidar_explained", {})
+      rad_exp = state.get("radar_explained", {})
+      prelim_winner = state.get("preliminary_winner", "lidar")
+
+      cam_det = cam_exp.get("detection", {})
+      lid_det = lid_exp.get("detection", {})
+      rad_det = rad_exp.get("detection", {})
+
+      if safety_override(lid_det):
+          override = True
+          final_winner = "lidar"
+          reason = "LiDAR detected close obstacle - safety override"
+      elif safety_override(rad_det):
+          override = True
+          final_winner = "radar"
+          reason = "Radar detected close moving object - safety override"
+      elif safety_override(cam_det):
+          override = True
+          final_winner = "camera"
+          reason = "Camera detected close obstacle - safety override"
+      else:
+          override = False
+          final_winner = prelim_winner
+          reason = "No safety override needed"
+
+      return {
+          "safety_override": override,
+          "final_winner": final_winner,
+          "override_reason": reason
+      }
+
+  - name: build_result
+    run: |
+      consensus = state.get("consensus_level", "none")
+      agreements = state.get("agreements", {})
+      scores = state.get("scores", {})
+      winner = state.get("final_winner", "unknown")
+      safety_override = state.get("safety_override", False)
+      override_reason = state.get("override_reason", "")
+      max_score = state.get("max_score", 0)
+
+      winner_key = f"{winner}_explained"
+      winner_explained = state.get(winner_key, {})
+      final_detection = winner_explained.get("detection", {})
+
+      reasoning_chain = []
+
+      reasoning_chain.append({
+          "step": 1,
+          "action": "consensus_check",
+          "result": consensus,
+          "details": f"Sensor agreement level: {consensus}"
+      })
+
+      score_details = ", ".join([f"{k}={v:.3f}" for k, v in scores.items()])
+      reasoning_chain.append({
+          "step": 2,
+          "action": "score_evaluation",
+          "result": f"winner={winner}",
+          "details": f"Scores: {score_details}"
+      })
+
+      reasoning_chain.append({
+          "step": 3,
+          "action": "safety_check",
+          "result": "override" if safety_override else "no_override",
+          "details": override_reason
+      })
+
+      reasoning_chain.append({
+          "step": 4,
+          "action": "final_decision",
+          "result": winner,
+          "details": winner_explained.get("explanation", "No explanation available")
+      })
+
+      if consensus == "full" and max_score > 0.7:
+          confidence_level = "high"
+          recommended_action = "proceed_normal"
+      elif consensus == "partial" and max_score > 0.5:
+          confidence_level = "medium"
+          recommended_action = "proceed_cautious"
+      elif safety_override:
+          confidence_level = "safety_critical"
+          recommended_action = "emergency_response"
+      else:
+          confidence_level = "low"
+          recommended_action = "slow_and_verify"
+
+      result = {
+          "consensus": consensus == "full",
+          "winning_sensor": winner,
+          "final_detection": final_detection,
+          "reasoning_chain": reasoning_chain,
+          "confidence_level": confidence_level,
+          "recommended_action": recommended_action
+      }
+
+      return {"arbitration_result": result}
+
+edges:
+  - from: __start__
+    to: check_consensus
+  - from: check_consensus
+    to: evaluate_explanations
+  - from: evaluate_explanations
+    to: safety_check
+  - from: safety_check
+    to: build_result
+  - from: build_result
+    to: __end__

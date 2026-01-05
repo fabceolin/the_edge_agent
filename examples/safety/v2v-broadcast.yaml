@@ -1,0 +1,165 @@
+# V2V Rule Broadcast Agent
+# Broadcasts learned rules to nearby vehicles
+name: v2v-rule-broadcast
+
+state_schema:
+  trigger_event: object
+  vehicle_id: str
+  location: object
+  timestamp: str
+  learned_rule: str
+  rule_metadata: object
+  broadcast_message: object
+  geofence: object
+
+nodes:
+  - name: classify_rule
+    language: prolog
+    run: |
+      tea_load_code("
+        broadcast_radius(safety_hazard, 2000).
+        broadcast_radius(traffic_condition, 1000).
+        broadcast_radius(road_condition, 500).
+        broadcast_radius(temporary_rule, 300).
+
+        rule_ttl(safety_hazard, 3600).
+        rule_ttl(traffic_condition, 1800).
+        rule_ttl(road_condition, 7200).
+        rule_ttl(temporary_rule, 900).
+
+        rule_priority(safety_hazard, 1).
+        rule_priority(traffic_condition, 2).
+        rule_priority(road_condition, 3).
+        rule_priority(temporary_rule, 4).
+      "),
+
+      state(trigger_event, Event),
+
+      get_dict(type, Event, EventTypeStr),
+      atom_string(EventType, EventTypeStr),
+
+      (EventType = obstacle_detected -> Category = safety_hazard
+      ; EventType = traffic_jam -> Category = traffic_condition
+      ; EventType = road_damage -> Category = road_condition
+      ; EventType = construction_zone -> Category = temporary_rule
+      ; EventType = weather_hazard -> Category = safety_hazard
+      ; Category = temporary_rule),
+
+      broadcast_radius(Category, Radius),
+      rule_ttl(Category, TTL),
+      rule_priority(Category, Priority),
+
+      return(category, Category),
+      return(radius_meters, Radius),
+      return(ttl_seconds, TTL),
+      return(priority, Priority).
+
+  - name: build_geofence
+    run: |
+      import math
+
+      location = state.get("location", {})
+      lat = location.get("lat", 0)
+      lon = location.get("lon", 0)
+      heading = location.get("heading", 0)
+      radius = state.get("radius_meters", 500)
+
+      lat_delta = radius / 111000
+      lon_delta = radius / (111000 * max(0.01, math.cos(math.radians(lat))))
+
+      geofence = {
+          "type": "circle",
+          "center": {"lat": lat, "lon": lon},
+          "radius_meters": radius,
+          "bounding_box": {
+              "north": lat + lat_delta,
+              "south": lat - lat_delta,
+              "east": lon + lon_delta,
+              "west": lon - lon_delta
+          },
+          "heading": heading,
+          "forward_extension": radius * 1.5
+      }
+
+      return {"geofence": geofence}
+
+  - name: build_message
+    run: |
+      from datetime import datetime, timedelta
+
+      vehicle_id = state.get("vehicle_id", "unknown")
+      timestamp = state.get("timestamp", datetime.utcnow().isoformat())
+      location = state.get("location", {})
+      learned_rule = state.get("learned_rule", "")
+      metadata = state.get("rule_metadata", {})
+      category = str(state.get("category", "temporary_rule"))
+      ttl = state.get("ttl_seconds", 900)
+      priority = state.get("priority", 4)
+      geofence = state.get("geofence", {})
+      trigger = state.get("trigger_event", {})
+
+      try:
+          ts = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+      except:
+          ts = datetime.utcnow()
+      expires = (ts + timedelta(seconds=ttl)).isoformat()
+
+      broadcast_message = {
+          "protocol": "V2V-RULE-SHARE-1.0",
+          "message_id": f"{vehicle_id}-{timestamp}",
+          "sender": {
+              "vehicle_id": vehicle_id,
+              "location": location,
+              "timestamp": timestamp
+          },
+          "rule": {
+              "category": category,
+              "priority": priority,
+              "prolog_code": learned_rule,
+              "human_description": metadata.get("description", ""),
+              "trigger_event": trigger
+          },
+          "validity": {
+              "geofence": geofence,
+              "expires": expires,
+              "ttl_seconds": ttl
+          },
+          "verification": {
+              "source_confidence": metadata.get("confidence", 0.8),
+              "human_verified": metadata.get("human_verified", False),
+              "corroborating_vehicles": []
+          }
+      }
+
+      return {"broadcast_message": broadcast_message}
+
+  - name: simulate_broadcast
+    run: |
+      message = state.get("broadcast_message", {})
+      geofence = state.get("geofence", {})
+
+      rule_code = message.get("rule", {}).get("prolog_code", "")
+      preview = rule_code[:100] + "..." if len(rule_code) > 100 else rule_code
+
+      broadcast_log = {
+          "status": "broadcast_simulated",
+          "message_id": message.get("message_id"),
+          "category": message.get("rule", {}).get("category"),
+          "geofence_radius": geofence.get("radius_meters"),
+          "ttl": message.get("validity", {}).get("ttl_seconds"),
+          "rule_preview": preview
+      }
+
+      return {"broadcast_log": broadcast_log}
+
+edges:
+  - from: __start__
+    to: classify_rule
+  - from: classify_rule
+    to: build_geofence
+  - from: build_geofence
+    to: build_message
+  - from: build_message
+    to: simulate_broadcast
+  - from: simulate_broadcast
+    to: __end__
