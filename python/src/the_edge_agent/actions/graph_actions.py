@@ -1,16 +1,28 @@
 """
-Graph Database Actions for YAMLEngine (TEA-BUILTIN-001.4).
+Graph Database Actions for YAMLEngine (TEA-BUILTIN-001.4, TEA-BUILTIN-001.8).
 
-This module provides graph database actions using CozoDB for entity-relationship
-storage with Datalog queries and optional HNSW vector search.
+This module provides graph database actions for multiple backends:
+- CozoDB: Datalog queries and HNSW vector search
+- Kuzu/Bighorn: Cypher queries and cloud storage (httpfs)
+- DuckPGQ: SQL/PGQ (ISO SQL:2023) queries and graph algorithms
 
-Actions:
+Core Actions (all backends):
     - graph.store_entity: Store an entity (node) with optional embedding
     - graph.store_relation: Store a relation (edge) between entities
-    - graph.query: Execute Datalog queries or pattern matches
+    - graph.query: Execute queries (cypher/datalog/pgq) or pattern matches
     - graph.retrieve_context: Retrieve relevant subgraph via HNSW or N-hop expansion
 
-Requires: pip install "pycozo[embedded]"
+DuckPGQ-specific Actions (TEA-BUILTIN-001.8):
+    - graph.create: Create property graph from Parquet vertex/edge tables
+    - graph.drop: Drop a property graph
+    - graph.algorithm: Run graph algorithms (PageRank, clustering, etc.)
+    - graph.shortest_path: Find shortest path between entities
+    - graph.list_graphs: List all created property graphs
+
+Requires:
+    - CozoDB: pip install "pycozo[embedded]"
+    - Kuzu: pip install kuzu
+    - DuckPGQ: pip install duckdb
 
 Example:
     >>> # Store entities
@@ -47,9 +59,10 @@ Example:
     >>> print(result['entities'])  # List of connected entities
 """
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 
 from ..memory import COZO_AVAILABLE, KUZU_AVAILABLE
+from ..memory.graph import DUCKPGQ_AVAILABLE
 
 
 def _graph_not_available_error() -> Dict[str, Any]:
@@ -57,7 +70,8 @@ def _graph_not_available_error() -> Dict[str, Any]:
     return {
         "success": False,
         "error": "No graph database installed. Install with: "
-        "pip install 'pycozo[embedded]' (CozoDB) or pip install kuzu (Kuzu/Bighorn)",
+        "pip install 'pycozo[embedded]' (CozoDB), pip install kuzu (Kuzu/Bighorn), "
+        "or pip install duckdb (DuckPGQ)",
         "error_type": "dependency_missing",
     }
 
@@ -73,7 +87,7 @@ def _graph_not_configured_error() -> Dict[str, Any]:
 
 def _is_graph_available() -> bool:
     """Check if any graph backend is available."""
-    return COZO_AVAILABLE or KUZU_AVAILABLE
+    return COZO_AVAILABLE or KUZU_AVAILABLE or DUCKPGQ_AVAILABLE
 
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
@@ -183,21 +197,23 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         state,
         cypher=None,
         datalog=None,
+        pgq=None,
         pattern=None,
         params=None,
         limit=100,
         timeout=None,
-        **kwargs
+        **kwargs,
     ):
         """
-        Execute a Cypher/Datalog query or pattern match.
+        Execute a Cypher/Datalog/SQL-PGQ query or pattern match.
 
         Args:
             state: Current state dictionary
             cypher: Cypher query string (for KuzuBackend/Bighorn)
             datalog: Datalog query string (for CozoBackend)
+            pgq: SQL/PGQ query string (for DuckPGQBackend)
             pattern: Simplified pattern dict (alternative to raw queries)
-            params: Query parameters (substituted into query)
+            params: Query parameters (substituted into query or Jinja2 template)
             limit: Maximum results to return (default: 100)
             timeout: Query timeout in seconds (not currently implemented)
 
@@ -206,8 +222,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             {"success": False, "error": str, "error_type": str} on failure
 
         Note:
-            Use 'cypher' for KuzuBackend and 'datalog' for CozoBackend.
-            The pattern parameter works with both backends.
+            Use 'cypher' for KuzuBackend, 'datalog' for CozoBackend,
+            'pgq' for DuckPGQBackend. The pattern parameter works with all backends.
+
+        Example PGQ query:
+            FROM GRAPH_TABLE (knowledge_graph
+              MATCH (a:entities)-[r:relations]->(b:entities)
+              COLUMNS (a.id AS source, r.type AS relation, b.id AS target)
+            )
+            ORDER BY source
+            LIMIT 10
         """
         if not _is_graph_available():
             return _graph_not_available_error()
@@ -215,14 +239,27 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
             return _graph_not_configured_error()
 
-        if not cypher and not datalog and not pattern:
+        if not cypher and not datalog and not pgq and not pattern:
             return {
                 "success": False,
-                "error": "One of cypher, datalog, or pattern is required",
+                "error": "One of cypher, datalog, pgq, or pattern is required",
                 "error_type": "validation_error",
             }
 
-        return engine._graph_backend.query(
+        # DuckPGQBackend uses 'pgq' parameter
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class == "DuckPGQBackend":
+            return backend.query(
+                pgq=pgq or cypher,  # Allow cypher as fallback for pgq
+                pattern=pattern,
+                params=params,
+                limit=int(limit) if limit else 100,
+                timeout=float(timeout) if timeout else None,
+            )
+
+        return backend.query(
             cypher=cypher,
             datalog=datalog,
             pattern=pattern,
@@ -685,7 +722,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         relation_type,
         on_create=None,
         on_match=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Conditional upsert of a relation with ON CREATE / ON MATCH semantics.
@@ -725,3 +762,331 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     registry["graph.merge_relation"] = graph_merge_relation
     registry["actions.graph_merge_relation"] = graph_merge_relation
+
+    # =========================================================================
+    # DUCKPGQ-SPECIFIC ACTIONS (TEA-BUILTIN-001.8)
+    # =========================================================================
+
+    def graph_create(state, name, vertex_tables, edge_tables, **kwargs):
+        """
+        Create a property graph from vertex and edge tables (DuckPGQ).
+
+        This action creates a SQL/PGQ property graph that can be queried
+        using the FROM GRAPH_TABLE syntax. Requires DuckPGQBackend.
+
+        Args:
+            state: Current state dictionary
+            name: Name of the property graph
+            vertex_tables: List of vertex table definitions:
+                [{"name": "entities", "source": "path/to/entities.parquet", "key": "id"}]
+            edge_tables: List of edge table definitions:
+                [{"name": "relations", "source": "path/to/relations.parquet",
+                  "source_key": "from_id", "destination_key": "to_id",
+                  "references": "entities"}]
+
+        Returns:
+            {"success": True, "graph": str}
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: setup_graph
+              uses: graph.create
+              with:
+                name: knowledge_graph
+                vertex_tables:
+                  - name: entities
+                    source: "s3://bucket/graph/entities.parquet"
+                    key: id
+                edge_tables:
+                  - name: relations
+                    source: "s3://bucket/graph/relations.parquet"
+                    source_key: from_id
+                    destination_key: to_id
+                    references: entities
+        """
+        if not DUCKPGQ_AVAILABLE:
+            return {
+                "success": False,
+                "error": "DuckPGQ not available. Install with: pip install duckdb",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "DuckPGQBackend":
+            return {
+                "success": False,
+                "error": f"graph.create requires DuckPGQBackend, but {backend_class} is configured. "
+                "Use YAMLEngine(graph_backend='duckpgq') to enable DuckPGQ.",
+                "error_type": "configuration_error",
+            }
+
+        if not name:
+            return {
+                "success": False,
+                "error": "name is required",
+                "error_type": "validation_error",
+            }
+
+        if not vertex_tables:
+            return {
+                "success": False,
+                "error": "vertex_tables is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.create_property_graph(
+            name=name,
+            vertex_tables=vertex_tables,
+            edge_tables=edge_tables or [],
+        )
+
+    registry["graph.create"] = graph_create
+    registry["actions.graph_create"] = graph_create
+
+    def graph_drop(state, name, **kwargs):
+        """
+        Drop a property graph (DuckPGQ).
+
+        Args:
+            state: Current state dictionary
+            name: Name of the property graph to drop
+
+        Returns:
+            {"success": True, "graph": str}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not DUCKPGQ_AVAILABLE:
+            return {
+                "success": False,
+                "error": "DuckPGQ not available. Install with: pip install duckdb",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "DuckPGQBackend":
+            return {
+                "success": False,
+                "error": f"graph.drop requires DuckPGQBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        if not name:
+            return {
+                "success": False,
+                "error": "name is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.drop_property_graph(name=name)
+
+    registry["graph.drop"] = graph_drop
+    registry["actions.graph_drop"] = graph_drop
+
+    def graph_algorithm(state, algorithm, graph, table, limit=100, **kwargs):
+        """
+        Run a graph algorithm (DuckPGQ).
+
+        Executes graph algorithms like PageRank, clustering coefficient,
+        and connected components on a property graph.
+
+        Args:
+            state: Current state dictionary
+            algorithm: Algorithm name:
+                - "pagerank": PageRank centrality
+                - "weakly_connected_component" or "wcc": Find clusters
+                - "local_clustering_coefficient" or "lcc": Node connectivity
+            graph: Property graph name
+            table: Vertex table name to run algorithm on
+            limit: Maximum results to return (default: 100)
+
+        Returns:
+            {"success": True, "results": list, "count": int, "algorithm": str}
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: compute_importance
+              uses: graph.algorithm
+              with:
+                algorithm: pagerank
+                graph: knowledge_graph
+                table: entities
+                limit: 100
+              output: important_entities
+        """
+        if not DUCKPGQ_AVAILABLE:
+            return {
+                "success": False,
+                "error": "DuckPGQ not available. Install with: pip install duckdb",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "DuckPGQBackend":
+            return {
+                "success": False,
+                "error": f"graph.algorithm requires DuckPGQBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        if not algorithm:
+            return {
+                "success": False,
+                "error": "algorithm is required",
+                "error_type": "validation_error",
+            }
+
+        if not graph:
+            return {
+                "success": False,
+                "error": "graph is required",
+                "error_type": "validation_error",
+            }
+
+        if not table:
+            return {
+                "success": False,
+                "error": "table is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.run_algorithm(
+            algorithm=algorithm,
+            graph=graph,
+            table=table,
+            limit=int(limit) if limit else 100,
+            **kwargs,
+        )
+
+    registry["graph.algorithm"] = graph_algorithm
+    registry["actions.graph_algorithm"] = graph_algorithm
+
+    def graph_shortest_path(
+        state,
+        graph,
+        from_id,
+        to_id,
+        edge_table="edges",
+        vertex_table="vertices",
+        max_hops=10,
+        **kwargs,
+    ):
+        """
+        Find shortest path between two entities (DuckPGQ).
+
+        Uses SQL/PGQ ANY SHORTEST path query to find the shortest
+        path between two entities in a property graph.
+
+        Args:
+            state: Current state dictionary
+            graph: Property graph name
+            from_id: Source entity ID
+            to_id: Target entity ID
+            edge_table: Edge table name/label (default: "edges")
+            vertex_table: Vertex table name/label (default: "vertices")
+            max_hops: Maximum path length (default: 10)
+
+        Returns:
+            {"success": True, "path": list, "hops": int}
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: find_path
+              uses: graph.shortest_path
+              with:
+                graph: knowledge_graph
+                from_id: "{{ state.source_entity }}"
+                to_id: "{{ state.target_entity }}"
+                edge_table: relations
+                vertex_table: entities
+                max_hops: 5
+              output: path_result
+        """
+        if not DUCKPGQ_AVAILABLE:
+            return {
+                "success": False,
+                "error": "DuckPGQ not available. Install with: pip install duckdb",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "DuckPGQBackend":
+            return {
+                "success": False,
+                "error": f"graph.shortest_path requires DuckPGQBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        if not graph or not from_id or not to_id:
+            return {
+                "success": False,
+                "error": "graph, from_id, and to_id are required",
+                "error_type": "validation_error",
+            }
+
+        return backend.shortest_path(
+            graph=graph,
+            from_id=str(from_id),
+            to_id=str(to_id),
+            edge_table=edge_table,
+            vertex_table=vertex_table,
+            max_hops=int(max_hops) if max_hops else 10,
+        )
+
+    registry["graph.shortest_path"] = graph_shortest_path
+    registry["actions.graph_shortest_path"] = graph_shortest_path
+
+    def graph_list_graphs(state, **kwargs):
+        """
+        List all created property graphs (DuckPGQ).
+
+        Args:
+            state: Current state dictionary
+
+        Returns:
+            {"success": True, "graphs": list}
+            or {"success": False, "error": str, "error_type": str} on failure
+        """
+        if not DUCKPGQ_AVAILABLE:
+            return {
+                "success": False,
+                "error": "DuckPGQ not available. Install with: pip install duckdb",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "DuckPGQBackend":
+            return {
+                "success": False,
+                "error": f"graph.list_graphs requires DuckPGQBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        return backend.list_property_graphs()
+
+    registry["graph.list_graphs"] = graph_list_graphs
+    registry["actions.graph_list_graphs"] = graph_list_graphs

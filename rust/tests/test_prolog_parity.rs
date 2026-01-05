@@ -305,3 +305,65 @@ fn test_parity_empty_collections() {
         Err(e) => panic!("Fixture should succeed: {}", e),
     }
 }
+
+// ============================================================================
+// TEA-RUST-041: Complex Dict Returns Parity Tests
+// ============================================================================
+
+#[test]
+fn test_parity_dict_returns() {
+    // Regression test for TEA-RUST-041: Complex Prolog dict returns
+    // SWI-Prolog's term_string/2 outputs tagged dicts like `_3862{...}`
+    // which must be properly parsed to JSON objects
+    let result = run_yaml_fixture("dict-returns");
+
+    match result {
+        Ok(value) => {
+            assert_eq!(value["success"], true, "Dict returns should succeed");
+
+            let final_state = &value["final_state"];
+
+            // Verify simple dict was properly parsed
+            let simple = &final_state["simple_dict"];
+            assert!(simple.is_object(), "simple_dict should be an object");
+            assert_eq!(simple["key"], "value");
+            assert_eq!(simple["number"], 42);
+            assert_eq!(simple["flag"], true);
+
+            // Verify nested dict was properly parsed
+            let nested = &final_state["nested_dict"];
+            assert!(nested.is_object(), "nested_dict should be an object");
+            assert!(nested["level1"].is_object(), "level1 should be an object");
+            assert!(
+                nested["level1"]["level2"].is_object(),
+                "level2 should be an object"
+            );
+            assert_eq!(nested["level1"]["level2"]["deep_value"], "found");
+            assert_eq!(nested["sibling"], "data");
+
+            // Verify list of dicts was properly parsed
+            let list = &final_state["list_of_dicts"];
+            assert!(list.is_array(), "list_of_dicts should be an array");
+            let arr = list.as_array().unwrap();
+            assert_eq!(arr.len(), 3);
+            assert!(arr[0].is_object(), "list items should be objects");
+            assert_eq!(arr[0]["id"], 1);
+            assert_eq!(arr[0]["name"], "first");
+
+            // Verify complex structure was properly parsed
+            let complex = &final_state["complex_structure"];
+            assert!(complex.is_object(), "complex_structure should be an object");
+            assert!(complex["items"].is_array(), "items should be an array");
+            assert!(complex["config"].is_object(), "config should be an object");
+            assert!(
+                complex["metadata"].is_object(),
+                "metadata should be an object"
+            );
+            assert!(
+                complex["metadata"]["tags"].is_array(),
+                "tags should be an array"
+            );
+        }
+        Err(e) => panic!("Dict returns fixture should succeed: {}", e),
+    }
+}

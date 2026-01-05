@@ -1,0 +1,158 @@
+# Sample Transition Dataset for Predicate Invention
+#
+# This file contains example transitions for training the effect discovery agent.
+# Each transition is a (before, action, after) tuple showing how sensor
+# readings change when an action is performed.
+#
+# Usage:
+#   ./tea run examples/predicate-invention/discover-effects.yaml \
+#     --input "$(cat examples/predicate-invention/sample-transitions.yaml | yq -o json)"
+
+transitions:
+  # === PICK ACTION EXAMPLES ===
+  # Pattern: aperture decreases, force increases, object moves to gripper
+
+  - action: "pick"
+    description: "Robot picks up a cup"
+    before:
+      gripper:
+        position: [0.5, 0.3, 0.1]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: cup
+          position: [0.5, 0.3, 0.0]
+          size: 0.06
+    after:
+      gripper:
+        position: [0.5, 0.3, 0.1]
+        aperture: 0.03
+        force: 1.2
+      objects:
+        - id: cup
+          position: [0.5, 0.3, 0.1]  # Now at gripper position
+          size: 0.06
+
+  - action: "pick"
+    description: "Robot picks up a bottle"
+    before:
+      gripper:
+        position: [0.2, 0.4, 0.15]
+        aperture: 0.10
+        force: 0.02
+      objects:
+        - id: bottle
+          position: [0.2, 0.4, 0.0]
+          size: 0.07
+    after:
+      gripper:
+        position: [0.2, 0.4, 0.15]
+        aperture: 0.04
+        force: 2.1
+      objects:
+        - id: bottle
+          position: [0.2, 0.4, 0.15]
+          size: 0.07
+
+  # === RELEASE ACTION EXAMPLES ===
+  # Pattern: aperture increases, force decreases, object drops
+
+  - action: "release"
+    description: "Robot releases cup onto table"
+    before:
+      gripper:
+        position: [0.8, 0.5, 0.2]
+        aperture: 0.03
+        force: 1.2
+      objects:
+        - id: cup
+          position: [0.8, 0.5, 0.2]
+          size: 0.06
+    after:
+      gripper:
+        position: [0.8, 0.5, 0.2]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: cup
+          position: [0.8, 0.5, 0.0]  # Dropped to table
+          size: 0.06
+
+  - action: "release"
+    description: "Robot releases bottle"
+    before:
+      gripper:
+        position: [0.6, 0.6, 0.25]
+        aperture: 0.04
+        force: 2.1
+      objects:
+        - id: bottle
+          position: [0.6, 0.6, 0.25]
+          size: 0.07
+    after:
+      gripper:
+        position: [0.6, 0.6, 0.25]
+        aperture: 0.10
+        force: 0.02
+      objects:
+        - id: bottle
+          position: [0.6, 0.6, 0.0]
+          size: 0.07
+
+  # === MOVE_TO ACTION EXAMPLES ===
+  # Pattern: gripper position changes, nothing else changes
+
+  - action: "move_to"
+    description: "Robot moves while holding cup"
+    before:
+      gripper:
+        position: [0.5, 0.3, 0.2]
+        aperture: 0.03
+        force: 1.2
+      objects:
+        - id: cup
+          position: [0.5, 0.3, 0.2]
+          size: 0.06
+    after:
+      gripper:
+        position: [0.8, 0.5, 0.2]  # Position changed
+        aperture: 0.03            # Same
+        force: 1.2                # Same
+      objects:
+        - id: cup
+          position: [0.8, 0.5, 0.2]  # Moves with gripper
+          size: 0.06
+
+  - action: "move_to"
+    description: "Robot moves with empty hand"
+    before:
+      gripper:
+        position: [0.0, 0.0, 0.3]
+        aperture: 0.08
+        force: 0.01
+      objects:
+        - id: plate
+          position: [0.5, 0.5, 0.0]
+          size: 0.20
+    after:
+      gripper:
+        position: [0.5, 0.5, 0.1]  # Moved to plate location
+        aperture: 0.08             # Same
+        force: 0.01                # Same
+      objects:
+        - id: plate
+          position: [0.5, 0.5, 0.0]  # Unchanged
+          size: 0.20
+
+# === EXPECTED DISCOVERIES ===
+# The effect discovery agent should find:
+#
+# Predicates:
+#   - empty_hand: aperture > 0.05 AND force < 0.1
+#   - holding(X): aperture < 0.05 AND force > 0.5 AND object X at gripper pos
+#   - reachable(X): distance(gripper, X) < 0.15
+#
+# Effects:
+#   - pick(X): preconditions=[empty_hand, reachable(X)], adds=[holding(X)], removes=[empty_hand]
+#   - release: preconditions=[holding(_)], adds=[empty_hand], removes=[holding(_)]
+#   - move_to(X): preconditions=[], adds=[reachable(X)], removes=[]

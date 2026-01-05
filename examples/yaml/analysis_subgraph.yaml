@@ -1,4 +1,5 @@
 # Analysis Subgraph
+# CLI: python (uses Python syntax in run blocks)
 # This subgraph is invoked by dynamic_parallel_subgraph_mode.yaml for each data source
 # It receives: data_source, config, source_index from the parent workflow
 
@@ -8,6 +9,7 @@ description: Analyze a single data source
 nodes:
   # Validate input and extract source info
   - name: validate_input
+    language: python
     run: |
       source = state.get("data_source", {})
       config = state.get("config", {})
@@ -27,6 +29,7 @@ nodes:
 
   # Simulate reading the data source
   - name: read_source
+    language: python
     run: |
       import random
       # Simulate reading data - in production would use file.read or http.get
@@ -43,6 +46,7 @@ nodes:
 
   # Perform analysis
   - name: analyze
+    language: python
     run: |
       row_count = state.get("row_count", 0)
       include_stats = state.get("include_stats", False)
@@ -62,6 +66,7 @@ nodes:
 
   # Generate summary
   - name: summarize
+    language: python
     run: |
       source_name = state.get("source_name", "unknown")
       analysis = state.get("analysis", {})

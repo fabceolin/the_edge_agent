@@ -1,4 +1,5 @@
 # Dynamic Parallel Fan-Out Example: Steps Mode
+# CLI: python (uses Python syntax in run blocks)
 # This example demonstrates processing documents through multiple sequential steps per item
 # Each document goes through extraction and summarization
 
@@ -8,6 +9,7 @@ description: Process multiple documents with extraction and summarization steps
 nodes:
   # Initialize documents to process
   - name: setup
+    language: python
     run: |
       return {
           "documents": [
@@ -39,6 +41,7 @@ nodes:
     steps:
       # Step 1: Extract key points (simulated - would use LLM in production)
       - name: extract_keywords
+        language: python
         run: |
           doc = state.get("doc", {})
           content = doc.get("content", "")
@@ -53,6 +56,7 @@ nodes:
 
       # Step 2: Calculate word count
       - name: calculate_stats
+        language: python
         run: |
           doc = state.get("doc", {})
           content = doc.get("content", "")
@@ -63,6 +67,7 @@ nodes:
 
       # Step 3: Generate a processing timestamp
       - name: add_metadata
+        language: python
         run: |
           import time
           return {
@@ -73,6 +78,7 @@ nodes:
 
   # Combine all processed documents
   - name: combine_results
+    language: python
     run: |
       processed = state.get("processed_documents", [])
 

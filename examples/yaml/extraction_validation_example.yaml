@@ -1,3 +1,4 @@
+# CLI: python (uses Python syntax in run blocks)
 # NOTE: This example uses Python scripting and is NOT compatible with the Rust runtime.
 # For cross-runtime compatibility, use language: lua or language: prolog.
 #

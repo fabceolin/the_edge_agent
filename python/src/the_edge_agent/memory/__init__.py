@@ -89,12 +89,15 @@ from .litestream import LitestreamBackend
 # Blob SQLite backend (TEA-BUILTIN-001.5)
 from .blob_sqlite import BlobSQLiteBackend
 
-# Graph backends (TEA-BUILTIN-001.4, 001.7)
+# Graph backends (TEA-BUILTIN-001.4, 001.7, 001.8)
 from .graph import (
     GraphBackend,
     COZO_AVAILABLE,
     KUZU_AVAILABLE,
     NEO4J_AVAILABLE,
+    DUCKPGQ_AVAILABLE,
+    _check_cozo_available,
+    _check_kuzu_available,
     _check_neo4j_available,
 )
 
@@ -124,9 +127,16 @@ except ImportError:
 
 # Conditionally import Neo4jBackend (TEA-BUILTIN-001.7)
 try:
-    from .graph import Neo4jBackend
+    from .graph import Neo4jBackend, Neo4jTransaction
 except ImportError:
     Neo4jBackend = None  # type: ignore
+    Neo4jTransaction = None  # type: ignore
+
+# Conditionally import DuckPGQBackend (TEA-BUILTIN-001.8)
+try:
+    from .graph import DuckPGQBackend
+except ImportError:
+    DuckPGQBackend = None  # type: ignore
 
 # Conditionally import lock implementations
 try:
@@ -263,12 +273,18 @@ __all__ = [
     "GraphBackend",
     "CozoBackend",
     "COZO_AVAILABLE",
+    "_check_cozo_available",
     "KuzuBackend",
     "BighornBackend",
     "KUZU_AVAILABLE",
+    "_check_kuzu_available",
     "Neo4jBackend",
+    "Neo4jTransaction",
     "NEO4J_AVAILABLE",
     "_check_neo4j_available",
+    # DuckPGQ backend (TEA-BUILTIN-001.8)
+    "DuckPGQBackend",
+    "DUCKPGQ_AVAILABLE",
     # Distributed locks (TEA-BUILTIN-001.5)
     "DistributedLock",
     "register_lock",

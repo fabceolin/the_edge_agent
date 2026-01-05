@@ -41,7 +41,9 @@ pytestmark = pytest.mark.skipif(not JANUS_AVAILABLE, reason="janus-swi not insta
 # Path to parity fixtures
 # tests/test_prolog_parity.py -> python/tests -> python -> the_edge_agent -> examples
 PARITY_DIR = Path(__file__).parent.parent.parent / "examples" / "prolog" / "parity"
-EXPECTED_DIR = Path(__file__).parent.parent.parent / "examples" / "prolog" / "parity-expected"
+EXPECTED_DIR = (
+    Path(__file__).parent.parent.parent / "examples" / "prolog" / "parity-expected"
+)
 
 
 def load_expected(fixture_name: str) -> Optional[Dict[str, Any]]:
@@ -188,13 +190,35 @@ class TestParallelExecutionParity:
     """P0: Parallel execution parity tests (AC-9, AC-10)."""
 
     def test_parallel_isolation(self):
-        """Verify thread-local state isolation in parallel branches."""
+        """Verify thread-local state isolation in parallel branches.
+
+        TEA-PROLOG-006: This test explicitly validates that Prolog nodes
+        execute without timeout in parallel branches. The bug manifested as
+        'Prolog timeout: execution exceeded 30 seconds' when running
+        parallel-isolation.yaml.
+        """
         yaml_path = PARITY_DIR / "parallel-isolation.yaml"
         if not yaml_path.exists():
             pytest.skip("Fixture not found")
 
-        result = run_yaml_agent(yaml_path)
-        assert result["success"] is True
+        # TEA-PROLOG-006: Explicitly catch PrologTimeoutError to validate fix
+        try:
+            result = run_yaml_agent(yaml_path)
+        except PrologTimeoutError as e:
+            pytest.fail(
+                f"TEA-PROLOG-006 regression: Prolog timeout in parallel branches. "
+                f"Error: {e}"
+            )
+
+        assert result["success"] is True, "Parallel Prolog execution should succeed"
+
+        # Validate fan-in received results from all 3 branches
+        final_state = result.get("final_state", {})
+        parallel_count = final_state.get("parallel_count")
+        if parallel_count is not None:
+            assert (
+                parallel_count == 3
+            ), f"Fan-in should receive 3 branch results, got {parallel_count}"
 
         expected = load_expected("parallel-isolation")
         assert expected is not None
@@ -280,15 +304,18 @@ class TestParityInfrastructure:
 
 
 # Parametrized test for all parity fixtures
-@pytest.mark.parametrize("fixture_name", [
-    "basic-state-access",
-    "type-coercion",
-    "clpfd-deterministic",
-    "clpfd-multiple-solutions",
-    "unicode-strings",
-    "nested-objects",
-    "empty-collections",
-])
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "basic-state-access",
+        "type-coercion",
+        "clpfd-deterministic",
+        "clpfd-multiple-solutions",
+        "unicode-strings",
+        "nested-objects",
+        "empty-collections",
+    ],
+)
 def test_parity_fixture_runs(fixture_name):
     """Verify each parity fixture runs without error (success tests only)."""
     yaml_path = PARITY_DIR / f"{fixture_name}.yaml"
@@ -299,10 +326,13 @@ def test_parity_fixture_runs(fixture_name):
     assert result["success"] is True, f"Fixture {fixture_name} should succeed"
 
 
-@pytest.mark.parametrize("fixture_name", [
-    "error-syntax",
-    "error-sandbox",
-])
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "error-syntax",
+        "error-sandbox",
+    ],
+)
 def test_parity_error_fixture_handles_errors(fixture_name):
     """Verify each error fixture handles errors gracefully.
 

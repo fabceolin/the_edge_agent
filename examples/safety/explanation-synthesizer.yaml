@@ -1,0 +1,231 @@
+# Explanation Synthesizer Agent
+# Combines arbitration, reasonableness, and traffic rules into unified decision
+name: explanation-synthesizer
+
+state_schema:
+  arbitration_result: object
+  reasonableness_check: object
+  traffic_rule_check: object
+  timestamp: str
+  vehicle_id: str
+  location: object
+  synthesized_explanation: object
+
+nodes:
+  - name: analyze_inputs
+    run: |
+      arb = state.get("arbitration_result", {})
+      reason = state.get("reasonableness_check", {})
+      traffic = state.get("traffic_rule_check", {})
+
+      analysis = {
+          "arbitration": {
+              "confidence": arb.get("confidence_level", "unknown"),
+              "action": arb.get("recommended_action", "unknown"),
+              "sensor": arb.get("winning_sensor", "unknown"),
+              "detection": arb.get("final_detection", {})
+          },
+          "reasonableness": {
+              "is_reasonable": reason.get("is_reasonable", True),
+              "explanation": reason.get("explanation", ""),
+              "action": reason.get("action", "PROCEED")
+          },
+          "traffic": {
+              "is_legal": traffic.get("is_legal", True),
+              "violation": traffic.get("violation", "none"),
+              "recommendation": traffic.get("recommendation", "")
+          }
+      }
+
+      conflicts = []
+
+      if (arb.get("recommended_action") == "proceed_normal" and
+          not reason.get("is_reasonable", True)):
+          conflicts.append({
+              "type": "sensor_vs_reasonableness",
+              "description": "Sensor fusion recommends proceed, but detection failed reasonableness check",
+              "resolution": "Trust reasonableness monitor (common sense override)"
+          })
+
+      if (arb.get("recommended_action") in ["proceed_normal", "proceed_cautious"] and
+          not traffic.get("is_legal", True)):
+          conflicts.append({
+              "type": "perception_vs_rules",
+              "description": f"Perception indicates clear path, but action violates: {traffic.get('violation')}",
+              "resolution": "Traffic rules take precedence"
+          })
+
+      return {
+          "input_analysis": analysis,
+          "detected_conflicts": conflicts
+      }
+
+  - name: resolve_conflicts
+    language: prolog
+    run: |
+      tea_load_code("
+        priority(safety_critical, 1).
+        priority(legal_violation, 2).
+        priority(reasonableness_concern, 3).
+        priority(normal_operation, 4).
+
+        resolve_conflict(safety_critical, _, safety_critical).
+        resolve_conflict(_, safety_critical, safety_critical).
+        resolve_conflict(legal_violation, reasonableness_concern, legal_violation).
+        resolve_conflict(reasonableness_concern, legal_violation, legal_violation).
+        resolve_conflict(X, X, X).
+        resolve_conflict(X, normal_operation, X).
+        resolve_conflict(normal_operation, X, X).
+      "),
+
+      state(input_analysis, Analysis),
+
+      get_dict(arbitration, Analysis, Arb),
+      get_dict(action, Arb, ArbActionStr),
+      atom_string(ArbAction, ArbActionStr),
+      (ArbAction = emergency_response -> ArbCategory = safety_critical
+      ; ArbAction = slow_and_verify -> ArbCategory = reasonableness_concern
+      ; ArbCategory = normal_operation),
+
+      get_dict(reasonableness, Analysis, Reason),
+      get_dict(is_reasonable, Reason, IsReasonable),
+      (IsReasonable = false -> ReasonCategory = reasonableness_concern
+      ; ReasonCategory = normal_operation),
+
+      get_dict(traffic, Analysis, Traffic),
+      get_dict(is_legal, Traffic, IsLegal),
+      (IsLegal = false -> TrafficCategory = legal_violation
+      ; TrafficCategory = normal_operation),
+
+      resolve_conflict(ArbCategory, ReasonCategory, Temp),
+      resolve_conflict(Temp, TrafficCategory, FinalCategory),
+
+      (FinalCategory = safety_critical ->
+          Decision = "EMERGENCY_STOP"
+      ; FinalCategory = legal_violation ->
+          Decision = "STOP_LEGAL_REQUIREMENT"
+      ; FinalCategory = reasonableness_concern ->
+          Decision = "CAUTION_VERIFY"
+      ;
+          Decision = "PROCEED"
+      ),
+
+      return(decision_category, FinalCategory),
+      return(final_decision, Decision).
+
+  - name: generate_justification
+    run: |
+      analysis = state.get("input_analysis", {})
+      conflicts = state.get("detected_conflicts", [])
+      decision = state.get("final_decision", "UNKNOWN")
+      category = state.get("decision_category", "unknown")
+
+      arb = analysis.get("arbitration", {})
+      reason = analysis.get("reasonableness", {})
+      traffic = analysis.get("traffic", {})
+
+      parts = [f"Decision: {decision}."]
+
+      if category == "safety_critical":
+          parts.append(f"Safety-critical situation detected by {arb.get('sensor', 'sensors')}.")
+      elif category == "legal_violation":
+          parts.append(f"Traffic rule violation: {traffic.get('violation', 'unknown')}.")
+      elif category == "reasonableness_concern":
+          parts.append(f"Reasonableness check failed: {reason.get('explanation', 'unknown')}.")
+      else:
+          parts.append("All systems indicate safe to proceed.")
+
+      if conflicts:
+          parts.append(f"Resolved {len(conflicts)} conflict(s) between subsystems.")
+
+      justification = " ".join(parts)
+      return {"primary_justification": justification}
+
+  - name: build_output
+    run: |
+      from datetime import datetime
+
+      arb = state.get("arbitration_result", {})
+      reason = state.get("reasonableness_check", {})
+      traffic = state.get("traffic_rule_check", {})
+      analysis = state.get("input_analysis", {})
+      conflicts = state.get("detected_conflicts", [])
+      decision = state.get("final_decision", "UNKNOWN")
+      category = state.get("decision_category", "unknown")
+      justification = state.get("primary_justification", "")
+
+      # Convert category to string if it's an atom
+      if hasattr(category, '__str__'):
+          category = str(category)
+
+      audit_record = {
+          "timestamp": state.get("timestamp", datetime.utcnow().isoformat()),
+          "vehicle_id": state.get("vehicle_id", "unknown"),
+          "location": state.get("location", {}),
+          "decision": decision,
+          "decision_category": category,
+          "inputs": {
+              "arbitration": arb,
+              "reasonableness": reason,
+              "traffic": traffic
+          },
+          "conflicts": conflicts,
+          "reasoning_chains": arb.get("reasoning_chain", [])
+      }
+
+      dissenting = []
+      if decision in ["EMERGENCY_STOP", "STOP_LEGAL_REQUIREMENT", "CAUTION_VERIFY"]:
+          if arb.get("recommended_action") == "proceed_normal":
+              dissenting.append({
+                  "source": "sensor_arbitration",
+                  "opinion": "Sensors indicated clear path",
+                  "overridden_by": category
+              })
+
+      supporting = []
+      if decision != "PROCEED":
+          if not traffic.get("is_legal", True):
+              supporting.append({
+                  "source": "traffic_rules",
+                  "evidence": f"Violation: {traffic.get('violation')}"
+              })
+          if not reason.get("is_reasonable", True):
+              supporting.append({
+                  "source": "reasonableness_monitor",
+                  "evidence": reason.get("explanation", "")
+              })
+          if arb.get("confidence_level") == "safety_critical":
+              supporting.append({
+                  "source": "sensor_arbitration",
+                  "evidence": f"Safety-critical detection by {arb.get('winning_sensor')}"
+              })
+
+      confidence_map = {
+          "safety_critical": "high",
+          "legal_violation": "high",
+          "reasonableness_concern": "medium",
+          "normal_operation": "high" if arb.get("confidence_level") == "high" else "medium"
+      }
+
+      synthesized = {
+          "decision": decision,
+          "confidence": confidence_map.get(category, "low"),
+          "primary_justification": justification,
+          "supporting_evidence": supporting,
+          "dissenting_opinions": dissenting,
+          "audit_record": audit_record
+      }
+
+      return {"synthesized_explanation": synthesized}
+
+edges:
+  - from: __start__
+    to: analyze_inputs
+  - from: analyze_inputs
+    to: resolve_conflicts
+  - from: resolve_conflicts
+    to: generate_justification
+  - from: generate_justification
+    to: build_output
+  - from: build_output
+    to: __end__

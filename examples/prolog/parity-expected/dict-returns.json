@@ -1,0 +1,37 @@
+{
+  "description": "TEA-RUST-041: Complex Prolog dict returns should be properly serialized",
+  "query_success": true,
+  "expected_types": {
+    "simple_dict": "object",
+    "nested_dict": "object",
+    "list_of_dicts": "array",
+    "complex_structure": "object"
+  },
+  "simple_dict": {
+    "key": "value",
+    "number": 42,
+    "flag": true
+  },
+  "nested_dict": {
+    "level1": {
+      "level2": {
+        "deep_value": "found"
+      }
+    },
+    "sibling": "data"
+  },
+  "list_of_dicts": [
+    {"id": 1, "name": "first"},
+    {"id": 2, "name": "second"},
+    {"id": 3, "name": "third"}
+  ],
+  "complex_structure": {
+    "items": ["alpha", "beta", "gamma"],
+    "config": {"debug": false, "timeout": 30},
+    "status": "ready",
+    "metadata": {
+      "version": "1.0",
+      "tags": ["test", "parity", "rust"]
+    }
+  }
+}

@@ -1,4 +1,5 @@
 # Dynamic Parallel Fan-Out Example: Subgraph Mode
+# CLI: python (uses Python syntax in run blocks)
 # This example demonstrates loading and executing an external YAML workflow for each item
 # Useful for complex per-item processing that benefits from separate workflow definition
 
@@ -8,6 +9,7 @@ description: Run analysis workflow on multiple data sources using subgraph mode
 nodes:
   # Initialize data sources to analyze
   - name: setup
+    language: python
     run: |
       return {
           "data_sources": [
@@ -38,6 +40,7 @@ nodes:
 
   # Aggregate analysis results
   - name: aggregate_analyses
+    language: python
     run: |
       results = state.get("analysis_results", [])
 

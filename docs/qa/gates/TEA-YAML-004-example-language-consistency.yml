@@ -1,0 +1,47 @@
+# Quality Gate: TEA-YAML-004
+schema: 1
+story: "TEA-YAML-004"
+story_title: "Fix Python/Lua Syntax Mismatch in YAML Examples"
+gate: PASS
+status_reason: "All 6 acceptance criteria met. 21 nodes across 7 YAML files now have explicit language declarations. CLI headers added for discoverability. 46 related tests pass."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-04T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+
+evidence:
+  tests_reviewed: 46
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No security-sensitive changes"
+  performance:
+    status: PASS
+    notes: "No runtime impact"
+  reliability:
+    status: PASS
+    notes: "Fixes Lua syntax errors when examples run on Rust CLI"
+  maintainability:
+    status: PASS
+    notes: "Clear CLI headers improve discoverability"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding Lua versions of key examples for Rust CLI compatibility"
+      refs: ["examples/yaml/"]

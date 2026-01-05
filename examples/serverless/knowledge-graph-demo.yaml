@@ -1,0 +1,271 @@
+# Knowledge Graph Demo with DuckPGQ
+# Demonstrates SQL/PGQ graph queries for serverless AI agents
+#
+# This example shows:
+# 1. Creating a property graph from entity/relation data
+# 2. Graph traversal with context retrieval
+#
+# Run with:
+#   python -m the_edge_agent.cli run examples/serverless/knowledge-graph-demo.yaml \
+#     --input '{"query": "find related to Alice"}'
+
+name: knowledge-graph-demo
+
+settings:
+  graph:
+    backend: duckpgq
+    lazy: true  # Cold start optimization
+
+state_schema:
+  query: str
+  target_entity: str
+  graph_ready: bool
+  entities: list
+  relations: list
+  search_results: list
+  context_result: dict
+
+nodes:
+  # Initialize sample data (in production, load from Parquet files)
+  - name: init_sample_data
+    run: |
+      # Sample knowledge graph about people and their skills
+      entities = [
+          {"id": "alice", "type": "Person", "name": "Alice", "role": "Engineer"},
+          {"id": "bob", "type": "Person", "name": "Bob", "role": "Designer"},
+          {"id": "carol", "type": "Person", "name": "Carol", "role": "Manager"},
+          {"id": "dave", "type": "Person", "name": "Dave", "role": "Engineer"},
+          {"id": "python", "type": "Skill", "name": "Python", "category": "Programming"},
+          {"id": "rust", "type": "Skill", "name": "Rust", "category": "Programming"},
+          {"id": "design", "type": "Skill", "name": "UI Design", "category": "Design"},
+          {"id": "leadership", "type": "Skill", "name": "Leadership", "category": "Management"},
+      ]
+
+      relations = [
+          {"from_entity": "alice", "to_entity": "python", "relation_type": "KNOWS", "level": "expert"},
+          {"from_entity": "alice", "to_entity": "rust", "relation_type": "KNOWS", "level": "intermediate"},
+          {"from_entity": "alice", "to_entity": "bob", "relation_type": "WORKS_WITH", "since": 2020},
+          {"from_entity": "bob", "to_entity": "design", "relation_type": "KNOWS", "level": "expert"},
+          {"from_entity": "bob", "to_entity": "carol", "relation_type": "REPORTS_TO", "since": 2019},
+          {"from_entity": "carol", "to_entity": "leadership", "relation_type": "KNOWS", "level": "expert"},
+          {"from_entity": "carol", "to_entity": "dave", "relation_type": "MANAGES", "since": 2021},
+          {"from_entity": "dave", "to_entity": "python", "relation_type": "KNOWS", "level": "expert"},
+          {"from_entity": "dave", "to_entity": "rust", "relation_type": "KNOWS", "level": "expert"},
+          {"from_entity": "dave", "to_entity": "alice", "relation_type": "WORKS_WITH", "since": 2022},
+      ]
+
+      return {"entities": entities, "relations": relations}
+
+  # Store first entity (Alice)
+  - name: store_alice
+    uses: graph.store_entity
+    with:
+      entity_id: "alice"
+      entity_type: "Person"
+      properties:
+        name: "Alice"
+        role: "Engineer"
+
+  # Store second entity (Bob)
+  - name: store_bob
+    uses: graph.store_entity
+    with:
+      entity_id: "bob"
+      entity_type: "Person"
+      properties:
+        name: "Bob"
+        role: "Designer"
+
+  # Store third entity (Carol)
+  - name: store_carol
+    uses: graph.store_entity
+    with:
+      entity_id: "carol"
+      entity_type: "Person"
+      properties:
+        name: "Carol"
+        role: "Manager"
+
+  # Store fourth entity (Dave)
+  - name: store_dave
+    uses: graph.store_entity
+    with:
+      entity_id: "dave"
+      entity_type: "Person"
+      properties:
+        name: "Dave"
+        role: "Engineer"
+
+  # Store skill entities
+  - name: store_python
+    uses: graph.store_entity
+    with:
+      entity_id: "python"
+      entity_type: "Skill"
+      properties:
+        name: "Python"
+        category: "Programming"
+
+  - name: store_rust
+    uses: graph.store_entity
+    with:
+      entity_id: "rust"
+      entity_type: "Skill"
+      properties:
+        name: "Rust"
+        category: "Programming"
+
+  # Store relations
+  - name: store_alice_knows_python
+    uses: graph.store_relation
+    with:
+      from_entity: "alice"
+      to_entity: "python"
+      relation_type: "KNOWS"
+      properties:
+        level: "expert"
+
+  - name: store_alice_knows_rust
+    uses: graph.store_relation
+    with:
+      from_entity: "alice"
+      to_entity: "rust"
+      relation_type: "KNOWS"
+      properties:
+        level: "intermediate"
+
+  - name: store_alice_works_with_bob
+    uses: graph.store_relation
+    with:
+      from_entity: "alice"
+      to_entity: "bob"
+      relation_type: "WORKS_WITH"
+      properties:
+        since: 2020
+
+  - name: store_dave_knows_python
+    uses: graph.store_relation
+    with:
+      from_entity: "dave"
+      to_entity: "python"
+      relation_type: "KNOWS"
+      properties:
+        level: "expert"
+
+  - name: store_dave_works_with_alice
+    uses: graph.store_relation
+    with:
+      from_entity: "dave"
+      to_entity: "alice"
+      relation_type: "WORKS_WITH"
+      properties:
+        since: 2022
+
+  # Parse query to find target entity
+  - name: parse_query
+    run: |
+      query = state.get("query", "").lower()
+      # Simple entity extraction
+      entities = state.get("entities", [])
+      target = None
+      for entity in entities:
+          if entity["name"].lower() in query:
+              target = entity["id"]
+              break
+      return {"target_entity": target or "alice", "graph_ready": True}
+
+  # Find related entities using graph traversal
+  - name: find_related
+    uses: graph.retrieve_context
+    with:
+      entity_id: "{{ state.target_entity }}"
+      hops: 2
+    output: context_result
+
+  # Format search results
+  - name: format_results
+    run: |
+      context = state.get("context_result", {})
+      entities = context.get("entities", [])
+      relations = context.get("relations", [])
+
+      results = []
+      for entity in entities:
+          results.append({
+              "id": entity.get("entity_id") or entity.get("id"),
+              "type": entity.get("entity_type") or entity.get("type"),
+              "properties": entity.get("properties", {})
+          })
+
+      return {
+          "search_results": results,
+          "context_summary": context.get("context_summary", f"Found {len(entities)} related entities")
+      }
+
+  # Final output
+  - name: output
+    run: |
+      return {
+          "query": state.get("query"),
+          "target_entity": state.get("target_entity"),
+          "related_entities": state.get("search_results", []),
+          "context": state.get("context_summary", ""),
+          "graph_stats": {
+              "entities_stored": len(state.get("entities", [])),
+              "relations_stored": len(state.get("relations", []))
+          }
+      }
+
+edges:
+  - from: __start__
+    to: init_sample_data
+
+  # Store entities in sequence
+  - from: init_sample_data
+    to: store_alice
+
+  - from: store_alice
+    to: store_bob
+
+  - from: store_bob
+    to: store_carol
+
+  - from: store_carol
+    to: store_dave
+
+  - from: store_dave
+    to: store_python
+
+  - from: store_python
+    to: store_rust
+
+  # Store relations
+  - from: store_rust
+    to: store_alice_knows_python
+
+  - from: store_alice_knows_python
+    to: store_alice_knows_rust
+
+  - from: store_alice_knows_rust
+    to: store_alice_works_with_bob
+
+  - from: store_alice_works_with_bob
+    to: store_dave_knows_python
+
+  - from: store_dave_knows_python
+    to: store_dave_works_with_alice
+
+  - from: store_dave_works_with_alice
+    to: parse_query
+
+  - from: parse_query
+    to: find_related
+
+  - from: find_related
+    to: format_results
+
+  - from: format_results
+    to: output
+
+  - from: output
+    to: __end__

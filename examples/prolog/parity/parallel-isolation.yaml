@@ -26,7 +26,8 @@ nodes:
       % Branch A reads value and computes A-specific result
       state(value, V),
       Result is V + 1,
-      Result = 101.
+      return(branch, "a"),
+      return(computed, Result).
 
   - name: branch_b
     language: prolog
@@ -34,7 +35,8 @@ nodes:
       % Branch B reads value and computes B-specific result
       state(value, V),
       Result is V + 2,
-      Result = 102.
+      return(branch, "b"),
+      return(computed, Result).
 
   - name: branch_c
     language: prolog
@@ -42,30 +44,43 @@ nodes:
       % Branch C reads value and computes C-specific result
       state(value, V),
       Result is V + 3,
-      Result = 103.
+      return(branch, "c"),
+      return(computed, Result).
 
   - name: fan_in
-    is_fan_in: true
-    language: lua
+    fan_in: true
     run: |
-      -- Collect results from parallel branches
-      local count = #parallel_results
-      return { parallel_count = count }
+      # parallel_results contains ParallelFlowResult objects with .branch and .state
+      results = []
+      for r in parallel_results:
+          state_dict = r.state if hasattr(r, 'state') else r
+          results.append(state_dict)
+      return {"parallel_count": len(results), "results": results}
 
-# Parallel edges require explicit definition (cannot use implicit/goto)
+# Parallel edges require type: parallel and explicit edges to fan_in node
 edges:
+  - from: __start__
+    to: setup
   - from: setup
     to: branch_a
-    parallel: true
+    type: parallel
     fan_in: fan_in
   - from: setup
     to: branch_b
-    parallel: true
+    type: parallel
     fan_in: fan_in
   - from: setup
     to: branch_c
-    parallel: true
+    type: parallel
     fan_in: fan_in
+  - from: branch_a
+    to: fan_in
+  - from: branch_b
+    to: fan_in
+  - from: branch_c
+    to: fan_in
+  - from: fan_in
+    to: __end__
 
 # Implicit flow: __start__ -> setup (via node order)
 # Implicit flow: fan_in -> __end__ (via last node)

@@ -1,0 +1,263 @@
+# System 1 / System 2 Blending Demonstration
+#
+# This agent demonstrates Kahneman's dual-process theory applied to AI:
+# - System 1 (Neural): Fast, reactive decisions based on pattern matching
+# - System 2 (Symbolic): Slow, deliberate reasoning using logic
+# - Blending Module: Meta-policy that dynamically weights both systems
+#
+# Scenario: An autonomous delivery robot navigating through a city
+#
+# RUN: tea run examples/wozniak-test/system1-system2-blending.yaml \
+#      --input '{"scenario": "delivery", "danger_level": 0.2, "distance_to_goal": 500}'
+#
+# Try different danger levels (0.0 to 1.0) to see blending weights change
+
+name: system1-system2-blending
+description: Demonstrates dynamic blending between reactive and deliberative reasoning
+
+state_schema:
+  scenario: str
+  danger_level: float
+  distance_to_goal: int
+  obstacles: list
+  system1_action: dict
+  system2_plan: dict
+  blend_weights: dict
+  final_decision: dict
+
+nodes:
+  # Initialize the environment state
+  - name: init_environment
+    language: lua
+    run: |
+      -- Simulate environment perception
+      local danger = state.danger_level or 0.2
+      local obstacles = {}
+
+      -- Generate obstacles based on danger level
+      if danger > 0.3 then
+        table.insert(obstacles, {type = "pedestrian", distance = 10, speed = 1.5})
+      end
+      if danger > 0.5 then
+        table.insert(obstacles, {type = "vehicle", distance = 20, speed = 15})
+      end
+      if danger > 0.7 then
+        table.insert(obstacles, {type = "emergency_vehicle", distance = 50, speed = 30})
+      end
+
+      return {
+        obstacles = obstacles,
+        environment = {
+          weather = "clear",
+          traffic_density = danger * 10,
+          time_of_day = "daytime"
+        }
+      }
+
+  # System 1: Fast, reactive responses (simulated neural policy)
+  - name: system1_react
+    language: lua
+    run: |
+      -- System 1 produces immediate, instinctive reactions
+      -- Like reflexes: fast but not always optimal for complex goals
+
+      local obstacles = state.obstacles or {}
+      local danger = state.danger_level or 0.2
+
+      local action = {
+        type = "continue",
+        speed = 1.0,
+        direction = "forward",
+        reasoning = "No immediate threat"
+      }
+
+      -- Reactive responses to obstacles
+      for _, obs in ipairs(obstacles) do
+        if obs.distance < 15 then
+          action = {
+            type = "evade",
+            speed = 0.3,
+            direction = "swerve_right",
+            reasoning = "Obstacle detected at close range - reflex avoidance"
+          }
+          break
+        elseif obs.type == "emergency_vehicle" then
+          action = {
+            type = "yield",
+            speed = 0.0,
+            direction = "pull_over",
+            reasoning = "Emergency vehicle detected - trained response"
+          }
+          break
+        end
+      end
+
+      -- High danger triggers defensive mode
+      if danger > 0.8 then
+        action.speed = 0.2
+        action.reasoning = action.reasoning .. " (defensive mode active)"
+      end
+
+      return {system1_action = action}
+
+  # System 2: Slow, deliberate planning (Prolog symbolic reasoning)
+  - name: system2_plan
+    language: prolog
+    run: |
+      % System 2: Logical reasoning about goals and constraints
+      % Like conscious thought: slower but handles complex planning
+
+      % Get current state
+      state(distance_to_goal, Distance),
+      state(danger_level, Danger),
+
+      % Calculate optimal route considering constraints
+      (Distance > 300 ->
+        Route = "highway_route"
+      ; Distance > 100 ->
+        Route = "main_street"
+      ;
+        Route = "direct_path"
+      ),
+
+      % Estimate time based on distance and safety margin
+      SafeSpeed is max(0.2, 1.0 - Danger),
+      EstimatedTime is Distance / (SafeSpeed * 10),
+
+      % Determine priority level
+      (Danger > 0.7 ->
+        Priority = "safety_first"
+      ; Danger > 0.4 ->
+        Priority = "balanced"
+      ;
+        Priority = "efficiency"
+      ),
+
+      % Build plan
+      return(system2_plan, _{
+        route: Route,
+        estimated_time: EstimatedTime,
+        priority: Priority,
+        waypoints: ["checkpoint_1", "checkpoint_2", "destination"],
+        reasoning: "Deliberate route planning with safety constraints"
+      }).
+
+  # Blending Module: Meta-policy that combines System 1 and System 2
+  - name: blend_systems
+    language: lua
+    run: |
+      -- The Blending Module is the key innovation
+      -- It dynamically allocates weight between reactive and deliberative systems
+      -- based on context
+
+      local danger = state.danger_level or 0.2
+      local s1 = state.system1_action or {}
+      local s2 = state.system2_plan or {}
+
+      -- Calculate blend weights based on context
+      -- High danger -> favor System 1 (fast reactions)
+      -- Low danger -> favor System 2 (optimal planning)
+
+      local s1_weight, s2_weight
+
+      if danger > 0.7 then
+        -- Emergency: 90% reactive, 10% planning
+        s1_weight = 0.9
+        s2_weight = 0.1
+      elseif danger > 0.4 then
+        -- Moderate risk: 60% reactive, 40% planning
+        s1_weight = 0.6
+        s2_weight = 0.4
+      elseif danger > 0.2 then
+        -- Low risk: 40% reactive, 60% planning
+        s1_weight = 0.4
+        s2_weight = 0.6
+      else
+        -- Safe: 20% reactive, 80% planning
+        s1_weight = 0.2
+        s2_weight = 0.8
+      end
+
+      -- Apply prior knowledge rules (injected commonsense)
+      local override_reason = nil
+
+      if s1.type == "yield" then
+        -- Emergency vehicle always takes priority
+        s1_weight = 1.0
+        s2_weight = 0.0
+        override_reason = "Prior knowledge: Emergency vehicles have absolute priority"
+      end
+
+      return {
+        blend_weights = {
+          system1 = s1_weight,
+          system2 = s2_weight,
+          override_active = override_reason ~= nil,
+          override_reason = override_reason or "Normal blending"
+        }
+      }
+
+  # Final decision: Combine outputs based on blend weights
+  - name: decide
+    language: lua
+    run: |
+      local weights = state.blend_weights or {system1 = 0.5, system2 = 0.5}
+      local s1 = state.system1_action or {}
+      local s2 = state.system2_plan or {}
+
+      -- Combine actions based on weights
+      local final = {}
+
+      if weights.system1 > 0.7 then
+        -- System 1 dominant: Use reactive action
+        final = {
+          action = s1.type or "continue",
+          speed = s1.speed or 1.0,
+          direction = s1.direction or "forward",
+          route = s2.route or "direct_path",  -- Keep planning context
+          dominant_system = "System 1 (Reactive)",
+          reasoning = s1.reasoning or "Reactive response"
+        }
+      elseif weights.system2 > 0.7 then
+        -- System 2 dominant: Use planned action
+        final = {
+          action = "execute_plan",
+          speed = 0.8,  -- Deliberate pace
+          direction = "planned_route",
+          route = s2.route or "direct_path",
+          dominant_system = "System 2 (Deliberative)",
+          reasoning = s2.reasoning or "Following optimal plan"
+        }
+      else
+        -- Balanced: Merge both systems
+        local merged_speed = (s1.speed or 1.0) * weights.system1 + 0.8 * weights.system2
+        final = {
+          action = "blended_response",
+          speed = merged_speed,
+          direction = s1.direction or "forward",
+          route = s2.route or "direct_path",
+          dominant_system = "Blended (both systems contributing)",
+          reasoning = "Combining reactive awareness with planned route"
+        }
+      end
+
+      final.blend_weights = weights
+      final.system1_contribution = s1
+      final.system2_contribution = s2
+
+      return {final_decision = final}
+
+# Implicit flow through all nodes
+edges:
+  - from: __start__
+    to: init_environment
+  - from: init_environment
+    to: system1_react
+  - from: system1_react
+    to: system2_plan
+  - from: system2_plan
+    to: blend_systems
+  - from: blend_systems
+    to: decide
+  - from: decide
+    to: __end__

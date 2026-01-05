@@ -530,7 +530,7 @@ impl PrologRuntime {
     /// - Atoms: 'hello' or hello -> "hello"
     /// - Numbers: 42, 3.14 -> number
     /// - Lists: [1, 2, 3] -> array
-    /// - Dicts: _{a: 1, b: 2} -> object
+    /// - Dicts: _{a: 1, b: 2} or _Tag{a: 1, b: 2} -> object
     pub fn prolog_to_json(&self, term: &str) -> TeaResult<JsonValue> {
         let term = term.trim();
 
@@ -573,13 +573,37 @@ impl PrologRuntime {
             return self.parse_prolog_list(term);
         }
 
-        // Handle dict
-        if term.starts_with("_{") && term.ends_with('}') {
+        // Handle dict - both anonymous _{...} and tagged _Tag{...} formats
+        // SWI-Prolog's term_string/2 outputs tagged dicts like _3862{key:value}
+        if self.is_prolog_dict(term) {
             return self.parse_prolog_dict(term);
         }
 
         // Plain atom without quotes
         Ok(JsonValue::String(term.to_string()))
+    }
+
+    /// Check if a term string is a Prolog dict
+    ///
+    /// Matches both:
+    /// - Anonymous dicts: `_{key: value, ...}`
+    /// - Tagged dicts: `_Tag{key: value, ...}` where Tag is alphanumeric
+    ///
+    /// SWI-Prolog's term_string/2 outputs tagged dicts like `_3862{...}`
+    fn is_prolog_dict(&self, term: &str) -> bool {
+        if !term.starts_with('_') || !term.ends_with('}') {
+            return false;
+        }
+
+        // Find the opening brace
+        if let Some(brace_pos) = term.find('{') {
+            // Check that everything between _ and { is alphanumeric (the tag)
+            // For anonymous dicts, brace_pos == 1 (immediately after _)
+            let tag = &term[1..brace_pos];
+            tag.is_empty() || tag.chars().all(|c| c.is_alphanumeric())
+        } else {
+            false
+        }
     }
 
     /// Parse a Prolog list string to JSON array
@@ -598,8 +622,17 @@ impl PrologRuntime {
     }
 
     /// Parse a Prolog dict string to JSON object
+    ///
+    /// Handles both:
+    /// - Anonymous dicts: `_{key: value, ...}`
+    /// - Tagged dicts: `_Tag{key: value, ...}` (e.g., `_3862{...}`)
     fn parse_prolog_dict(&self, term: &str) -> TeaResult<JsonValue> {
-        let inner = &term[2..term.len() - 1]; // Remove _{ and }
+        // Find the opening brace to handle both _{...} and _Tag{...}
+        let brace_pos = term
+            .find('{')
+            .ok_or_else(|| TeaError::Prolog("Invalid dict: no opening brace".to_string()))?;
+
+        let inner = &term[brace_pos + 1..term.len() - 1]; // Content between { and }
         if inner.is_empty() {
             return Ok(JsonValue::Object(serde_json::Map::new()));
         }
@@ -2258,5 +2291,207 @@ mod tests {
         let result = runtime.execute_node_code(code, &state).unwrap();
 
         assert_eq!(result.get("category"), Some(&json!("medium")));
+    }
+
+    // ========================================================================
+    // Tests for TEA-RUST-041: Complex Prolog Dict Returns
+    // ========================================================================
+
+    #[test]
+    fn test_is_prolog_dict_anonymous() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        assert!(runtime.is_prolog_dict("_{key: value}"));
+        assert!(runtime.is_prolog_dict("_{}"));
+        assert!(runtime.is_prolog_dict("_{a: 1, b: 2}"));
+    }
+
+    #[test]
+    fn test_is_prolog_dict_tagged() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        // SWI-Prolog's term_string/2 outputs tagged dicts like _3862{...}
+        assert!(runtime.is_prolog_dict("_3862{key: value}"));
+        assert!(runtime.is_prolog_dict("_1{a: 1}"));
+        assert!(runtime.is_prolog_dict("_999999{complex: data}"));
+    }
+
+    #[test]
+    fn test_is_prolog_dict_negative_cases() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        assert!(!runtime.is_prolog_dict("not_a_dict"));
+        assert!(!runtime.is_prolog_dict("[1, 2, 3]"));
+        assert!(!runtime.is_prolog_dict("foo(bar)"));
+        assert!(!runtime.is_prolog_dict("_variable"));
+        assert!(!runtime.is_prolog_dict("{key: value}")); // Missing underscore
+    }
+
+    #[test]
+    fn test_prolog_to_json_simple_dict() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let result = runtime.prolog_to_json("_{key: 'value'}").unwrap();
+        assert_eq!(result, json!({"key": "value"}));
+
+        let result = runtime.prolog_to_json("_{num: 42}").unwrap();
+        assert_eq!(result, json!({"num": 42}));
+    }
+
+    #[test]
+    fn test_prolog_to_json_tagged_dict() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        // This is what term_string/2 produces
+        let result = runtime.prolog_to_json("_3862{key: 'value'}").unwrap();
+        assert_eq!(result, json!({"key": "value"}));
+
+        let result = runtime
+            .prolog_to_json("_42{coffee_type: drip, ready: true}")
+            .unwrap();
+        assert_eq!(result, json!({"coffee_type": "drip", "ready": true}));
+    }
+
+    #[test]
+    fn test_prolog_to_json_nested_dict() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        // Nested dict
+        let result = runtime
+            .prolog_to_json("_{outer: _{inner: 'deep'}}")
+            .unwrap();
+        assert_eq!(result, json!({"outer": {"inner": "deep"}}));
+
+        // Tagged nested dict
+        let result = runtime
+            .prolog_to_json("_1{level1: _2{level2: 'value'}}")
+            .unwrap();
+        assert_eq!(result, json!({"level1": {"level2": "value"}}));
+    }
+
+    #[test]
+    fn test_prolog_to_json_dict_with_list() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let result = runtime
+            .prolog_to_json("_{items: [1, 2, 3], name: 'test'}")
+            .unwrap();
+        assert_eq!(result, json!({"items": [1, 2, 3], "name": "test"}));
+    }
+
+    #[test]
+    fn test_prolog_to_json_list_of_dicts() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let result = runtime.prolog_to_json("[_{a: 1}, _{b: 2}]").unwrap();
+        assert_eq!(result, json!([{"a": 1}, {"b": 2}]));
+
+        // With tagged dicts
+        let result = runtime.prolog_to_json("[_1{x: 10}, _2{y: 20}]").unwrap();
+        assert_eq!(result, json!([{"x": 10}, {"y": 20}]));
+    }
+
+    #[test]
+    fn test_prolog_to_json_complex_nested_structure() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        // Complex structure like the coffee agent world model
+        let term = r#"_{kitchen_type: modern, items: [ground_coffee, filter, water], config: _{nested: true}}"#;
+        let result = runtime.prolog_to_json(term).unwrap();
+
+        assert_eq!(
+            result,
+            json!({
+                "kitchen_type": "modern",
+                "items": ["ground_coffee", "filter", "water"],
+                "config": {"nested": true}
+            })
+        );
+    }
+
+    #[test]
+    fn test_execute_node_code_simple_dict_return() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let code = r#"
+            return(result, _{key: 'value', num: 42}).
+        "#;
+
+        let result = runtime.execute_node_code(code, &json!({})).unwrap();
+
+        assert!(result.get("result").is_some());
+        let result_value = result.get("result").unwrap();
+        assert_eq!(result_value.get("key"), Some(&json!("value")));
+        assert_eq!(result_value.get("num"), Some(&json!(42)));
+    }
+
+    #[test]
+    fn test_execute_node_code_nested_dict_return() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let code = r#"
+            return(result, _{outer: _{inner: 'deep_value'}}).
+        "#;
+
+        let result = runtime.execute_node_code(code, &json!({})).unwrap();
+
+        assert!(result.get("result").is_some());
+        let result_value = result.get("result").unwrap();
+        assert!(result_value.get("outer").is_some());
+        assert_eq!(
+            result_value.get("outer").unwrap().get("inner"),
+            Some(&json!("deep_value"))
+        );
+    }
+
+    #[test]
+    fn test_execute_node_code_list_of_dicts_return() {
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let code = r#"
+            return(items, [_{a: 1}, _{b: 2}, _{c: 3}]).
+        "#;
+
+        let result = runtime.execute_node_code(code, &json!({})).unwrap();
+
+        assert!(result.get("items").is_some());
+        let items = result.get("items").unwrap().as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].get("a"), Some(&json!(1)));
+        assert_eq!(items[1].get("b"), Some(&json!(2)));
+        assert_eq!(items[2].get("c"), Some(&json!(3)));
+    }
+
+    #[test]
+    fn test_execute_node_code_world_model_pattern() {
+        // This mimics the coffee agent's world_model return pattern
+        let runtime = PrologRuntime::with_config(Duration::from_secs(30), false).unwrap();
+
+        let code = r#"
+            KitchenType = modern,
+            CoffeeMakerType = drip,
+            Items = [ground_coffee, filter, water, cup],
+            Steps = [add_filter, add_coffee, add_water, press_start],
+            return(world_model, _{
+                kitchen_type: KitchenType,
+                coffee_maker_type: CoffeeMakerType,
+                required_items: Items,
+                process_steps: Steps
+            }).
+        "#;
+
+        let result = runtime.execute_node_code(code, &json!({})).unwrap();
+
+        assert!(result.get("world_model").is_some());
+        let world = result.get("world_model").unwrap();
+        assert_eq!(world.get("kitchen_type"), Some(&json!("modern")));
+        assert_eq!(world.get("coffee_maker_type"), Some(&json!("drip")));
+
+        let items = world.get("required_items").unwrap().as_array().unwrap();
+        assert_eq!(items.len(), 4);
+        assert!(items.contains(&json!("ground_coffee")));
+
+        let steps = world.get("process_steps").unwrap().as_array().unwrap();
+        assert_eq!(steps.len(), 4);
     }
 }

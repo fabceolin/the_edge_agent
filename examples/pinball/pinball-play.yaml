@@ -1,0 +1,279 @@
+# =============================================================================
+# Video Pinball Neurosymbolic Agent
+# =============================================================================
+#
+# This agent plays Atari Video Pinball using a neurosymbolic architecture:
+#
+# SENSORS (Perception):
+#   OCAtari extracts objects from game frames -> ball, flippers, bumpers
+#
+# WORLDVIEW (Prolog):
+#   Symbolic rules encode physics, geometry, timing, and strategy
+#
+# ACTIONS (Output):
+#   Discrete actions: flip_left, flip_right, flip_both, launch, wait
+#
+# No LLM in the gameplay loop - decisions are made in microseconds by Prolog.
+# LLM is used offline for rule improvement (see pinball-learn.yaml).
+#
+# Usage:
+#   python -m the_edge_agent.cli run examples/pinball/pinball-play.yaml \
+#     --input '{"max_frames": 10000, "render": true}'
+#
+# =============================================================================
+
+name: pinball-play
+description: "Neurosymbolic agent that plays Atari Video Pinball"
+
+state_schema:
+  # Configuration
+  max_frames: int
+  render: bool
+
+  # Game state (updated each frame)
+  frame: int
+  score: int
+  lives: int
+  ball_x: float
+  ball_y: float
+  ball_vx: float
+  ball_vy: float
+  ball_visible: bool
+
+  # Decision output
+  action: str
+  rule_fired: str
+
+  # Tracing for learning
+  traces: list
+  game_over: bool
+  final_score: int
+
+settings:
+  prolog:
+    preload_file: "examples/pinball/pinball_rules_v1.pl"
+
+nodes:
+  # =========================================================================
+  # Node 1: Initialize Environment
+  # =========================================================================
+  - name: init_environment
+    description: "Create Video Pinball environment using OCAtari"
+    run: |
+      import sys
+      sys.path.insert(0, "examples/pinball")
+      from atari_env import VideoPinballEnv, GameTracer
+
+      # Store in global for access across nodes
+      global _env, _tracer
+      _env = VideoPinballEnv(
+          render_mode="human" if state.get("render", True) else "rgb_array"
+      )
+      _tracer = GameTracer()
+
+      # Reset environment
+      game_state = _env.reset()
+
+      return {
+          "frame": 0,
+          "score": 0,
+          "lives": 3,
+          "ball_x": game_state.ball.x if game_state.ball else 80,
+          "ball_y": game_state.ball.y if game_state.ball else 0,
+          "ball_vx": 0,
+          "ball_vy": 0,
+          "ball_visible": game_state.ball is not None,
+          "traces": [],
+          "game_over": False,
+      }
+
+  # =========================================================================
+  # Node 2: Update Prolog Knowledge Base
+  # =========================================================================
+  - name: update_worldview
+    description: "Assert current game state as Prolog facts"
+    language: prolog
+    run: |
+      % Retract old state facts
+      retractall(frame(_)),
+      retractall(score(_)),
+      retractall(lives(_)),
+      retractall(ball_position(_, _)),
+      retractall(ball_velocity(_, _)),
+      retractall(ball_not_visible),
+
+      % Get current state from TEA
+      state(frame, Frame),
+      state(score, Score),
+      state(lives, Lives),
+      state(ball_x, BX),
+      state(ball_y, BY),
+      state(ball_vx, VX),
+      state(ball_vy, VY),
+      state(ball_visible, Visible),
+
+      % Assert new facts
+      assertz(frame(Frame)),
+      assertz(score(Score)),
+      assertz(lives(Lives)),
+
+      % Assert ball state
+      (   Visible == true
+      ->  assertz(ball_position(BX, BY)),
+          assertz(ball_velocity(VX, VY))
+      ;   assertz(ball_not_visible)
+      ),
+
+      return(worldview_updated, true).
+
+  # =========================================================================
+  # Node 3: Decide Action using Prolog Rules
+  # =========================================================================
+  - name: decide_action
+    description: "Query Prolog for optimal action based on worldview"
+    language: prolog
+    run: |
+      % Query the optimal action
+      (   optimal_action(Action)
+      ->  true
+      ;   Action = wait
+      ),
+
+      % Determine which rule fired (for tracing)
+      (   ball_approaching_flipper(left), optimal_flip_timing
+      ->  Rule = 'approach_left_optimal_timing'
+      ;   ball_approaching_flipper(right), optimal_flip_timing
+      ->  Rule = 'approach_right_optimal_timing'
+      ;   ball_in_danger_zone
+      ->  Rule = 'danger_zone_emergency'
+      ;   ball_not_visible
+      ->  Rule = 'ball_not_visible_launch'
+      ;   Rule = 'default_wait'
+      ),
+
+      return(action, Action),
+      return(rule_fired, Rule).
+
+  # =========================================================================
+  # Node 4: Execute Action in Environment
+  # =========================================================================
+  - name: execute_action
+    description: "Send action to Atari environment and get new state"
+    run: |
+      global _env, _tracer
+
+      action = state.get("action", "wait")
+      rule_fired = state.get("rule_fired", "unknown")
+
+      # Execute action
+      game_state = _env.step(action)
+
+      # Compute outcome
+      old_score = state.get("score", 0)
+      points_gained = game_state.score - old_score
+
+      if points_gained > 0:
+          outcome = "score"
+      elif game_state.lives < state.get("lives", 3):
+          outcome = "ball_lost"
+      else:
+          outcome = "neutral"
+
+      # Record trace
+      from atari_env import GameState
+      _tracer.record_decision(
+          state=game_state,
+          action=action,
+          rule_fired=rule_fired,
+          outcome=outcome,
+          points=points_gained,
+      )
+
+      # Check for game over
+      game_over = game_state.terminated or game_state.truncated
+      max_frames = state.get("max_frames", 10000)
+      if game_state.frame >= max_frames:
+          game_over = True
+
+      if game_over:
+          _tracer.end_game(game_state.score, 3 - game_state.lives)
+
+      return {
+          "frame": game_state.frame,
+          "score": game_state.score,
+          "lives": game_state.lives,
+          "ball_x": game_state.ball.x if game_state.ball else 80,
+          "ball_y": game_state.ball.y if game_state.ball else 0,
+          "ball_vx": game_state.ball_vx,
+          "ball_vy": game_state.ball_vy,
+          "ball_visible": game_state.ball is not None and game_state.ball.visible,
+          "game_over": game_over,
+          "final_score": game_state.score if game_over else 0,
+      }
+
+  # =========================================================================
+  # Node 5: Export Traces (when game ends)
+  # =========================================================================
+  - name: export_traces
+    description: "Export game traces for LLM analysis"
+    run: |
+      global _tracer, _env
+
+      analysis = _tracer.export_for_llm(last_n_games=5)
+      _env.close()
+
+      return {
+          "traces": analysis,
+          "final_score": state.get("score", 0),
+      }
+
+  # =========================================================================
+  # Node 6: Log Progress (for long games)
+  # =========================================================================
+  - name: log_progress
+    description: "Log current game progress"
+    run: |
+      frame = state.get("frame", 0)
+      score = state.get("score", 0)
+      lives = state.get("lives", 3)
+      action = state.get("action", "wait")
+
+      if frame % 100 == 0:
+          print(f"Frame {frame}: Score={score}, Lives={lives}, Action={action}")
+
+      return {}
+
+# =============================================================================
+# Edge Definitions - Game Loop
+# =============================================================================
+edges:
+  # Start -> Initialize
+  - from: __start__
+    to: init_environment
+
+  # Initialize -> Update worldview
+  - from: init_environment
+    to: update_worldview
+
+  # Main game loop
+  - from: update_worldview
+    to: decide_action
+
+  - from: decide_action
+    to: execute_action
+
+  - from: execute_action
+    to: log_progress
+
+  # Continue loop if not game over
+  - from: log_progress
+    to: update_worldview
+    condition: "not state.get('game_over', False)"
+
+  # Exit when game over
+  - from: log_progress
+    to: export_traces
+    condition: "state.get('game_over', False)"
+
+  - from: export_traces
+    to: __end__

@@ -77,6 +77,16 @@ JANUS_AVAILABLE = False
 PYSWIP_AVAILABLE = False  # Keep for backward compatibility checks
 _janus = None
 
+# TEA-PROLOG-006: Global lock for all janus-swi operations
+# janus-swi is NOT thread-safe for concurrent Python thread access.
+# All Prolog operations must be serialized to prevent segfaults.
+# Using RLock for reentrant locking (init may call methods that also lock)
+_GLOBAL_PROLOG_LOCK = threading.RLock()
+
+# TEA-PROLOG-006: Track global initialization state
+# Prolog predicates only need to be set up once per process
+_GLOBAL_INITIALIZED = False
+
 try:
     import janus_swi as janus
 
@@ -301,27 +311,41 @@ class PrologRuntime:
 
         self.timeout = timeout
         self.sandbox = sandbox
-        self._lock = threading.Lock()
+        # TEA-PROLOG-006: Use global lock, not instance lock
+        # janus-swi is not thread-safe; all operations must be serialized
+        self._lock = _GLOBAL_PROLOG_LOCK
         self._initialized = False
 
         self._initialize()
 
     def _initialize(self) -> None:
         """Set up the Prolog environment."""
-        if self._initialized:
+        global _GLOBAL_INITIALIZED
+
+        # TEA-PROLOG-006: Use global initialization flag
+        # Predicates only need to be set up once per process
+        if _GLOBAL_INITIALIZED:
+            self._initialized = True
             return
 
-        # Set up thread-local dynamic predicates for state access
-        self._setup_state_predicates()
+        with self._lock:
+            # Double-check after acquiring lock
+            if _GLOBAL_INITIALIZED:
+                self._initialized = True
+                return
 
-        # Pre-load common modules
-        self._preload_modules(self.DEFAULT_MODULES)
+            # Set up thread-local dynamic predicates for state access
+            self._setup_state_predicates()
 
-        # Apply sandbox restrictions if enabled
-        if self.sandbox:
-            self._apply_sandbox()
+            # Pre-load common modules
+            self._preload_modules(self.DEFAULT_MODULES)
 
-        self._initialized = True
+            # Apply sandbox restrictions if enabled
+            if self.sandbox:
+                self._apply_sandbox()
+
+            _GLOBAL_INITIALIZED = True
+            self._initialized = True
 
     def _preload_modules(self, modules: List[str]) -> None:
         """
@@ -553,10 +577,13 @@ class PrologRuntime:
             PrologTimeoutError: If execution exceeds timeout
         """
         with self._lock:
-            self._set_state(state)
-            self._clear_returns()
+            # TEA-PROLOG-006: Attach Prolog engine to current thread
+            _janus.attach_engine()
 
             try:
+                self._set_state(state)
+                self._clear_returns()
+
                 # Clean up query - ensure it doesn't end with period
                 clean_query = query.strip().rstrip(".")
 
@@ -585,6 +612,8 @@ class PrologRuntime:
                 ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
+            finally:
+                _janus.detach_engine()
 
     def execute_node_code(self, code: str, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -621,10 +650,14 @@ class PrologRuntime:
             return {}
 
         with self._lock:
-            self._set_state(state)
-            self._clear_returns()
+            # TEA-PROLOG-006: Attach Prolog engine to current thread
+            # Required for janus-swi to work from non-main threads
+            _janus.attach_engine()
 
             try:
+                self._set_state(state)
+                self._clear_returns()
+
                 # Use Prolog-side parsing via tea_load_code/1
                 # This is the key architectural improvement: let Prolog parse Prolog!
 
@@ -677,6 +710,9 @@ class PrologRuntime:
                 ):
                     raise PrologTimeoutError("Prolog execution timeout") from e
                 raise PrologRuntimeError(str(e)) from e
+            finally:
+                # TEA-PROLOG-006: Detach engine when done
+                _janus.detach_engine()
 
     def execute_node_code_legacy(
         self, code: str, state: Dict[str, Any]
@@ -840,9 +876,12 @@ class PrologRuntime:
             PrologTimeoutError: If evaluation exceeds timeout
         """
         with self._lock:
-            self._set_state(state)
+            # TEA-PROLOG-006: Attach Prolog engine to current thread
+            _janus.attach_engine()
 
             try:
+                self._set_state(state)
+
                 # Clean up expression
                 expr_clean = expression.strip().rstrip(".")
 
@@ -877,6 +916,8 @@ class PrologRuntime:
                 if "fail" in error_msg:
                     return None
                 raise PrologRuntimeError(str(e)) from e
+            finally:
+                _janus.detach_engine()
 
     def consult_file(self, path: str) -> None:
         """

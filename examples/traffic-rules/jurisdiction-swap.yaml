@@ -1,0 +1,167 @@
+# Jurisdiction-aware autonomous driver
+# Automatically loads traffic rules based on GPS location
+# Demonstrates geographic rule-swapping without retraining
+name: jurisdiction-aware-driver
+
+state_schema:
+  gps_location: dict
+  detected_objects: list
+  current_speed: float
+  current_zone: str
+  weather: str
+  signal_state: str
+  proposed_action: str
+  proposed_speed: float
+  jurisdiction: str
+  traffic_rules: str
+  perception_facts: str
+  is_legal: bool
+  violation: str
+  result: str
+
+nodes:
+  - name: get_jurisdiction
+    run: |
+      lat = state["gps_location"]["lat"]
+      lon = state["gps_location"]["lon"]
+      if -35 < lat < 5 and -75 < lon < -30:
+          jurisdiction = "BR"
+      elif 25 < lat < 50 and -130 < lon < -65:
+          jurisdiction = "US"
+      elif 50 < lat < 60 and -10 < lon < 2:
+          jurisdiction = "UK"
+      else:
+          jurisdiction = "INTERNATIONAL"
+      return {"jurisdiction": jurisdiction}
+
+  - name: load_rules
+    run: |
+      jurisdiction = state["jurisdiction"]
+
+      br_rules = """
+      max_speed(residential, 40).
+      max_speed(school, 30).
+      max_speed(highway, 110).
+      must_stop :- detected(stop_sign, D), D < 15.
+      must_stop :- signal(red).
+      speed_reduction(rain, 0.8).
+      speed_reduction(fog, 0.5).
+      speed_reduction(sandstorm, 0.3).
+      speed_reduction(clear, 1.0).
+      legal_speed(S) :-
+          zone(Z), max_speed(Z, Max),
+          weather(W), speed_reduction(W, Factor),
+          AdjustedMax is Max * Factor,
+          S =< AdjustedMax.
+      legal(action(continue, S)) :- \\+ must_stop, legal_speed(S).
+      legal(action(stop, _)) :- true.
+      violation(action(continue, _), must_stop_for_sign) :- detected(stop_sign, D), D < 15.
+      violation(action(continue, _), must_stop_for_red) :- signal(red).
+      violation(action(continue, S), speed_violation) :- \\+ legal_speed(S).
+      """
+
+      us_rules = """
+      max_speed(residential, 25).
+      max_speed(school, 15).
+      max_speed(highway, 65).
+      has_no_turn_sign :- detected(no_turn_on_red, _).
+      right_on_red_allowed :- signal(red), \\+ has_no_turn_sign.
+      has_stop_sign(D) :- detected(stop_sign, D).
+      must_stop :- has_stop_sign(D), D < 50.
+      must_stop :- signal(red), \\+ right_on_red_allowed.
+      legal_speed(S) :- zone(Z), max_speed(Z, Max), S =< Max.
+      legal(action(continue, S)) :- \\+ must_stop, legal_speed(S).
+      legal(action(turn_right, S)) :- right_on_red_allowed, legal_speed(S).
+      legal(action(stop, _)) :- true.
+      violation(action(continue, _), stop_sign_violation) :- has_stop_sign(D), D < 50.
+      violation(action(continue, _), red_light_violation) :- signal(red), \\+ right_on_red_allowed.
+      violation(action(continue, S), speeding) :- \\+ legal_speed(S).
+      """
+
+      uk_rules = """
+      max_speed(residential, 30).
+      max_speed(school, 20).
+      max_speed(motorway, 70).
+      max_speed(highway, 70).
+      must_stop :- detected(stop_sign, D), D < 15.
+      must_stop :- signal(red).
+      must_stop :- detected(zebra_crossing, D), D < 20, detected(pedestrian, _).
+      legal_speed(S) :- zone(Z), max_speed(Z, Max), S =< Max.
+      legal(action(continue, S)) :- \\+ must_stop, legal_speed(S).
+      legal(action(stop, _)) :- true.
+      violation(action(turn_left, _), no_turn_on_red_uk) :- signal(red).
+      violation(action(turn_right, _), no_turn_on_red_uk) :- signal(red).
+      violation(action(continue, _), zebra_crossing_violation) :- detected(zebra_crossing, D), D < 20, detected(pedestrian, _).
+      """
+
+      intl_rules = """
+      max_speed(residential, 30).
+      max_speed(school, 20).
+      max_speed(highway, 80).
+      must_stop :- detected(stop_sign, D), D < 15.
+      must_stop :- signal(red).
+      legal_speed(S) :- zone(Z), max_speed(Z, Max), S =< Max.
+      legal(action(continue, S)) :- \\+ must_stop, legal_speed(S).
+      legal(action(stop, _)) :- true.
+      violation(action(continue, _), stop_required) :- must_stop.
+      violation(action(continue, S), speed_violation) :- \\+ legal_speed(S).
+      """
+
+      rules_map = {"BR": br_rules, "US": us_rules, "UK": uk_rules, "INTERNATIONAL": intl_rules}
+      return {"traffic_rules": rules_map.get(jurisdiction, intl_rules)}
+
+  - name: generate_facts
+    run: |
+      facts = []
+      facts.append(f"speed({state['current_speed']}).")
+      facts.append(f"zone({state.get('current_zone', 'residential')}).")
+      facts.append(f"weather({state.get('weather', 'clear')}).")
+      facts.append(f"signal({state.get('signal_state', 'none')}).")
+      # Always define detected/2 to avoid "unknown procedure" errors
+      facts.append("detected(nothing, -1).")
+      for obj in state.get('detected_objects', []):
+          facts.append(f"detected({obj['type']}, {obj['distance']}).")
+      facts.append(f"proposed(action({state['proposed_action']}, {state['proposed_speed']})).")
+      return {"perception_facts": "\n".join(facts)}
+
+  - name: reason
+    language: prolog
+    run: |
+      state(perception_facts, FactsText),
+      tea_load_code(FactsText),
+      state(traffic_rules, RulesText),
+      tea_load_code(RulesText),
+      proposed(Action),
+      (legal(Action) ->
+        (IsLegal = true, Violation = none)
+      ;
+        (IsLegal = false,
+         (violation(Action, V) -> Violation = V ; Violation = unknown))
+      ),
+      return(is_legal, IsLegal),
+      return(violation, Violation).
+
+  - name: format
+    run: |
+      j = state["jurisdiction"]
+      legal = state.get("is_legal", False)
+      v = state.get("violation", "none")
+      if legal:
+          msg = f"[{j}] Action is LEGAL"
+      else:
+          msg = f"[{j}] VIOLATION: {v}"
+      return {"result": msg}
+
+edges:
+  - from: __start__
+    to: get_jurisdiction
+  - from: get_jurisdiction
+    to: load_rules
+  - from: load_rules
+    to: generate_facts
+  - from: generate_facts
+    to: reason
+  - from: reason
+    to: format
+  - from: format
+    to: __end__

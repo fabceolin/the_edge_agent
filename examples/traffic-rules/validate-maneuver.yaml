@@ -1,0 +1,110 @@
+# Validate a driving maneuver against traffic rules
+# Uses Prolog to reason about legality
+name: validate-maneuver
+
+state_schema:
+  # Perception inputs (from neural network)
+  detected_objects: list    # [{"type": "stop_sign", "distance": 10}, ...]
+  current_speed: float      # km/h
+  current_zone: str         # "residential", "school", "highway"
+  weather: str              # "clear", "rain", "fog", "sandstorm"
+  signal_state: str         # "red", "yellow", "green", "none"
+
+  # Proposed action (from motion planner)
+  proposed_action: str      # "continue", "stop", "turn_right", "turn_left"
+  proposed_speed: float     # km/h
+
+  # Rule set
+  jurisdiction: str         # "BR", "US_CA", "US_MA", "UK"
+  traffic_rules: str        # Prolog rules for this jurisdiction
+
+  # Intermediate
+  perception_facts: str
+
+  # Output
+  is_legal: bool
+  violation: str
+  recommendation: str
+  status: str
+
+nodes:
+  # Generate Prolog facts from perception
+  - name: generate_facts
+    run: |
+      facts = []
+
+      # Current state facts
+      facts.append(f"speed({state['current_speed']}).")
+      facts.append(f"zone({state['current_zone']}).")
+      facts.append(f"weather({state['weather']}).")
+      facts.append(f"signal({state['signal_state']}).")
+
+      # Detected objects (always define predicate to avoid errors)
+      facts.append("detected(nothing, -1).")
+      for obj in state.get('detected_objects', []):
+          facts.append(f"detected({obj['type']}, {obj['distance']}).")
+
+      # Proposed action
+      facts.append(f"proposed(action({state['proposed_action']}, {state['proposed_speed']})).")
+
+      return {"perception_facts": "\n".join(facts)}
+
+  # Reason about legality using Prolog
+  - name: reason
+    language: prolog
+    run: |
+      % Load perception facts
+      state(perception_facts, FactsText),
+      tea_load_code(FactsText),
+
+      % Load jurisdiction-specific rules
+      state(traffic_rules, RulesText),
+      tea_load_code(RulesText),
+
+      % Get proposed action
+      proposed(Action),
+
+      % Check if action is legal
+      (legal(Action) ->
+        (IsLegal = true, Violation = none, Recommendation = "Proceed as planned")
+      ;
+        (IsLegal = false,
+         % Find which rule is violated
+         (violation(Action, Rule) ->
+           (Violation = Rule, Recommendation = "Stop and reassess")
+         ;
+           (Violation = unknown_violation, Recommendation = "Proceed with caution")
+         ))
+      ),
+
+      return(is_legal, IsLegal),
+      return(violation, Violation),
+      return(recommendation, Recommendation).
+
+  # Format output
+  - name: format_output
+    run: |
+      is_legal = state.get("is_legal", False)
+      violation = state.get("violation", "unknown")
+      recommendation = state.get("recommendation", "")
+      jurisdiction = state.get("jurisdiction", "unknown")
+
+      if is_legal:
+          status = f"LEGAL in {jurisdiction}"
+      else:
+          status = f"VIOLATION in {jurisdiction}: {violation}"
+
+      return {
+          "status": status,
+          "result": f"{status} - {recommendation}"
+      }
+
+edges:
+  - from: __start__
+    to: generate_facts
+  - from: generate_facts
+    to: reason
+  - from: reason
+    to: format_output
+  - from: format_output
+    to: __end__

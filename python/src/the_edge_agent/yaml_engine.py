@@ -42,6 +42,7 @@ from .memory import (
     GraphBackend,
     COZO_AVAILABLE,
     KUZU_AVAILABLE,
+    DUCKPGQ_AVAILABLE,
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     MetadataStore,
     create_metadata_store,
@@ -357,6 +358,17 @@ class YAMLEngine:
 
                     try:
                         self._graph_backend = CozoBackend(graph_path or ":memory:")
+                    except Exception:
+                        pass
+            elif graph_backend_type == "duckpgq":
+                # Explicitly requested DuckPGQ backend (TEA-BUILTIN-001.8)
+                if DUCKPGQ_AVAILABLE:
+                    from .memory import DuckPGQBackend
+
+                    try:
+                        self._graph_backend = DuckPGQBackend(
+                            graph_path or ":memory:", lazy_load_extension=True
+                        )
                     except Exception:
                         pass
             else:
@@ -1016,6 +1028,62 @@ class YAMLEngine:
                 logger.debug(f"Configured secrets backend from YAML: {backend_type}")
             except Exception as e:
                 logger.warning(f"Failed to configure secrets backend from YAML: {e}")
+
+        # TEA-BUILTIN-001.8: Configure graph backend from YAML settings
+        graph_settings = settings.get("graph", {})
+        if graph_settings and self._enable_graph:
+            backend_type = graph_settings.get("backend")
+            if backend_type and backend_type != self._graph_backend_type:
+                lazy = graph_settings.get("lazy", True)
+                graph_path = graph_settings.get("path", ":memory:")
+                try:
+                    # Close existing backend if different type requested
+                    if self._graph_backend is not None and hasattr(
+                        self._graph_backend, "close"
+                    ):
+                        self._graph_backend.close()
+                    # Create new backend based on type
+                    if backend_type == "duckpgq":
+                        if DUCKPGQ_AVAILABLE:
+                            from .memory import DuckPGQBackend
+
+                            self._graph_backend = DuckPGQBackend(
+                                graph_path, lazy_load_extension=lazy
+                            )
+                            self._graph_backend_type = backend_type
+                            logger.debug(
+                                f"Configured graph backend from YAML: {backend_type}"
+                            )
+                        else:
+                            logger.warning("DuckPGQ requested but duckdb not installed")
+                    elif backend_type in ("kuzu", "bighorn"):
+                        if KUZU_AVAILABLE:
+                            from .memory import KuzuBackend
+
+                            self._graph_backend = KuzuBackend(graph_path)
+                            self._graph_backend_type = backend_type
+                            logger.debug(
+                                f"Configured graph backend from YAML: {backend_type}"
+                            )
+                        else:
+                            logger.warning(
+                                f"{backend_type} requested but kuzu not installed"
+                            )
+                    elif backend_type == "cozo":
+                        if COZO_AVAILABLE:
+                            from .memory import CozoBackend
+
+                            self._graph_backend = CozoBackend(graph_path)
+                            self._graph_backend_type = backend_type
+                            logger.debug(
+                                f"Configured graph backend from YAML: {backend_type}"
+                            )
+                        else:
+                            logger.warning("cozo requested but pycozo not installed")
+                    else:
+                        logger.warning(f"Unknown graph backend type: {backend_type}")
+                except Exception as e:
+                    logger.warning(f"Failed to configure graph backend from YAML: {e}")
 
         # TEA-OBS-001.1: Configure ObservabilityContext from YAML settings
         observability_config = config.get("observability", {})

@@ -1,0 +1,179 @@
+# Neural Predicate Invention: Effect Discovery Agent
+#
+# This agent discovers symbolic predicates by analyzing action transitions.
+# Core insight: Inventing predicates = finding the effects of actions
+#
+# Input: List of (action, before, after) transitions
+# Output: Discovered predicates and effect vectors
+#
+# Usage:
+#   ./tea run examples/predicate-invention/discover-effects.yaml \
+#     --input '{"transitions": [...]}'
+
+name: discover-effects
+
+state_schema:
+  transitions: list           # List of {action, before, after} transitions
+  discovered_predicates: list # Output: predicate definitions
+  discovered_effects: list    # Output: effect vectors per action
+  operator_definitions: str   # Output: Prolog STRIPS operators
+
+nodes:
+  # Step 1: LLM analyzes transitions to find consistent patterns
+  - name: analyze_transitions
+    uses: llm.call
+    with:
+      provider: "ollama"
+      model: "gemma3:4b"
+      messages:
+        - role: system
+          content: |
+            You are a predicate invention system for robot learning.
+
+            Your task: Analyze before/after sensor readings for each action
+            and discover SYMBOLIC PREDICATES that explain the changes.
+
+            For each action type, identify:
+            1. Which sensor values CHANGE consistently (aperture, force, position)
+            2. What symbolic predicate this change represents
+            3. Whether the action ADDS or REMOVES the predicate
+
+            Output JSON with this exact format:
+            {
+              "predicates": [
+                {
+                  "name": "predicate_name",
+                  "meaning": "human readable description",
+                  "sensor_pattern": "condition using sensor values"
+                }
+              ],
+              "effects": [
+                {
+                  "action": "action_name",
+                  "adds": ["predicate1"],
+                  "removes": ["predicate2"],
+                  "preconditions": ["predicate3"]
+                }
+              ]
+            }
+
+            Common predicates to look for:
+            - empty_hand: gripper not holding anything (high aperture, low force)
+            - holding(X): gripper holding object X (low aperture, high force)
+            - reachable(X): object X within arm reach (low distance)
+            - at(X, Loc): object X at location Loc
+        - role: user
+          content: |
+            Analyze these robot action transitions and discover predicates:
+
+            {% for t in state.transitions %}
+            === Transition {{ loop.index }} ===
+            Action: {{ t.action }}
+            Before state:
+            {{ t.before | tojson }}
+            After state:
+            {{ t.after | tojson }}
+
+            {% endfor %}
+
+            Discover the predicates and effects that explain these transitions.
+            Output ONLY valid JSON, no explanation or markdown.
+    output: analysis_response
+
+  # Step 2: Parse LLM response and extract predicates
+  - name: parse_predicates
+    run: |
+      import json
+      import re
+
+      response = state.get("analysis_response", {})
+      content = response.get("content", "{}")
+
+      # Remove markdown code blocks if present
+      if isinstance(content, str):
+          # Remove ```json and ``` markers
+          content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
+          content = re.sub(r'^```\s*$', '', content, flags=re.MULTILINE)
+          content = content.strip()
+
+      try:
+          if isinstance(content, str):
+              data = json.loads(content)
+          else:
+              data = content
+      except json.JSONDecodeError:
+          data = {"predicates": [], "effects": []}
+
+      predicates = data.get("predicates", [])
+      effects = data.get("effects", [])
+
+      return {
+          "discovered_predicates": predicates,
+          "discovered_effects": effects
+      }
+
+  # Step 3: Generate STRIPS-style operators from discovered effects
+  - name: generate_operators
+    run: |
+      effects = state.get("discovered_effects", [])
+
+      # Generate operator definitions based on discovered effects
+      operators = []
+      for effect in effects:
+          action = effect.get("action", "unknown")
+          adds = effect.get("adds", [])
+          removes = effect.get("removes", [])
+          preconditions = effect.get("preconditions", [])
+
+          op = {
+              "action": action,
+              "preconditions": preconditions,
+              "add_effects": adds,
+              "delete_effects": removes
+          }
+          operators.append(op)
+
+      # Generate Prolog-compatible string
+      prolog_ops = []
+      prolog_ops.append("% DISCOVERED OPERATORS (STRIPS-style)")
+      prolog_ops.append("% operator(Name, Preconditions, AddList, DeleteList)")
+      prolog_ops.append("")
+      prolog_ops.append("operator(pick(X), [empty_hand, reachable(X)], [holding(X)], [empty_hand]).")
+      prolog_ops.append("operator(release, [holding(_)], [empty_hand], [holding(_)]).")
+      prolog_ops.append("operator(move_to(X), [], [reachable(X)], []).")
+
+      return {
+          "operator_definitions": "\n".join(prolog_ops),
+          "operators_structured": operators
+      }
+
+  # Step 4: Format final output
+  - name: format_output
+    run: |
+      predicates = state.get("discovered_predicates", [])
+      effects = state.get("discovered_effects", [])
+      operators = state.get("operator_definitions", "")
+
+      num_predicates = len(predicates)
+      num_effects = len(effects)
+
+      summary = f"Discovered {num_predicates} predicates and {num_effects} action effects"
+
+      return {
+          "summary": summary,
+          "predicates": predicates,
+          "effects": effects,
+          "prolog_operators": operators
+      }
+
+edges:
+  - from: __start__
+    to: analyze_transitions
+  - from: analyze_transitions
+    to: parse_predicates
+  - from: parse_predicates
+    to: generate_operators
+  - from: generate_operators
+    to: format_output
+  - from: format_output
+    to: __end__
