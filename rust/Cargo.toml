@@ -58,10 +58,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Utilities
 parking_lot = "0.12"
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 regex = "1"
+
+# A2A Inter-Agent Communication (optional)
+dashmap = { version = "6.1", optional = true }
+bincode = { version = "1.3", optional = true }
 
 # Data processing
 csv = "1.3"
@@ -80,7 +84,7 @@ assert_cmd = "2.0"
 predicates = "3.1"
 
 [features]
-default = ["memory", "trace", "data", "llm"]
+default = ["memory", "trace", "data", "llm", "agent", "reflection", "reasoning", "planning"]
 memory = []
 trace = []
 data = []
@@ -88,10 +92,15 @@ web = []
 rag = []
 llm = []
 code = []
+agent = []  # Multi-agent collaboration primitives (TEA-AGENT-001.1-rust)
+reflection = []  # Reflection loop primitives (TEA-AGENT-001.2-rust)
+reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, self-correct, decompose
+planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
+a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
 prolog = ["dep:swipl"]
 ltm-duckdb = ["dep:duckdb"]
 graph = ["dep:cozo"]
-all = ["memory", "trace", "data", "web", "rag", "llm", "code", "prolog", "ltm-duckdb", "graph"]
+all = ["memory", "trace", "data", "web", "rag", "llm", "code", "agent", "reflection", "reasoning", "planning", "a2a", "prolog", "ltm-duckdb", "graph"]
 
 [dependencies.duckdb]
 version = "1.1"

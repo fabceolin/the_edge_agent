@@ -1,0 +1,152 @@
+# Code Refactoring Planning Example
+# Demonstrates plan.decompose with iterative strategy for code refactoring
+#
+# Usage:
+#   tea run examples/planning/code-refactoring-plan.yaml --input '{"codebase_path": "./src", "refactoring_goal": "Extract common utilities into shared module"}'
+
+name: code-refactoring-agent
+version: "1.0"
+description: Plan and execute code refactoring with iterative decomposition
+
+state_schema:
+  codebase_path: str
+  refactoring_goal: str
+  plan: dict
+  refactoring_results: dict
+  validation_report: str
+
+settings:
+  llm:
+    model: "${OPENAI_MODEL:-gpt-4}"
+    api_key: "${OPENAI_API_KEY}"
+
+nodes:
+  - name: analyze_codebase
+    action: llm.call
+    with:
+      model: "{{ settings.llm.model }}"
+      messages:
+        - role: system
+          content: You are a code analysis expert. Analyze the codebase structure for refactoring opportunities.
+        - role: user
+          content: |
+            Codebase path: {{ state.codebase_path }}
+            Refactoring goal: {{ state.refactoring_goal }}
+
+            Identify:
+            1. Files that need modification
+            2. Dependencies between files
+            3. Potential breaking changes
+            4. Test files that need updates
+    output: codebase_analysis
+
+  - name: create_refactoring_plan
+    action: plan.decompose
+    with:
+      goal: |
+        Refactor codebase at {{ state.codebase_path }} to: {{ state.refactoring_goal }}
+
+        Based on analysis:
+        {{ state.codebase_analysis }}
+      planner:
+        model: "{{ settings.llm.model }}"
+        strategy: iterative
+        prompt_template: |
+          You are a code refactoring planner. Create a step-by-step refactoring plan.
+
+          Goal: {{ goal }}
+
+          Important principles:
+          - Each step should be atomic and testable
+          - Maintain backward compatibility where possible
+          - Include test updates with each change
+          - Order steps to minimize breaking changes
+
+          Return JSON with subtasks that have clear dependencies:
+          {
+            "subtasks": [
+              {"id": "step_1", "description": "Create new shared module structure", "dependencies": []},
+              {"id": "step_2", "description": "Extract utility functions", "dependencies": ["step_1"]},
+              {"id": "step_3", "description": "Update imports in dependent files", "dependencies": ["step_2"]},
+              {"id": "step_4", "description": "Update and run tests", "dependencies": ["step_3"]}
+            ]
+          }
+    output: plan
+
+  - name: execute_refactoring
+    action: plan.execute
+    with:
+      plan: "{{ state.plan }}"
+      parallel: false  # Sequential for refactoring to avoid conflicts
+      subtask_executor:
+        action: llm.call
+        with:
+          model: "{{ settings.llm.model }}"
+          messages:
+            - role: system
+              content: |
+                You are a code refactoring assistant. Execute the refactoring step and provide:
+                1. The code changes (as diff or new code)
+                2. Files modified
+                3. Any issues encountered
+            - role: user
+              content: |
+                Refactoring step: {{ subtask.description }}
+                Codebase: {{ state.codebase_path }}
+
+                Previous steps completed:
+                {{ state.subtask_results | tojson }}
+      on_subtask_failure: replan  # Re-plan if a step fails
+      max_replans: 2
+    output: refactoring_results
+
+  - name: validate_refactoring
+    action: llm.call
+    with:
+      model: "{{ settings.llm.model }}"
+      messages:
+        - role: system
+          content: You are a code review expert. Validate the refactoring results.
+        - role: user
+          content: |
+            Original goal: {{ state.refactoring_goal }}
+
+            Refactoring results:
+            {{ state.refactoring_results | tojson }}
+
+            Provide a validation report:
+            1. Were all goals achieved?
+            2. Are there any remaining issues?
+            3. Recommendations for follow-up work
+    output: validation_report
+
+  - name: handle_replan
+    condition: "{{ state.plan.metadata.replan_count | default(0) > 0 }}"
+    action: plan.replan
+    with:
+      plan: "{{ state.plan }}"
+      context: |
+        A refactoring step failed. Adjust the plan based on:
+        - Completed work: {{ state.subtask_results | tojson }}
+        - Current state of codebase
+      preserve_completed: true
+      max_replans: 2
+    output: plan
+
+edges:
+  - from: __start__
+    to: analyze_codebase
+  - from: analyze_codebase
+    to: create_refactoring_plan
+  - from: create_refactoring_plan
+    to: execute_refactoring
+  - from: execute_refactoring
+    to: validate_refactoring
+    condition: "{{ state.plan.metadata.replan_count | default(0) == 0 }}"
+  - from: execute_refactoring
+    to: handle_replan
+    condition: "{{ state.plan.metadata.replan_count | default(0) > 0 }}"
+  - from: handle_replan
+    to: execute_refactoring
+  - from: validate_refactoring
+    to: __end__

@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 import typer
 
 from the_edge_agent import YAMLEngine, __version__
+from the_edge_agent.serialization import TeaJSONEncoder
 
 # Implementation identifier
 IMPLEMENTATION = "python"
@@ -298,7 +299,7 @@ def emit_ndjson_event(event_type: str, **kwargs):
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **kwargs,
     }
-    print(json.dumps(event), flush=True)
+    print(json.dumps(event, cls=TeaJSONEncoder), flush=True)
 
 
 def load_checkpoint(checkpoint_path: str) -> Dict[str, Any]:
@@ -654,7 +655,9 @@ def run(
                         state = event.get("state", {})
                         if not quiet:
                             typer.echo(f"⏸  Interrupt at: {node}")
-                            typer.echo(f"   State: {json.dumps(state, indent=2)}")
+                            typer.echo(
+                                f"   State: {json.dumps(state, indent=2, cls=TeaJSONEncoder)}"
+                            )
 
                         checkpoint_path = event.get("checkpoint_path")
 
@@ -689,7 +692,7 @@ def run(
                             typer.echo("✓ Completed")
                             typer.echo("=" * 80)
                             typer.echo(
-                                f"Final state: {json.dumps(event.get('state', {}), indent=2)}"
+                                f"Final state: {json.dumps(event.get('state', {}), indent=2, cls=TeaJSONEncoder)}"
                             )
                         completed = True
                         break
@@ -842,7 +845,7 @@ def resume(
                         typer.echo("✓ Completed")
                         typer.echo("=" * 80)
                         typer.echo(
-                            f"Final state: {json.dumps(event.get('state', {}), indent=2)}"
+                            f"Final state: {json.dumps(event.get('state', {}), indent=2, cls=TeaJSONEncoder)}"
                         )
                     break
                 elif event_type == "error":

@@ -2,12 +2,23 @@
 //!
 //! Actions are composable units of functionality that can be used in workflow nodes.
 
+#[cfg(feature = "a2a")]
+pub mod a2a;
+#[cfg(feature = "agent")]
+pub mod agent;
 pub mod data;
 pub mod file;
 pub mod http;
+#[cfg(feature = "llm")]
 pub mod llm;
 pub mod memory;
+#[cfg(feature = "planning")]
+pub mod planning;
 pub mod ratelimit;
+#[cfg(feature = "reasoning")]
+pub mod reasoning;
+#[cfg(feature = "reflection")]
+pub mod reflection;
 
 use crate::engine::executor::ActionRegistry;
 
@@ -21,6 +32,21 @@ pub fn register_defaults(registry: &ActionRegistry) {
 
     #[cfg(feature = "llm")]
     llm::register(registry);
+
+    #[cfg(feature = "reasoning")]
+    reasoning::register(registry);
+
+    #[cfg(feature = "reflection")]
+    reflection::register(registry);
+
+    #[cfg(feature = "agent")]
+    agent::register(registry);
+
+    #[cfg(feature = "planning")]
+    planning::register(registry);
+
+    #[cfg(feature = "a2a")]
+    a2a::register(registry);
 }
 
 /// Action result helper

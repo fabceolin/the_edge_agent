@@ -1,6 +1,6 @@
 # Story TEA-BUILTIN-015.8: Health & Metadata Endpoints
 
-## Status: Ready for Development
+## Status: Done
 
 ## Story
 
@@ -22,58 +22,58 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Define Server Settings Schema** (AC1, AC9)
-  - [ ] Create `ServerSettings` Pydantic model
-  - [ ] Add `server` field to Settings
-  - [ ] Define enable flags and path overrides
+- [x] **Task 1: Define Server Settings Schema** (AC1, AC9)
+  - [x] Create `ServerSettings` Pydantic model
+  - [x] Add `server` field to Settings
+  - [x] Define enable flags and path overrides
 
-- [ ] **Task 2: Implement Health Endpoint** (AC2)
-  - [ ] Return `{"status": "healthy", "timestamp": "..."}`
-  - [ ] Include version and service name
-  - [ ] Always returns 200 if service is running
+- [x] **Task 2: Implement Health Endpoint** (AC2)
+  - [x] Return `{"status": "healthy", "timestamp": "..."}`
+  - [x] Include version and service name
+  - [x] Always returns 200 if service is running
 
-- [ ] **Task 3: Implement Readiness Endpoint** (AC3)
-  - [ ] Check configured backends (Firestore, LTM, etc.)
-  - [ ] Return 200 if all ready, 503 if not
-  - [ ] Include individual check results
+- [x] **Task 3: Implement Readiness Endpoint** (AC3)
+  - [x] Check configured backends (Firestore, LTM, etc.)
+  - [x] Return 200 if all ready, 503 if not
+  - [x] Include individual check results
 
-- [ ] **Task 4: Implement Agents List Endpoint** (AC4)
-  - [ ] Scan agents directory
-  - [ ] Return list with name, description, endpoint
-  - [ ] Cache results for performance
+- [x] **Task 4: Implement Agents List Endpoint** (AC4)
+  - [x] Scan agents directory
+  - [x] Return list with name, description, endpoint
+  - [x] Cache results for performance
 
-- [ ] **Task 5: Implement Agent Info Endpoint** (AC5)
-  - [ ] Return detailed agent info
-  - [ ] Include input/output schemas
-  - [ ] Include endpoint configuration
+- [x] **Task 5: Implement Agent Info Endpoint** (AC5)
+  - [x] Return detailed agent info
+  - [x] Include input/output schemas
+  - [x] Include endpoint configuration
 
-- [ ] **Task 6: Implement Metrics Endpoint** (AC6)
-  - [ ] Track agent execution count
-  - [ ] Track execution duration histogram
-  - [ ] Track error count by type
-  - [ ] Format as Prometheus text
+- [x] **Task 6: Implement Metrics Endpoint** (AC6)
+  - [x] Track agent execution count
+  - [x] Track execution duration histogram
+  - [x] Track error count by type
+  - [x] Format as Prometheus text
 
-- [ ] **Task 7: Implement OpenAPI Endpoint** (AC7)
-  - [ ] Aggregate all agent endpoint specs
-  - [ ] Include auth schemes
-  - [ ] Include server info
+- [x] **Task 7: Implement OpenAPI Endpoint** (AC7)
+  - [x] Aggregate all agent endpoint specs
+  - [x] Include auth schemes
+  - [x] Include server info
 
-- [ ] **Task 8: Implement Custom Health Checks** (AC8)
-  - [ ] Allow registering custom check functions
-  - [ ] Support async checks
-  - [ ] Include in readiness response
+- [x] **Task 8: Implement Custom Health Checks** (AC8)
+  - [x] Allow registering custom check functions
+  - [x] Support async checks
+  - [x] Include in readiness response
 
-- [ ] **Task 9: Write Tests** (AC1-AC9)
-  - [ ] Test each endpoint
-  - [ ] Test enable/disable flags
-  - [ ] Test custom paths
-  - [ ] Test metrics collection
-  - [ ] Test custom health checks
+- [x] **Task 9: Write Tests** (AC1-AC9)
+  - [x] Test each endpoint
+  - [x] Test enable/disable flags
+  - [x] Test custom paths
+  - [x] Test metrics collection
+  - [x] Test custom health checks
 
-- [ ] **Task 10: Documentation**
-  - [ ] Update `docs/shared/YAML_REFERENCE.md` with server settings
-  - [ ] Add operational endpoints guide
-  - [ ] Include Kubernetes probe examples
+- [x] **Task 10: Documentation**
+  - [x] Update `docs/shared/YAML_REFERENCE.md` with server settings
+  - [x] Add operational endpoints guide
+  - [x] Include Kubernetes probe examples
 
 ## Dev Notes
 
@@ -623,16 +623,34 @@ class YAMLEngine:
 ## Dev Agent Record
 
 ### Agent Model Used
-_To be filled by dev agent_
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
-_To be filled by dev agent_
+- No critical issues encountered during implementation
+- Pydantic Config deprecation warning fixed (migrated to ConfigDict)
 
 ### Completion Notes List
-_To be filled by dev agent_
+1. Created new `http` module at `python/src/the_edge_agent/http/`
+2. Implemented ServerSettings Pydantic model with all endpoint configuration options
+3. Health endpoint returns JSON with service info and timestamp
+4. Readiness endpoint checks all registered health checks, returns 503 on failure
+5. Agents list and info endpoints filter sensitive settings (llm, auth)
+6. Metrics endpoint uses thread-safe MetricsCollector, outputs Prometheus text format
+7. OpenAPI endpoint generates OpenAPI 3.0 spec from agent registry with type conversion
+8. Custom health checks support both sync and async callables
+9. All 40 tests pass covering AC1-AC9
+10. Documentation added to specialized.md with Kubernetes probe examples
 
 ### File List
-_To be filled by dev agent_
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/http/__init__.py` | Created | Module exports for http endpoints |
+| `python/src/the_edge_agent/http/settings.py` | Created | ServerSettings, HealthCheckConfig, PathOverrides models |
+| `python/src/the_edge_agent/http/endpoints.py` | Created | Health, ready, agents list/info endpoint handlers |
+| `python/src/the_edge_agent/http/metrics.py` | Created | MetricsCollector class and Prometheus export |
+| `python/src/the_edge_agent/http/openapi.py` | Created | OpenAPI 3.0 spec generation from agent registry |
+| `python/tests/test_server_endpoints.py` | Created | 40 unit/integration tests covering all ACs |
+| `docs/shared/yaml-reference/actions/specialized.md` | Modified | Added Server Endpoints section with full documentation |
 
 ## QA Results
 
@@ -717,3 +735,78 @@ None identified. Story is ready for development with clear test criteria.
 ---
 
 **Test Design Reference:** `docs/qa/assessments/TEA-BUILTIN-015.8-test-design-20260105.md`
+
+---
+
+### Review Date: 2026-01-05
+
+### Reviewed By: Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall Grade: EXCELLENT**
+
+The implementation demonstrates high-quality engineering with well-structured, modular code following Python best practices. Key strengths:
+
+1. **Clean Architecture**: The `http` module is well-organized with separate files for settings, endpoints, metrics, and OpenAPI generation
+2. **Pydantic Models**: Excellent use of Pydantic v2 with `ConfigDict`, field validators, and proper type annotations
+3. **Thread Safety**: `MetricsCollector` correctly uses `threading.Lock` for concurrent access protection
+4. **Graceful Fallbacks**: FastAPI import is optional with proper `FASTAPI_AVAILABLE` guards
+5. **Async/Sync Support**: Health checks correctly handle both sync and async callables via `asyncio.iscoroutinefunction()`
+6. **Security Filtering**: Agent info endpoint properly filters sensitive settings (llm, auth, api_key, secret, token, password)
+7. **ISO Timestamps**: Consistent UTC timestamp formatting with Z suffix
+
+### Refactoring Performed
+
+No refactoring required. The implementation is clean and follows all established patterns.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows Python conventions, type hints, docstrings
+- Project Structure: ✓ Module organization matches story specification
+- Testing Strategy: ✓ 40 tests covering all 9 ACs with proper unit/integration split
+- All ACs Met: ✓ All 9 acceptance criteria fully implemented and tested
+
+### Improvements Checklist
+
+All items addressed by developer - no outstanding improvements required:
+
+- [x] ServerSettings Pydantic model with all endpoint configuration options (AC1)
+- [x] Health endpoint returns JSON with service info and timestamp (AC2)
+- [x] Readiness endpoint checks all registered health checks, returns 503 on failure (AC3)
+- [x] Agents list and info endpoints with proper filtering (AC4, AC5)
+- [x] MetricsCollector with thread-safe Prometheus text format export (AC6)
+- [x] OpenAPI 3.0 spec generation from agent registry (AC7)
+- [x] Custom health checks support both sync and async callables (AC8)
+- [x] Custom path configuration via PathOverrides model (AC9)
+- [x] Comprehensive test coverage (40 tests passing)
+- [x] Documentation added to specialized.md with Kubernetes probe examples
+
+### Security Review
+
+**Status: PASS**
+
+1. **Sensitive Settings Filtering**: Implemented in `_agent_info_handler()` - filters `llm`, `auth`, `api_key`, `secret`, `token`, `password` keys (endpoints.py:248-251)
+2. **No Secrets Exposure**: Health/ready/agents endpoints don't expose credentials
+3. **Input Validation**: Pydantic models validate all configuration inputs
+
+### Performance Considerations
+
+**Status: PASS**
+
+1. **Thread-Safe Metrics**: `threading.Lock` ensures safe concurrent metric recording
+2. **Efficient Handler Design**: Handlers are async-first with sync fallback
+3. **No N+1 Issues**: Agent registry accessed directly without nested queries
+4. **Prometheus Export**: Simple string concatenation, efficient for scraping
+
+### Files Modified During Review
+
+No files modified during review - implementation quality is production-ready.
+
+### Gate Status
+
+Gate: **PASS** → docs/qa/gates/TEA-BUILTIN-015.8-health-metadata-endpoints.yml
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, 40/40 tests passing, documentation complete, no blocking issues identified.

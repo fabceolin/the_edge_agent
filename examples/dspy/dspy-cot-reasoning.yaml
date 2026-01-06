@@ -1,0 +1,55 @@
+# DSPy Chain-of-Thought Reasoning Example
+#
+# Demonstrates using DSPy's ChainOfThought module for structured
+# reasoning with automatic prompt optimization.
+#
+# When DSPy is unavailable, gracefully falls back to native reason.cot.
+#
+# Usage:
+#   tea run examples/dspy/dspy-cot-reasoning.yaml --input '{"problem": "What is 15% of 80?"}'
+
+name: dspy-cot-reasoning
+version: "1.0"
+
+settings:
+  dspy:
+    enabled: true
+    model: gpt-4
+    temperature: 0.3
+
+state_schema:
+  problem: str
+  thinking: str
+  answer: str
+  reasoning_trace: list
+
+nodes:
+  - name: solve_with_dspy_cot
+    description: Solve problem using DSPy ChainOfThought
+    action: reason.dspy.cot
+    with:
+      problem: "{{ state.problem }}"
+      signature: "question -> thinking, answer"
+      few_shot_examples:
+        - question: "What is 20% of 50?"
+          thinking: "To find 20% of 50, I multiply 50 by 0.20. 50 * 0.20 = 10."
+          answer: "10"
+        - question: "If a shirt costs $40 and is 25% off, what is the sale price?"
+          thinking: "25% of $40 is 40 * 0.25 = $10. Sale price = $40 - $10 = $30."
+          answer: "$30"
+
+  - name: format_output
+    description: Format the reasoning result
+    run: |
+      dspy_module = state.get("dspy_module", "unknown")
+      return {
+          "result_summary": f"Module: {dspy_module}\nThinking: {state.get('thinking', 'N/A')}\nAnswer: {state.get('answer', 'N/A')}"
+      }
+
+edges:
+  - from: __start__
+    to: solve_with_dspy_cot
+  - from: solve_with_dspy_cot
+    to: format_output
+  - from: format_output
+    to: __end__

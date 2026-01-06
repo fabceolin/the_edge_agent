@@ -1,0 +1,88 @@
+schema: 1
+story: TEA-BUILTIN-015.2
+story_title: Firestore Built-in Actions
+gate: PASS
+status_reason: >-
+  All 9 acceptance criteria implemented with 34 unit tests passing.
+  Code quality excellent with proper separation of concerns, thread-safe
+  client caching, and comprehensive error handling.
+reviewer: Quinn (Test Architect)
+updated: 2026-01-05T12:00:00Z
+
+quality_score: 100
+expires: 2026-01-19T12:00:00Z
+
+top_issues: []
+
+waiver:
+  active: false
+
+evidence:
+  tests_reviewed: 34
+  tests_passing: 34
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    ac_gaps: []
+
+test_design:
+  scenarios_total: 47
+  by_level:
+    unit: 22
+    integration: 19
+    e2e: 6
+  by_priority:
+    p0: 15
+    p1: 20
+    p2: 10
+    p3: 2
+  coverage_gaps: []
+  minimum_coverage: 90%
+  emulator_required: true
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: >-
+      Template interpolation uses sandboxed Jinja2; credentials resolved from
+      environment; Firestore typed API prevents injection; no sensitive data
+      in error messages.
+  performance:
+    status: PASS
+    notes: >-
+      Client caching per project; lazy initialization for serverless; batch
+      API reduces round trips. Query offset is post-query which may be slow
+      for large offsets (documented limitation).
+  reliability:
+    status: PASS
+    notes: >-
+      Thread-safe client initialization with Lock; comprehensive error handling
+      with structured error codes; graceful handling when firebase-admin not
+      installed.
+  maintainability:
+    status: PASS
+    notes: >-
+      Clean separation between client factory and actions; dual namespace
+      registration for backward compatibility; comprehensive docstrings with
+      YAML examples.
+
+implementation_files:
+  new:
+    - python/src/the_edge_agent/backends/__init__.py
+    - python/src/the_edge_agent/backends/firestore_client.py
+    - python/src/the_edge_agent/actions/firestore_actions.py
+    - python/tests/test_firestore_actions.py
+  modified:
+    - python/src/the_edge_agent/actions/__init__.py
+    - python/src/the_edge_agent/yaml_engine.py
+    - docs/shared/yaml-reference/actions/memory.md
+
+recommendations:
+  immediate: []
+  future:
+    - action: Add integration tests with Firebase emulator in CI
+      refs: ['python/tests/test_firestore_actions_integration.py']
+    - action: Consider cursor-based pagination for large query offsets
+      refs: ['python/src/the_edge_agent/actions/firestore_actions.py:584']
+    - action: Add E2E test with complete YAML agent workflow
+      refs: ['python/tests/e2e/test_firestore_agent.py']

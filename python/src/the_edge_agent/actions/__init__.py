@@ -27,6 +27,19 @@ Actions are organized by domain:
 - text_actions: Text processing including citation insertion (TEA-KIROKU-002)
 - neo4j_trigger_actions: Neo4j APOC trigger management (TEA-BUILTIN-001.7.5)
 - neo4j_gds_actions: Neo4j GDS graph analytics algorithms (TEA-BUILTIN-001.7.4)
+- reasoning_actions: Reasoning technique primitives (CoT, ReAct, self-correct, decompose) (TEA-AGENT-001.4)
+- agent_actions: Multi-agent collaboration primitives (dispatch, parallel, sequential, coordinate) (TEA-AGENT-001.1)
+- mem0_actions: Mem0 universal memory integration (TEA-AGENT-001.6)
+- planning_actions: Planning and decomposition primitives (decompose, execute, replan, status) (TEA-AGENT-001.3)
+- session_persistence_actions: Session persistence (load, save, delete, exists) (TEA-BUILTIN-015.1)
+- llamaindex_actions: LlamaIndex RAG bridge (query, router, subquestion, index management) (TEA-AGENT-001.8)
+- dspy_actions: DSPy prompt optimization (cot, react, compile, optimize) (TEA-AGENT-001.7)
+- firestore_actions: Firestore CRUD operations (get, set, query, delete, batch) (TEA-BUILTIN-015.2)
+- http_response_actions: HTTP response for early termination (http.respond) (TEA-BUILTIN-015.5)
+- input_validation_actions: Input schema validation (validate.input) (TEA-BUILTIN-015.4)
+- auth_actions: Authentication verification (auth.verify, auth.get_user) (TEA-BUILTIN-015.3)
+- error_actions: Error handling actions (error.is_retryable, error.clear, error.retry) (TEA-BUILTIN-015.6)
+- a2a_actions: Inter-agent communication (send, receive, broadcast, delegate, state, discover) (TEA-AGENT-001.5)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -95,6 +108,52 @@ from .neo4j_trigger_actions import register_actions as register_neo4j_triggers
 
 # TEA-BUILTIN-001.7.4: Neo4j GDS Actions
 from .neo4j_gds_actions import register_actions as register_neo4j_gds
+
+# TEA-AGENT-001.2: Reflection Loop Primitive
+from .reflection_actions import register_actions as register_reflection
+from .reflection_actions import ReflectionFailedError
+
+# TEA-AGENT-001.4: Reasoning Techniques Primitives
+from .reasoning_actions import register_actions as register_reasoning
+
+# TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+from .agent_actions import register_actions as register_agent
+
+# TEA-AGENT-001.6: Mem0 Memory Integration
+from .mem0_actions import register_actions as register_mem0
+
+# TEA-AGENT-001.3: Planning & Decomposition Primitive
+from .planning_actions import register_actions as register_planning
+
+# TEA-BUILTIN-015.1: Session Persistence Actions
+from .session_persistence_actions import (
+    register_actions as register_session_persistence,
+)
+
+# TEA-AGENT-001.8: LlamaIndex RAG Bridge
+from .llamaindex_actions import register_actions as register_llamaindex
+
+# TEA-AGENT-001.7: DSPy Prompt Optimization
+from .dspy_actions import register_actions as register_dspy
+
+# TEA-BUILTIN-015.2: Firestore CRUD Actions
+from .firestore_actions import register_actions as register_firestore
+
+# TEA-BUILTIN-015.5: HTTP Response Actions (Early Termination)
+from .http_response_actions import register_actions as register_http_response
+from .http_response_actions import HTTPResponse
+
+# TEA-BUILTIN-015.4: Input Validation Schema
+from .input_validation_actions import register_actions as register_input_validation
+
+# TEA-BUILTIN-015.3: Authentication Actions
+from .auth_actions import register_actions as register_auth
+
+# TEA-BUILTIN-015.6: Error Handling Actions
+from .error_actions import register_actions as register_error
+
+# TEA-AGENT-001.5: Inter-Agent Communication
+from .a2a_actions import register_actions as register_a2a
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -174,6 +233,48 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     # TEA-BUILTIN-001.7.4: Neo4j GDS Actions
     register_neo4j_gds(registry, engine)
 
+    # TEA-AGENT-001.2: Reflection Loop Primitive
+    register_reflection(registry, engine)
+
+    # TEA-AGENT-001.4: Reasoning Techniques Primitives
+    register_reasoning(registry, engine)
+
+    # TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+    register_agent(registry, engine)
+
+    # TEA-AGENT-001.6: Mem0 Memory Integration
+    register_mem0(registry, engine)
+
+    # TEA-AGENT-001.3: Planning & Decomposition Primitive
+    register_planning(registry, engine)
+
+    # TEA-BUILTIN-015.1: Session Persistence Actions
+    register_session_persistence(registry, engine)
+
+    # TEA-AGENT-001.8: LlamaIndex RAG Bridge
+    register_llamaindex(registry, engine)
+
+    # TEA-AGENT-001.7: DSPy Prompt Optimization
+    register_dspy(registry, engine)
+
+    # TEA-BUILTIN-015.2: Firestore CRUD Actions
+    register_firestore(registry, engine)
+
+    # TEA-BUILTIN-015.5: HTTP Response Actions
+    register_http_response(registry, engine)
+
+    # TEA-BUILTIN-015.4: Input Validation Schema
+    register_input_validation(registry, engine)
+
+    # TEA-BUILTIN-015.3: Authentication Actions
+    register_auth(registry, engine)
+
+    # TEA-BUILTIN-015.6: Error Handling Actions
+    register_error(registry, engine)
+
+    # TEA-AGENT-001.5: Inter-Agent Communication
+    register_a2a(registry, engine)
+
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)
     register_cloud_memory(registry, engine)
@@ -190,4 +291,6 @@ __all__ = [
     "build_actions_registry",
     "register_cache_jinja_filters",
     "configure_rate_limiters_from_settings",
+    "ReflectionFailedError",
+    "HTTPResponse",
 ]

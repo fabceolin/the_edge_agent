@@ -1,0 +1,116 @@
+# Reflection Loop Example (TEA-AGENT-001.2)
+#
+# Demonstrates the reflection.loop action for self-correcting output generation.
+# This example shows a JSON generation task with schema validation and automatic
+# correction using the generate->evaluate->correct cycle.
+#
+# Usage:
+#   tea run examples/reflection/reflection-loop-example.yaml --input '{"topic": "climate change"}'
+#
+# The reflection loop will:
+# 1. Generate initial JSON output
+# 2. Validate against the schema
+# 3. If invalid, run corrector and retry
+# 4. Repeat until valid or max_iterations reached
+
+name: reflection-loop-example
+version: "1.0"
+
+description: |
+  Example demonstrating the reflection loop pattern for self-correcting agents.
+  The agent generates structured JSON and automatically corrects any schema violations.
+
+state_schema:
+  topic: str
+  article: dict
+  reflection_iteration: int
+  reflection_history: list
+  reflection_best_score: float
+
+settings:
+  llm:
+    provider: ollama
+    default_model: llama3.2
+
+nodes:
+  - name: generate_article
+    uses: reflection.loop
+    with:
+      # Generator: produces the initial output
+      generator:
+        run: |
+          topic = state.get("topic", "technology")
+          # Simulate LLM output (in real use, call llm.call)
+          iteration = state.get("reflection_iteration", 1)
+          if iteration == 1:
+            # First attempt - missing required field
+            result = {
+              "title": f"Understanding {topic.title()}",
+              "body": f"An article about {topic}."
+            }
+          else:
+            # After correction - complete article
+            result = {
+              "title": f"Understanding {topic.title()}",
+              "summary": f"This article explores the key aspects of {topic}.",
+              "body": f"A comprehensive analysis of {topic}.",
+              "tags": [topic, "research", "analysis"]
+            }
+
+      # Evaluator: validates against JSON Schema
+      evaluator:
+        type: schema
+        schema:
+          type: object
+          required:
+            - title
+            - summary
+            - body
+          properties:
+            title:
+              type: string
+              minLength: 5
+            summary:
+              type: string
+              minLength: 10
+            body:
+              type: string
+            tags:
+              type: array
+              items:
+                type: string
+
+      # Corrector: provides feedback for next iteration
+      corrector:
+        run: |
+          errors = state.get("reflection_errors", [])
+          error_messages = [e.get("message", str(e)) for e in errors]
+          # Store feedback for generator to use
+          result = {
+            "correction_feedback": f"Fix these issues: {'; '.join(error_messages)}",
+            "needs_summary": any("summary" in str(e) for e in errors)
+          }
+
+      max_iterations: 3
+      on_failure: return_best
+
+  - name: format_output
+    run: |
+      article = state.get("reflection_output", {})
+      iteration = state.get("reflection_iteration", 0)
+      success = state.get("valid", False)
+
+      return {
+        "article": article,
+        "generation_attempts": iteration,
+        "success": success,
+        "message": f"Article generated in {iteration} iteration(s)"
+      }
+
+edges:
+  - from: __start__
+    to: generate_article
+  - from: generate_article
+    to: format_output
+  - from: format_output
+    to: __end__

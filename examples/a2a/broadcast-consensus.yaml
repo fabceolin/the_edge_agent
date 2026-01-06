@@ -1,0 +1,162 @@
+# Broadcast Consensus Example
+#
+# This example demonstrates a consensus pattern where:
+# - A proposer broadcasts a proposal to all voters
+# - Voters respond with their votes
+# - The proposer collects all votes and determines the outcome
+#
+# Story: TEA-AGENT-001.5
+
+name: broadcast-consensus-example
+description: Broadcast-based voting/consensus pattern
+
+state_schema:
+  proposal: dict
+  proposal_id: str
+  votes: list
+  a2a_messages: list
+  a2a_broadcast_count: int
+  outcome: str
+
+settings:
+  a2a:
+    enabled: true
+    namespace: voting-room
+    agent_id: proposer
+
+nodes:
+  # Step 1: Register as proposer
+  - name: register_proposer
+    action: a2a.register
+    with:
+      capabilities: [propose, tally]
+      agent_type: proposer
+
+  # Step 2: Create a proposal
+  - name: create_proposal
+    run: |
+      import uuid
+      return {
+          "proposal_id": f"prop_{uuid.uuid4().hex[:8]}",
+          "proposal": {
+              "title": "Adopt New Framework",
+              "description": "Should we adopt the new edge computing framework?",
+              "options": ["yes", "no", "abstain"]
+          }
+      }
+
+  # Step 3: Broadcast proposal to all voters
+  - name: broadcast_proposal
+    action: a2a.broadcast
+    with:
+      message:
+        type: proposal
+        payload:
+          proposal_id: "{{ state.proposal_id }}"
+          title: "{{ state.proposal.title }}"
+          description: "{{ state.proposal.description }}"
+          options: "{{ state.proposal.options }}"
+      agent_type_filter: voter
+
+  # Step 4: Check if anyone received the proposal
+  - name: check_broadcast
+    run: |
+      count = state.get("a2a_broadcast_count", 0)
+      return {
+          "voter_count": count,
+          "has_voters": count > 0
+      }
+
+  # Step 5: Wait for votes (with require_all if we know the voters)
+  - name: wait_for_votes
+    condition: "{{ state.has_voters }}"
+    action: a2a.receive
+    with:
+      type: vote
+      timeout: 30s
+
+  # Step 6: Tally votes
+  - name: tally_votes
+    run: |
+      messages = state.get("a2a_messages", [])
+      votes = {}
+
+      for msg in messages:
+          payload = msg.get("payload", {})
+          vote = payload.get("vote", "abstain")
+          votes[vote] = votes.get(vote, 0) + 1
+
+      total_votes = len(messages)
+      yes_votes = votes.get("yes", 0)
+      no_votes = votes.get("no", 0)
+
+      if total_votes == 0:
+          outcome = "no_quorum"
+      elif yes_votes > no_votes:
+          outcome = "approved"
+      elif no_votes > yes_votes:
+          outcome = "rejected"
+      else:
+          outcome = "tied"
+
+      return {
+          "votes": votes,
+          "total_votes": total_votes,
+          "outcome": outcome
+      }
+
+  # Step 7: Store result in shared state
+  - name: store_result
+    action: a2a.state.set
+    with:
+      key: "vote_{{ state.proposal_id }}"
+      value:
+        proposal_id: "{{ state.proposal_id }}"
+        title: "{{ state.proposal.title }}"
+        votes: "{{ state.votes }}"
+        outcome: "{{ state.outcome }}"
+      ttl: 86400
+
+  # Step 8: Broadcast outcome to all voters
+  - name: broadcast_outcome
+    action: a2a.broadcast
+    with:
+      message:
+        type: vote_result
+        payload:
+          proposal_id: "{{ state.proposal_id }}"
+          outcome: "{{ state.outcome }}"
+          votes: "{{ state.votes }}"
+      agent_type_filter: voter
+
+  # Step 9: Final report
+  - name: final_report
+    run: |
+      return {
+          "status": "completed",
+          "proposal_id": state.get("proposal_id"),
+          "outcome": state.get("outcome"),
+          "total_votes": state.get("total_votes", 0)
+      }
+
+edges:
+  - from: __start__
+    to: register_proposer
+  - from: register_proposer
+    to: create_proposal
+  - from: create_proposal
+    to: broadcast_proposal
+  - from: broadcast_proposal
+    to: check_broadcast
+  - from: check_broadcast
+    to: wait_for_votes
+  - from: wait_for_votes
+    to: tally_votes
+  - from: tally_votes
+    to: store_result
+  - from: store_result
+    to: broadcast_outcome
+  - from: broadcast_outcome
+    to: final_report
+  - from: final_report
+    to: __end__

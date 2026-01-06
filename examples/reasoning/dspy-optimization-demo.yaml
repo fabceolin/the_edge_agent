@@ -1,0 +1,107 @@
+# DSPy Prompt Optimization Demo
+#
+# This example demonstrates DSPy integration for prompt optimization:
+# 1. Compile prompts with training data
+# 2. Use optimized prompts for inference
+# 3. Graceful fallback when DSPy is unavailable
+#
+# Prerequisites:
+#   pip install dspy-ai
+#
+# Usage:
+#   # Compile prompts with training data
+#   tea run examples/reasoning/dspy-optimization-demo.yaml \
+#     --input '{"phase": "compile", "training_data": [...]}'
+#
+#   # Use optimized prompts for inference
+#   tea run examples/reasoning/dspy-optimization-demo.yaml \
+#     --input '{"phase": "inference", "question": "What is machine learning?"}'
+
+name: dspy-optimization-demo
+description: Demonstrates DSPy prompt optimization with TEA
+
+state_schema:
+  phase: str               # compile or inference
+  training_data: list      # Training examples for compilation
+  question: str            # Question for inference
+  compiled_module: object  # Compiled DSPy module
+  result: object           # Output
+
+nodes:
+  # Route based on phase
+  - name: router
+    run: |
+      phase = state.get("phase", "inference")
+      return {"_next": phase}
+    next:
+      - condition: "{{ state._next == 'compile' }}"
+        to: compile_module
+      - to: inference
+
+  # Compile DSPy module with training data
+  - name: compile_module
+    uses: reason.dspy.compile
+    with:
+      module_type: cot
+      trainset: "{{ state.training_data }}"
+      teleprompter: BootstrapFewShot
+      teleprompter_config:
+        max_bootstrapped_demos: 4
+        max_labeled_demos: 16
+    output: compiled_module
+    next: save_module
+
+  - name: save_module
+    run: |
+      # In production, save to persistent storage
+      return {
+          "result": {
+              "phase": "compile",
+              "success": True,
+              "message": "Module compiled successfully",
+              "compiled_module": state.get("compiled_module")
+          }
+      }
+    next: __end__
+
+  # Use optimized prompts for inference
+  - name: inference
+    uses: reason.dspy.cot
+    with:
+      question: "{{ state.question }}"
+      model: "{{ env.LLM_MODEL | default('gpt-4') }}"
+      signature: "question: str -> reasoning: str, answer: str"
+    output: result
+    next: format_inference
+
+  - name: format_inference
+    run: |
+      result = state.get("result", {})
+      return {
+          "result": {
+              "phase": "inference",
+              "success": True,
+              "dspy_module": result.get("dspy_module", "native_fallback"),
+              "thinking": result.get("thinking"),
+              "answer": result.get("answer"),
+              "reasoning_trace": result.get("reasoning_trace", [])
+          }
+      }
+    next: __end__
+
+edges:
+  - from: __start__
+    to: router
+
+# Example training data format for compilation:
+#
+# training_data:
+#   - question: "What is the capital of France?"
+#     reasoning: "France is a country in Western Europe. Its capital city is Paris."
+#     answer: "Paris"
+#   - question: "What is 2 + 2?"
+#     reasoning: "Adding 2 and 2 together gives us 4."
+#     answer: "4"
+#   - question: "What color is the sky?"
+#     reasoning: "During the day, the sky appears blue due to Rayleigh scattering."
+#     answer: "Blue"

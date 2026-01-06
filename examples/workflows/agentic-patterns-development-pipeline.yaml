@@ -1,0 +1,401 @@
+name: agentic-patterns-development-pipeline
+description: |
+  Orchestrates TEA-AGENT-001 epic development with dependency-aware phased execution.
+
+  Phase 1 (Foundation - 4 parallel): 001.2, 001.4, 001.1, 001.6 - No dependencies
+  Phase 2 (Core - 3 parallel): 001.3, 001.7, 001.8 - Dependencies from Phase 1
+  Phase 3 (Communication - 1): 001.5 - Depends on 001.1 + 001.3
+  Phase 4 (Future P2 - skipped): 001.9 - Deferred
+
+  Usage: tea run examples/workflows/agentic-patterns-development-pipeline.yaml
+
+state_schema:
+  phase1_stories: list   # Foundation: 001.2, 001.4, 001.1, 001.6
+  phase2_stories: list   # Core: 001.3, 001.7, 001.8
+  phase3_stories: list   # Communication: 001.5
+  phase1_results: list
+  phase2_results: list
+  phase3_results: list
+
+nodes:
+  - name: init
+    description: Initialize pipeline with dependency-ordered story lists
+    run: |
+      print("="*70)
+      print("TEA-AGENT-001 AGENTIC DESIGN PATTERNS - DEVELOPMENT PIPELINE")
+      print("="*70)
+      print("\nDependency Graph:")
+      print("  Phase 1 (Foundation):  001.2, 001.4, 001.1, 001.6  [No deps]")
+      print("  Phase 2 (Core):        001.3 (←001.1,001.2), 001.7 (←001.4), 001.8")
+      print("  Phase 3 (Comms):       001.5 (←001.1,001.3)")
+      print("  Phase 4 (Future):      001.9 (P2 - Deferred)")
+      print("="*70)
+
+      return {
+          "phase1_stories": [
+              "TEA-AGENT-001.2-reflection-loop",
+              "TEA-AGENT-001.4-reasoning-techniques",
+              "TEA-AGENT-001.1-multi-agent-collaboration",
+              "TEA-AGENT-001.6-mem0-memory"
+          ],
+          "phase2_stories": [
+              "TEA-AGENT-001.3-planning-primitive",
+              "TEA-AGENT-001.7-dspy-optimization",
+              "TEA-AGENT-001.8-llamaindex-rag"
+          ],
+          "phase3_stories": [
+              "TEA-AGENT-001.5-inter-agent-communication"
+          ],
+          "phase1_results": [],
+          "phase2_results": [],
+          "phase3_results": []
+      }
+
+  # ============ PHASE 1: Foundation (4 Parallel) ============
+  - name: phase1_start
+    description: Start Phase 1 - Foundation stories (no dependencies)
+    run: |
+      stories = state.get("phase1_stories", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 1: FOUNDATION ({len(stories)} stories in parallel)")
+      print(f"{'='*70}")
+      print("Dependencies: None (can start immediately)")
+      for s in stories:
+          print(f"  - {s}")
+      print()
+      return {}
+
+  - name: phase1_run
+    description: Run Phase 1 stories in parallel via bmad-story-development
+    type: dynamic_parallel
+    items: "{{ state.phase1_stories }}"
+    item_var: story_id
+    index_var: idx
+    max_concurrency: 4
+    fail_fast: false
+    fan_in: phase1_complete
+    steps:
+      - name: run_development
+        run: |
+          import subprocess
+          import json
+          import time
+
+          story = state.get("story_id")
+          start_time = time.time()
+          print(f"[Phase1] Starting: {story}")
+
+          input_json = json.dumps({"arg": story})
+          cmd = f"source python/.venv/bin/activate && tea run examples/workflows/bmad-story-development.yaml --input '{input_json}'"
+
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=3600  # 60 min timeout per story
+          )
+
+          elapsed = time.time() - start_time
+          print(f"[Phase1] Completed: {story} (exit={result.returncode}, time={elapsed:.1f}s)")
+
+          if result.returncode != 0:
+              stderr_preview = result.stderr[:500] if result.stderr else 'none'
+              print(f"[Phase1] stderr: {stderr_preview}")
+
+          return {
+              "story": story,
+              "returncode": result.returncode,
+              "success": result.returncode == 0,
+              "elapsed_seconds": elapsed
+          }
+    output: phase1_results
+
+  - name: phase1_complete
+    description: Summarize Phase 1 results
+    fan_in: true
+    run: |
+      results = state.get("phase1_results", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 1 COMPLETE: {len(results)} stories processed")
+      print(f"{'='*70}")
+
+      success_count = 0
+      for r in results:
+          if hasattr(r, 'state'):
+              s = r.state
+          else:
+              s = r.get("state", {})
+          story = s.get("story", "unknown")
+          success = s.get("success", False)
+          elapsed = s.get("elapsed_seconds", 0)
+          status = "OK" if success else "FAILED"
+          if success:
+              success_count += 1
+          print(f"  [{status}] {story} ({elapsed:.1f}s)")
+
+      print(f"\nPhase 1 Summary: {success_count}/{len(results)} succeeded")
+
+      if success_count < len(results):
+          print("\nWARNING: Some Phase 1 stories failed. Phase 2 may have issues.")
+
+      return {}
+
+  # ============ PHASE 2: Core Patterns (3 Parallel) ============
+  - name: phase2_start
+    description: Start Phase 2 - Core patterns depending on Phase 1
+    run: |
+      stories = state.get("phase2_stories", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 2: CORE PATTERNS ({len(stories)} stories in parallel)")
+      print(f"{'='*70}")
+      print("Dependencies:")
+      print("  - 001.3 Planning ← 001.1 Multi-Agent + 001.2 Reflection")
+      print("  - 001.7 DSPy ← 001.4 Reasoning")
+      print("  - 001.8 LlamaIndex ← (independent)")
+      for s in stories:
+          print(f"  - {s}")
+      print()
+      return {}
+
+  - name: phase2_run
+    description: Run Phase 2 stories in parallel
+    type: dynamic_parallel
+    items: "{{ state.phase2_stories }}"
+    item_var: story_id
+    index_var: idx
+    max_concurrency: 3
+    fail_fast: false
+    fan_in: phase2_complete
+    steps:
+      - name: run_development
+        run: |
+          import subprocess
+          import json
+          import time
+
+          story = state.get("story_id")
+          start_time = time.time()
+          print(f"[Phase2] Starting: {story}")
+
+          input_json = json.dumps({"arg": story})
+          cmd = f"source python/.venv/bin/activate && tea run examples/workflows/bmad-story-development.yaml --input '{input_json}'"
+
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=3600
+          )
+
+          elapsed = time.time() - start_time
+          print(f"[Phase2] Completed: {story} (exit={result.returncode}, time={elapsed:.1f}s)")
+
+          if result.returncode != 0:
+              stderr_preview = result.stderr[:500] if result.stderr else 'none'
+              print(f"[Phase2] stderr: {stderr_preview}")
+
+          return {
+              "story": story,
+              "returncode": result.returncode,
+              "success": result.returncode == 0,
+              "elapsed_seconds": elapsed
+          }
+    output: phase2_results
+
+  - name: phase2_complete
+    description: Summarize Phase 2 results
+    fan_in: true
+    run: |
+      results = state.get("phase2_results", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 2 COMPLETE: {len(results)} stories processed")
+      print(f"{'='*70}")
+
+      success_count = 0
+      for r in results:
+          if hasattr(r, 'state'):
+              s = r.state
+          else:
+              s = r.get("state", {})
+          story = s.get("story", "unknown")
+          success = s.get("success", False)
+          elapsed = s.get("elapsed_seconds", 0)
+          status = "OK" if success else "FAILED"
+          if success:
+              success_count += 1
+          print(f"  [{status}] {story} ({elapsed:.1f}s)")
+
+      print(f"\nPhase 2 Summary: {success_count}/{len(results)} succeeded")
+      return {}
+
+  # ============ PHASE 3: Communication (1 Sequential) ============
+  - name: phase3_start
+    description: Start Phase 3 - A2A Communication (depends on Planning)
+    run: |
+      stories = state.get("phase3_stories", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 3: COMMUNICATION ({len(stories)} story)")
+      print(f"{'='*70}")
+      print("Dependencies:")
+      print("  - 001.5 A2A ← 001.1 Multi-Agent + 001.3 Planning")
+      for s in stories:
+          print(f"  - {s}")
+      print()
+      return {}
+
+  - name: phase3_run
+    description: Run Phase 3 stories
+    type: dynamic_parallel
+    items: "{{ state.phase3_stories }}"
+    item_var: story_id
+    index_var: idx
+    max_concurrency: 1
+    fail_fast: false
+    fan_in: phase3_complete
+    steps:
+      - name: run_development
+        run: |
+          import subprocess
+          import json
+          import time
+
+          story = state.get("story_id")
+          start_time = time.time()
+          print(f"[Phase3] Starting: {story}")
+
+          input_json = json.dumps({"arg": story})
+          cmd = f"source python/.venv/bin/activate && tea run examples/workflows/bmad-story-development.yaml --input '{input_json}'"
+
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=3600
+          )
+
+          elapsed = time.time() - start_time
+          print(f"[Phase3] Completed: {story} (exit={result.returncode}, time={elapsed:.1f}s)")
+
+          if result.returncode != 0:
+              stderr_preview = result.stderr[:500] if result.stderr else 'none'
+              print(f"[Phase3] stderr: {stderr_preview}")
+
+          return {
+              "story": story,
+              "returncode": result.returncode,
+              "success": result.returncode == 0,
+              "elapsed_seconds": elapsed
+          }
+    output: phase3_results
+
+  - name: phase3_complete
+    description: Summarize Phase 3 results
+    fan_in: true
+    run: |
+      results = state.get("phase3_results", [])
+      print(f"\n{'='*70}")
+      print(f"PHASE 3 COMPLETE: {len(results)} stories processed")
+      print(f"{'='*70}")
+
+      success_count = 0
+      for r in results:
+          if hasattr(r, 'state'):
+              s = r.state
+          else:
+              s = r.get("state", {})
+          story = s.get("story", "unknown")
+          success = s.get("success", False)
+          elapsed = s.get("elapsed_seconds", 0)
+          status = "OK" if success else "FAILED"
+          if success:
+              success_count += 1
+          print(f"  [{status}] {story} ({elapsed:.1f}s)")
+
+      print(f"\nPhase 3 Summary: {success_count}/{len(results)} succeeded")
+      return {}
+
+  # ============ FINAL SUMMARY ============
+  - name: summary
+    description: Final pipeline summary with statistics
+    run: |
+      p1 = state.get("phase1_results", [])
+      p2 = state.get("phase2_results", [])
+      p3 = state.get("phase3_results", [])
+
+      def get_stats(results):
+          success = 0
+          total_time = 0
+          for r in results:
+              if hasattr(r, 'state'):
+                  s = r.state
+              else:
+                  s = r.get("state", {})
+              if s.get("success", False):
+                  success += 1
+              total_time += s.get("elapsed_seconds", 0)
+          return success, len(results), total_time
+
+      p1_ok, p1_total, p1_time = get_stats(p1)
+      p2_ok, p2_total, p2_time = get_stats(p2)
+      p3_ok, p3_total, p3_time = get_stats(p3)
+
+      total_ok = p1_ok + p2_ok + p3_ok
+      total_stories = p1_total + p2_total + p3_total
+      total_time = p1_time + p2_time + p3_time
+
+      print("\n" + "="*70)
+      print("TEA-AGENT-001 AGENTIC PATTERNS DEVELOPMENT PIPELINE - COMPLETE")
+      print("="*70)
+      print(f"\n{'Phase':<20} {'Success':<15} {'Time':<15}")
+      print("-"*50)
+      print(f"{'Phase 1 (Foundation)':<20} {p1_ok}/{p1_total:<12} {p1_time:.0f}s")
+      print(f"{'Phase 2 (Core)':<20} {p2_ok}/{p2_total:<12} {p2_time:.0f}s")
+      print(f"{'Phase 3 (Comms)':<20} {p3_ok}/{p3_total:<12} {p3_time:.0f}s")
+      print("-"*50)
+      print(f"{'TOTAL':<20} {total_ok}/{total_stories:<12} {total_time:.0f}s")
+      print("="*70)
+
+      if total_ok == total_stories:
+          print("\n SUCCESS: All stories developed!")
+      else:
+          print(f"\n PARTIAL: {total_ok}/{total_stories} stories succeeded")
+          print("  Review failed stories and re-run as needed.")
+
+      print("\nNote: 001.9 TextGrad (P2) was deferred to a future sprint.")
+      print("="*70)
+
+      return {
+          "pipeline_complete": True,
+          "phase1_success": p1_ok,
+          "phase2_success": p2_ok,
+          "phase3_success": p3_ok,
+          "total_success": total_ok,
+          "total_stories": total_stories,
+          "total_time_seconds": total_time
+      }
+
+edges:
+  - from: __start__
+    to: init
+  - from: init
+    to: phase1_start
+  - from: phase1_start
+    to: phase1_run
+  - from: phase1_complete
+    to: phase2_start
+  - from: phase2_start
+    to: phase2_run
+  - from: phase2_complete
+    to: phase3_start
+  - from: phase3_start
+    to: phase3_run
+  - from: phase3_complete
+    to: summary
+  - from: summary
+    to: __end__

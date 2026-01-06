@@ -1,0 +1,140 @@
+# ReAct Research Agent Example
+# Story: TEA-AGENT-001.4
+#
+# This example demonstrates using reason.react for multi-step
+# research with tool integration (web search, scraping, memory).
+
+name: react-research-agent
+description: Research topics using ReAct reasoning with tool integration
+
+state_schema:
+  research_question: str
+  research_context: str
+  sources: list
+  findings: list
+  final_report: str
+
+variables:
+  default_model: gpt-4
+  max_research_steps: 8
+
+nodes:
+  # Step 1: Clarify the research question
+  - name: clarify_question
+    uses: llm.call
+    with:
+      model: "{{ variables.default_model }}"
+      messages:
+        - role: system
+          content: |
+            You are a research assistant. Analyze the research question and:
+            1. Identify the key concepts
+            2. Suggest search queries
+            3. Note any ambiguities
+
+            Return JSON: {
+              "key_concepts": [],
+              "search_queries": [],
+              "clarifications_needed": [],
+              "scope": "broad|focused|specific"
+            }
+        - role: user
+          content: "{{ state.research_question }}"
+      response_format:
+        type: json_object
+    output: analysis
+
+  # Step 2: Execute ReAct research loop
+  - name: research_loop
+    uses: reason.react
+    with:
+      goal: |
+        Research the following question thoroughly:
+
+        Question: {{ state.research_question }}
+
+        Context: {{ state.research_context | default('No additional context') }}
+
+        Key concepts to explore: {{ state.analysis.key_concepts | tojson }}
+
+        Gather information from multiple sources, verify facts, and compile findings.
+        Stop when you have sufficient information to answer the question comprehensively.
+      model: "{{ variables.default_model }}"
+      tools:
+        - web.search      # Search the web
+        - web.scrape      # Scrape specific pages
+        - memory.store    # Store findings
+        - memory.retrieve # Retrieve stored info
+      max_steps: "{{ variables.max_research_steps }}"
+    output: research_result
+
+  # Step 3: Compile sources from research
+  - name: compile_sources
+    run: |
+      steps = state.get("research_result", {}).get("steps", [])
+      sources = []
+      findings = []
+
+      for step in steps:
+          if step.get("action") == "web.scrape":
+              url = step.get("action_input", {}).get("url", "")
+              if url:
+                  sources.append(url)
+          if step.get("observation"):
+              findings.append({
+                  "step": step.get("step"),
+                  "action": step.get("action"),
+                  "summary": step.get("observation")[:500] if step.get("observation") else ""
+              })
+
+      return {
+          "sources": sources,
+          "findings": findings
+      }
+
+  # Step 4: Generate final report
+  - name: generate_report
+    uses: llm.call
+    with:
+      model: "{{ variables.default_model }}"
+      messages:
+        - role: system
+          content: |
+            Generate a comprehensive research report based on the findings.
+
+            Structure:
+            1. Executive Summary
+            2. Key Findings
+            3. Evidence and Sources
+            4. Conclusions
+            5. Recommendations for Further Research
+
+            Be thorough but concise.
+        - role: user
+          content: |
+            Research Question: {{ state.research_question }}
+
+            Research Process:
+            {{ state.research_result.steps | tojson }}
+
+            Final Answer from Research:
+            {{ state.research_result.final_answer }}
+
+            Sources Consulted:
+            {{ state.sources | tojson }}
+    output: report
+
+  # Step 5: Format final output
+  - name: format_output
+    run: |
+      return {
+          "final_report": state["report"]["content"],
+          "react_steps": state["research_result"].get("react_steps", []),
+          "total_steps": state["research_result"].get("total_steps", 0),
+          "sources": state["sources"],
+          "findings": state["findings"],
+          "reasoning_trace": state["research_result"].get("reasoning_trace", [])
+      }
+
+config:
+  raise_exceptions: true

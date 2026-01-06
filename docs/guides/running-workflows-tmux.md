@@ -266,3 +266,8 @@ ls -la python/.venv/bin/activate
 # Or use full path
 source /home/user/project/python/.venv/bin/activate
 ```
+
+## See Also
+
+- [Parallel Workflow Orchestration](./parallel-workflow-orchestration.md) - Run workflows in parallel with `dynamic_parallel`
+- [YAML Reference](../shared/YAML_REFERENCE.md) - Complete YAML syntax reference

@@ -1,0 +1,97 @@
+# Mem0 Conversation Memory Example (TEA-AGENT-001.6)
+#
+# This example demonstrates persistent conversation memory using Mem0.
+# The agent remembers facts from previous conversations and uses them
+# to personalize responses.
+#
+# Usage:
+#   tea run examples/mem0/mem0-conversation-memory.yaml \
+#     --input '{"user_id": "user_123", "message": "My favorite color is blue"}'
+#
+# Prerequisites:
+#   pip install the-edge-agent[mem0]
+#   export MEM0_API_KEY=your_api_key  # Optional for cloud mode
+
+name: mem0-conversation-memory
+description: Personalized chatbot with persistent memory using Mem0
+
+# Configure Mem0 as the memory backend
+settings:
+  memory:
+    backend: mem0
+    api_key: "${MEM0_API_KEY:-}"  # Optional: use cloud mode if set
+    # user_id set dynamically from state
+
+state_schema:
+  user_id: str
+  message: str
+  context: str
+  response: str
+  memory_stored: bool
+
+nodes:
+  # Step 1: Search for relevant memories based on user's message
+  - name: recall_context
+    uses: memory.mem0.search
+    with:
+      query: "{{ state.message }}"
+      user_id: "{{ state.user_id }}"
+      limit: 5
+    output: memory_search
+
+  # Step 2: Format the context from retrieved memories
+  - name: format_context
+    run: |
+      results = state.get("memory_search", {}).get("results", [])
+      if results:
+          context_parts = []
+          for mem in results:
+              context_parts.append(f"- {mem.get('memory', '')}")
+          context = "Previous knowledge about this user:\n" + "\n".join(context_parts)
+      else:
+          context = "No previous knowledge about this user."
+      return {"context": context}
+
+  # Step 3: Generate response using LLM with memory context
+  - name: generate_response
+    uses: llm.call
+    with:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: |
+            You are a helpful assistant with persistent memory.
+            Use the following context to personalize your response:
+
+            {{ state.context }}
+
+            Remember to be friendly and reference what you know about the user.
+        - role: user
+          content: "{{ state.message }}"
+    output: llm_result
+
+  # Step 4: Extract response content
+  - name: extract_response
+    run: |
+      return {"response": state.get("llm_result", {}).get("content", "I'm sorry, I couldn't generate a response.")}
+
+  # Step 5: Store the new conversation in memory
+  - name: store_conversation
+    uses: memory.mem0.add
+    with:
+      messages:
+        - role: user
+          content: "{{ state.message }}"
+        - role: assistant
+          content: "{{ state.response }}"
+      user_id: "{{ state.user_id }}"
+      metadata:
+        source: conversation
+        timestamp: "{{ now() }}"
+    output: store_result
+
+  # Step 6: Confirm memory was stored
+  - name: confirm_storage
+    run: |
+      stored = state.get("store_result", {}).get("success", False)
+      return {"memory_stored": stored}

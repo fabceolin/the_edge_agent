@@ -1,0 +1,140 @@
+# Reasoning Patterns Demo
+#
+# This example demonstrates all four core reasoning patterns:
+# 1. Chain-of-Thought (CoT) - Structured step-by-step reasoning
+# 2. ReAct - Reason + Act loop with tool integration
+# 3. Self-Correction - Generate-critique-improve cycle
+# 4. Decomposition - Break complex problems into sub-problems
+#
+# Usage:
+#   tea run examples/reasoning/reasoning-patterns-demo.yaml --input '{"mode": "cot", "problem": "What is 15% of 240?"}'
+#   tea run examples/reasoning/reasoning-patterns-demo.yaml --input '{"mode": "react", "goal": "Find the capital of France"}'
+#   tea run examples/reasoning/reasoning-patterns-demo.yaml --input '{"mode": "self_correct", "task": "Write a haiku about AI"}'
+#   tea run examples/reasoning/reasoning-patterns-demo.yaml --input '{"mode": "decompose", "problem": "Design a REST API for a todo app"}'
+
+name: reasoning-patterns-demo
+description: Demonstrates TEA reasoning action patterns
+
+state_schema:
+  mode: str          # One of: cot, react, self_correct, decompose
+  problem: str       # For CoT and decompose
+  goal: str          # For ReAct
+  task: str          # For self-correct
+  result: object     # Output
+
+nodes:
+  # Entry point - route based on mode
+  - name: router
+    run: |
+      mode = state.get("mode", "cot")
+      return {"_next": mode}
+    next:
+      - condition: "{{ state._next == 'cot' }}"
+        to: chain_of_thought
+      - condition: "{{ state._next == 'react' }}"
+        to: react_agent
+      - condition: "{{ state._next == 'self_correct' }}"
+        to: self_correction
+      - condition: "{{ state._next == 'decompose' }}"
+        to: decomposition
+      - to: chain_of_thought  # Default
+
+  # Pattern 1: Chain-of-Thought
+  - name: chain_of_thought
+    uses: reason.cot
+    with:
+      problem: "{{ state.problem }}"
+      model: "{{ env.LLM_MODEL | default('gpt-4') }}"
+      thinking_format: step_by_step
+      few_shot_examples:
+        - problem: "What is 20% of 150?"
+          thinking: |
+            Step 1: Convert percentage to decimal: 20% = 0.20
+            Step 2: Multiply: 0.20 * 150 = 30
+          answer: "30"
+        - problem: "If a shirt costs $80 and is 25% off, what is the sale price?"
+          thinking: |
+            Step 1: Calculate discount: 25% of $80 = 0.25 * 80 = $20
+            Step 2: Subtract from original: $80 - $20 = $60
+          answer: "$60"
+    output: result
+    next: format_output
+
+  # Pattern 2: ReAct Agent
+  - name: react_agent
+    uses: reason.react
+    with:
+      goal: "{{ state.goal }}"
+      model: "{{ env.LLM_MODEL | default('gpt-4') }}"
+      tools:
+        - web.search
+        - http.get
+        - memory.store
+      max_steps: 5
+    output: result
+    next: format_output
+
+  # Pattern 3: Self-Correction
+  - name: self_correction
+    uses: reason.self_correct
+    with:
+      task: "{{ state.task }}"
+      model: "{{ env.LLM_MODEL | default('gpt-4') }}"
+      improvement_rounds: 2
+      critic_prompt: |
+        Review this output for:
+        1. Correctness and accuracy
+        2. Clarity and coherence
+        3. Style and elegance
+
+        Provide specific, actionable improvements.
+    output: result
+    next: format_output
+
+  # Pattern 4: Problem Decomposition
+  - name: decomposition
+    uses: reason.decompose
+    with:
+      problem: "{{ state.problem }}"
+      model: "{{ env.LLM_MODEL | default('gpt-4') }}"
+      max_depth: 2
+      synthesis_prompt: |
+        Combine the sub-answers into a coherent final answer.
+        Address any contradictions or gaps.
+    output: result
+    next: format_output
+
+  # Format and display output
+  - name: format_output
+    run: |
+      result = state.get("result", {})
+
+      # Extract key information based on pattern
+      output = {
+          "mode": state.get("mode", "cot"),
+          "success": True
+      }
+
+      # Add pattern-specific fields
+      if "thinking" in result:
+          output["thinking"] = result["thinking"]
+          output["answer"] = result.get("answer")
+      elif "steps" in result:
+          output["steps"] = len(result.get("steps", []))
+          output["final_answer"] = result.get("final_answer")
+      elif "improvement_history" in result:
+          output["rounds"] = len(result.get("improvement_history", []))
+          output["output"] = result.get("output")
+      elif "sub_problems" in result:
+          output["sub_problems"] = len(result.get("sub_problems", []))
+          output["final_answer"] = result.get("final_answer")
+
+      # Always include trace for debugging
+      output["reasoning_trace"] = result.get("reasoning_trace", [])
+
+      return {"result": output}
+    next: __end__
+
+edges:
+  - from: __start__
+    to: router

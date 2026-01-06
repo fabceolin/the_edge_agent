@@ -670,6 +670,42 @@ The transformer architecture changed NLP forever [1].
 | `trace.log` | `observability_actions.py` | Log trace event |
 | `trace.end` | `observability_actions.py` | End trace span |
 
+### Authentication (TEA-BUILTIN-015.3)
+
+| Action | Module | Description |
+|--------|--------|-------------|
+| `auth.verify` | `auth_actions.py` | Verify authentication token |
+| `auth.get_user` | `auth_actions.py` | Get full user profile by UID |
+
+**auth.verify** - Verify an authentication token:
+
+```yaml
+- name: verify_token
+  uses: auth.verify
+  with:
+    token: "{{ state.custom_token }}"  # Optional: extract from headers if omitted
+    headers: "{{ state.request_headers }}"  # Optional headers dict
+  output: auth_result
+
+- name: check_auth
+  run: |
+    result = state["auth_result"]
+    if result["success"]:
+        return {"user_id": result["user"]["uid"]}
+    else:
+        return {"error": result["error"]}
+```
+
+**auth.get_user** - Get full user profile:
+
+```yaml
+- name: get_profile
+  uses: auth.get_user
+  with:
+    uid: "{{ state.__user__.uid }}"
+  output: full_profile
+```
+
 ## Source Location
 
 All action modules are in:
@@ -693,7 +729,8 @@ python/src/the_edge_agent/actions/
 ├── text_actions.py
 ├── tools_actions.py
 ├── observability_actions.py
-└── context_actions.py
+├── context_actions.py
+└── auth_actions.py
 ```
 
 ## Custom Actions

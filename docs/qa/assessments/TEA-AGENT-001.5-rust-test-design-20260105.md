@@ -47,24 +47,26 @@ This story implements core inter-agent communication primitives in Rust using cr
 | 001.5R-UNIT-005 | Unit | P1 | Send to non-existent agent returns error | Error handling |
 | 001.5R-INT-001 | Integration | P0 | Fire-and-forget pattern - sender continues without waiting | Multi-component flow |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-001: Send to named agent
-#[test]
-fn test_send_to_named_agent() {
-    // Given: ChannelRegistry with agent "worker-1" registered
-    // When: a2a.send to "worker-1" with message
-    // Then: Message appears in worker-1's receive channel
-}
+```gherkin
+# 001.5R-UNIT-001: Send to named agent
+Given ChannelRegistry with agent "worker-1" registered (capacity=100)
+When a2a.send to="worker-1" message={type: "task", payload: {"id": 1}}
+Then message appears in worker-1's receive channel
+And sender receives Ok(()) immediately
 
-// 001.5R-UNIT-004: Backpressure handling
-#[test]
-fn test_bounded_channel_backpressure() {
-    // Given: Channel capacity = 2, 2 messages already queued
-    // When: Third message sent
-    // Then: Send blocks until receiver drains (or returns WouldBlock for try_send)
-}
+# 001.5R-UNIT-004: Backpressure handling
+Given bounded channel with capacity=2 and 2 messages already queued
+When third message sent via a2a.send
+Then send blocks OR returns WouldBlock error (depending on try_send vs send)
+And no message is lost
+
+# 001.5R-INT-001: Fire-and-forget pattern
+Given agent "sender" and agent "receiver" in same namespace
+When sender calls a2a.send to="receiver" and immediately continues execution
+Then sender completes its node without waiting for receiver to process
+And receiver eventually processes the message
 ```
 
 ---
@@ -82,24 +84,28 @@ fn test_bounded_channel_backpressure() {
 | 001.5R-UNIT-012 | Unit | P1 | Receive with type filter on empty queue - returns empty after timeout | Edge case |
 | 001.5R-INT-002 | Integration | P0 | Multi-agent receive - messages from different senders collected correctly | Cross-component |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-009: require_all coordination
-#[test]
-fn test_require_all_waits_for_all_agents() {
-    // Given: Expecting messages from [agent-a, agent-b, agent-c]
-    // When: Only agent-a and agent-b send within partial timeout
-    // Then: Continue waiting until agent-c sends or full timeout
-}
+```gherkin
+# 001.5R-UNIT-007: Timeout handling
+Given empty channel (no messages pending)
+When a2a.receive timeout_ms=100
+Then crossbeam::select! triggers timeout branch after ~100ms
+And Err(Timeout) is returned
 
-// 001.5R-INT-002: Multi-agent message collection
-#[test]
-fn test_receive_from_multiple_agents() {
-    // Given: 3 agents sending concurrently
-    // When: receive with require_all=true
-    // Then: All 3 messages collected in Vec before return
-}
+# 001.5R-UNIT-009: require_all coordination
+Given expecting messages from [agent-a, agent-b, agent-c]
+And agent-a and agent-b have sent messages
+And agent-c has not sent
+When a2a.receive from=["agent-a","agent-b","agent-c"] require_all=true timeout_ms=1000
+Then receiver waits beyond receiving agent-a and agent-b messages
+And returns Timeout error after 1000ms if agent-c never sends
+
+# 001.5R-INT-002: Multi-agent message collection
+Given 3 agents [w1, w2, w3] sending concurrently
+When coordinator calls a2a.receive from=["w1","w2","w3"] require_all=true
+Then Vec<Message> with exactly 3 messages returned
+And each message.from matches one of [w1, w2, w3]
 ```
 
 ---
@@ -114,16 +120,25 @@ fn test_receive_from_multiple_agents() {
 | 001.5R-UNIT-016 | Unit | P1 | Non-blocking broadcast - returns immediately | Async behavior |
 | 001.5R-INT-003 | Integration | P1 | Broadcast under load - all 100 agents receive in namespace | Scale validation |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-014: Namespace isolation
-#[test]
-fn test_broadcast_namespace_isolation() {
-    // Given: namespace-a with [agent-1, agent-2], namespace-b with [agent-3]
-    // When: Broadcast to namespace-a
-    // Then: agent-1 and agent-2 receive, agent-3 does not
-}
+```gherkin
+# 001.5R-UNIT-014: Namespace isolation
+Given namespace-a with agents [agent-1, agent-2]
+And namespace-b with agents [agent-3]
+When a2a.broadcast namespace="namespace-a" message={type: "alert"}
+Then agent-1.receive() returns the message
+And agent-2.receive() returns the message
+And agent-3.receive(timeout_ms=100) returns Timeout (no message)
+
+# 001.5R-UNIT-015: Agent type filter
+Given namespace with agents:
+  - {id: "w1", type: "worker"}
+  - {id: "w2", type: "worker"}
+  - {id: "c1", type: "coordinator"}
+When a2a.broadcast type_filter="worker"
+Then w1 and w2 receive the broadcast
+And c1 does not receive (different type)
 ```
 
 ---
@@ -142,24 +157,33 @@ fn test_broadcast_namespace_isolation() {
 | 001.5R-INT-004 | Integration | P0 | Full delegate round-trip - request sent, processed, response returned | Critical path |
 | 001.5R-INT-005 | Integration | P0 | Delegate timeout triggers fallback action execution | Fallback integration |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-019: Correlation ID matching
-#[test]
-fn test_correlation_id_matches_response() {
-    // Given: Delegate request with correlation_id = X
-    // When: Multiple responses arrive (correlation_ids X, Y, Z)
-    // Then: Only response with correlation_id X returned to requester
-}
+```gherkin
+# 001.5R-UNIT-019: Correlation ID matching
+Given coordinator has sent delegate request with correlation_id=X
+And responder sends back 3 responses with correlation_ids [Y, X, Z]
+When coordinator receives responses
+Then only response with correlation_id=X is returned to coordinator's delegate call
+And responses Y and Z are discarded or queued for other pending delegates
 
-// 001.5R-UNIT-023: Concurrent delegate isolation
-#[test]
-fn test_concurrent_delegates_isolated() {
-    // Given: 10 concurrent delegate requests from same agent
-    // When: All responses arrive (potentially out of order)
-    // Then: Each request gets its correctly correlated response
-}
+# 001.5R-UNIT-021: Fallback execution
+Given responder agent is non-responsive
+And delegate configured with:
+  on_timeout: fallback_local
+  timeout_ms: 100
+  fallback: {action: "local_search", with: {query: "test"}}
+When a2a.delegate to="responder"
+Then after 100ms timeout fires
+And fallback action "local_search" executes locally
+And delegate returns fallback action's result
+
+# 001.5R-UNIT-023: Concurrent delegate isolation
+Given coordinator issues 10 delegate requests simultaneously to 10 workers
+And each worker responds after random delay (10-100ms)
+When all responses arrive (potentially out of order)
+Then each delegate call receives exactly its correlated response
+And no response is delivered to wrong delegate caller
 ```
 
 ---
@@ -177,25 +201,33 @@ fn test_concurrent_delegates_isolated() {
 | 001.5R-INT-006 | Integration | P0 | Concurrent CAS for leader election - exactly one wins | Race condition handling |
 | 001.5R-INT-007 | Integration | P1 | TTL cleanup task - expired entries removed from DashMap | Background task |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-026: CAS success
-#[test]
-fn test_cas_success_when_expected_matches() {
-    // Given: state["leader"] = null
-    // When: CAS(key="leader", expected=null, new="agent-1")
-    // Then: Returns true, state["leader"] = "agent-1"
-}
+```gherkin
+# 001.5R-UNIT-026: CAS success
+Given shared state with key "leader" = null
+When agent-1 calls a2a.state.cas(key="leader", expected=null, new_value="agent-1")
+Then CAS returns true (success)
+And state.get("leader") returns "agent-1"
 
-// 001.5R-INT-006: Leader election race
-#[test]
-fn test_concurrent_cas_only_one_wins() {
-    // Given: state["leader"] = null
-    // When: 10 agents concurrently CAS(expected=null, new=self.id)
-    // Then: Exactly 1 returns true, 9 return false
-    // And: state["leader"] contains the winner's ID
-}
+# 001.5R-UNIT-027: CAS failure
+Given shared state with key "leader" = "agent-1"
+When agent-2 calls a2a.state.cas(key="leader", expected=null, new_value="agent-2")
+Then CAS returns false (current != expected)
+And state.get("leader") still returns "agent-1"
+
+# 001.5R-INT-006: Concurrent leader election [SECURITY-TEST: Race Condition]
+Given shared state with key "leader" = null
+And 10 agents spawn threads simultaneously
+When all 10 call a2a.state.cas(key="leader", expected=null, new_value=self.id)
+Then exactly 1 CAS returns true
+And exactly 9 CAS return false
+And state.get("leader") contains the winning agent's ID
+
+# 001.5R-UNIT-029: TTL expiration
+Given state.set(key="temp", value="data", ttl_seconds=1)
+When 2 seconds elapse
+Then state.get("temp") returns None (expired)
 ```
 
 ---
@@ -211,16 +243,20 @@ fn test_concurrent_cas_only_one_wins() {
 | 001.5R-UNIT-034 | Unit | P1 | Discovery mode: dynamic (runtime registration) | Dynamic registration |
 | 001.5R-INT-008 | Integration | P1 | Discover agents after dynamic registration | Integration of registration + discovery |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-UNIT-032: Capability advertisement
-#[test]
-fn test_capabilities_advertised() {
-    // Given: Agent registers with capabilities: ["search", "summarize"]
-    // When: a2a.discover()
-    // Then: Agent's capabilities list includes ["search", "summarize"]
-}
+```gherkin
+# 001.5R-UNIT-032: Capability advertisement
+Given agent "search-worker" registers with capabilities: ["search", "summarize"]
+When any agent calls a2a.discover(namespace="team")
+Then result contains agent with id="search-worker"
+And agent.capabilities == ["search", "summarize"]
+
+# 001.5R-INT-008: Dynamic discovery
+Given workflow starts with 2 static agents [a1, a2]
+When third agent "a3" registers dynamically at runtime
+And another agent calls a2a.discover()
+Then result contains all 3 agents [a1, a2, a3]
 ```
 
 ---
@@ -234,16 +270,21 @@ fn test_capabilities_advertised() {
 | 001.5R-INT-009 | Integration | P2 | Recovery on process restart - pending messages restored | Critical recovery path |
 | 001.5R-INT-010 | Integration | P2 | Max file size respected - oldest messages dropped | Size limit handling |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-INT-009: Persistence recovery
-#[test]
-fn test_persistence_recovery_on_restart() {
-    // Given: 5 messages persisted to file, process "restarted" (registry recreated)
-    // When: New ChannelRegistry created with same persistence path
-    // Then: 5 messages available for receive
-}
+```gherkin
+# 001.5R-INT-009: Persistence recovery
+Given persistence=true and 5 messages sent before "process crash"
+When ChannelRegistry recreated with same persistence_path
+Then a2a.receive() returns the 5 previously persisted messages
+And messages are in original send order (FIFO preserved)
+
+# 001.5R-INT-010: Max file size enforcement
+Given max_file_size=1KB and persistence enabled
+And 2KB worth of messages sent
+When checking persistence file
+Then file size <= 1KB
+And oldest messages were dropped to stay under limit
 ```
 
 ---
@@ -256,6 +297,23 @@ fn test_persistence_recovery_on_restart() {
 | 001.5R-INT-011 | Integration | P1 | Full a2a module available with feature enabled | Feature gate integration |
 | 001.5R-INT-012 | Integration | P1 | Build succeeds without a2a feature (no crossbeam/dashmap deps) | Clean feature separation |
 
+**Given-When-Then Examples:**
+
+```gherkin
+# 001.5R-INT-011: Feature enabled
+Given Cargo.toml with [features] a2a = ["crossbeam-channel", "dashmap"]
+When cargo build --features a2a
+Then all a2a.* actions compile successfully
+And binary includes crossbeam and dashmap
+
+# 001.5R-INT-012: Feature disabled
+Given default features (no a2a)
+When cargo build
+Then a2a module is not compiled
+And binary does not link crossbeam or dashmap
+And cargo tree --features default shows no crossbeam/dashmap
+```
+
 ---
 
 ## E2E Test Scenarios
@@ -267,34 +325,57 @@ fn test_persistence_recovery_on_restart() {
 | 001.5R-E2E-003 | E2E | P1 | Leader election scenario - 3 agents coordinate, 1 becomes leader | Real-world coordination |
 | 001.5R-E2E-004 | E2E | P1 | Namespace-isolated workflows - two teams run independently | Multi-tenant scenario |
 
-**Test Details:**
+**Given-When-Then Examples:**
 
-```rust
-// 001.5R-E2E-001: Multi-agent workflow
-#[test]
-fn test_coordinator_worker_workflow() {
-    // Given: YAML with coordinator + 3 worker agents
-    // When: Workflow executed with research query
-    // Then:
-    //   - Coordinator delegates to all workers
-    //   - Workers return results
-    //   - Coordinator aggregates and returns final answer
-}
+```gherkin
+# 001.5R-E2E-001: Multi-agent coordinator-worker workflow
+Given YAML workflow defining:
+  - coordinator agent with delegate logic
+  - 3 worker agents with search capability
+  - aggregation logic in coordinator
+When workflow executed with input {query: "research topic"}
+Then coordinator sends tasks to all 3 workers
+And workers each return results
+And coordinator aggregates into final output
+And workflow output contains combined research results
+
+# 001.5R-E2E-002: Delegate timeout with fallback
+Given YAML workflow with delegate action:
+  to: "offline-agent"
+  timeout_ms: 100
+  on_timeout: fallback_local
+  fallback: {action: web.scrape, ...}
+And "offline-agent" is not registered
+When workflow executes the delegate node
+Then timeout fires after 100ms
+And fallback web.scrape action executes
+And workflow continues with fallback result
+And no error is raised to user
+
+# 001.5R-E2E-004: Namespace isolation [SECURITY-TEST]
+Given two YAML workflows:
+  - team-alpha with namespace="alpha" and agent "worker"
+  - team-beta with namespace="beta" and agent "worker" (same name)
+When both workflows run concurrently
+Then team-alpha's messages stay in namespace "alpha"
+And team-beta's messages stay in namespace "beta"
+And no cross-namespace message leakage occurs
+And state keys are isolated between namespaces
 ```
 
 ---
 
 ## Risk Coverage Matrix
 
-| Risk | Test IDs Mitigating |
-|------|---------------------|
-| Race conditions in DashMap | 001.5R-INT-006, 001.5R-UNIT-026, 001.5R-UNIT-027 |
-| Deadlock in channel operations | 001.5R-UNIT-007, 001.5R-INT-004, 001.5R-UNIT-009 |
-| Message loss under backpressure | 001.5R-UNIT-004, 001.5R-INT-003 |
-| Correlation ID collisions | 001.5R-UNIT-018, 001.5R-UNIT-023 |
-| Namespace leakage | 001.5R-UNIT-014, 001.5R-UNIT-028 |
-| Persistence file corruption | 001.5R-INT-009, 001.5R-INT-010 |
-| Feature flag regression | 001.5R-INT-011, 001.5R-INT-012 |
+| Risk | Severity | Test IDs Mitigating | Notes |
+|------|----------|---------------------|-------|
+| Race conditions in DashMap | High | 001.5R-INT-006, 001.5R-UNIT-026, 001.5R-UNIT-027 | 10-agent concurrent CAS simulation |
+| Deadlock in channel operations | High | 001.5R-UNIT-007, 001.5R-INT-004, 001.5R-UNIT-009 | Timeout + select! verification |
+| Message loss under backpressure | High | 001.5R-UNIT-004, 001.5R-INT-003 | Bounded channel behavior |
+| Correlation ID mismatches | Medium | 001.5R-UNIT-018, 001.5R-UNIT-019, 001.5R-UNIT-023 | Out-of-order response handling |
+| Namespace leakage | Medium | 001.5R-UNIT-014, 001.5R-UNIT-028, 001.5R-E2E-004 | Security boundary tests |
+| Persistence file corruption | Low | 001.5R-INT-009, 001.5R-INT-010 | Write/recovery path |
+| Feature flag regression | Low | 001.5R-INT-011, 001.5R-INT-012 | Conditional compilation |
 
 ---
 
@@ -358,12 +439,17 @@ test_design:
     - id: "001.5R-INT-006"
       description: "Concurrent CAS leader election race"
       risk: "Race conditions"
+      annotation: "[SECURITY-TEST: Race Condition]"
     - id: "001.5R-UNIT-009"
       description: "require_all waits for all agents"
       risk: "Deadlock potential"
     - id: "001.5R-UNIT-004"
       description: "Bounded channel backpressure"
       risk: "Memory exhaustion"
+    - id: "001.5R-E2E-004"
+      description: "Namespace isolation"
+      risk: "Security boundary"
+      annotation: "[SECURITY-TEST]"
 ```
 
 ---
@@ -378,6 +464,8 @@ test_design:
 - [x] Scenarios are atomic and independent
 - [x] Race condition scenarios explicitly designed
 - [x] Rust-specific concerns addressed (lock-free, channel semantics)
+- [x] Given-When-Then examples provided for all ACs
+- [x] Security test annotations added where applicable
 
 ---
 
@@ -389,4 +477,5 @@ P0 tests identified: 30
 P1 tests identified: 16
 P2 tests identified: 8
 Total scenarios: 54
+Story reference: docs/stories/TEA-AGENT-001.5-rust-a2a-communication.md
 ```

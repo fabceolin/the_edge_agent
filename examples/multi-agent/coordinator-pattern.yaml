@@ -1,0 +1,103 @@
+# Coordinator Pattern Example
+# TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+#
+# This example demonstrates the coordinator pattern where a lead agent
+# orchestrates worker agents and synthesizes their outputs. The coordinator
+# dynamically decides which workers to invoke based on the task.
+#
+# Usage:
+#   tea run examples/multi-agent/coordinator-pattern.yaml --input '{"request": "Build a landing page for a SaaS product"}'
+
+name: coordinator-pattern
+version: "1.0"
+description: Coordinator orchestrating specialized worker agents
+
+settings:
+  llm:
+    model: gpt-4o-mini
+    temperature: 0.7
+
+  agents:
+    coordinator:
+      system_prompt: |
+        You are a project coordinator. Your job is to:
+        1. Analyze incoming requests
+        2. Delegate to appropriate specialists
+        3. Synthesize results into a cohesive deliverable
+
+        When coordinating, provide clear instructions to each worker.
+        When synthesizing, integrate all contributions thoughtfully.
+      temperature: 0.5
+
+    designer:
+      system_prompt: |
+        You are a UI/UX designer. When given a design task:
+        - Create visual layouts and component structures
+        - Define color schemes and typography
+        - Ensure accessibility and usability
+        - Provide design specifications in structured format
+
+        Output JSON with: layout, colors, typography, components
+      temperature: 0.7
+
+    copywriter:
+      system_prompt: |
+        You are a marketing copywriter. When given a content task:
+        - Write compelling headlines and taglines
+        - Create persuasive body copy
+        - Develop clear call-to-actions
+        - Match tone to target audience
+
+        Output JSON with: headline, subheadline, body, cta, tone
+      temperature: 0.8
+
+    developer:
+      system_prompt: |
+        You are a frontend developer. When given a development task:
+        - Write clean, semantic HTML
+        - Create responsive CSS
+        - Implement interactive JavaScript
+        - Follow best practices
+
+        Output code snippets for implementation.
+      temperature: 0.3
+
+state_schema:
+  request: str
+  design: str
+  copy: str
+  implementation: str
+  final_deliverable: str
+
+nodes:
+  - name: coordinate_work
+    action: agent.coordinate
+    params:
+      coordinator: coordinator
+      workers:
+        - designer
+        - copywriter
+        - developer
+      request: "{{ state.request }}"
+      coordinator_instructions: |
+        Analyze this request and coordinate the team to deliver it:
+        {{ state.request }}
+
+        First, plan what each specialist needs to do.
+        Then, synthesize their outputs into a complete solution.
+      synthesis_instructions: |
+        Combine all worker outputs into a cohesive deliverable:
+        - Ensure design and copy work together
+        - Verify implementation matches specifications
+        - Provide a complete, ready-to-use solution
+    output:
+      design: design
+      copy: copy
+      implementation: implementation
+      final_deliverable: synthesis
+
+edges:
+  - from: __start__
+    to: coordinate_work
+  - from: coordinate_work
+    to: __end__

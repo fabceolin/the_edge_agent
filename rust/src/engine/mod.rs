@@ -1,5 +1,7 @@
 //! Core engine components
 
+#[cfg(feature = "a2a")]
+pub mod a2a;
 pub mod checkpoint;
 pub mod executor;
 pub mod graph;

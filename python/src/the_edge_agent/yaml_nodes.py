@@ -160,6 +160,10 @@ class NodeFactory:
         ):
             run_func = self._wrap_with_observability(run_func, node_name, node_config)
 
+        # TEA-BUILTIN-015.6: Wrap with error handling if on_error is configured
+        if run_func is not None and "on_error" in node_config:
+            run_func = self._wrap_with_error_handling(run_func, node_name, node_config)
+
         # Add node to graph
         if is_fan_in:
             graph.add_fanin_node(node_name, run=run_func)
@@ -307,6 +311,117 @@ class NodeFactory:
                 raise
 
         return observed_func
+
+    def _wrap_with_error_handling(
+        self, func: Callable, node_name: str, node_config: Dict[str, Any]
+    ) -> Callable:
+        """
+        Wrap a node function with error handling (TEA-BUILTIN-015.6).
+
+        Implements:
+        - Retry with exponential backoff (mode=retry)
+        - Graceful degradation (mode=graceful)
+        - Fallback routing
+        - Error state capture (__error__)
+
+        Args:
+            func: The original run function
+            node_name: Name of the node
+            node_config: Node configuration dictionary with 'on_error' block
+
+        Returns:
+            Wrapped function with error handling
+        """
+        from .error_handling import (
+            ErrorHandler,
+            ErrorMode,
+            NodeErrorSettings,
+            parse_node_error_settings,
+            RetryPolicy,
+            create_error_info,
+        )
+
+        on_error = node_config.get("on_error", {})
+        node_settings = parse_node_error_settings(on_error)
+
+        # Get global error handling settings from engine
+        global_settings = getattr(self._engine, "_error_handling_settings", None)
+
+        # Merge node settings with global settings
+        if global_settings is not None and node_settings is not None:
+            merged_settings = node_settings.merge_with_global(global_settings)
+        elif node_settings is not None:
+            # Use node settings directly (create minimal global)
+            from .error_handling.settings import ErrorHandlingSettings
+
+            merged_settings = node_settings.merge_with_global(
+                ErrorHandlingSettings.default()
+            )
+        elif global_settings is not None:
+            merged_settings = global_settings
+        else:
+            # Default: raise mode (backward compatible)
+            from .error_handling.settings import ErrorHandlingSettings
+
+            merged_settings = ErrorHandlingSettings.default()
+
+        # Create error handler from merged settings
+        handler = ErrorHandler.from_settings(merged_settings)
+
+        def error_handled_func(state, **kwargs):
+            action_name = node_config.get("uses")
+
+            # Clear previous error if clear_on_success is enabled
+            if handler.should_clear_error() and "__error__" in state:
+                state = {k: v for k, v in state.items() if k != "__error__"}
+
+            # Execute with error handling
+            try:
+                if merged_settings.mode == ErrorMode.RETRY:
+                    # Execute with retry wrapper
+                    retry_count = 0
+
+                    def on_retry(error, attempt, delay):
+                        nonlocal retry_count
+                        retry_count = attempt + 1
+
+                    from .error_handling.retry import with_retry_sync
+
+                    try:
+                        return with_retry_sync(
+                            func,
+                            handler.retry_policy,
+                            state,
+                            on_retry=on_retry,
+                            **kwargs,
+                        )
+                    except Exception as e:
+                        # All retries exhausted
+                        result = handler.handle_sync(
+                            e, node_name, action_name, state, retry_count=retry_count
+                        )
+                        if result:
+                            return result
+                        raise
+
+                else:
+                    # No retry, just execute with error capture
+                    return func(state, **kwargs)
+
+            except Exception as e:
+                # Handle error according to mode
+                result = handler.handle_sync(e, node_name, action_name, state)
+                if result:
+                    # Graceful mode: return error in state
+                    # Check for fallback routing
+                    fallback = handler.get_fallback_node()
+                    if fallback:
+                        result["__fallback_node__"] = fallback
+                    return result
+                # Raise mode: re-raise exception
+                raise
+
+        return error_handled_func
 
     def create_run_function(self, node_config: Dict[str, Any]) -> Optional[Callable]:
         """

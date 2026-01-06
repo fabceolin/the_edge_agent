@@ -1,0 +1,109 @@
+# Mem0 User Personalization Example (TEA-AGENT-001.6)
+#
+# This example demonstrates a user preferences learning system that
+# stores and retrieves user preferences to personalize recommendations.
+#
+# Usage:
+#   # Store a preference
+#   tea run examples/mem0/mem0-user-personalization.yaml \
+#     --input '{"user_id": "user_123", "action": "store", "preference": "I love Italian food"}'
+#
+#   # Get recommendations
+#   tea run examples/mem0/mem0-user-personalization.yaml \
+#     --input '{"user_id": "user_123", "action": "recommend", "category": "restaurants"}'
+#
+# Prerequisites:
+#   pip install the-edge-agent[mem0]
+#   export MEM0_API_KEY=your_api_key  # Optional
+
+name: mem0-user-personalization
+description: User preference learning and personalized recommendations
+
+settings:
+  memory:
+    backend: mem0
+    api_key: "${MEM0_API_KEY:-}"
+
+state_schema:
+  user_id: str
+  action: str           # "store" or "recommend"
+  preference: str       # For store action
+  category: str         # For recommend action
+  recommendations: list
+  status: str
+
+nodes:
+  # Route based on action type
+  - name: route_action
+    run: |
+      action = state.get("action", "recommend")
+      return {"_route": action}
+    goto:
+      store: store_preference
+      recommend: get_preferences
+      _default: get_preferences
+
+  # Store preference path
+  - name: store_preference
+    uses: memory.mem0.add
+    with:
+      messages: "{{ state.preference }}"
+      user_id: "{{ state.user_id }}"
+      metadata:
+        type: preference
+        category: general
+    output: store_result
+    goto: confirm_store
+
+  - name: confirm_store
+    run: |
+      success = state.get("store_result", {}).get("success", False)
+      if success:
+          return {"status": f"Learned preference: {state.get('preference')}"}
+      else:
+          return {"status": "Failed to store preference"}
+    goto: __end__
+
+  # Recommendation path
+  - name: get_preferences
+    uses: memory.mem0.search
+    with:
+      query: "{{ state.category }} preferences likes favorites"
+      user_id: "{{ state.user_id }}"
+      limit: 10
+    output: pref_search
+
+  - name: generate_recommendations
+    uses: llm.call
+    with:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: |
+            You are a recommendation assistant. Based on the user's preferences,
+            suggest 3 relevant {{ state.category }} recommendations.
+
+            User preferences:
+            {% for mem in state.pref_search.results %}
+            - {{ mem.memory }}
+            {% endfor %}
+
+            If no preferences are found, make general popular recommendations
+            and explain you'd love to learn their preferences.
+        - role: user
+          content: "Give me 3 {{ state.category }} recommendations based on my preferences."
+    output: rec_result
+
+  - name: format_recommendations
+    run: |
+      content = state.get("rec_result", {}).get("content", "")
+      prefs_found = len(state.get("pref_search", {}).get("results", []))
+
+      status = f"Based on {prefs_found} stored preferences"
+      if prefs_found == 0:
+          status = "No preferences found - using general recommendations"
+
+      return {
+          "recommendations": [content],
+          "status": status
+      }

@@ -1,0 +1,110 @@
+# Parallel Agent Reviewers Example
+# TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+#
+# This example demonstrates parallel execution of multiple agents with
+# different aggregation strategies. Three reviewers evaluate code in parallel,
+# and their results are aggregated using consensus.
+#
+# Usage:
+#   tea run examples/multi-agent/parallel-reviewers.yaml --input '{"code": "def add(a, b): return a + b"}'
+
+name: parallel-reviewers
+version: "1.0"
+description: Parallel code review with multiple specialized agents
+
+settings:
+  llm:
+    model: gpt-4o-mini
+    temperature: 0.5
+
+  agents:
+    security_reviewer:
+      system_prompt: |
+        You are a security expert. Review code for security vulnerabilities:
+        - Injection attacks
+        - Authentication issues
+        - Data exposure
+        - Input validation
+
+        Rate security: LOW_RISK, MEDIUM_RISK, or HIGH_RISK.
+        Provide JSON: {"rating": "...", "issues": [...], "recommendations": [...]}
+      temperature: 0.2
+
+    performance_reviewer:
+      system_prompt: |
+        You are a performance expert. Review code for performance issues:
+        - Time complexity
+        - Memory usage
+        - Algorithmic efficiency
+        - Caching opportunities
+
+        Rate performance: OPTIMAL, ACCEPTABLE, or NEEDS_IMPROVEMENT.
+        Provide JSON: {"rating": "...", "issues": [...], "recommendations": [...]}
+      temperature: 0.2
+
+    style_reviewer:
+      system_prompt: |
+        You are a code style expert. Review code for style and maintainability:
+        - Naming conventions
+        - Code organization
+        - Documentation
+        - Best practices
+
+        Rate style: EXCELLENT, GOOD, or NEEDS_WORK.
+        Provide JSON: {"rating": "...", "issues": [...], "recommendations": [...]}
+      temperature: 0.2
+
+state_schema:
+  code: str
+  reviews: list
+  consensus: str
+
+nodes:
+  - name: parallel_review
+    action: agent.parallel
+    params:
+      agents:
+        - security_reviewer
+        - performance_reviewer
+        - style_reviewer
+      task: |
+        Review the following code:
+
+        ```
+        {{ state.code }}
+        ```
+
+        Provide your expert assessment.
+      aggregation: collect
+    output: reviews
+
+  - name: synthesize
+    action: llm.call
+    params:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: |
+            You are a lead reviewer. Synthesize multiple review results into
+            a final assessment with:
+            - Overall rating (APPROVED, NEEDS_CHANGES, REJECTED)
+            - Summary of all issues
+            - Prioritized recommendations
+        - role: user
+          content: |
+            Synthesize these reviews:
+
+            {% for review in state.reviews %}
+            REVIEW {{ loop.index }}:
+            {{ review }}
+
+            {% endfor %}
+    output: consensus
+
+edges:
+  - from: __start__
+    to: parallel_review
+  - from: parallel_review
+    to: synthesize
+  - from: synthesize
+    to: __end__

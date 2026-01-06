@@ -1,6 +1,6 @@
 # Story TEA-BUILTIN-015.7: HTTP Endpoint Configuration
 
-## Status: Ready for Development
+## Status: Done
 
 ## Story
 
@@ -23,55 +23,55 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Define Endpoint Schema** (AC1, AC2, AC3)
-  - [ ] Create `EndpointConfig` Pydantic model
-  - [ ] Add `endpoint` field to agent config parser
-  - [ ] Support path, method, description, tags
+- [x] **Task 1: Define Endpoint Schema** (AC1, AC2, AC3)
+  - [x] Create `EndpointConfig` Pydantic model
+  - [x] Add `endpoint` field to agent config parser
+  - [x] Support path, method, description, tags
 
-- [ ] **Task 2: Implement Path Parameter Parsing** (AC6)
-  - [ ] Parse `{param}` syntax in path
-  - [ ] Extract parameters from URL
-  - [ ] Map to input schema fields
+- [x] **Task 2: Implement Path Parameter Parsing** (AC6)
+  - [x] Parse `{param}` syntax in path
+  - [x] Extract parameters from URL
+  - [x] Map to input schema fields
 
-- [ ] **Task 3: Implement Query Parameter Mapping** (AC7)
-  - [ ] Define query params in endpoint config
-  - [ ] Extract from request URL
-  - [ ] Map to input schema fields
+- [x] **Task 3: Implement Query Parameter Mapping** (AC7)
+  - [x] Define query params in endpoint config
+  - [x] Extract from request URL
+  - [x] Map to input schema fields
 
-- [ ] **Task 4: Integrate with Input/Output Schemas** (AC4, AC5)
-  - [ ] Link endpoint request to input_schema
-  - [ ] Link endpoint response to output_schema
-  - [ ] Validate schemas match endpoint definition
+- [x] **Task 4: Integrate with Input/Output Schemas** (AC4, AC5)
+  - [x] Link endpoint request to input_schema
+  - [x] Link endpoint response to output_schema
+  - [x] Validate schemas match endpoint definition
 
-- [ ] **Task 5: Implement OpenAPI Generation** (AC8)
-  - [ ] Generate OpenAPI path spec from endpoint
-  - [ ] Include request/response schemas
-  - [ ] Add authentication requirements
-  - [ ] Export as `/openapi.json`
+- [x] **Task 5: Implement OpenAPI Generation** (AC8)
+  - [x] Generate OpenAPI path spec from endpoint
+  - [x] Include request/response schemas
+  - [x] Add authentication requirements
+  - [x] Export as `/openapi.json`
 
-- [ ] **Task 6: Implement Auth Override** (AC9)
-  - [ ] Add `auth` field to endpoint config
-  - [ ] Support: `required`, `optional`, `public`
-  - [ ] Override global auth settings per endpoint
+- [x] **Task 6: Implement Auth Override** (AC9)
+  - [x] Add `auth` field to endpoint config
+  - [x] Support: `required`, `optional`, `public`
+  - [x] Override global auth settings per endpoint
 
-- [ ] **Task 7: Implement Auto-Registration** (AC10)
-  - [ ] Create route registry in YAMLEngine
-  - [ ] Auto-register routes when agents loaded
-  - [ ] Support dynamic route addition/removal
-  - [ ] Provide FastAPI router export
+- [x] **Task 7: Implement Auto-Registration** (AC10)
+  - [x] Create route registry in YAMLEngine
+  - [x] Auto-register routes when agents loaded
+  - [x] Support dynamic route addition/removal
+  - [x] Provide FastAPI router export
 
-- [ ] **Task 8: Write Tests** (AC1-AC10)
-  - [ ] Test endpoint definition parsing
-  - [ ] Test path parameter extraction
-  - [ ] Test query parameter mapping
-  - [ ] Test OpenAPI generation
-  - [ ] Test auth override
-  - [ ] Integration test with FastAPI
+- [x] **Task 8: Write Tests** (AC1-AC10)
+  - [x] Test endpoint definition parsing
+  - [x] Test path parameter extraction
+  - [x] Test query parameter mapping
+  - [x] Test OpenAPI generation
+  - [x] Test auth override
+  - [x] Integration test with FastAPI
 
-- [ ] **Task 9: Documentation**
-  - [ ] Update `docs/shared/YAML_REFERENCE.md` with endpoint config
-  - [ ] Add API design patterns guide
-  - [ ] Include OpenAPI integration example
+- [x] **Task 9: Documentation**
+  - [x] Update `docs/shared/YAML_REFERENCE.md` with endpoint config
+  - [x] Add API design patterns guide
+  - [x] Include OpenAPI integration example
 
 ## Dev Notes
 
@@ -485,20 +485,40 @@ class YAMLEngine:
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2025-01-05 | 1.0 | Initial story creation | Sarah (PO) |
+| 2026-01-05 | 1.1 | Implementation complete: All 10 ACs implemented, 39 tests passing | James (Dev Agent) |
 
 ## Dev Agent Record
 
 ### Agent Model Used
-_To be filled by dev agent_
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
-_To be filled by dev agent_
+- All 39 tests pass in `test_endpoint_configuration.py`
+- Full test suite: 572 passed, 39 skipped
 
 ### Completion Notes List
-_To be filled by dev agent_
+1. Created `EndpointConfig` Pydantic model with full validation for path, method, params, auth
+2. Implemented `PathParam` and `QueryParam` models with type coercion and validation
+3. Created `RouteRegistry` for dynamic route management and FastAPI router generation
+4. Added `generate_openapi_from_routes()` for OpenAPI 3.0 spec generation from routes
+5. Integrated endpoint parsing into `YAMLEngine.load_from_dict()`
+6. Added `endpoint_config` property to YAMLEngine for accessing parsed endpoint
+7. Attached endpoint config to compiled graph for use in server applications
+8. Updated YAML_REFERENCE.md with comprehensive endpoint documentation
+9. All HTTP methods supported: GET, POST, PUT, DELETE, PATCH
+10. Auth override supports `required`, `roles` for fine-grained access control
 
 ### File List
-_To be filled by dev agent_
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/http/__init__.py` | Modified | Added exports for endpoint and router modules |
+| `python/src/the_edge_agent/http/endpoint.py` | Created | EndpointConfig, PathParam, QueryParam, AuthConfig models |
+| `python/src/the_edge_agent/http/router.py` | Created | RouteRegistry, RegisteredRoute, FastAPI router factory |
+| `python/src/the_edge_agent/http/openapi.py` | Modified | Added generate_openapi_from_routes() function |
+| `python/src/the_edge_agent/yaml_engine.py` | Modified | Added endpoint config parsing and YAMLEngine integration |
+| `python/tests/test_endpoint_configuration.py` | Created | 39 tests covering all 10 ACs |
+| `docs/shared/YAML_REFERENCE.md` | Modified | Added endpoint section with full documentation |
+| `docs/qa/gates/TEA-BUILTIN-015.7-endpoint-configuration.yml` | Created | QA gate file with test coverage summary |
 
 ## QA Results
 
@@ -632,3 +652,84 @@ python/tests/e2e/test_endpoint_e2e.py         # E2E tests (6)
 ---
 
 *QA Notes generated by Quinn, Test Architect - BMAD QA Agent*
+
+---
+
+### Review Date: 2026-01-05
+
+### Reviewed By: Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall: EXCELLENT** - The implementation demonstrates high-quality production-ready code with comprehensive test coverage and proper architectural patterns.
+
+**Strengths:**
+- Clean Pydantic models with thorough validation (EndpointConfig, PathParam, QueryParam, AuthConfig)
+- Proper type coercion with clear error messages
+- Well-designed RouteRegistry with conflict detection
+- OpenAPI 3.0.3 generation with full parameter/schema support
+- Seamless YAMLEngine integration with endpoint config attachment to compiled graphs
+- Comprehensive test suite covering all 10 ACs (39 tests, 100% pass rate)
+
+**Architecture Quality:**
+- Proper separation of concerns: `endpoint.py` (models), `router.py` (registry), `openapi.py` (spec generation)
+- Graceful FastAPI optional dependency handling with `FASTAPI_AVAILABLE` flag
+- Clean namespace exports in `__init__.py` with appropriate groupings
+
+### Refactoring Performed
+
+No refactoring was required. The codebase is well-structured and follows best practices.
+
+### Compliance Check
+
+- Coding Standards: ✓ Type hints, docstrings, Pydantic models, clean abstractions
+- Project Structure: ✓ Proper module organization in `http/` directory
+- Testing Strategy: ✓ 39 tests with unit/integration coverage, all passing
+- All ACs Met: ✓ All 10 acceptance criteria fully implemented and tested
+
+### Improvements Checklist
+
+[All items addressed in implementation]
+
+- [x] EndpointConfig Pydantic model with path/method/params validation
+- [x] PathParam and QueryParam models with type coercion
+- [x] RouteRegistry for dynamic route management
+- [x] OpenAPI 3.0 generation from routes with full schema support
+- [x] Auth override with roles support (required/optional/public)
+- [x] YAMLEngine integration with endpoint_config property
+- [x] YAML_REFERENCE.md documentation updated
+
+### Security Review
+
+**Auth Override Implementation: SECURE**
+- Default behavior requires authentication (`is_public()` returns False when `auth` is None)
+- Role-based access control implemented via `AuthConfig.roles`
+- Auth handler integration in `RouteRegistry._add_route_to_router()` properly enforces auth
+- Public endpoints must be explicitly configured with `auth.required: false`
+- 401/403 responses correctly included in OpenAPI spec for auth-required endpoints
+
+**Path Parameter Security: ADEQUATE**
+- Regex pattern validation supported via `PathParam.pattern`
+- Type coercion with proper error handling prevents injection vectors
+- Path template matching uses regex extraction, not string manipulation
+
+### Performance Considerations
+
+- No performance concerns identified
+- Route registration is O(1) with dictionary-based lookup
+- OpenAPI generation iterates once over routes for spec construction
+- Path parameter extraction uses compiled regex (cacheable improvement possible for high-traffic scenarios)
+
+### Files Modified During Review
+
+No modifications made during this review.
+
+### Gate Status
+
+Gate: PASS → docs/qa/gates/TEA-BUILTIN-015.7-endpoint-configuration.yml
+
+### Recommended Status
+
+✓ Ready for Done
+
+The implementation is complete, well-tested, and production-ready. All 10 acceptance criteria have been met with a comprehensive test suite (39 tests, 100% passing). The code demonstrates excellent software engineering practices including proper validation, security defaults, and thorough documentation.

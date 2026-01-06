@@ -1,0 +1,117 @@
+# LlamaIndex Router Query Engine Example
+#
+# Demonstrates the Router Query Engine pattern for dynamic retrieval selection.
+# The router uses an LLM to analyze the query and automatically select the
+# most appropriate retrieval engine based on the query semantics.
+#
+# This example shows:
+# 1. Creating multiple specialized indices
+# 2. Configuring a router with different engine types
+# 3. Automatic engine selection based on query
+#
+# Requirements:
+#   pip install the_edge_agent[llamaindex]
+#   export OPENAI_API_KEY=your-key
+#
+# Run:
+#   tea run examples/llamaindex/llamaindex-router-rag.yaml \
+#     --input '{"query": "What are the best practices for error handling?"}'
+#
+#   tea run examples/llamaindex/llamaindex-router-rag.yaml \
+#     --input '{"query": "Find all logs containing ERROR from yesterday"}'
+
+name: llamaindex-router-rag
+description: Router Query Engine for dynamic retrieval strategy selection
+
+settings:
+  llamaindex:
+    embedding_model: text-embedding-3-small
+    llm_model: gpt-4o-mini
+
+state_schema:
+  query: str
+  selected_engine: str
+  answer: str
+
+nodes:
+  # Step 1: Create documentation index
+  - name: create_docs_index
+    action: rag.llamaindex.create_index
+    with:
+      documents:
+        - text: "Error handling in Python uses try/except blocks. Best practice is to catch specific exceptions rather than bare except clauses."
+          metadata: {type: best_practices, topic: error_handling}
+        - text: "Always log exceptions with full stack traces. Use logging.exception() which automatically includes traceback information."
+          metadata: {type: best_practices, topic: logging}
+        - text: "API design should follow REST principles. Use appropriate HTTP status codes: 200 for success, 400 for client errors, 500 for server errors."
+          metadata: {type: best_practices, topic: api_design}
+        - text: "Testing best practices include writing unit tests for edge cases, using mocks for external dependencies, and aiming for high code coverage."
+          metadata: {type: best_practices, topic: testing}
+      persist_path: "/tmp/router_docs_index"
+    output: docs_index_result
+
+  # Step 2: Create logs index (simulated log entries)
+  - name: create_logs_index
+    action: rag.llamaindex.create_index
+    with:
+      documents:
+        - text: "2024-01-15 10:23:45 ERROR: Connection timeout to database server db-prod-01. Retrying in 5 seconds."
+          metadata: {level: error, timestamp: "2024-01-15T10:23:45"}
+        - text: "2024-01-15 10:23:50 INFO: Successfully reconnected to database after 1 retry."
+          metadata: {level: info, timestamp: "2024-01-15T10:23:50"}
+        - text: "2024-01-15 14:05:22 ERROR: Authentication failed for user john@example.com. Invalid credentials."
+          metadata: {level: error, timestamp: "2024-01-15T14:05:22"}
+        - text: "2024-01-15 15:30:00 WARNING: Memory usage at 85%. Consider scaling horizontally."
+          metadata: {level: warning, timestamp: "2024-01-15T15:30:00"}
+        - text: "2024-01-14 09:00:00 ERROR: Failed to process payment for order #12345. Gateway timeout."
+          metadata: {level: error, timestamp: "2024-01-14T09:00:00"}
+      persist_path: "/tmp/router_logs_index"
+    output: logs_index_result
+
+  # Step 3: Use router to automatically select the best engine
+  - name: smart_query
+    action: rag.llamaindex.router
+    with:
+      query: "{{ state.query }}"
+      engines:
+        - type: vector
+          index_path: "/tmp/router_docs_index"
+          name: documentation
+          description: "Semantic search over technical documentation, best practices, and API guides. Use for conceptual questions about how to do things."
+        - type: vector
+          index_path: "/tmp/router_logs_index"
+          name: logs
+          description: "Search through application logs. Use for finding specific errors, warnings, or events that occurred in the system."
+      verbose: true
+    output: router_result
+
+  # Step 4: Format the results
+  - name: format_response
+    run: |
+      result = state.get("router_result", {})
+      selected = result.get("selected_engine", {})
+      response = result.get("response", "No response")
+      nodes = result.get("nodes", [])
+
+      # Format retrieved context
+      context_preview = ""
+      for i, node in enumerate(nodes[:3]):
+          text = node.get("text", "")[:200]
+          context_preview += f"\n  {i+1}. {text}..."
+
+      return {
+          "selected_engine": str(selected),
+          "answer": response,
+          "context_preview": context_preview
+      }
+
+  # Step 5: Display results
+  - name: output_results
+    run: |
+      print(f"\n=== Router Query Results ===")
+      print(f"Query: {state['query']}")
+      print(f"Selected Engine: {state['selected_engine']}")
+      print(f"\nAnswer: {state['answer']}")
+      if state.get('context_preview'):
+          print(f"\nRetrieved Context:{state['context_preview']}")
+      return {}
