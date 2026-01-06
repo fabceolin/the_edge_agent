@@ -13,6 +13,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 - [Document Structure](#document-structure)
 - [Top-Level Keys](#top-level-keys)
   - [imports](#imports)
+  - [endpoint](#endpoint-optional) (HTTP API configuration)
 - [Node Specification](#node-specification)
 - [Navigation and Flow Control](#navigation-and-flow-control)
 - [Edge Specification](#edge-specification-deprecated) (sequential edges deprecated, parallel edges supported)
@@ -54,6 +55,8 @@ This reference is organized into focused modules for easier navigation:
 | I/O Actions | [yaml-reference/actions/io.md](./yaml-reference/actions/io.md) |
 | Data Processing | [yaml-reference/actions/data.md](./yaml-reference/actions/data.md) |
 | Memory Actions | [yaml-reference/actions/memory.md](./yaml-reference/actions/memory.md) |
+| Reasoning Actions | [yaml-reference/actions/reasoning.md](./yaml-reference/actions/reasoning.md) |
+| Planning Actions | [yaml-reference/actions/planning.md](./yaml-reference/actions/planning.md) |
 | Integrations | [yaml-reference/actions/integrations.md](./yaml-reference/actions/integrations.md) |
 | Specialized (incl. Secrets) | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
 
@@ -342,6 +345,223 @@ state_schema:
 ```
 Defines the expected structure of the state object. Types are Python type names as strings.
 
+### `input_schema` (optional)
+
+Defines validation rules for input data. When provided, input is validated before graph execution, returning a 422 error if validation fails. Supports type coercion, required fields, defaults, and constraints.
+
+```yaml
+input_schema:
+  # Required string with length constraints
+  query:
+    type: str
+    required: true
+    min_length: 1
+    max_length: 1000
+
+  # Optional string with regex pattern
+  session_id:
+    type: str
+    pattern: "^[a-f0-9-]{36}$"
+
+  # Number with range and default
+  max_results:
+    type: int
+    default: 5
+    min: 1
+    max: 100
+
+  # Enum choices
+  output_format:
+    type: str
+    default: "json"
+    choices: ["json", "text", "markdown"]
+
+  # Nested object validation
+  options:
+    type: dict
+    properties:
+      temperature:
+        type: float
+        default: 0.7
+        min: 0.0
+        max: 2.0
+      model:
+        type: str
+        default: "gpt-4o-mini"
+
+  # List with item validation
+  tags:
+    type: list
+    items:
+      type: str
+      max_length: 50
+```
+
+**Supported Types:** `str`, `int`, `float`, `bool`, `list`, `dict`
+
+**Constraints:**
+| Constraint | Types | Description |
+|------------|-------|-------------|
+| `required` | all | Error if field is missing |
+| `default` | all | Value to use when field is missing |
+| `min_length` | str | Minimum string length |
+| `max_length` | str | Maximum string length |
+| `pattern` | str | Regex pattern to match |
+| `min` | int, float | Minimum numeric value |
+| `max` | int, float | Maximum numeric value |
+| `choices` | all | List of allowed values |
+| `properties` | dict | Nested field schemas |
+| `items` | list | Schema for list elements |
+
+**Type Coercion:** String values are automatically coerced to the target type when possible (e.g., `"123"` → `123`, `"true"` → `True`).
+
+**Validation Error Response:**
+```json
+{
+  "type": "validation_error",
+  "status_code": 422,
+  "errors": [
+    {
+      "field": "query",
+      "error": "required",
+      "message": "Field 'query' is required"
+    },
+    {
+      "field": "options.temperature",
+      "error": "max",
+      "message": "Field 'options.temperature' must be at most 2.0",
+      "value": 3.0,
+      "constraint": 2.0
+    }
+  ]
+}
+```
+
+### `endpoint` (optional)
+
+Defines the HTTP endpoint configuration for exposing this agent as a REST API. When present, the agent can be auto-registered with a route registry and its OpenAPI specification is automatically generated.
+
+```yaml
+endpoint:
+  # Required: URL path (must start with /)
+  path: "/api/v1/research"
+
+  # HTTP method (default: POST)
+  method: POST
+
+  # OpenAPI metadata
+  summary: "Execute research query"
+  description: "Searches the web and synthesizes an answer with citations."
+  tags:
+    - Research
+    - AI Agents
+
+  # Authentication override (default: required)
+  auth:
+    required: true
+    roles:
+      - user
+      - admin
+
+  # Path parameters (extracted from URL)
+  path_params:
+    user_id:
+      type: int
+      description: "User identifier"
+      pattern: "^[0-9]+$"
+
+  # Query parameters (URL ?param=value)
+  query_params:
+    limit:
+      type: int
+      required: false
+      default: 10
+      min: 1
+      max: 100
+      description: "Maximum results"
+
+    format:
+      type: str
+      default: "json"
+      map_to: output_format  # Maps to different state key
+
+  # Request body configuration
+  request:
+    content_type: "application/json"
+    schema_ref: input_schema  # Links to input_schema section
+
+  # Response configuration
+  response:
+    content_type: "application/json"
+    schema_ref: output_schema
+    examples:
+      success:
+        summary: "Successful research result"
+        value:
+          status: "success"
+          result: "Research findings..."
+          citations: ["https://example.com"]
+```
+
+**HTTP Methods:** `GET`, `POST`, `PUT`, `DELETE`, `PATCH`
+
+**Path Parameters:**
+- Extracted from `{param_name}` placeholders in path
+- Auto-created as `str` type if not explicitly defined
+- Type-converted and validated before graph execution
+
+**Query Parameters:**
+| Property | Type | Description |
+|----------|------|-------------|
+| `type` | str | `str`, `int`, `float`, `bool`, `list` |
+| `required` | bool | Error if missing (default: false) |
+| `default` | any | Value when not provided |
+| `min`/`max` | number | Range constraints (int/float) |
+| `min_length`/`max_length` | int | Length constraints (str/list) |
+| `map_to` | str | State key to store value (default: param name) |
+| `description` | str | OpenAPI description |
+
+**Auth Configuration:**
+| Property | Default | Description |
+|----------|---------|-------------|
+| `required` | true | Require authentication |
+| `roles` | [] | Required roles (empty = any authenticated user) |
+
+**OpenAPI Generation:**
+When an agent has an `endpoint` section, its OpenAPI specification includes:
+- Path/query parameters with types and validation
+- Request body schema (from `input_schema`)
+- Response schema (from `output_schema`)
+- Security requirements (from `auth`)
+- Tags and operation metadata
+
+**Python Integration:**
+```python
+from the_edge_agent import YAMLEngine
+from the_edge_agent.http import RouteRegistry, generate_openapi_from_routes
+
+# Load agent with endpoint config
+engine = YAMLEngine()
+graph = engine.load_from_file("agent.yaml")
+
+# Access endpoint config
+if engine.endpoint_config:
+    print(f"Endpoint: {engine.endpoint_config.method} {engine.endpoint_config.path}")
+
+# Register with route registry
+registry = RouteRegistry()
+registry.register(
+    agent_name=graph._agent_name,
+    config=graph._endpoint_config,
+    handler=lambda state: list(graph.invoke(state)),
+    input_schema=agent_config.get("input_schema"),
+    output_schema=agent_config.get("output_schema"),
+)
+
+# Generate OpenAPI spec
+spec = generate_openapi_from_routes(registry, "my-api", "1.0.0")
+```
+
 ### `nodes` (required)
 Array of node definitions. See [Node Specification](#node-specification).
 
@@ -361,6 +581,78 @@ config:
   interrupt_after: [node_name]  # Pause after these nodes
   checkpoint_dir: ./checkpoints # Directory for auto-save checkpoints
 ```
+
+### `settings` (optional)
+
+Runtime configuration for the agent including authentication, LLM defaults, and infrastructure.
+
+#### `settings.auth` - Authentication (TEA-BUILTIN-015.3)
+
+Configure authentication for securing agent endpoints:
+
+```yaml
+settings:
+  auth:
+    provider: firebase         # Required: firebase | jwt | api_key | none
+    token_header: "Authorization"  # Header containing token (default)
+    # token_query_param: "api_key"  # Alternative: token from query param
+    required: true             # 401 if auth fails (default: true)
+    inject_user: true          # Inject user into state (default: true)
+    user_state_key: "__user__" # State key for user info (default: __user__)
+
+    # Claims mapping (optional) - map token claims to user fields
+    claims_mapping:
+      user_id: uid             # state.__user__.user_id = token.uid
+      user_email: email
+      roles: custom_claims.roles
+
+    # Provider-specific config
+    firebase:
+      project_id: "${FIREBASE_PROJECT_ID}"
+
+    jwt:
+      secret: "${JWT_SECRET}"
+      # public_key_path: "/path/to/public.pem"  # For RS256
+      algorithms: ["HS256"]
+      issuer: "https://your-issuer.com"
+      audience: "your-api"
+
+    api_key:
+      keys:
+        - "${API_KEY_1}"
+        - "${API_KEY_2}"
+      # keys_file: "/path/to/keys.txt"  # Load from file
+```
+
+**Provider Types:**
+
+| Provider | Description | Dependencies |
+|----------|-------------|--------------|
+| `firebase` | Firebase ID token verification | `firebase-admin>=6.2.0` |
+| `jwt` | Generic JWT verification | `PyJWT>=2.8.0` |
+| `api_key` | Simple API key matching | None |
+| `none` | No authentication (default) | None |
+
+**User Info Injection:**
+
+When `inject_user: true`, the authenticated user is available in state:
+
+```yaml
+nodes:
+  - name: greet_user
+    run: |
+      user = state.get("__user__")
+      if user:
+          return {"greeting": f"Hello, {user['email']}!"}
+      return {"greeting": "Hello, anonymous!"}
+```
+
+**Required vs Optional Auth:**
+
+- `required: true` (default): Returns 401 error if token is missing/invalid
+- `required: false`: Sets `__user__` to None and continues execution
+
+See [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md#auth-actions) for `auth.verify` and `auth.get_user` actions.
 
 ---
 
@@ -509,14 +801,20 @@ For complete template reference including conditionals and loops, see [Template 
 
 > **Full documentation:** [yaml-reference/actions/](./yaml-reference/actions/)
 
-TEA provides 50+ built-in actions organized by category:
+TEA provides 100+ built-in actions organized by category:
 
 | Category | Actions | Documentation |
 |----------|---------|---------------|
 | LLM | llm.call, llm.stream, llm.retry, llm.tools | [actions/llm.md](./yaml-reference/actions/llm.md) |
 | I/O | http.*, file.*, storage.* | [actions/io.md](./yaml-reference/actions/io.md) |
 | Data | json.*, csv.*, data.* | [actions/data.md](./yaml-reference/actions/data.md) |
-| Memory | memory.*, ltm.*, cache.* | [actions/memory.md](./yaml-reference/actions/memory.md) |
+| Memory | memory.*, ltm.*, cache.*, graph.* | [actions/memory.md](./yaml-reference/actions/memory.md) |
+| Reasoning | reason.cot, reason.react, reason.self_correct, reason.decompose | [actions/reasoning.md](./yaml-reference/actions/reasoning.md) |
+| Planning | plan.decompose, plan.execute, plan.replan, plan.status | [actions/planning.md](./yaml-reference/actions/planning.md) |
+| Multi-Agent | agent.dispatch, agent.parallel, agent.sequential, agent.coordinate | [actions/agent.md](./yaml-reference/actions/agent.md) |
+| A2A | a2a.send, a2a.receive, a2a.broadcast, a2a.delegate, a2a.state.* | [actions/a2a.md](./yaml-reference/actions/a2a.md) |
+| Reflection | reflection.loop, reflection.evaluate, reflection.correct | [actions/reflection.md](./yaml-reference/actions/reflection.md) |
+| Cloud Production | session.*, firestore.*, auth.*, validate.*, error.* | [actions/cloud-production.md](./yaml-reference/actions/cloud-production.md) |
 | Integrations | web.*, vector.*, tools.* | [actions/integrations.md](./yaml-reference/actions/integrations.md) |
 | Specialized | checkpoint.*, schema.*, secrets.*, ratelimit.* | [actions/specialized.md](./yaml-reference/actions/specialized.md) |
 
