@@ -186,9 +186,9 @@ Define tools inline and let the LLM decide when to use them:
 
 ## Learn More
 
-- [YAML Reference - LLM Actions](../shared/YAML_REFERENCE.md#llm-actions)
-- [Python Actions Reference](../python/actions-reference.md#llm-actions)
-- [Rust Actions Reference](../rust/actions-reference.md#llm-actions)
+- [YAML Reference - LLM Actions](../shared/yaml-reference/actions/llm.md)
+- [Python Actions Reference](../python/actions-reference.md)
+- [Rust Actions Reference](../rust/actions-reference.md)
 - [LiteLLM Provider Docs](https://docs.litellm.ai/docs/providers)
-- [Ollama Support Story](../stories/TEA-BUILTIN-009-ollama-provider-support.md)
-- [LiteLLM Integration Story](../stories/TEA-LLM-003-litellm-provider-integration.md)
+- [Ollama Support Story](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-009-ollama-provider-support.md)
+- [LiteLLM Integration Story](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-LLM-003-litellm-provider-integration.md)

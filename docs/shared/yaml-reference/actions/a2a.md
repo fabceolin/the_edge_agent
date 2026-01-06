@@ -1,7 +1,7 @@
 # A2A (Agent-to-Agent) Communication Actions
 
 > **Parent document:** [Actions Index](./README.md)
-> **Story:** [TEA-AGENT-001.5 Inter-Agent Communication](../../../stories/TEA-AGENT-001.5-inter-agent-communication.md)
+> **Story:** [TEA-AGENT-001.5 Inter-Agent Communication](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-AGENT-001.5-inter-agent-communication.md)
 
 ## Overview
 

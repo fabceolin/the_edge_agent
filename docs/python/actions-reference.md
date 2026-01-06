@@ -176,7 +176,7 @@ settings:
 - Environment variable expansion (`${VAR}` syntax)
 - File mode for large contexts
 
-See [YAML Reference](../shared/YAML_REFERENCE.md#shell-provider-tea-llm-004) for complete documentation.
+See [YAML Reference](../shared/YAML_REFERENCE.md) for complete documentation.
 
 ### HTTP Actions
 

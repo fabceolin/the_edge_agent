@@ -162,7 +162,7 @@ When using Opik, configuration follows this precedence (highest to lowest):
 
 ### Documentation
 
-- [Observability Epic](../stories/TEA-OBS-001-hybrid-observability-epic.md) - Architecture and design decisions
+- [Observability Epic](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-OBS-001-hybrid-observability-epic.md) - Architecture and design decisions
 - [Python Getting Started](../python/getting-started.md) - Quick start with observability
 - [Rust Getting Started](../rust/getting-started.md) - Quick start with Rust runtime
 - [YAML Reference](../shared/YAML_REFERENCE.md) - Complete settings reference
@@ -171,11 +171,11 @@ When using Opik, configuration follows this precedence (highest to lowest):
 
 | Story | Description | Status |
 |-------|-------------|--------|
-| [TEA-OBS-001.1](../stories/TEA-OBS-001.1-python-observability-core.md) | Python ObservabilityContext infrastructure | Done |
-| [TEA-OBS-001.2](../stories/TEA-OBS-001.2-rust-observability-core.md) | Rust ObservabilityContext infrastructure | Done |
-| [TEA-BUILTIN-005.1](../stories/TEA-BUILTIN-005.1.opik-exporter.md) | OpikExporter backend | Done |
-| [TEA-BUILTIN-005.2](../stories/TEA-BUILTIN-005.2.opik-llm-instrumentation.md) | Native Opik LLM instrumentation | Done |
-| [TEA-BUILTIN-005.3](../stories/TEA-BUILTIN-005.3.opik-configuration.md) | Opik configuration and utilities | Done |
+| [TEA-OBS-001.1](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-OBS-001.1-python-observability-core.md) | Python ObservabilityContext infrastructure | Done |
+| [TEA-OBS-001.2](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-OBS-001.2-rust-observability-core.md) | Rust ObservabilityContext infrastructure | Done |
+| [TEA-BUILTIN-005.1](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-005.1.opik-exporter.md) | OpikExporter backend | Done |
+| [TEA-BUILTIN-005.2](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-005.2.opik-llm-instrumentation.md) | Native Opik LLM instrumentation | Done |
+| [TEA-BUILTIN-005.3](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-005.3.opik-configuration.md) | Opik configuration and utilities | Done |
 
 ### External Resources
 

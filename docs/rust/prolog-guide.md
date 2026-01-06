@@ -685,8 +685,8 @@ cargo install --path . --features prolog
 
 ## Related Documentation
 
-- [YAML Reference - Prolog Section](../shared/YAML_REFERENCE.md#method-2c-prolog-code)
-- [Neurosymbolic Patterns Guide](../shared/architecture/neurosymbolic-patterns.md)
-- [Prolog Examples](../../examples/prolog/)
+- [YAML Reference](../shared/YAML_REFERENCE.md)
+- [Neurosymbolic Patterns Guide](https://github.com/fabceolin/the_edge_agent/blob/main/docs/shared/architecture/neurosymbolic-patterns.md)
+- [Prolog Examples](https://github.com/fabceolin/the_edge_agent/tree/main/examples/prolog)
 - [Python Prolog Guide](../python/prolog-guide.md)
 - [Rust Development Guide](./development-guide.md)

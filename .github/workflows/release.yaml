@@ -48,7 +48,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic && \
              pip install -e . --no-deps && \
              pyinstaller --onefile --name tea-python-linux-x86_64 \
                --hidden-import=the_edge_agent \
@@ -59,7 +59,9 @@ jobs:
                --hidden-import=jinja2 \
                --hidden-import=typer \
                --hidden-import=dotenv \
+               --hidden-import=pydantic \
                --collect-all the_edge_agent \
+               --collect-all pydantic \
                --exclude-module tkinter \
                --exclude-module matplotlib \
                --exclude-module numpy \
@@ -105,7 +107,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
@@ -120,6 +122,7 @@ jobs:
                --hidden-import=jinja2 \
                --hidden-import=typer \
                --hidden-import=dotenv \
+               --hidden-import=pydantic \
                --hidden-import=openai \
                --hidden-import=numpy \
                --hidden-import=chromadb \
@@ -138,6 +141,7 @@ jobs:
                --collect-all numpy \
                --collect-all pandas \
                --collect-all firebase_admin \
+               --collect-all pydantic \
                --exclude-module tkinter \
                --exclude-module matplotlib \
                --strip \
@@ -184,7 +188,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -200,7 +204,9 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --collect-all the_edge_agent \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --exclude-module numpy \
@@ -250,7 +256,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -270,6 +276,7 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -288,6 +295,7 @@ jobs:
             --collect-all numpy \
             --collect-all pandas \
             --collect-all firebase_admin \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -334,7 +342,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -350,7 +358,9 @@ jobs:
             --hidden-import=jinja2 `
             --hidden-import=typer `
             --hidden-import=dotenv `
+            --hidden-import=pydantic `
             --collect-all the_edge_agent `
+            --collect-all pydantic `
             --exclude-module tkinter `
             --exclude-module matplotlib `
             --exclude-module numpy `
@@ -398,7 +408,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv `
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic `
                       openai "numpy<2" chromadb requests RestrictedPython `
                       "pycozo[embedded]" pandas `
                       s3fs gcsfs adlfs lupa kuzu `
@@ -418,6 +428,7 @@ jobs:
             --hidden-import=jinja2 `
             --hidden-import=typer `
             --hidden-import=dotenv `
+            --hidden-import=pydantic `
             --hidden-import=openai `
             --hidden-import=numpy `
             --hidden-import=chromadb `
@@ -436,6 +447,7 @@ jobs:
             --collect-all numpy `
             --collect-all pandas `
             --collect-all firebase_admin `
+            --collect-all pydantic `
             --exclude-module tkinter `
             --exclude-module matplotlib `
             src/the_edge_agent/cli.py
@@ -480,7 +492,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -496,7 +508,9 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --collect-all the_edge_agent \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --exclude-module numpy \
@@ -546,7 +560,7 @@ jobs:
       - name: Install dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -566,6 +580,7 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -584,6 +599,7 @@ jobs:
             --collect-all numpy \
             --collect-all pandas \
             --collect-all firebase_admin \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -644,7 +660,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -662,8 +678,10 @@ jobs:
             --hidden-import=typer \
             --hidden-import=dotenv \
             --hidden-import=janus_swi \
+            --hidden-import=pydantic \
             --collect-all the_edge_agent \
             --collect-all janus_swi \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --exclude-module numpy \
@@ -799,7 +817,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -817,8 +835,10 @@ jobs:
             --hidden-import=typer \
             --hidden-import=dotenv \
             --hidden-import=janus_swi \
+            --hidden-import=pydantic \
             --collect-all the_edge_agent \
             --collect-all janus_swi \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --exclude-module numpy \
@@ -933,7 +953,7 @@ jobs:
       - name: Install Python dependencies (full + janus-swi)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -954,6 +974,7 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -974,6 +995,7 @@ jobs:
             --collect-all pandas \
             --collect-all firebase_admin \
             --collect-all janus_swi \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -1107,7 +1129,7 @@ jobs:
       - name: Install Python dependencies (full + janus-swi)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -1128,6 +1150,7 @@ jobs:
             --hidden-import=jinja2 \
             --hidden-import=typer \
             --hidden-import=dotenv \
+            --hidden-import=pydantic \
             --hidden-import=openai \
             --hidden-import=numpy \
             --hidden-import=chromadb \
@@ -1148,6 +1171,7 @@ jobs:
             --collect-all pandas \
             --collect-all firebase_admin \
             --collect-all janus_swi \
+            --collect-all pydantic \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \

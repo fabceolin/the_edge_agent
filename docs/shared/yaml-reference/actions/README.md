@@ -2,7 +2,7 @@
 
 > **Parent document:** [YAML Reference](../../YAML_REFERENCE.md)
 > **Related:** [Node Specification](../nodes.md) | [Template Syntax](../templates.md)
-> **Epic:** [DOC-002](../../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** [DOC-002](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/DOC-002-yaml-reference-modularization.md)
 
 ## Overview
 

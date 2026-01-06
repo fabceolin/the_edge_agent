@@ -652,7 +652,7 @@ nodes:
 - `required: true` (default): Returns 401 error if token is missing/invalid
 - `required: false`: Sets `__user__` to None and continues execution
 
-See [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md#auth-actions) for `auth.verify` and `auth.get_user` actions.
+See [Cloud Production Actions](./yaml-reference/actions/cloud-production.md) for `auth.verify` and `auth.get_user` actions.
 
 ---
 
@@ -799,7 +799,7 @@ For complete template reference including conditionals and loops, see [Template 
 
 ## Built-in Actions
 
-> **Full documentation:** [yaml-reference/actions/](./yaml-reference/actions/)
+> **Full documentation:** [Actions Index](./yaml-reference/actions/README.md)
 
 TEA provides 100+ built-in actions organized by category:
 
@@ -956,7 +956,7 @@ Complete, runnable example agents demonstrating various patterns:
 
 For complete examples with full code, see [Complete Examples](./yaml-reference/examples.md).
 
-See also: [examples/yaml/](../examples/yaml/) for additional example agents.
+See also: [examples/yaml/](https://github.com/fabceolin/the_edge_agent/tree/main/examples/yaml) for additional example agents.
 
 ---
 

@@ -193,16 +193,16 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
 
 ## Examples
 
-- [Simple Prolog Agent](../../examples/prolog/simple-prolog-agent.yaml) - Basic neurosymbolic inference
-- [Parallel Workflows](../../examples/prolog/parity/) - Fan-out/fan-in patterns
-- [Web Automation](../../examples/web/) - Headless browser agents
+- [Simple Prolog Agent](https://github.com/fabceolin/the_edge_agent/blob/main/examples/prolog/simple-prolog-agent.yaml) - Basic neurosymbolic inference
+- [Parallel Workflows](https://github.com/fabceolin/the_edge_agent/tree/main/examples/prolog/parity) - Fan-out/fan-in patterns
+- [Web Automation](https://github.com/fabceolin/the_edge_agent/tree/main/examples/web) - Headless browser agents
 
 ## Learn More
 
 - [GitHub Releases](https://github.com/fabceolin/the_edge_agent/releases) - Download binaries
-- [Multi-Platform Binaries Story](../stories/TEA-RELEASE-001-multi-platform-binaries.md) - Implementation details
-- [Prolog AppImage Story](../stories/TEA-RELEASE-002-rust-prolog-appimage.md) - AppImage build process
-- [README Download Section](../../README.md#download-pre-built-binaries) - Quick install commands
+- [Multi-Platform Binaries Story](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-RELEASE-001-multi-platform-binaries.md) - Implementation details
+- [Prolog AppImage Story](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-RELEASE-002-rust-prolog-appimage.md) - AppImage build process
+- [README Download Section](https://github.com/fabceolin/the_edge_agent#download-pre-built-binaries) - Quick install commands
 - [Neurosymbolic Capability](./neurosymbolic.md) - Prolog integration details
 
 ## Technical Details

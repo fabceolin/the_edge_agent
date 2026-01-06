@@ -207,16 +207,16 @@ settings:
 
 ## Examples
 
-- [Knowledge Graph Agent](../../examples/prolog/neurosymbolic/) - Graph memory with Datalog reasoning
-- [Conversational Agent](../../examples/) - Short-term memory with summarization
-- [RAG Pipeline](../../examples/) - Embedding + vector search workflow
+- [Knowledge Graph Agent](https://github.com/fabceolin/the_edge_agent/tree/main/examples/prolog/neurosymbolic) - Graph memory with Datalog reasoning
+- [Conversational Agent](https://github.com/fabceolin/the_edge_agent/tree/main/examples) - Short-term memory with summarization
+- [RAG Pipeline](https://github.com/fabceolin/the_edge_agent/tree/main/examples) - Embedding + vector search workflow
 
 ## Learn More
 
 - [Memory Actions Reference](../python/actions-reference.md) - Full API documentation
-- [LTM Backend Guide](../../CLAUDE.md) - Backend selection and configuration (lines 154-199)
+- [LTM Backend Guide](https://github.com/fabceolin/the_edge_agent/blob/main/CLAUDE.md#ltm-backend-selection-guide) - Backend selection and configuration
 - [Checkpoint Guide](../shared/architecture/checkpoint-guide.md) - Save/resume with memory state
-- [TEA-BUILTIN-001.1: Memory Actions](../stories/TEA-BUILTIN-001.1.memory-actions.md) - Implementation story
-- [TEA-BUILTIN-001.4: Long-Term Memory](../stories/TEA-BUILTIN-001.4.long-term-memory.md) - LTM architecture
-- [TEA-BUILTIN-001.6: DuckDB LTM](../stories/TEA-BUILTIN-001.6.duckdb-ltm-backend.md) - Cloud-native backend
-- [TEA-BUILTIN-002.2: RAG Actions](../stories/TEA-BUILTIN-002.2.rag-actions.md) - Embedding and vector search
+- [TEA-BUILTIN-001.1: Memory Actions](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-001.1.memory-actions.md) - Implementation story
+- [TEA-BUILTIN-001.4: Long-Term Memory](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-001.4.long-term-memory.md) - LTM architecture
+- [TEA-BUILTIN-001.6: DuckDB LTM](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-001.6.duckdb-ltm-backend.md) - Cloud-native backend
+- [TEA-BUILTIN-002.2: RAG Actions](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-002.2.rag-actions.md) - Embedding and vector search

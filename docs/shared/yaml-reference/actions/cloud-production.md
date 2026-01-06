@@ -1,7 +1,7 @@
 # Cloud Production Actions
 
 > **Parent document:** [Actions Index](./README.md)
-> **Epic:** [TEA-BUILTIN-015 Cloud Production](../../../stories/TEA-BUILTIN-015-cloud-production-epic.md)
+> **Epic:** [TEA-BUILTIN-015 Cloud Production](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-015-cloud-production-epic.md)
 
 ## Overview
 
@@ -310,7 +310,7 @@ Authentication actions provide explicit token verification within workflows.
 
 ### Configuration
 
-See [YAML_REFERENCE.md](../../YAML_REFERENCE.md#settingsauth---authentication-tea-builtin-0153) for full `settings.auth` configuration.
+See [YAML Reference](../../YAML_REFERENCE.md) for full `settings.auth` configuration.
 
 ### auth.verify
 

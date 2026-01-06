@@ -95,7 +95,6 @@ cargo test
 ## Next Steps
 
 - [Development Guide](development-guide.md) - Full development setup
-- [Source Tree](source-tree.md) - Code organization
 - [Actions Reference](actions-reference.md) - Available actions
 - [YAML Reference](../shared/YAML_REFERENCE.md) - Complete YAML syntax
 

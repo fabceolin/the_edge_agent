@@ -82,10 +82,10 @@ For most use cases, you define Prolog logic directly in the `run:` block with `l
 
 ## Learn More
 
-- [Prolog Integration Epic](../stories/TEA-PROLOG-001-prolog-integration-epic.md) - Architecture overview and story status
-- [Python Prolog Support](../stories/TEA-PY-004-prolog-scripting-support.md) - Python implementation details
-- [Rust Prolog Support](../stories/TEA-RUST-035-prolog-scripting-support.md) - Rust implementation details
-- [Cross-Runtime Parity](../stories/TEA-PROLOG-002-cross-runtime-parity-tests.md) - Python/Rust compatibility testing
+- [Prolog Integration Epic](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-PROLOG-001-prolog-integration-epic.md) - Architecture overview and story status
+- [Python Prolog Support](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-PY-004-prolog-scripting-support.md) - Python implementation details
+- [Rust Prolog Support](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-RUST-035-prolog-scripting-support.md) - Rust implementation details
+- [Cross-Runtime Parity](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-PROLOG-002-cross-runtime-parity-tests.md) - Python/Rust compatibility testing
 
 ## Installation
 

@@ -204,6 +204,6 @@ result = list(graph.invoke({"approved": True}, checkpoint=checkpoint))
 ## Learn More
 
 - [Checkpoint Persistence Guide](../shared/architecture/checkpoint-guide.md) - Detailed checkpoint and interrupt documentation
-- [Interactive HITL Mode (Story)](../stories/TEA-CLI-005-interactive-hitl-mode.md) - CLI interactive mode specification
-- [Interactive Mode - Rust Core](../stories/TEA-CLI-005a-interactive-rust-core.md) - Rust implementation details
-- [Interactive Interrupt Support](../stories/TEA-CLI-003.interactive-interrupt-support.md) - Original interrupt support story
+- [Interactive HITL Mode (Story)](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-CLI-005-interactive-hitl-mode.md) - CLI interactive mode specification
+- [Interactive Mode - Rust Core](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-CLI-005a-interactive-rust-core.md) - Rust implementation details
+- [Interactive Interrupt Support](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-CLI-003.interactive-interrupt-support.md) - Original interrupt support story

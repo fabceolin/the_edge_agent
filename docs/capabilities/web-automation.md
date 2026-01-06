@@ -91,7 +91,7 @@ TEA integrates with multiple web automation services:
 
 ## Examples
 
-- [Deep Research Crawler](../../examples/web/deep-research-crawler.yaml) - Multi-stage law firm data extraction with sitemap analysis
+- [Deep Research Crawler](https://github.com/fabceolin/the_edge_agent/blob/main/examples/web/deep-research-crawler.yaml) - Multi-stage law firm data extraction with sitemap analysis
 - [ScrapeGraph Simple Test](../../examples/web/scrapegraph-simple-test.yaml) - Quick test for AI-powered extraction
 - [ScrapeGraph Production Test](../../examples/web/test-scrapegraph-production.yaml) - Production validation example
 
@@ -202,9 +202,9 @@ Actions automatically retry on:
 
 ## Learn More
 
-- [Web Actions Story](../stories/TEA-BUILTIN-002.1.web-actions.md) - Technical implementation details
-- [ScrapeGraphAI Integration](../stories/TEA-BUILTIN-008.4-scrapegraphai-integration.md) - AI-powered extraction
-- [LlamaExtract Actions](../stories/TEA-BUILTIN-008.1-llamaextract-actions.md) - Document extraction
+- [Web Actions Story](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-002.1.web-actions.md) - Technical implementation details
+- [ScrapeGraphAI Integration](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-008.4-scrapegraphai-integration.md) - AI-powered extraction
+- [LlamaExtract Actions](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-BUILTIN-008.1-llamaextract-actions.md) - Document extraction
 - [YAML Reference](../shared/YAML_REFERENCE.md) - Full action documentation
 
 ---

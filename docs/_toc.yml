@@ -17,6 +17,49 @@ parts:
     chapters:
       - file: shared/YAML_REFERENCE
         title: YAML Reference
+        sections:
+          - file: shared/yaml-reference/nodes
+            title: Nodes
+          - file: shared/yaml-reference/navigation
+            title: Navigation & Edges
+          - file: shared/yaml-reference/templates
+            title: Templates
+          - file: shared/yaml-reference/examples
+            title: Examples
+          - file: shared/yaml-reference/advanced-runtimes
+            title: Advanced Runtimes
+          - file: shared/yaml-reference/troubleshooting
+            title: Troubleshooting
+          - file: shared/yaml-reference/actions/README
+            title: Actions Index
+          - file: shared/yaml-reference/actions/llm
+            title: LLM Actions
+          - file: shared/yaml-reference/actions/io
+            title: I/O Actions
+          - file: shared/yaml-reference/actions/data
+            title: Data Actions
+          - file: shared/yaml-reference/actions/memory
+            title: Memory Actions
+          - file: shared/yaml-reference/actions/reasoning
+            title: Reasoning Actions
+          - file: shared/yaml-reference/actions/planning
+            title: Planning Actions
+          - file: shared/yaml-reference/actions/agent
+            title: Multi-Agent Actions
+          - file: shared/yaml-reference/actions/a2a
+            title: A2A Actions
+          - file: shared/yaml-reference/actions/reflection
+            title: Reflection Actions
+          - file: shared/yaml-reference/actions/cloud-production
+            title: Cloud Production Actions
+          - file: shared/yaml-reference/actions/integrations
+            title: Integration Actions
+          - file: shared/yaml-reference/actions/specialized
+            title: Specialized Actions
+      - file: shared/architecture/concepts
+        title: Core Concepts
+      - file: shared/architecture/checkpoint-guide
+        title: Checkpoint Guide
       - file: shared/cli-reference
         title: CLI Reference
       - file: guides/human-in-the-loop
@@ -30,6 +73,8 @@ parts:
     chapters:
       - file: capabilities/README
         title: Overview
+      - file: capabilities/human-in-the-loop
+        title: Human-in-the-Loop
       - file: capabilities/neurosymbolic
         title: Neurosymbolic AI
       - file: capabilities/parallel-workflows

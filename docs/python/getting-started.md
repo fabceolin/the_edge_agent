@@ -92,7 +92,6 @@ for event in graph.stream({"name": "World"}):
 ## Next Steps
 
 - [Development Guide](development-guide.md) - Full development setup
-- [Coding Standards](coding-standards.md) - Code conventions
 - [YAML Reference](../shared/YAML_REFERENCE.md) - Complete YAML syntax
 - [Actions Reference](actions-reference.md) - Built-in actions
 

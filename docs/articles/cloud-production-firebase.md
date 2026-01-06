@@ -35,42 +35,44 @@ This separation allows non-developers to modify agent behavior, simplifies deplo
 
 ## 2. Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Client Application                          │
-│                   (React/Next.js Frontend)                      │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ HTTP + Firebase ID Token
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  Firebase Cloud Function                        │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    FastAPI (~80 lines)                    │  │
-│  │  • Token verification                                     │  │
-│  │  • Request forwarding to TEA                              │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    TEA YAMLEngine                         │  │
-│  │  • Loads YAML agent definitions                           │  │
-│  │  • Executes state graph                                   │  │
-│  │  • Handles interrupts for interactive agents              │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    YAML Agents                            │  │
-│  │  • Secrets via ${ENV_VAR} syntax                          │  │
-│  │  • LLM config in settings.llm                             │  │
-│  │  • Cloud memory via settings.ltm                          │  │
-│  │  • Built-in actions (llm.call, web.search, memory.*)      │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                           │
-         ┌─────────────────┼─────────────────┐
-         ▼                 ▼                 ▼
-┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│ Secret      │   │ Cloud       │   │ External    │
-│ Manager     │   │ Storage     │   │ APIs        │
-│ (API Keys)  │   │ (GCS/S3)    │   │ (OpenAI)    │
-└─────────────┘   └─────────────┘   └─────────────┘
+```mermaid
+flowchart TB
+    subgraph Client["Client Application"]
+        Frontend["React/Next.js Frontend"]
+    end
+
+    subgraph CloudFunction["Firebase Cloud Function"]
+        subgraph FastAPI["FastAPI (~80 lines)"]
+            TokenVerify["Token verification"]
+            RequestForward["Request forwarding to TEA"]
+        end
+
+        subgraph YAMLEngine["TEA YAMLEngine"]
+            LoadYAML["Loads YAML agent definitions"]
+            ExecuteGraph["Executes state graph"]
+            HandleInterrupts["Handles interrupts for interactive agents"]
+        end
+
+        subgraph YAMLAgents["YAML Agents"]
+            Secrets["Secrets via ${ENV_VAR} syntax"]
+            LLMConfig["LLM config in settings.llm"]
+            CloudMemory["Cloud memory via settings.ltm"]
+            BuiltinActions["Built-in actions (llm.call, web.search, memory.*)"]
+        end
+    end
+
+    subgraph ExternalServices["External Services"]
+        SecretManager["Secret Manager<br/>(API Keys)"]
+        CloudStorage["Cloud Storage<br/>(GCS/S3)"]
+        ExternalAPIs["External APIs<br/>(OpenAI)"]
+    end
+
+    Frontend -->|"HTTP + Firebase ID Token"| FastAPI
+    FastAPI --> YAMLEngine
+    YAMLEngine --> YAMLAgents
+    YAMLAgents --> SecretManager
+    YAMLAgents --> CloudStorage
+    YAMLAgents --> ExternalAPIs
 ```
 
 The architecture separates concerns cleanly:

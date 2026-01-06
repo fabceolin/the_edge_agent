@@ -111,12 +111,12 @@ Multiple edges from the same source with `parallel: true` and the same `fan_in` 
 
 ## Examples
 
-- [Parallel State Isolation](../../examples/prolog/parity/parallel-isolation.yaml) - Thread-local state isolation in parallel Prolog branches
+- [Parallel State Isolation](https://github.com/fabceolin/the_edge_agent/blob/main/examples/prolog/parity/parallel-isolation.yaml) - Thread-local state isolation in parallel Prolog branches
 - [Core Concepts: Parallel Edges](../shared/architecture/concepts.md#parallel-edges) - Fundamental parallel edge syntax
 
 ## Learn More
 
 - [Core Concepts: Parallel Edges](../shared/architecture/concepts.md#parallel-edges) - Parallel edge fundamentals
-- [Multi-Strategy Parallel Execution Epic](../stories/TEA-PARALLEL-001-multi-strategy-execution-epic.md) - Thread, process, and remote execution strategies
-- [Parallel Lua Isolation](../stories/TEA-RUST-030-parallel-lua-isolation.md) - Thread-local state implementation details
+- [Multi-Strategy Parallel Execution Epic](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-PARALLEL-001-multi-strategy-execution-epic.md) - Thread, process, and remote execution strategies
+- [Parallel Lua Isolation](https://github.com/fabceolin/the_edge_agent/blob/main/docs/stories/TEA-RUST-030-parallel-lua-isolation.md) - Thread-local state implementation details
 - [YAML Reference](../shared/YAML_REFERENCE.md) - Complete YAML configuration syntax
