@@ -35,21 +35,16 @@ use std::time::Duration;
 // =============================================================================
 
 /// On-failure strategy enum (AC7)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnFailure {
     /// Return highest-scoring attempt
+    #[default]
     ReturnBest,
     /// Return final attempt
     ReturnLast,
     /// Return error with full history
     Raise,
-}
-
-impl Default for OnFailure {
-    fn default() -> Self {
-        OnFailure::ReturnBest
-    }
 }
 
 impl OnFailure {

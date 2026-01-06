@@ -382,15 +382,16 @@ pub enum AggregationStrategy {
     Consensus,
 }
 
-impl AggregationStrategy {
-    /// Parse from string.
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for AggregationStrategy {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "vote" => Self::Vote,
             "first" => Self::First,
             "consensus" => Self::Consensus,
             _ => Self::Collect,
-        }
+        })
     }
 }
 
@@ -858,7 +859,7 @@ fn agent_parallel(state: &JsonValue, params: &HashMap<String, JsonValue>) -> Tea
         .get("aggregation")
         .and_then(|v| v.as_str())
         .unwrap_or("collect");
-    let strategy = AggregationStrategy::from_str(aggregation);
+    let strategy: AggregationStrategy = aggregation.parse().unwrap();
 
     // Get consensus threshold
     let consensus_threshold = params
@@ -1384,27 +1385,27 @@ mod tests {
     #[test]
     fn test_aggregation_strategy_from_str() {
         assert_eq!(
-            AggregationStrategy::from_str("collect"),
+            "collect".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::Collect
         );
         assert_eq!(
-            AggregationStrategy::from_str("vote"),
+            "vote".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::Vote
         );
         assert_eq!(
-            AggregationStrategy::from_str("first"),
+            "first".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::First
         );
         assert_eq!(
-            AggregationStrategy::from_str("consensus"),
+            "consensus".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::Consensus
         );
         assert_eq!(
-            AggregationStrategy::from_str("VOTE"),
+            "VOTE".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::Vote
         );
         assert_eq!(
-            AggregationStrategy::from_str("unknown"),
+            "unknown".parse::<AggregationStrategy>().unwrap(),
             AggregationStrategy::Collect
         );
     }

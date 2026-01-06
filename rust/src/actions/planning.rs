@@ -23,6 +23,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+/// Type alias for the graph build result to reduce complexity
+type GraphBuildResult = (
+    DiGraph<String, ()>,
+    HashMap<String, NodeIndex>,
+    HashMap<NodeIndex, String>,
+);
+
 /// Register planning actions
 pub fn register(registry: &ActionRegistry) {
     registry.register("plan.decompose", plan_decompose);
@@ -36,20 +43,15 @@ pub fn register(registry: &ActionRegistry) {
 // =============================================================================
 
 /// Status of a subtask in the plan
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubtaskStatus {
+    #[default]
     Pending,
     InProgress,
     Completed,
     Failed,
     Skipped,
-}
-
-impl Default for SubtaskStatus {
-    fn default() -> Self {
-        SubtaskStatus::Pending
-    }
 }
 
 impl std::fmt::Display for SubtaskStatus {
@@ -65,18 +67,13 @@ impl std::fmt::Display for SubtaskStatus {
 }
 
 /// Strategy for plan decomposition
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanningStrategy {
+    #[default]
     Flat,
     Hierarchical,
     Iterative,
-}
-
-impl Default for PlanningStrategy {
-    fn default() -> Self {
-        PlanningStrategy::Flat
-    }
 }
 
 impl std::fmt::Display for PlanningStrategy {
@@ -90,19 +87,14 @@ impl std::fmt::Display for PlanningStrategy {
 }
 
 /// Strategy for handling subtask failures (AC4)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureStrategy {
     Replan,
     Retry,
     Skip,
+    #[default]
     Abort,
-}
-
-impl Default for FailureStrategy {
-    fn default() -> Self {
-        FailureStrategy::Abort
-    }
 }
 
 impl std::fmt::Display for FailureStrategy {
@@ -211,13 +203,7 @@ impl Plan {
 
     /// Build a petgraph DiGraph from subtasks
     /// Returns (graph, id_to_index, index_to_id)
-    fn build_graph(
-        &self,
-    ) -> TeaResult<(
-        DiGraph<String, ()>,
-        HashMap<String, NodeIndex>,
-        HashMap<NodeIndex, String>,
-    )> {
+    fn build_graph(&self) -> TeaResult<GraphBuildResult> {
         let mut graph: DiGraph<String, ()> = DiGraph::new();
         let mut id_to_index: HashMap<String, NodeIndex> = HashMap::new();
         let mut index_to_id: HashMap<NodeIndex, String> = HashMap::new();
@@ -865,8 +851,6 @@ fn plan_execute(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
 
                         // Execute with retry logic
                         let mut attempts = 0;
-                        #[allow(unused_assignments)]
-                        let mut last_error: Option<String> = None;
 
                         loop {
                             match execute_subtask_placeholder(&st, state, subtask_executor) {
@@ -884,7 +868,6 @@ fn plan_execute(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
                                 }
                                 Err(e) => {
                                     attempts += 1;
-                                    last_error = Some(e.clone());
 
                                     match failure_strat {
                                         FailureStrategy::Retry if attempts < max_retries => {

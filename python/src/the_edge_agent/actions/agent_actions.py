@@ -637,6 +637,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
                 agg_result = aggregate_consensus(results, consensus_threshold)
 
+            agg_result["success"] = True
             agg_result["rounds"] = rounds
             agg_result["elapsed_ms"] = (time.time() - start_time) * 1000
             agg_result["agents_called"] = [a.name for a in valid_agents]
@@ -645,6 +646,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Apply aggregation strategy
         strategy = AGGREGATION_STRATEGIES.get(aggregation, aggregate_collect)
         agg_result = strategy(results)
+        agg_result["success"] = True
         agg_result["elapsed_ms"] = (time.time() - start_time) * 1000
         agg_result["agents_called"] = [a.name for a in valid_agents]
         agg_result["raw_results"] = results

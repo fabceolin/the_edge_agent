@@ -133,19 +133,14 @@ pub struct CotOutput {
 }
 
 /// Thinking format for CoT (AC1)
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingFormat {
+    #[default]
     StepByStep,
     ProsCons,
     Tree,
     FirstPrinciples,
-}
-
-impl Default for ThinkingFormat {
-    fn default() -> Self {
-        Self::StepByStep
-    }
 }
 
 // =============================================================================
