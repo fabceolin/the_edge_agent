@@ -1,0 +1,16 @@
+// Simple linear workflow
+// No parallel execution - nodes execute sequentially
+
+digraph linear {
+    rankdir=TB;
+    node [shape=box];
+
+    step1 [label="Step 1: Initialize"];
+    step2 [label="Step 2: Process"];
+    step3 [label="Step 3: Validate"];
+    step4 [label="Step 4: Complete"];
+
+    step1 -> step2;
+    step2 -> step3;
+    step3 -> step4;
+}

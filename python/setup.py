@@ -38,6 +38,7 @@ setup(
         "typer>=0.9.0",  # TEA-CLI-004: CLI subcommand support
         "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
         "pydantic>=2.0.0",  # TEA-BUILTIN-015: Required for session, error_handling, http settings
+        "pydot>=2.0.0",  # TEA-TOOLS-001: DOT/Graphviz parsing for tea from dot
     ],
     entry_points={
         "console_scripts": [

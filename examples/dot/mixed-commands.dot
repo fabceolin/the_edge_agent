@@ -1,0 +1,37 @@
+// Example: Validation pipeline with per-node commands (TEA-TOOLS-002)
+//
+// This DOT file shows a validation workflow where each step
+// has its own specific command.
+//
+// Usage:
+//   tea from dot mixed-commands.dot --use-node-commands -o workflow.yaml
+
+digraph validation_pipeline {
+    rankdir=TB;
+    node [shape=box];
+
+    subgraph cluster_validate {
+        label="Validation Tasks";
+
+        // All nodes have specific commands
+        lint [label="Lint Code", command="npm run lint -- --fix"];
+        typecheck [label="Type Check", command="tsc --noEmit"];
+        format [label="Format Check", command="prettier --check ."];
+        review [label="Code Review", command="gh pr review --approve"];
+        approve [label="Final Approval", command="echo 'Approved!'"];
+    }
+
+    Start [label="Start", shape=ellipse];
+    End [label="End", shape=ellipse];
+
+    Start -> lint;
+    Start -> typecheck;
+    Start -> format;
+
+    lint -> review;
+    typecheck -> review;
+    format -> review;
+
+    review -> approve;
+    approve -> End;
+}

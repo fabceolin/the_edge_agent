@@ -1056,6 +1056,140 @@ schema_app = typer.Typer(
 app.add_typer(schema_app, name="schema")
 
 
+# ============================================================
+# From Subcommands (TEA-TOOLS-001)
+# ============================================================
+
+from_app = typer.Typer(
+    name="from",
+    help="Convert external formats to TEA YAML workflows",
+    no_args_is_help=True,
+)
+app.add_typer(from_app, name="from")
+
+
+@from_app.command("dot")
+def from_dot(
+    file: Path = typer.Argument(..., help="Path to DOT/Graphviz file"),
+    command: Optional[str] = typer.Option(
+        None,
+        "--command",
+        "-c",
+        help="Command template to execute per item (use {{ item }} placeholder). "
+        "Required when NOT using --use-node-commands.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output YAML path (default: stdout)"
+    ),
+    max_concurrency: int = typer.Option(
+        3, "--max-concurrency", "-m", help="Maximum parallel executions"
+    ),
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n", help="Workflow name (default: derived from graph)"
+    ),
+    tmux: bool = typer.Option(False, "--tmux", help="Generate tmux-based execution"),
+    session: Optional[str] = typer.Option(
+        None, "--session", "-s", help="Tmux session name (only with --tmux)"
+    ),
+    validate_output: bool = typer.Option(
+        False, "--validate", help="Validate generated YAML before output"
+    ),
+    # TEA-TOOLS-002: Per-node command support
+    use_node_commands: bool = typer.Option(
+        False,
+        "--use-node-commands",
+        help="Use command attribute from DOT nodes. Each node MUST have "
+        'command="..." attribute. Mutually exclusive with --command.',
+    ),
+):
+    """
+    Convert DOT/Graphviz diagram to TEA YAML workflow.
+
+    Parses DOT files with cluster subgraphs and generates parallel workflow
+    YAML using dynamic_parallel and fan_in patterns.
+
+    Two modes of operation:
+
+    1. Template mode (--command): Same command for all nodes, use {{ item }} for node label
+
+    2. Per-node mode (--use-node-commands): Each node specifies its own command attribute
+
+    Examples:
+
+        # Template mode - same command, different items
+        tea from dot workflow.dot -c "make build-{{ item }}" -o out.yaml
+
+        # Per-node mode - each node has its own command
+        tea from dot workflow.dot --use-node-commands -o out.yaml
+
+        # With tmux
+        tea from dot workflow.dot --use-node-commands --tmux -s my-session
+    """
+    from the_edge_agent.dot_parser import (
+        dot_to_yaml,
+        DotParseError,
+        CircularDependencyError,
+    )
+
+    # Validate file exists
+    if not file.exists():
+        typer.echo(f"Error: DOT file not found: {file}", err=True)
+        raise typer.Exit(1)
+
+    # Validate tmux options
+    if session and not tmux:
+        typer.echo("Error: --session requires --tmux flag", err=True)
+        raise typer.Exit(1)
+
+    # TEA-TOOLS-002: Validate command mode (mutually exclusive)
+    if use_node_commands and command:
+        typer.echo(
+            "Error: --use-node-commands and --command are mutually exclusive. "
+            "Use --command for template mode OR --use-node-commands for per-node mode.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if not use_node_commands and not command:
+        typer.echo(
+            "Error: --command is required (or use --use-node-commands for per-node mode)",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        yaml_content = dot_to_yaml(
+            file_path=str(file),
+            command_template=command or "",
+            output_path=str(output) if output else None,
+            max_concurrency=max_concurrency,
+            workflow_name=name,
+            use_tmux=tmux,
+            tmux_session=session,
+            validate=validate_output,
+            use_node_commands=use_node_commands,
+        )
+
+        if output:
+            typer.echo(f"Generated YAML written to {output}", err=True)
+        else:
+            # Print to stdout
+            print(yaml_content)
+
+    except DotParseError as e:
+        typer.echo(f"Error: Invalid DOT syntax: {e}", err=True)
+        raise typer.Exit(1)
+    except CircularDependencyError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except ValueError as e:
+        typer.echo(f"Error: Validation failed: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
 @schema_app.command("merge")
 def schema_merge(
     files: List[Path] = typer.Argument(
@@ -1175,6 +1309,7 @@ def main_callback(
             "validate",
             "inspect",
             "schema",
+            "from",
         ]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):

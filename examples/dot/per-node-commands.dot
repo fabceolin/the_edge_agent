@@ -1,0 +1,62 @@
+// Example: Per-node command attributes (TEA-TOOLS-002)
+//
+// This DOT file demonstrates using the command attribute
+// to specify per-node execution commands.
+//
+// Usage:
+//   tea from dot per-node-commands.dot --use-node-commands -o workflow.yaml
+//   tea from dot per-node-commands.dot --use-node-commands -c "echo fallback {{ item }}"
+
+digraph build_pipeline {
+    rankdir=TB;
+    node [shape=box];
+
+    // Build Phase - each node has its own build command
+    subgraph cluster_build {
+        label="Build Phase";
+        color=blue;
+
+        frontend [label="Frontend", command="cd frontend && npm run build"];
+        backend [label="Backend", command="cd backend && cargo build --release"];
+        docs [label="Documentation", command="cd docs && mkdocs build"];
+    }
+
+    // Test Phase - heterogeneous test commands
+    subgraph cluster_test {
+        label="Test Phase";
+        color=green;
+
+        unit_tests [label="Unit Tests", command="pytest tests/unit/ -v"];
+        integration [label="Integration", command="pytest tests/integration/ --timeout=300"];
+        e2e [label="E2E Tests", command="playwright test"];
+    }
+
+    // Deploy Phase
+    subgraph cluster_deploy {
+        label="Deploy Phase";
+        color=red;
+
+        staging [label="Deploy Staging", command="kubectl apply -f k8s/staging/"];
+        production [label="Deploy Prod", command="kubectl apply -f k8s/prod/"];
+    }
+
+    // Dependencies
+    Start [label="Start", shape=ellipse];
+    End [label="End", shape=ellipse];
+
+    Start -> frontend;
+    Start -> backend;
+    Start -> docs;
+
+    frontend -> unit_tests;
+    backend -> unit_tests;
+    backend -> integration;
+    docs -> End;
+
+    unit_tests -> e2e;
+    integration -> e2e;
+
+    e2e -> staging;
+    staging -> production;
+    production -> End;
+}
