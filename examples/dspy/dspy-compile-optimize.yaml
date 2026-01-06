@@ -1,0 +1,132 @@
+# DSPy Compile and Optimize Example
+#
+# Demonstrates DSPy's prompt compilation and optimization workflow:
+# 1. Compile a module with training examples
+# 2. Optimize against validation set
+# 3. Use optimized module for inference
+#
+# Usage:
+#   tea run examples/dspy/dspy-compile-optimize.yaml
+
+name: dspy-compile-optimize
+version: "1.0"
+
+settings:
+  dspy:
+    enabled: true
+    model: gpt-4
+    temperature: 0.3
+    teleprompter: BootstrapFewShot
+
+state_schema:
+  training_data: list
+  validation_data: list
+  test_question: str
+  compiled_module_key: str
+  optimized_module_key: str
+  result: dict
+
+nodes:
+  - name: prepare_data
+    description: Prepare training and validation datasets
+    run: |
+      # Training examples for math word problems
+      training = [
+          {"question": "What is 10% of 200?", "answer": "20"},
+          {"question": "If you have 50 and add 25%, how much do you have?", "answer": "62.5"},
+          {"question": "A shirt costs $80 with 20% off. What's the sale price?", "answer": "$64"},
+          {"question": "What is 15% of 60?", "answer": "9"},
+          {"question": "Find 30% of 150.", "answer": "45"},
+      ]
+
+      # Validation examples
+      validation = [
+          {"question": "What is 5% of 100?", "answer": "5"},
+          {"question": "Calculate 12% of 250.", "answer": "30"},
+          {"question": "A book is $50 with 10% discount. What's the final price?", "answer": "$45"},
+      ]
+
+      return {
+          "training_data": training,
+          "validation_data": validation,
+          "test_question": "What is 25% of 80?"
+      }
+
+  - name: compile_module
+    description: Compile CoT module with training data
+    action: reason.dspy.compile
+    with:
+      module_type: cot
+      signature: "question -> answer"
+      training_data: "{{ state.training_data }}"
+      teleprompter: BootstrapFewShot
+
+  - name: check_compile_result
+    description: Check compilation result and route
+    condition: |
+      return "optimizing" if state.get("compiled", False) else "error"
+    paths:
+      optimizing: optimize_module
+      error: handle_compile_error
+
+  - name: optimize_module
+    description: Optimize module against validation set
+    action: reason.dspy.optimize
+    with:
+      module_type: cot
+      signature: "question -> answer"
+      training_data: "{{ state.training_data }}"
+      validation_data: "{{ state.validation_data }}"
+      metric: exact_match
+
+  - name: use_optimized_module
+    description: Use the optimized module for inference
+    action: reason.dspy.cot
+    with:
+      problem: "{{ state.test_question }}"
+      signature: "question -> answer"
+      compiled_key: "{{ state.module_key }}"
+
+  - name: format_results
+    description: Format the optimization results
+    run: |
+      train_score = state.get("train_score", 0)
+      val_score = state.get("val_score", 0)
+      answer = state.get("answer", "N/A")
+
+      return {
+          "optimization_report": {
+              "training_score": train_score,
+              "validation_score": val_score,
+              "test_question": state.get("test_question"),
+              "predicted_answer": answer,
+              "module_key": state.get("module_key", "N/A")
+          }
+      }
+
+  - name: handle_compile_error
+    description: Handle compilation errors
+    run: |
+      error = state.get("error", "Unknown error")
+      return {
+          "optimization_report": {
+              "error": error,
+              "success": False
+          }
+      }
+
+edges:
+  - from: __start__
+    to: prepare_data
+  - from: prepare_data
+    to: compile_module
+  - from: compile_module
+    to: check_compile_result
+  - from: optimize_module
+    to: use_optimized_module
+  - from: use_optimized_module
+    to: format_results
+  - from: format_results
+    to: __end__
+  - from: handle_compile_error
+    to: __end__

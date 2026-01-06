@@ -1,0 +1,109 @@
+# LlamaIndex Sub-Question Query Engine Example
+#
+# Demonstrates the Sub-Question Query Engine pattern for complex query decomposition.
+# The engine automatically breaks down complex queries into simpler sub-questions,
+# executes them in parallel (optionally), and synthesizes a comprehensive answer.
+#
+# This is particularly useful for:
+# - Comparative questions ("Compare X and Y")
+# - Multi-part questions ("What are the pros and cons?")
+# - Questions requiring information from multiple sources
+#
+# Requirements:
+#   pip install the_edge_agent[llamaindex]
+#   export OPENAI_API_KEY=your-key
+#
+# Run:
+#   tea run examples/llamaindex/llamaindex-subquestion-rag.yaml \
+#     --input '{"question": "Compare Python and Rust for building web services"}'
+
+name: llamaindex-subquestion-rag
+description: Sub-Question Query Engine for complex query decomposition
+
+settings:
+  llamaindex:
+    embedding_model: text-embedding-3-small
+    llm_model: gpt-4o-mini
+
+state_schema:
+  question: str
+  sub_questions: list
+  sub_answers: list
+  final_answer: str
+
+nodes:
+  # Step 1: Create a comprehensive knowledge base
+  - name: create_knowledge_base
+    action: rag.llamaindex.create_index
+    with:
+      documents:
+        # Python information
+        - text: "Python is an interpreted, high-level programming language. Its design philosophy emphasizes code readability with significant whitespace. Python is dynamically typed and garbage-collected."
+          metadata: {language: python, aspect: overview}
+        - text: "Python web frameworks include Django (full-featured, batteries-included) and Flask (micro-framework, flexible). FastAPI is popular for building async APIs with automatic OpenAPI documentation."
+          metadata: {language: python, aspect: web_frameworks}
+        - text: "Python performance: Generally slower than compiled languages due to being interpreted. The GIL (Global Interpreter Lock) limits true multi-threading. Can use multiprocessing or async for concurrency."
+          metadata: {language: python, aspect: performance}
+        - text: "Python ecosystem has pip for package management and PyPI with over 400,000 packages. Virtual environments help manage dependencies. Poetry and pipenv offer modern dependency management."
+          metadata: {language: python, aspect: ecosystem}
+
+        # Rust information
+        - text: "Rust is a systems programming language focused on safety, speed, and concurrency. It achieves memory safety without garbage collection through its ownership system."
+          metadata: {language: rust, aspect: overview}
+        - text: "Rust web frameworks include Actix-web (high performance), Axum (modular, tower-based), and Rocket (developer-friendly). All compile to native code for excellent performance."
+          metadata: {language: rust, aspect: web_frameworks}
+        - text: "Rust performance: Comparable to C/C++ since it compiles to native machine code. Zero-cost abstractions mean you pay no runtime penalty for high-level constructs. True multi-threading without GIL."
+          metadata: {language: rust, aspect: performance}
+        - text: "Rust ecosystem uses Cargo for package management and crates.io for packages. Cargo handles building, testing, documentation, and dependency management in one tool."
+          metadata: {language: rust, aspect: ecosystem}
+
+        # Comparative information
+        - text: "Learning curve: Python is often recommended for beginners due to its simple syntax. Rust has a steeper learning curve, especially around ownership and borrowing concepts."
+          metadata: {aspect: learning_curve}
+        - text: "Use cases: Python excels in data science, ML, scripting, and rapid prototyping. Rust is preferred for systems programming, performance-critical applications, and when memory safety is paramount."
+          metadata: {aspect: use_cases}
+      persist_path: "/tmp/subquestion_index"
+    output: index_result
+
+  # Step 2: Use sub-question decomposition for complex query
+  - name: decompose_and_answer
+    action: rag.llamaindex.subquestion
+    with:
+      query: "{{ state.question }}"
+      index_path: "/tmp/subquestion_index"
+      parallel: true  # Execute sub-questions in parallel
+      verbose: true
+    output: subq_result
+
+  # Step 3: Extract results
+  - name: extract_results
+    run: |
+      result = state.get("subq_result", {})
+      return {
+          "sub_questions": result.get("sub_questions", []),
+          "sub_answers": result.get("sub_answers", []),
+          "final_answer": result.get("response", "No answer generated")
+      }
+
+  # Step 4: Display comprehensive results
+  - name: display_results
+    run: |
+      print("\n" + "="*60)
+      print("SUB-QUESTION QUERY ENGINE RESULTS")
+      print("="*60)
+      print(f"\nOriginal Question: {state['question']}")
+
+      print("\n--- Sub-Questions Generated ---")
+      for i, sq in enumerate(state.get("sub_questions", []), 1):
+          print(f"  {i}. {sq}")
+
+      print("\n--- Sub-Answers ---")
+      for i, sa in enumerate(state.get("sub_answers", []), 1):
+          answer_preview = sa[:200] + "..." if len(sa) > 200 else sa
+          print(f"  {i}. {answer_preview}")
+
+      print("\n--- Final Synthesized Answer ---")
+      print(state.get("final_answer", "N/A"))
+      print("="*60)
+
+      return {}

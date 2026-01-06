@@ -16,6 +16,14 @@ Memory actions provide session storage, persistent long-term memory, caching, an
   - [memory.store](#memorystore)
   - [memory.retrieve](#memoryretrieve)
   - [memory.summarize](#memorysummarize)
+- [Mem0 Universal Memory Actions](#mem0-universal-memory-actions)
+  - [memory.mem0.add](#memorymem0add)
+  - [memory.mem0.search](#memorymem0search)
+  - [memory.mem0.get_all](#memorymem0get_all)
+  - [memory.mem0.get](#memorymem0get)
+  - [memory.mem0.update](#memorymem0update)
+  - [memory.mem0.delete](#memorymem0delete)
+  - [memory.mem0.test](#memorymem0test)
 - [Long-Term Memory Configuration](#long-term-memory-configuration)
   - [Backend Types](#backend-types)
   - [Catalog Types](#catalog-types)
@@ -40,14 +48,31 @@ Memory actions provide session storage, persistent long-term memory, caching, an
   - [session.create](#sessioncreate)
   - [session.end](#sessionend)
   - [session.restore](#sessionrestore)
+- [Session Persistence Actions](#session-persistence-actions-tea-builtin-0151)
+  - [session.load](#sessionload)
+  - [session.save](#sessionsave)
+  - [session.delete](#sessiondelete)
+  - [session.exists](#sessionexists)
 - [Catalog Actions](#catalog-actions)
   - [catalog.register_table](#catalogregister_table)
   - [catalog.create_snapshot](#catalogcreate_snapshot)
+- [Firestore Actions (TEA-BUILTIN-015.2)](#firestore-actions-tea-builtin-0152)
+  - [firestore.get](#firestoreget)
+  - [firestore.set](#firestoreset)
+  - [firestore.query](#firestorequery)
+  - [firestore.delete](#firestoredelete)
+  - [firestore.batch](#firestorebatch)
 - [Graph Database Actions](#graph-database-actions)
   - [graph.store_entity](#graphstore_entity)
   - [graph.store_relation](#graphstore_relation)
   - [graph.query](#graphquery)
   - [graph.retrieve_context](#graphretrieve_context)
+- [DuckPGQ Graph Actions (TEA-BUILTIN-001.8)](#duckpgq-graph-actions-tea-builtin-0018)
+  - [graph.create](#graphcreate)
+  - [graph.drop](#graphdrop)
+  - [graph.algorithm](#graphalgorithm)
+  - [graph.shortest_path](#graphshortest_path)
+  - [graph.list_graphs](#graphlist_graphs)
 
 ---
 
@@ -114,6 +139,260 @@ Summarize conversation history using LLM:
 ```
 
 **Returns:** `{"summary": str, "original_count": int, "token_estimate": int, "success": true}`
+
+---
+
+## Mem0 Universal Memory Actions
+
+> **Story:** [TEA-AGENT-001.6](../../../stories/TEA-AGENT-001.6-mem0-memory.md)
+
+Mem0 integration for universal memory management with automatic fact extraction, semantic search, and user/session/agent scoped memories. Optionally supports graph memory for entity-relationship extraction.
+
+**Required dependencies:**
+- `pip install mem0ai` or `pip install the-edge-agent[mem0]`
+
+### Configuration
+
+Configure Mem0 backend in YAML settings:
+
+```yaml
+settings:
+  memory:
+    backend: mem0                              # Enable Mem0 backend
+    api_key: "${MEM0_API_KEY}"                 # Optional: Mem0 cloud API key
+    endpoint: "${MEM0_ENDPOINT}"               # Optional: self-hosted endpoint
+    user_id: "{{ state.user_id }}"             # Optional: default user scope
+    session_id: "{{ state.session_id }}"       # Optional: default session scope
+    agent_id: "agent_abc"                      # Optional: default agent scope
+    graph: true                                # Optional: enable graph memory
+```
+
+**Cloud vs Local Mode:**
+- With `api_key`: Uses Mem0 cloud service (recommended for production)
+- Without `api_key`: Uses local Mem0 instance (requires additional setup)
+
+### `memory.mem0.add`
+
+Store conversation messages with automatic fact extraction:
+
+```yaml
+- name: remember_preferences
+  uses: memory.mem0.add
+  with:
+    messages:                                   # Required
+      - role: user
+        content: "I prefer dark mode and coding in Python"
+      - role: assistant
+        content: "I'll remember your preferences!"
+    user_id: "{{ state.user_id }}"             # Optional (at least one scope required)
+    session_id: "{{ state.session_id }}"       # Optional
+    agent_id: "{{ state.agent_id }}"           # Optional
+    metadata:                                   # Optional
+      source: "onboarding"
+      priority: "high"
+  output: memory_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `messages` | str/list/dict | Yes | - | Single message or conversation history |
+| `user_id` | string | No* | - | User scope for memory |
+| `session_id` | string | No* | - | Session scope for memory |
+| `agent_id` | string | No* | - | Agent scope for memory |
+| `metadata` | dict | No | - | Additional metadata to store |
+
+\* At least one scope (user_id, session_id, or agent_id) is required.
+
+**Returns:** `{"success": true, "memory_id": str, "memories": list}`
+
+### `memory.mem0.search`
+
+Semantic search over stored memories:
+
+```yaml
+- name: recall_preferences
+  uses: memory.mem0.search
+  with:
+    query: "What are my coding preferences?"   # Required
+    user_id: "{{ state.user_id }}"             # Optional
+    session_id: "{{ state.session_id }}"       # Optional
+    agent_id: "{{ state.agent_id }}"           # Optional
+    limit: 5                                   # Optional (default: 5)
+    include_relations: false                   # Optional (requires graph: true)
+  output: search_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | Yes | - | Semantic search query |
+| `user_id` | string | No | - | Filter by user scope |
+| `session_id` | string | No | - | Filter by session scope |
+| `agent_id` | string | No | - | Filter by agent scope |
+| `limit` | int | No | 5 | Maximum results to return |
+| `include_relations` | bool | No | false | Include graph relations (graph mode) |
+
+**Returns:**
+```json
+{
+  "success": true,
+  "results": [
+    {"id": "mem_abc123", "memory": "User prefers dark mode", "score": 0.95, "metadata": {...}},
+    {"id": "mem_def456", "memory": "User codes in Python", "score": 0.89, "metadata": {...}}
+  ],
+  "relations": []
+}
+```
+
+### `memory.mem0.get_all`
+
+Retrieve all memories for a scope with pagination:
+
+```yaml
+- name: list_user_memories
+  uses: memory.mem0.get_all
+  with:
+    user_id: "{{ state.user_id }}"             # Optional
+    session_id: "{{ state.session_id }}"       # Optional
+    agent_id: "{{ state.agent_id }}"           # Optional
+    limit: 20                                  # Optional
+    offset: 0                                  # Optional (for pagination)
+  output: memories_result
+```
+
+**Returns:** `{"success": true, "memories": list, "total": int}`
+
+### `memory.mem0.get`
+
+Retrieve a specific memory by ID:
+
+```yaml
+- name: get_specific_memory
+  uses: memory.mem0.get
+  with:
+    memory_id: "{{ state.memory_id }}"         # Required
+  output: memory_result
+```
+
+**Returns:** `{"success": true, "memory": {"id": str, "memory": str, "metadata": dict}}`
+
+### `memory.mem0.update`
+
+Update an existing memory's content or metadata:
+
+```yaml
+- name: update_memory
+  uses: memory.mem0.update
+  with:
+    memory_id: "{{ state.memory_id }}"         # Required
+    text: "Updated preference: VS Code"        # Optional
+    metadata:                                  # Optional
+      verified: true
+      updated_at: "{{ state.timestamp }}"
+  output: update_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `memory_id` | string | Yes | - | Memory ID to update |
+| `text` | string | No* | - | New memory content |
+| `metadata` | dict | No* | - | Metadata to merge with existing |
+
+\* At least one of `text` or `metadata` is required.
+
+**Returns:** `{"success": true, "memory": {...}}`
+
+### `memory.mem0.delete`
+
+Delete memories by ID or bulk delete by scope:
+
+```yaml
+# Delete single memory
+- name: delete_memory
+  uses: memory.mem0.delete
+  with:
+    memory_id: "{{ state.memory_id }}"         # Required for single delete
+  output: delete_result
+
+# Bulk delete all user memories
+- name: delete_user_memories
+  uses: memory.mem0.delete
+  with:
+    user_id: "{{ state.user_id }}"             # Scope for bulk delete
+    delete_all: true                           # Required for bulk delete (safety flag)
+  output: bulk_delete_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `memory_id` | string | No* | - | Delete specific memory by ID |
+| `user_id` | string | No | - | Scope for bulk delete |
+| `session_id` | string | No | - | Scope for bulk delete |
+| `agent_id` | string | No | - | Scope for bulk delete |
+| `delete_all` | bool | No | false | Safety flag for bulk delete |
+
+\* Either `memory_id` or (`scope` + `delete_all: true`) is required.
+
+**Returns:** `{"success": true, "deleted_count": int}`
+
+### `memory.mem0.test`
+
+Test Mem0 connection and configuration:
+
+```yaml
+- name: check_mem0
+  uses: memory.mem0.test
+  output: test_result
+```
+
+**Returns:** `{"success": true, "message": "Mem0 connection successful"}` or error details.
+
+### Graceful Fallback
+
+When Mem0 is unavailable (not installed or connection error), actions gracefully fall back:
+- `memory.mem0.add`: Falls back to `memory.store` with serialized messages
+- `memory.mem0.search`: Returns error (semantic search requires Mem0)
+- `memory.mem0.get_all`: Falls back to `memory.retrieve` where possible
+
+All fallback responses include `"fallback": true` in the result.
+
+### Graph Memory
+
+Enable graph memory for entity-relationship extraction by setting `graph: true` in settings:
+
+```yaml
+settings:
+  memory:
+    backend: mem0
+    graph: true                                # Enable Mem0g
+    user_id: "{{ state.user_id }}"
+
+nodes:
+  - name: store_relationship
+    uses: memory.mem0.add
+    with:
+      messages:
+        - role: user
+          content: "Alice works at Acme Corp and reports to Bob"
+      user_id: "{{ state.user_id }}"
+    # Mem0 automatically extracts: Alice -> works_at -> Acme Corp
+    #                              Alice -> reports_to -> Bob
+
+  - name: query_relationships
+    uses: memory.mem0.search
+    with:
+      query: "Who does Alice report to?"
+      user_id: "{{ state.user_id }}"
+      include_relations: true                  # Returns graph relations
+    output: relationship_result
+```
 
 ---
 
@@ -602,6 +881,146 @@ Restore archived session:
 
 ---
 
+## Session Persistence Actions (TEA-BUILTIN-015.1)
+
+Session persistence provides stateful conversation support via YAML settings. Configure a session backend to automatically load and save session state across agent executions.
+
+### Configuration
+
+Configure session persistence in the `settings.session` block:
+
+```yaml
+settings:
+  session:
+    backend: memory              # Required: memory | firestore
+    collection: "agent_sessions" # Firestore collection name
+    auto_save: true              # Auto-save state after execution
+    ttl: 3600                    # Session TTL in seconds (0 = never expires)
+    persist_fields:              # Optional: specific fields to persist
+      - conversation_history
+      - user_context
+```
+
+**Settings Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `backend` | string | `"memory"` | Storage backend: `memory` (in-process) or `firestore` |
+| `collection` | string | `"agent_sessions"` | Firestore collection name |
+| `auto_save` | boolean | `false` | Automatically save state after each execution |
+| `ttl` | integer | `0` | Session expiry in seconds (0 = never expires) |
+| `persist_fields` | list | `null` | Specific state fields to persist (null = all) |
+
+### State Injection
+
+When `session_id` is present in the initial state, session data is automatically loaded and merged before execution:
+
+```yaml
+# First turn
+events = graph.stream({"session_id": "conv_123", "message": "Hello"})
+
+# Second turn (session data auto-loaded)
+events = graph.stream({"session_id": "conv_123", "message": "Follow-up"})
+```
+
+Initial state values take precedence over session data.
+
+### `session.load`
+
+Explicitly load session data:
+
+```yaml
+- name: load_context
+  uses: session.load
+  with:
+    session_id: "{{ state.session_id }}"  # Optional: uses state.session_id if omitted
+    default: {}                           # Default if session not found
+  output: session_data
+```
+
+**Returns:** Session data dictionary or default value.
+
+### `session.save`
+
+Explicitly save current state:
+
+```yaml
+- name: save_progress
+  uses: session.save
+  with:
+    session_id: "{{ state.session_id }}"  # Optional: uses state.session_id if omitted
+    fields:                               # Optional: specific fields to save
+      - conversation_history
+      - last_question
+    ttl: 7200                             # Optional: override TTL for this save
+  output: save_result
+```
+
+**Returns:** `{"success": true, "session_id": str}` or `{"success": false, "error": str}`
+
+### `session.delete`
+
+Delete a session:
+
+```yaml
+- name: cleanup
+  uses: session.delete
+  with:
+    session_id: "{{ state.session_id }}"
+  output: delete_result
+```
+
+**Returns:** `{"success": true}`
+
+### `session.exists`
+
+Check if a session exists:
+
+```yaml
+- name: check_session
+  uses: session.exists
+  with:
+    session_id: "{{ state.session_id }}"
+  output: exists_result
+```
+
+**Returns:** `{"exists": true}` or `{"exists": false}`
+
+### Complete Example
+
+```yaml
+name: stateful-conversation
+state_schema:
+  session_id: str
+  messages: list
+  turn_count: int
+
+settings:
+  session:
+    backend: memory
+    auto_save: true
+    ttl: 3600
+    persist_fields:
+      - messages
+      - turn_count
+
+nodes:
+  - name: process_message
+    run: |
+      messages = state.get("messages", [])
+      messages.append({"role": "user", "content": state.get("input", "")})
+      turn_count = state.get("turn_count", 0) + 1
+      return {"messages": messages, "turn_count": turn_count}
+
+edges:
+  - from: __start__
+    to: process_message
+  - from: process_message
+    to: __end__
+```
+
+---
+
 ## Catalog Actions
 
 ### `catalog.register_table`
@@ -637,6 +1056,213 @@ Create point-in-time snapshot:
 ```
 
 **Returns:** `{"success": true, "snapshot_id": str, "created_at": datetime}`
+
+---
+
+## Firestore Actions (TEA-BUILTIN-015.2)
+
+Direct Firestore document CRUD operations for YAML agents. Provides document-level access to Google Cloud Firestore without requiring custom Python code.
+
+**Required:**
+- `pip install firebase-admin`
+
+**Environment Variables:**
+| Variable | Description |
+|----------|-------------|
+| `FIREBASE_PROJECT_ID` | Google Cloud/Firebase project ID |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON |
+| `FIRESTORE_EMULATOR_HOST` | Emulator address (e.g., `localhost:8080`) |
+
+### Configuration
+
+Configure Firestore settings in `settings.firestore`:
+
+```yaml
+settings:
+  firestore:
+    project: "${FIREBASE_PROJECT_ID}"
+    emulator_host: "${FIRESTORE_EMULATOR_HOST:-}"        # Optional, for local dev
+    credentials_path: "${GOOGLE_APPLICATION_CREDENTIALS:-}"  # Optional
+```
+
+### `firestore.get`
+
+Retrieve a document by ID:
+
+```yaml
+- name: get_user
+  uses: firestore.get
+  with:
+    collection: "users"                    # Required
+    document: "{{ state.user_id }}"        # Required
+    default: {name: "Unknown", active: false}  # Optional fallback
+  output: user_data
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `collection` | string | Yes | - | Collection path (supports nested: `users/uid/posts`) |
+| `document` | string | Yes | - | Document ID |
+| `default` | any | No | `null` | Value if document doesn't exist |
+
+**Returns:** `{"success": true, "data": dict, "exists": bool, "doc_id": str, "path": str}`
+
+### `firestore.set`
+
+Create or update a document:
+
+```yaml
+- name: save_result
+  uses: firestore.set
+  with:
+    collection: "results"
+    document: "{{ state.session_id }}"     # Optional (auto-generates UUID if omitted)
+    data:                                  # Required
+      answer: "{{ state.answer }}"
+      timestamp: "{{ now() }}"
+    merge: true                            # Optional (preserve existing fields)
+  output: doc_ref
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `collection` | string | Yes | - | Collection path |
+| `document` | string | No | auto-gen | Document ID (UUID generated if omitted) |
+| `data` | dict | Yes | - | Document data to write |
+| `merge` | bool | No | `false` | If true, merge with existing doc |
+
+**Returns:** `{"success": true, "doc_id": str, "path": str, "created": bool}`
+
+### `firestore.query`
+
+Query documents with filters:
+
+```yaml
+- name: get_history
+  uses: firestore.query
+  with:
+    collection: "history"
+    where:                                 # Optional filters
+      - field: user_id
+        op: "=="
+        value: "{{ state.user_id }}"
+      - field: created_at
+        op: ">="
+        value: "{{ state.since_date }}"
+    order_by: "-created_at"                # Optional ("-" for descending)
+    limit: 10                              # Optional (default: 100)
+    offset: 0                              # Optional
+  output: history_items
+```
+
+**Where Operators:**
+- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Array: `in`, `not-in`, `array-contains`, `array-contains-any`
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `collection` | string | Yes | - | Collection path |
+| `where` | list | No | - | Filter conditions |
+| `order_by` | string/list | No | - | Field(s) to sort by |
+| `limit` | int | No | 100 | Max documents to return |
+| `offset` | int | No | 0 | Documents to skip |
+
+**Returns:** `{"success": true, "documents": list, "count": int}`
+
+### `firestore.delete`
+
+Delete a document:
+
+```yaml
+- name: cleanup
+  uses: firestore.delete
+  with:
+    collection: "temp"
+    document: "{{ state.temp_id }}"
+  output: delete_result
+```
+
+**Returns:** `{"success": true, "doc_id": str, "path": str, "deleted": true}`
+
+### `firestore.batch`
+
+Execute multiple operations atomically:
+
+```yaml
+- name: batch_update
+  uses: firestore.batch
+  with:
+    operations:
+      - type: set
+        collection: "users"
+        document: "{{ state.user_id }}"
+        data: {last_active: "{{ now() }}"}
+        merge: true
+      - type: delete
+        collection: "temp"
+        document: "{{ state.temp_id }}"
+  output: batch_result
+```
+
+**Operation Types:**
+- `set`: Create or update document (supports `merge: true`)
+- `delete`: Delete document
+
+**Returns:** `{"success": true, "count": int, "results": list}`
+
+### Error Codes
+
+All Firestore actions return structured errors on failure:
+
+```yaml
+# Error response structure
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",           # Error code
+    "message": "Document not found",
+    "collection": "users",         # Context if applicable
+    "document": "missing_id"
+  }
+}
+```
+
+| Code | Description |
+|------|-------------|
+| `NOT_FOUND` | Document does not exist |
+| `PERMISSION_DENIED` | Insufficient permissions |
+| `INVALID_ARGUMENT` | Invalid parameter value |
+| `ALREADY_EXISTS` | Document already exists (when expected not to) |
+| `ABORTED` | Operation aborted (transaction contention) |
+| `UNAVAILABLE` | Service unavailable |
+| `INTERNAL` | Internal error |
+| `IMPORT_ERROR` | firebase-admin not installed |
+
+### Nested Collections
+
+Access subcollections using path notation:
+
+```yaml
+- name: get_post
+  uses: firestore.get
+  with:
+    collection: "users/{{ state.user_id }}/posts"
+    document: "{{ state.post_id }}"
+  output: post_data
+
+# Or provide full path in collection
+- name: get_comment
+  uses: firestore.get
+  with:
+    collection: "users/{{ state.user_id }}/posts/{{ state.post_id }}/comments/{{ state.comment_id }}"
+  output: comment_data
+```
 
 ---
 
@@ -728,12 +1354,334 @@ Retrieve contextual information for entity:
 
 ---
 
+## DuckPGQ Graph Actions (TEA-BUILTIN-001.8)
+
+SQL/PGQ graph queries via the DuckDB DuckPGQ extension. Provides property graphs, pattern matching, path finding, and graph algorithms (PageRank, clustering, connected components) using standard SQL/PGQ syntax (ISO SQL:2023).
+
+> **Story:** [TEA-BUILTIN-001.8](../../../stories/TEA-BUILTIN-001.8.duckpgq-graph-queries.md)
+
+**Required:**
+- DuckDB with DuckPGQ extension (auto-installs from community)
+- `pip install duckdb` - For DuckDB
+
+**Optional cloud storage:**
+- `pip install fsspec s3fs` - For S3 URIs
+- `pip install fsspec gcsfs` - For GCS URIs
+- `pip install fsspec adlfs` - For Azure URIs
+
+### Configuration
+
+Configure DuckPGQ via DuckDB settings:
+
+```yaml
+settings:
+  duckdb:
+    extensions:
+      - httpfs    # For cloud storage access
+      - duckpgq   # SQL/PGQ graph queries (lazy-loaded on first use)
+```
+
+### `graph.create`
+
+Create a property graph from vertex and edge tables (Parquet files):
+
+```yaml
+- name: setup_knowledge_graph
+  uses: graph.create
+  with:
+    name: knowledge_graph                      # Required: graph name
+    vertex_tables:                             # Required: vertex tables
+      - name: entities
+        source: "s3://bucket/graph/entities.parquet"
+        key: id                                # Primary key column
+      - name: documents
+        source: "s3://bucket/graph/documents.parquet"
+        key: doc_id
+    edge_tables:                               # Required: edge tables
+      - name: relations
+        source: "s3://bucket/graph/relations.parquet"
+        source_key: from_id                    # Foreign key to source vertex
+        destination_key: to_id                 # Foreign key to destination vertex
+        references: entities                   # Vertex table reference
+  output: graph_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | Yes | - | Property graph name |
+| `vertex_tables` | list | Yes | - | Vertex table definitions |
+| `edge_tables` | list | Yes | - | Edge table definitions |
+
+**Vertex Table Definition:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Table name in graph |
+| `source` | string | Yes | Parquet file path (local or cloud URI) |
+| `key` | string | Yes | Primary key column |
+
+**Edge Table Definition:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Table name in graph |
+| `source` | string | Yes | Parquet file path (local or cloud URI) |
+| `source_key` | string | Yes | Column referencing source vertex |
+| `destination_key` | string | Yes | Column referencing destination vertex |
+| `references` | string | Yes | Vertex table name |
+
+**Returns:** `{"success": true, "graph": str, "vertex_tables": list, "edge_tables": list}`
+
+### `graph.drop`
+
+Drop a property graph:
+
+```yaml
+- name: cleanup_graph
+  uses: graph.drop
+  with:
+    name: knowledge_graph                      # Required
+    if_exists: true                            # Optional (default: true)
+  output: drop_result
+```
+
+**Returns:** `{"success": true, "graph": str, "dropped": bool}`
+
+### SQL/PGQ Query Support
+
+The existing `graph.query` action supports SQL/PGQ via the `pgq` parameter:
+
+```yaml
+# Pattern matching with SQL/PGQ
+- name: find_related_entities
+  uses: graph.query
+  with:
+    pgq: |
+      FROM GRAPH_TABLE (knowledge_graph
+        MATCH (e:entities WHERE e.id = '{{ state.entity_id }}')
+              -[r:relations]->(related:entities)
+        COLUMNS (related.id, related.name, r.type, r.weight)
+      )
+      ORDER BY weight DESC
+      LIMIT {{ state.limit | default(10) }}
+  output: related_entities
+
+# Shortest path query
+- name: find_path
+  uses: graph.query
+  with:
+    pgq: |
+      FROM GRAPH_TABLE (knowledge_graph
+        MATCH path = ANY SHORTEST
+          (a:entities WHERE a.id = '{{ state.start_id }}')
+          -[r:relations]->{1,5}
+          (b:entities WHERE b.id = '{{ state.end_id }}')
+        COLUMNS (path_length(path) as hops, vertices(path) as nodes)
+      )
+  output: path_result
+```
+
+**Returns:** `{"success": true, "results": list, "count": int, "query": str}`
+
+### `graph.algorithm`
+
+Run graph algorithms (PageRank, clustering, connected components):
+
+```yaml
+# PageRank for entity importance
+- name: compute_pagerank
+  uses: graph.algorithm
+  with:
+    algorithm: pagerank                        # Required
+    graph: knowledge_graph                     # Required
+    table: entities                            # Required: vertex table
+    limit: 100                                 # Optional
+  output: important_entities
+
+# Find clusters
+- name: find_clusters
+  uses: graph.algorithm
+  with:
+    algorithm: weakly_connected_component
+    graph: knowledge_graph
+    table: entities
+  output: clustered_entities
+
+# Connectivity analysis
+- name: analyze_connectivity
+  uses: graph.algorithm
+  with:
+    algorithm: local_clustering_coefficient
+    graph: knowledge_graph
+    table: entities
+    filter: "clustering > 0.5"                 # Optional WHERE filter
+  output: connected_entities
+```
+
+**Supported Algorithms:**
+
+| Algorithm | Description | Output Column |
+|-----------|-------------|---------------|
+| `pagerank` | PageRank centrality score | `importance` |
+| `weakly_connected_component` | Cluster/component ID | `cluster` |
+| `local_clustering_coefficient` | Node connectivity score | `clustering` |
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `algorithm` | string | Yes | - | Algorithm name |
+| `graph` | string | Yes | - | Property graph name |
+| `table` | string | Yes | - | Vertex table name |
+| `limit` | int | No | - | Max results to return |
+| `filter` | string | No | - | WHERE clause filter |
+
+**Returns:** `{"success": true, "results": list, "count": int, "algorithm": str}`
+
+### `graph.shortest_path`
+
+Find shortest path between two entities:
+
+```yaml
+- name: find_connection
+  uses: graph.shortest_path
+  with:
+    graph: knowledge_graph                     # Required
+    from_entity: "{{ state.start_id }}"        # Required
+    to_entity: "{{ state.end_id }}"            # Required
+    max_hops: 5                                # Optional (default: 5)
+    edge_table: relations                      # Optional
+  output: path_result
+```
+
+**Returns:**
+```json
+{
+  "success": true,
+  "path_found": true,
+  "hops": 3,
+  "nodes": ["entity_a", "entity_b", "entity_c", "entity_d"],
+  "edges": [
+    {"from": "entity_a", "to": "entity_b", "type": "knows"},
+    {"from": "entity_b", "to": "entity_c", "type": "works_with"},
+    {"from": "entity_c", "to": "entity_d", "type": "reports_to"}
+  ]
+}
+```
+
+### `graph.list_graphs`
+
+List created property graphs:
+
+```yaml
+- name: list_all_graphs
+  uses: graph.list_graphs
+  output: graphs_list
+```
+
+**Returns:** `{"success": true, "graphs": list, "count": int}`
+
+### Complete Example: Knowledge Graph Analysis
+
+```yaml
+name: knowledge-graph-analysis
+description: Analyze entity relationships using DuckPGQ
+
+nodes:
+  # Create property graph from cloud storage
+  - name: setup_graph
+    uses: graph.create
+    with:
+      name: company_graph
+      vertex_tables:
+        - name: people
+          source: "s3://data/graph/people.parquet"
+          key: person_id
+        - name: departments
+          source: "s3://data/graph/departments.parquet"
+          key: dept_id
+      edge_tables:
+        - name: works_in
+          source: "s3://data/graph/works_in.parquet"
+          source_key: person_id
+          destination_key: dept_id
+          references: people
+        - name: reports_to
+          source: "s3://data/graph/reports_to.parquet"
+          source_key: subordinate_id
+          destination_key: manager_id
+          references: people
+
+  # Find team members
+  - name: find_team
+    uses: graph.query
+    with:
+      pgq: |
+        FROM GRAPH_TABLE (company_graph
+          MATCH (p:people)-[w:works_in]->(d:departments WHERE d.name = '{{ state.department }}')
+          COLUMNS (p.person_id, p.name, p.role)
+        )
+    output: team_members
+
+  # Compute influence scores
+  - name: find_influencers
+    uses: graph.algorithm
+    with:
+      algorithm: pagerank
+      graph: company_graph
+      table: people
+      limit: 10
+    output: top_influencers
+
+  # Find reporting chain
+  - name: find_chain
+    uses: graph.shortest_path
+    with:
+      graph: company_graph
+      from_entity: "{{ state.employee_id }}"
+      to_entity: "{{ state.ceo_id }}"
+      max_hops: 10
+      edge_table: reports_to
+    output: reporting_chain
+
+edges:
+  - from: __start__
+    to: setup_graph
+  - from: setup_graph
+    to: [find_team, find_influencers, find_chain]
+  - from: [find_team, find_influencers, find_chain]
+    to: __end__
+```
+
+### Cloud Storage URIs
+
+DuckPGQ supports loading Parquet files from cloud storage via httpfs:
+
+| Cloud | URI Format | Authentication |
+|-------|------------|----------------|
+| S3 | `s3://bucket/path/file.parquet` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+| GCS | `gs://bucket/path/file.parquet` | `GOOGLE_APPLICATION_CREDENTIALS` |
+| Azure | `az://container/path/file.parquet` | `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_KEY` |
+
+### Backend Selection
+
+DuckPGQ is automatically used when:
+- The `pgq` parameter is provided to `graph.query`
+- The `graph.create`, `graph.drop`, `graph.algorithm`, `graph.shortest_path`, or `graph.list_graphs` actions are called
+
+For other graph operations (`graph.store_entity`, `graph.store_relation`, `graph.retrieve_context`), the configured CozoDB or Kuzu backend is used.
+
+---
+
 ## Dual Namespace
 
 All memory actions use dual namespaces: `memory.*` and `actions.memory_*`.
 All LTM actions: `ltm.*` and `actions.ltm_*`.
 All cache actions: `cache.*` and `actions.cache_*`.
 All graph actions: `graph.*` and `actions.graph_*`.
+All Firestore actions: `firestore.*` and `actions.firestore_*`.
 
 ---
 

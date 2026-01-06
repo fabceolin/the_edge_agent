@@ -1,0 +1,83 @@
+# Sequential Pipeline Example
+# TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+#
+# This example demonstrates sequential execution where each agent's output
+# becomes input to the next agent, creating a processing pipeline.
+# State is threaded through each agent in order.
+#
+# Usage:
+#   tea run examples/multi-agent/sequential-pipeline.yaml --input '{"raw_data": "Customer feedback: The product is great but the shipping was slow"}'
+
+name: sequential-pipeline
+version: "1.0"
+description: Sequential agent pipeline for data processing
+
+settings:
+  llm:
+    model: gpt-4o-mini
+    temperature: 0.5
+
+  agents:
+    extractor:
+      system_prompt: |
+        You are a data extraction specialist. Extract structured information
+        from raw text:
+        - Key entities (people, products, organizations)
+        - Sentiment indicators
+        - Action items
+        - Categories
+
+        Output JSON: {"entities": [...], "sentiment": "...", "actions": [...], "categories": [...]}
+      temperature: 0.2
+
+    enricher:
+      system_prompt: |
+        You are a data enrichment specialist. Given extracted data, add:
+        - Context and background information
+        - Related concepts and connections
+        - Priority scores (1-10)
+        - Suggested follow-up actions
+
+        Output JSON with enriched data structure.
+      temperature: 0.5
+
+    summarizer:
+      system_prompt: |
+        You are a summarization specialist. Create a concise summary that:
+        - Highlights key points
+        - Prioritizes by importance
+        - Provides actionable insights
+        - Is suitable for executive review
+
+        Output a structured summary with sections: overview, key_findings, recommendations
+      temperature: 0.7
+
+state_schema:
+  raw_data: str
+  extracted: str
+  enriched: str
+  summary: str
+  pipeline_trace: list
+
+nodes:
+  - name: run_pipeline
+    action: agent.sequential
+    params:
+      agents:
+        - extractor
+        - enricher
+        - summarizer
+      initial_task: |
+        Process this data: {{ state.raw_data }}
+      thread_state: true
+    output:
+      extracted: stage_0
+      enriched: stage_1
+      summary: stage_2
+      pipeline_trace: trace
+
+edges:
+  - from: __start__
+    to: run_pipeline
+  - from: run_pipeline
+    to: __end__

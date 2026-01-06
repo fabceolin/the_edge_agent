@@ -457,6 +457,16 @@ class YAMLEngine:
         # TEA-BUILTIN-012.1: Secrets backend (initialized from settings.secrets)
         self._secrets_backend: Optional[Any] = None
 
+        # TEA-BUILTIN-015.1: Session backend and settings (initialized from settings.session)
+        self._session_backend: Optional[Any] = None
+        self._session_settings: Optional[Any] = None
+
+        # TEA-BUILTIN-015.2: Firestore settings (initialized from settings.firestore)
+        self._firestore_settings: Optional[Dict[str, Any]] = None
+
+        # TEA-BUILTIN-015.7: Endpoint configuration (initialized from endpoint section)
+        self._endpoint_config: Optional[Any] = None
+
         # Opik LLM tracing flag (TEA-BUILTIN-005.2) - opt-in native Opik instrumentation
         self._opik_llm_tracing = opik_llm_tracing
 
@@ -677,6 +687,29 @@ class YAMLEngine:
             ...     print(f"Events: {flow_log['metrics']['event_count']}")
         """
         return self._observability_context
+
+    @property
+    def endpoint_config(self) -> Optional[Any]:
+        """
+        Get the endpoint configuration (TEA-BUILTIN-015.7).
+
+        The endpoint config defines how this agent should be exposed as an HTTP API,
+        including path, method, parameters, and authentication requirements.
+
+        Returns:
+            The current EndpointConfig, or None if not configured.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> graph = engine.load_from_dict({
+            ...     'name': 'research_agent',
+            ...     'endpoint': {'path': '/api/v1/research', 'method': 'POST'},
+            ...     'nodes': [...], 'edges': [...]
+            ... })
+            >>> if engine.endpoint_config:
+            ...     print(f"Endpoint: {engine.endpoint_config.method} {engine.endpoint_config.path}")
+        """
+        return self._endpoint_config
 
     def _resolve_opik_config(
         self, yaml_settings: Optional[Dict[str, Any]] = None
@@ -1029,6 +1062,43 @@ class YAMLEngine:
             except Exception as e:
                 logger.warning(f"Failed to configure secrets backend from YAML: {e}")
 
+        # TEA-BUILTIN-015.1: Configure session backend from YAML settings
+        session_config = settings.get("session", {})
+        if session_config:
+            try:
+                from .session import (
+                    SessionSettings,
+                    create_session_backend_from_settings,
+                )
+
+                # Parse and validate session settings
+                self._session_settings = SessionSettings(**session_config)
+                # Create session backend based on settings
+                self._session_backend = create_session_backend_from_settings(
+                    self._session_settings
+                )
+                logger.debug(
+                    f"Configured session backend from YAML: {self._session_settings.backend}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to configure session backend from YAML: {e}")
+
+        # TEA-BUILTIN-015.2: Configure Firestore settings from YAML
+        firestore_settings = settings.get("firestore", {})
+        if firestore_settings:
+            # Expand environment variables in Firestore config
+            firestore_settings = expand_env_vars(firestore_settings)
+            # Store settings for firestore actions to access
+            self._firestore_settings = {
+                "project": firestore_settings.get("project"),
+                "emulator_host": firestore_settings.get("emulator_host"),
+                "credentials_path": firestore_settings.get("credentials_path"),
+            }
+            logger.debug(
+                f"Configured Firestore settings from YAML: "
+                f"project={self._firestore_settings.get('project')}"
+            )
+
         # TEA-BUILTIN-001.8: Configure graph backend from YAML settings
         graph_settings = settings.get("graph", {})
         if graph_settings and self._enable_graph:
@@ -1178,6 +1248,58 @@ class YAMLEngine:
             )
             self.variables["extraction_prompt"] = prompt
 
+        # TEA-BUILTIN-015.5: Parse output_schema for response transformation
+        output_schema_config = config.get("output_schema")
+        self._output_schema = None
+        if output_schema_config:
+            from .transformation import OutputSchema
+
+            self._output_schema = OutputSchema.from_yaml(output_schema_config)
+            logger.debug(
+                f"Configured output_schema with {len(self._output_schema.fields)} fields"
+            )
+
+        # TEA-BUILTIN-015.4: Parse input_schema for request validation
+        input_schema_config = config.get("input_schema")
+        self._input_schema = None
+        if input_schema_config:
+            from .validation import InputSchema
+
+            self._input_schema = InputSchema.from_yaml(input_schema_config)
+            logger.debug(
+                f"Configured input_schema with {len(self._input_schema.fields)} fields"
+            )
+
+        # TEA-BUILTIN-015.7: Parse endpoint configuration for HTTP API
+        endpoint_config_yaml = config.get("endpoint")
+        self._endpoint_config = None
+        if endpoint_config_yaml:
+            from .http import EndpointConfig
+
+            self._endpoint_config = EndpointConfig.from_yaml(endpoint_config_yaml)
+            logger.debug(
+                f"Configured endpoint: {self._endpoint_config.method} {self._endpoint_config.path}"
+            )
+
+        # TEA-BUILTIN-015.6: Parse error_handling settings
+        error_handling_config = settings.get("error_handling", {})
+        self._error_handling_settings = None
+        if error_handling_config:
+            from .error_handling import ErrorHandlingSettings
+
+            self._error_handling_settings = ErrorHandlingSettings.from_yaml(
+                error_handling_config
+            )
+            logger.debug(
+                f"Configured error_handling: mode={self._error_handling_settings.mode.value}, "
+                f"max_retries={self._error_handling_settings.max_retries}"
+            )
+        else:
+            # Default settings (raise mode for backward compatibility)
+            from .error_handling import ErrorHandlingSettings
+
+            self._error_handling_settings = ErrorHandlingSettings.default()
+
         # Create graph
         compile_config = config.get("config", {})
         graph = StateGraph(
@@ -1265,6 +1387,27 @@ class YAMLEngine:
         if checkpoint_path:
             # Store checkpoint path for resume
             compiled_graph._resume_checkpoint_path = checkpoint_path
+
+        # TEA-BUILTIN-015.1: Attach session backend and settings for auto-save
+        if self._session_backend is not None:
+            compiled_graph._session_backend = self._session_backend
+            compiled_graph._session_settings = self._session_settings
+
+        # TEA-BUILTIN-015.5: Attach output_schema and engine reference for auto-application
+        if self._output_schema is not None:
+            compiled_graph._output_schema = self._output_schema
+            compiled_graph._yaml_engine = self
+
+        # TEA-BUILTIN-015.4: Attach input_schema for request validation
+        if self._input_schema is not None:
+            compiled_graph._input_schema = self._input_schema
+            compiled_graph._yaml_engine = self
+
+        # TEA-BUILTIN-015.7: Attach endpoint configuration for HTTP API
+        if self._endpoint_config is not None:
+            compiled_graph._endpoint_config = self._endpoint_config
+            # Store agent name from config for route registration
+            compiled_graph._agent_name = config.get("name", "unnamed_agent")
 
         return compiled_graph
 

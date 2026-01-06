@@ -1057,6 +1057,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "delegate"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,7 +1518,7 @@ dependencies = [
  "atoi",
  "atomic 0.5.3",
  "byte-slice-cast",
- "dashmap",
+ "dashmap 5.5.3",
  "delegate",
  "fast-float2",
  "fxhash",
@@ -3959,6 +3973,7 @@ version = "0.8.22"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "bincode",
  "chrono",
  "clap",
  "cozo",
@@ -3966,6 +3981,7 @@ dependencies = [
  "crossbeam",
  "csv",
  "ctrlc",
+ "dashmap 6.1.0",
  "duckdb",
  "jmespath",
  "jsonschema",

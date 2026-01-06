@@ -1,0 +1,131 @@
+# Self-Correcting Code Generation Example
+# Story: TEA-AGENT-001.4
+#
+# This example demonstrates using reason.self_correct for
+# iterative code improvement through generate-critique-improve cycles.
+
+name: self-correcting-code-generator
+description: Generate and iteratively improve code through self-correction
+
+state_schema:
+  coding_task: str
+  language: str
+  requirements: list
+  generated_code: str
+  improvement_history: list
+  final_code: str
+  test_results: dict
+
+variables:
+  generator_model: gpt-4
+  critic_model: gpt-4
+  improvement_rounds: 2
+
+nodes:
+  # Step 1: Parse requirements
+  - name: parse_requirements
+    uses: llm.call
+    with:
+      model: "{{ variables.generator_model }}"
+      messages:
+        - role: system
+          content: |
+            Parse the coding task into structured requirements.
+            Return JSON: {
+              "task_summary": "...",
+              "inputs": [{"name": "...", "type": "...", "description": "..."}],
+              "outputs": [{"name": "...", "type": "...", "description": "..."}],
+              "constraints": [],
+              "edge_cases": [],
+              "test_scenarios": []
+            }
+        - role: user
+          content: |
+            Language: {{ state.language | default('python') }}
+            Task: {{ state.coding_task }}
+            Additional requirements: {{ state.requirements | default([]) | tojson }}
+      response_format:
+        type: json_object
+    output: parsed_requirements
+
+  # Step 2: Generate code with self-correction
+  - name: generate_code
+    uses: reason.self_correct
+    with:
+      task: |
+        Generate {{ state.language | default('python') }} code for:
+
+        Task: {{ state.coding_task }}
+
+        Requirements:
+        {{ state.parsed_requirements | tojson }}
+
+        The code should:
+        1. Be clean and well-documented
+        2. Handle edge cases properly
+        3. Follow best practices for {{ state.language | default('python') }}
+        4. Include type hints where applicable
+      generator_model: "{{ variables.generator_model }}"
+      critic_model: "{{ variables.critic_model }}"
+      improvement_rounds: "{{ variables.improvement_rounds }}"
+      critic_prompt: |
+        Review this {{ state.language | default('python') }} code critically:
+
+        {{ output }}
+
+        Check for:
+        1. **Correctness**: Does it implement the requirements correctly?
+        2. **Edge Cases**: Are all edge cases from {{ state.parsed_requirements.edge_cases | tojson }} handled?
+        3. **Code Quality**: Is it clean, readable, and well-documented?
+        4. **Performance**: Are there any obvious inefficiencies?
+        5. **Security**: Are there any security concerns?
+        6. **Best Practices**: Does it follow {{ state.language | default('python') }} best practices?
+
+        Be specific about issues and provide concrete suggestions.
+    output: code_result
+
+  # Step 3: Generate tests
+  - name: generate_tests
+    uses: llm.call
+    with:
+      model: "{{ variables.generator_model }}"
+      messages:
+        - role: system
+          content: |
+            Generate comprehensive unit tests for the code.
+            Include tests for:
+            1. Normal operation
+            2. Edge cases
+            3. Error conditions
+
+            Return the test code as a string.
+        - role: user
+          content: |
+            Code to test:
+            ```{{ state.language | default('python') }}
+            {{ state.code_result.output }}
+            ```
+
+            Test scenarios from requirements:
+            {{ state.parsed_requirements.test_scenarios | tojson }}
+
+            Edge cases:
+            {{ state.parsed_requirements.edge_cases | tojson }}
+    output: test_code
+
+  # Step 4: Format final output
+  - name: format_output
+    run: |
+      return {
+          "final_code": state["code_result"]["output"],
+          "generated_code": state["code_result"]["output"],
+          "improvement_history": state["code_result"].get("improvement_history", []),
+          "rounds_completed": state["code_result"].get("rounds_completed", 0),
+          "test_code": state["test_code"]["content"],
+          "requirements": state["parsed_requirements"],
+          "reasoning_trace": state["code_result"].get("reasoning_trace", []),
+          "test_results": {}  # Would be populated if we execute tests
+      }
+
+config:
+  raise_exceptions: true

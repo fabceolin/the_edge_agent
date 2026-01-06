@@ -85,3 +85,10 @@ parts:
         title: Serverless AI Agents
       - file: articles/symbolic-abstraction-learning
         title: Neural Predicate Invention for Zero-Shot Generalization
+      - file: articles/cloud-production-firebase
+        title: Cloud Production with Firebase
+
+  - caption: Contributing
+    chapters:
+      - file: guides/writing-articles
+        title: Writing Articles

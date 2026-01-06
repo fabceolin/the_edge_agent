@@ -1,0 +1,114 @@
+# Multi-Agent Research Team Example
+# TEA-AGENT-001.1: Multi-Agent Collaboration Primitives
+#
+# This example demonstrates a research team with three specialized agents:
+# - Researcher: Gathers information from sources
+# - Analyst: Processes and analyzes the gathered data
+# - Writer: Synthesizes findings into a final report
+#
+# Usage:
+#   tea run examples/multi-agent/research-team.yaml --input '{"topic": "quantum computing"}'
+
+name: research-team
+version: "1.0"
+description: Multi-agent research team for comprehensive topic analysis
+
+settings:
+  llm:
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 2000
+
+  agents:
+    researcher:
+      system_prompt: |
+        You are a skilled research agent. Your job is to gather comprehensive
+        information about the given topic. Focus on:
+        - Key concepts and definitions
+        - Current state of the field
+        - Major players and contributors
+        - Recent developments
+
+        Provide structured, factual information.
+      temperature: 0.3
+
+    analyst:
+      system_prompt: |
+        You are an analytical agent. Your job is to analyze research data and
+        identify patterns, insights, and implications. Focus on:
+        - Trends and patterns
+        - Strengths and weaknesses
+        - Opportunities and threats
+        - Key takeaways
+
+        Provide structured analysis with clear reasoning.
+      temperature: 0.5
+
+    writer:
+      system_prompt: |
+        You are a professional writer. Your job is to synthesize research and
+        analysis into a coherent, well-structured report. Focus on:
+        - Clear executive summary
+        - Logical flow of ideas
+        - Actionable recommendations
+        - Professional tone
+
+        Write in a clear, engaging style.
+      temperature: 0.7
+
+state_schema:
+  topic: str
+  research: str
+  analysis: str
+  report: str
+
+nodes:
+  - name: gather_research
+    action: agent.dispatch
+    params:
+      agent: researcher
+      task: |
+        Research the following topic thoroughly: {{ state.topic }}
+
+        Provide comprehensive information including key concepts,
+        current developments, and important facts.
+    output: research
+
+  - name: analyze_data
+    action: agent.dispatch
+    params:
+      agent: analyst
+      task: |
+        Analyze the following research data:
+
+        {{ state.research }}
+
+        Provide insights, patterns, and key findings.
+    output: analysis
+
+  - name: write_report
+    action: agent.dispatch
+    params:
+      agent: writer
+      task: |
+        Create a professional report based on this research and analysis:
+
+        RESEARCH:
+        {{ state.research }}
+
+        ANALYSIS:
+        {{ state.analysis }}
+
+        Write a comprehensive report with an executive summary,
+        main findings, and recommendations.
+    output: report
+
+edges:
+  - from: __start__
+    to: gather_research
+  - from: gather_research
+    to: analyze_data
+  - from: analyze_data
+    to: write_report
+  - from: write_report
+    to: __end__

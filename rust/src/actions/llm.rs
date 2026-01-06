@@ -199,7 +199,7 @@ struct StreamingRequest {
 }
 
 /// Call LLM completion API
-fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
+pub fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
     // Get provider config
     let provider = params
         .get("provider")

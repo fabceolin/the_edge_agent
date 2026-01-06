@@ -1,0 +1,140 @@
+# LLM-as-Judge Reflection Pattern (TEA-AGENT-001.2)
+#
+# Demonstrates using an LLM as a quality judge for text generation.
+# The agent generates creative content, evaluates it for quality,
+# and refines until it meets the quality threshold.
+#
+# Usage:
+#   tea run examples/workflows/llm-as-judge-reflection.yaml \
+#     --input '{"topic": "the importance of renewable energy", "style": "persuasive essay"}'
+
+name: llm-as-judge-reflection
+description: Generate high-quality text content using LLM-as-judge evaluation
+
+state_schema:
+  topic: str
+  style: str
+  content: str
+  quality_score: float
+  feedback: str
+  llm_provider: str
+  llm_model: str
+
+settings:
+  llm:
+    provider: ollama
+    model: gemma3:4b
+
+nodes:
+  - name: generate_content
+    uses: reflection.loop
+    with:
+      generator:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are an expert writer specializing in {{ state.style }} writing.
+              Create compelling, well-structured content that engages readers.
+
+              Guidelines:
+              - Use clear, concise language
+              - Include relevant examples
+              - Structure with logical flow
+              - End with a strong conclusion
+          - role: user
+            content: |
+              Write a {{ state.style }} about: {{ state.topic }}
+
+              Length: 200-300 words
+
+      evaluator:
+        type: llm
+        model: "ollama/gemma3:4b"
+        prompt: |
+          You are a professional editor evaluating written content.
+
+          Content to evaluate:
+          ---
+          {{ state.reflection_output }}
+          ---
+
+          Topic: {{ state.topic }}
+          Expected style: {{ state.style }}
+
+          Score the content on these criteria (each 0-10):
+          1. Clarity: Is the writing clear and easy to understand?
+          2. Structure: Is there logical flow and organization?
+          3. Engagement: Does it capture and hold attention?
+          4. Relevance: Does it address the topic appropriately?
+          5. Style Match: Does it match the requested style?
+
+          Calculate an overall score (average of all criteria / 10).
+
+          Respond with a JSON object:
+          {
+            "pass": <true if overall score >= 0.7>,
+            "score": <overall score 0.0-1.0>,
+            "reason": "<brief overall assessment>",
+            "suggestions": ["<specific improvement 1>", "<specific improvement 2>"]
+          }
+
+      corrector:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are an expert writer and editor. Revise the content to address the feedback.
+              Maintain the same topic and style while improving quality.
+          - role: user
+            content: |
+              Original content:
+              {{ state.reflection_output }}
+
+              Editor feedback:
+              {{ state.reflection_errors | tojson }}
+
+              Please revise the content to address the feedback.
+              Keep the same approximate length (200-300 words).
+
+      max_iterations: 3
+      on_failure: return_best
+
+    output: content
+
+  - name: extract_metrics
+    run: |
+      # Extract quality metrics from the reflection history
+      history = state.get("reflection_history", [])
+      final_eval = history[-1].get("evaluation", {}) if history else {}
+
+      return {
+          "quality_score": final_eval.get("score", 0.0),
+          "feedback": final_eval.get("reason", "No evaluation available"),
+          "total_iterations": state.get("reflection_iteration", 1),
+          "passed_evaluation": state.get("valid", False)
+      }
+    output: quality_score
+
+  - name: format_output
+    run: |
+      # Format the final output with all relevant information
+      return {
+          "content": state.get("content", ""),
+          "quality_score": state.get("quality_score", 0.0),
+          "feedback": state.get("feedback", ""),
+          "iterations": state.get("total_iterations", 1),
+          "success": state.get("passed_evaluation", False)
+      }
+
+edges:
+  - from: __start__
+    to: generate_content
+  - from: generate_content
+    to: extract_metrics
+  - from: extract_metrics
+    to: format_output
+  - from: format_output
+    to: __end__

@@ -1,0 +1,56 @@
+# DSPy ReAct Research Agent Example
+#
+# Demonstrates using DSPy's ReAct module for tool-using agents
+# that reason and act iteratively to achieve goals.
+#
+# When DSPy is unavailable, gracefully falls back to native reason.react.
+#
+# Usage:
+#   tea run examples/dspy/dspy-react-research.yaml --input '{"goal": "Find the population of Tokyo"}'
+
+name: dspy-react-research
+version: "1.0"
+
+settings:
+  dspy:
+    enabled: true
+    model: gpt-4
+    temperature: 0.5
+
+state_schema:
+  goal: str
+  final_answer: str
+  steps: list
+  reasoning_trace: list
+
+nodes:
+  - name: research_with_react
+    description: Research goal using DSPy ReAct with tool integration
+    action: reason.dspy.react
+    with:
+      goal: "{{ state.goal }}"
+      signature: "goal -> result"
+      tools:
+        - web.search
+      max_steps: 5
+
+  - name: summarize_research
+    description: Summarize the research findings
+    run: |
+      steps = state.get("steps", [])
+      final = state.get("final_answer", "No answer found")
+      dspy_module = state.get("dspy_module", "unknown")
+
+      summary = f"Research completed using: {dspy_module}\n"
+      summary += f"Steps taken: {len(steps)}\n"
+      summary += f"Final Answer: {final}"
+
+      return {"research_summary": summary}
+
+edges:
+  - from: __start__
+    to: research_with_react
+  - from: research_with_react
+    to: summarize_research
+  - from: summarize_research
+    to: __end__

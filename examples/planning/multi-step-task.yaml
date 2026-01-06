@@ -1,0 +1,135 @@
+# Multi-Step Task Planning Example
+# Demonstrates plan.decompose with flat strategy for simple multi-step tasks
+#
+# Usage:
+#   tea run examples/planning/multi-step-task.yaml --input '{"task": "Prepare a technical blog post about REST API best practices"}'
+
+name: multi-step-task-agent
+version: "1.0"
+description: Execute multi-step tasks with flat planning and parallel execution
+
+state_schema:
+  task: str
+  plan: dict
+  task_results: dict
+  final_output: str
+  status_report: dict
+
+settings:
+  llm:
+    model: "${OPENAI_MODEL:-gpt-4}"
+    api_key: "${OPENAI_API_KEY}"
+
+nodes:
+  - name: decompose_task
+    action: plan.decompose
+    with:
+      goal: "{{ state.task }}"
+      planner:
+        model: "{{ settings.llm.model }}"
+        strategy: flat
+        prompt_template: |
+          Break down this task into independent subtasks that can be executed in parallel where possible.
+
+          Task: {{ goal }}
+
+          Guidelines:
+          - Create 3-7 subtasks
+          - Identify which subtasks can run in parallel (no dependencies)
+          - Identify which subtasks must wait for others (have dependencies)
+          - Keep subtasks focused and achievable
+
+          Return JSON:
+          {
+            "subtasks": [
+              {"id": "outline", "description": "Create blog post outline", "dependencies": []},
+              {"id": "research", "description": "Research REST API standards", "dependencies": []},
+              {"id": "examples", "description": "Create code examples", "dependencies": ["research"]},
+              {"id": "draft", "description": "Write first draft", "dependencies": ["outline", "examples"]},
+              {"id": "review", "description": "Review and polish", "dependencies": ["draft"]}
+            ]
+          }
+    output: plan
+
+  - name: show_plan
+    action: plan.status
+    with:
+      include_completed: false
+      include_details: true
+    output: initial_status
+
+  - name: execute_tasks
+    action: plan.execute
+    with:
+      plan: "{{ state.plan }}"
+      parallel: true
+      max_concurrent: 4
+      subtask_executor:
+        action: llm.call
+        with:
+          model: "{{ settings.llm.model }}"
+          messages:
+            - role: system
+              content: |
+                You are a task execution assistant. Complete the assigned subtask thoroughly.
+                Use any available context from previous subtasks.
+            - role: user
+              content: |
+                Main task: {{ state.task }}
+                Your subtask: {{ subtask.description }}
+
+                {% if state.subtask_results %}
+                Context from completed subtasks:
+                {% for id, result in state.subtask_results.items() %}
+                [{{ id }}]: {{ result[:500] }}...
+                {% endfor %}
+                {% endif %}
+
+                Complete this subtask and provide your output.
+      on_subtask_failure: skip  # Skip failed subtasks and continue
+    output: task_results
+
+  - name: get_final_status
+    action: plan.status
+    with:
+      include_completed: true
+      include_details: true
+    output: status_report
+
+  - name: compile_output
+    action: llm.call
+    with:
+      model: "{{ settings.llm.model }}"
+      messages:
+        - role: system
+          content: You are an output compiler. Combine subtask results into a cohesive final output.
+        - role: user
+          content: |
+            Original task: {{ state.task }}
+
+            Status: {{ state.status_report.completed }} completed, {{ state.status_report.failed }} failed, {{ state.status_report.skipped }} skipped
+
+            Subtask results:
+            {% for subtask_id, result in state.task_results.items() %}
+            ## {{ subtask_id }}
+            {{ result }}
+
+            {% endfor %}
+
+            Compile these into a polished final output that fulfills the original task.
+            If any subtasks were skipped or failed, note what's missing.
+    output: final_output
+
+edges:
+  - from: __start__
+    to: decompose_task
+  - from: decompose_task
+    to: show_plan
+  - from: show_plan
+    to: execute_tasks
+  - from: execute_tasks
+    to: get_final_status
+  - from: get_final_status
+    to: compile_output
+  - from: compile_output
+    to: __end__

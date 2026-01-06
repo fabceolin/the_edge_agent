@@ -1,0 +1,87 @@
+# LLM Evaluator Example (TEA-AGENT-001.2)
+#
+# Demonstrates using an LLM as the evaluator in a reflection loop.
+# The LLM judges the quality of generated content and provides feedback.
+#
+# Usage:
+#   tea run examples/reflection/llm-evaluator-example.yaml --input '{"task": "Write a haiku about coding"}'
+#
+# Requires: OPENAI_API_KEY or Ollama running locally
+
+name: llm-evaluator-example
+version: "1.0"
+
+description: |
+  Example using LLM-as-judge evaluation in a reflection loop.
+  The evaluator LLM assesses quality and provides improvement suggestions.
+
+state_schema:
+  task: str
+  result: str
+  evaluation_feedback: str
+
+settings:
+  llm:
+    provider: ollama
+    default_model: llama3.2
+
+nodes:
+  - name: generate_with_llm_eval
+    uses: reflection.loop
+    with:
+      generator:
+        action: llm.call
+        prompt: |
+          Task: {{ state.task }}
+
+          {% if state.reflection_iteration > 1 %}
+          Previous attempt feedback: {{ state.reflection_errors | map(attribute='message') | join('; ') }}
+          {% endif %}
+
+          Provide your response:
+
+      evaluator:
+        type: llm
+        prompt: |
+          Evaluate the following response for quality.
+
+          Task: {{ state.task }}
+          Response: {{ state.reflection_output }}
+
+          Rate this response and provide feedback.
+          Return a JSON object:
+          {
+            "valid": true/false (is this a good response?),
+            "score": 0.0-1.0 (quality score),
+            "reason": "explanation",
+            "suggestions": ["improvement 1", "improvement 2"]
+          }
+
+      corrector:
+        run: |
+          # Extract suggestions from LLM feedback
+          errors = state.get("reflection_errors", [])
+          suggestions = []
+          for e in errors:
+            if e.get("type") == "suggestion":
+              suggestions.append(e.get("message", ""))
+          result = {"improvement_hints": suggestions}
+
+      max_iterations: 2
+      on_failure: return_best
+
+  - name: finalize
+    run: |
+      result = {
+        "result": state.get("reflection_output", ""),
+        "quality_score": state.get("reflection_best_score", 0),
+        "attempts": state.get("reflection_iteration", 1)
+      }
+
+edges:
+  - from: __start__
+    to: generate_with_llm_eval
+  - from: generate_with_llm_eval
+    to: finalize
+  - from: finalize
+    to: __end__

@@ -1,0 +1,95 @@
+# Chain-of-Thought Problem Solving Example
+# Story: TEA-AGENT-001.4
+#
+# This example demonstrates using reason.cot for structured
+# step-by-step reasoning on math and logic problems.
+
+name: cot-problem-solver
+description: Solve problems using Chain-of-Thought reasoning
+
+state_schema:
+  problem: str
+  thinking: str
+  answer: any
+  thinking_format: str
+
+variables:
+  default_model: gpt-4
+
+nodes:
+  # Step 1: Analyze the problem type and select thinking format
+  - name: analyze_problem
+    uses: llm.call
+    with:
+      model: "{{ variables.default_model }}"
+      messages:
+        - role: system
+          content: |
+            Classify the problem type and recommend a thinking format.
+            Return JSON: {"type": "math|logic|analysis|planning", "format": "step_by_step|pros_cons|tree|first_principles"}
+        - role: user
+          content: "{{ state.problem }}"
+      response_format:
+        type: json_object
+    output: analysis
+
+  # Step 2: Apply Chain-of-Thought reasoning
+  - name: solve_with_cot
+    uses: reason.cot
+    with:
+      problem: "{{ state.problem }}"
+      model: "{{ variables.default_model }}"
+      thinking_format: "{{ state.analysis.format | default('step_by_step') }}"
+      few_shot_examples:
+        - problem: "What is 15% of 80?"
+          thinking: |
+            Step 1: Convert 15% to decimal: 15/100 = 0.15
+            Step 2: Multiply: 0.15 * 80 = 12
+          answer: "12"
+        - problem: "If all cats are mammals and all mammals are animals, are all cats animals?"
+          thinking: |
+            Step 1: Premise 1: All cats are mammals
+            Step 2: Premise 2: All mammals are animals
+            Step 3: By transitivity: If cats are mammals and mammals are animals, then cats are animals
+            Step 4: This is a valid syllogism
+          answer: "Yes, all cats are animals"
+    output: solution
+
+  # Step 3: Validate the reasoning
+  - name: validate_reasoning
+    uses: llm.call
+    with:
+      model: "{{ variables.default_model }}"
+      messages:
+        - role: system
+          content: |
+            Review the reasoning trace and answer. Check for:
+            1. Logical consistency
+            2. Correct application of rules
+            3. Accurate final answer
+
+            Return JSON: {"valid": true/false, "issues": [], "confidence": 0.0-1.0}
+        - role: user
+          content: |
+            Problem: {{ state.problem }}
+
+            Thinking: {{ state.solution.thinking }}
+
+            Answer: {{ state.solution.answer }}
+      response_format:
+        type: json_object
+    output: validation
+
+  # Step 4: Format final output
+  - name: format_output
+    run: |
+      return {
+          "thinking": state["solution"]["thinking"],
+          "answer": state["solution"]["answer"],
+          "thinking_format": state.get("analysis", {}).get("format", "step_by_step"),
+          "validation": state["validation"],
+          "reasoning_trace": state["solution"].get("reasoning_trace", [])
+      }
+
+config:
+  raise_exceptions: true

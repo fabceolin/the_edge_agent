@@ -1,0 +1,195 @@
+name: rust-agentic-pipeline
+description: |
+  Orchestrates Rust agentic pattern story DEVELOPMENT with dependency-aware execution.
+  Phase 1: 001.1-rust + 001.2-rust (parallel)
+  Phase 2: 001.3-rust + 001.4-rust + 001.5-rust (parallel, after Phase 1)
+
+  Uses bmad-story-development.yaml which runs: Dev → QA → SM agents
+
+state_schema:
+  phase1_stories: list
+  phase2_stories: list
+  phase1_results: list
+  phase2_results: list
+
+nodes:
+  - name: init
+    description: Initialize pipeline with story lists
+    run: |
+      print("="*60)
+      print("RUST AGENTIC PIPELINE - DEVELOPMENT")
+      print("="*60)
+      return {
+          "phase1_stories": [
+              "TEA-AGENT-001.1-rust",
+              "TEA-AGENT-001.2-rust"
+          ],
+          "phase2_stories": [
+              "TEA-AGENT-001.3-rust",
+              "TEA-AGENT-001.4-rust",
+              "TEA-AGENT-001.5-rust"
+          ],
+          "phase1_results": [],
+          "phase2_results": []
+      }
+
+  # ============ PHASE 1: Foundation (Parallel) ============
+  - name: phase1_start
+    description: Start Phase 1 - Foundation stories (no dependencies)
+    run: |
+      stories = state.get("phase1_stories", [])
+      print(f"\n=== PHASE 1: Foundation ({len(stories)} stories in parallel) ===")
+      for s in stories:
+          print(f"  - {s}")
+      return {}
+
+  - name: phase1_run
+    description: Run Phase 1 stories in parallel
+    type: dynamic_parallel
+    items: "{{ state.phase1_stories }}"
+    item_var: story_id
+    max_concurrency: 2
+    fail_fast: false
+    fan_in: phase1_complete
+    steps:
+      - name: run_development
+        run: |
+          import subprocess
+          import json
+          story = state.get("story_id")
+          print(f"[Phase1] Starting development: {story}")
+
+          input_json = json.dumps({"arg": story})
+          cmd = f"source python/.venv/bin/activate && tea run examples/workflows/bmad-story-development.yaml --input '{input_json}'"
+          result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable='/bin/bash')
+
+          print(f"[Phase1] Completed: {story} (exit={result.returncode})")
+          if result.returncode != 0:
+              print(f"[Phase1] stderr: {result.stderr[:500] if result.stderr else 'none'}")
+          return {
+              "story": story,
+              "returncode": result.returncode,
+              "success": result.returncode == 0
+          }
+    output: phase1_results
+
+  - name: phase1_complete
+    description: Summarize Phase 1
+    fan_in: true
+    run: |
+      results = state.get("phase1_results", [])
+      print(f"\n=== PHASE 1 COMPLETE: {len(results)} stories ===")
+      for r in results:
+          if hasattr(r, 'state'):
+              s = r.state
+          else:
+              s = r.get("state", {})
+          story = s.get("story", "unknown")
+          success = s.get("success", False)
+          status = "OK" if success else "FAILED"
+          print(f"  - {story}: {status}")
+      return {}
+
+  # ============ PHASE 2: Dependent Stories (Parallel) ============
+  - name: phase2_start
+    description: Start Phase 2 - Stories depending on 001.1-rust
+    run: |
+      stories = state.get("phase2_stories", [])
+      print(f"\n=== PHASE 2: Dependent Stories ({len(stories)} in parallel) ===")
+      print("(Dependencies: All require 001.1-rust Multi-Agent)")
+      for s in stories:
+          print(f"  - {s}")
+      return {}
+
+  - name: phase2_run
+    description: Run Phase 2 stories in parallel
+    type: dynamic_parallel
+    items: "{{ state.phase2_stories }}"
+    item_var: story_id
+    max_concurrency: 3
+    fail_fast: false
+    fan_in: phase2_complete
+    steps:
+      - name: run_development
+        run: |
+          import subprocess
+          import json
+          story = state.get("story_id")
+          print(f"[Phase2] Starting development: {story}")
+
+          input_json = json.dumps({"arg": story})
+          cmd = f"source python/.venv/bin/activate && tea run examples/workflows/bmad-story-development.yaml --input '{input_json}'"
+          result = subprocess.run(cmd, shell=True, capture_output=True, text=True, executable='/bin/bash')
+
+          print(f"[Phase2] Completed: {story} (exit={result.returncode})")
+          if result.returncode != 0:
+              print(f"[Phase2] stderr: {result.stderr[:500] if result.stderr else 'none'}")
+          return {
+              "story": story,
+              "returncode": result.returncode,
+              "success": result.returncode == 0
+          }
+    output: phase2_results
+
+  - name: phase2_complete
+    description: Summarize Phase 2
+    fan_in: true
+    run: |
+      results = state.get("phase2_results", [])
+      print(f"\n=== PHASE 2 COMPLETE: {len(results)} stories ===")
+      for r in results:
+          if hasattr(r, 'state'):
+              s = r.state
+          else:
+              s = r.get("state", {})
+          story = s.get("story", "unknown")
+          success = s.get("success", False)
+          status = "OK" if success else "FAILED"
+          print(f"  - {story}: {status}")
+      return {}
+
+  # ============ SUMMARY ============
+  - name: summary
+    description: Final pipeline summary
+    run: |
+      p1 = state.get("phase1_results", [])
+      p2 = state.get("phase2_results", [])
+
+      def get_success(r):
+          if hasattr(r, 'state'):
+              return r.state.get("success", False)
+          return r.get("state", {}).get("success", False)
+
+      p1_success = sum(1 for r in p1 if get_success(r))
+      p2_success = sum(1 for r in p2 if get_success(r))
+
+      print("\n" + "="*60)
+      print("RUST AGENTIC PIPELINE - DEVELOPMENT COMPLETE")
+      print("="*60)
+      print(f"Phase 1: {p1_success}/{len(p1)} succeeded")
+      print(f"Phase 2: {p2_success}/{len(p2)} succeeded")
+      print(f"Total:   {p1_success + p2_success}/{len(p1) + len(p2)} succeeded")
+      print("="*60)
+
+      return {
+          "pipeline_complete": True,
+          "phase1_success": p1_success,
+          "phase2_success": p2_success,
+          "total": len(p1) + len(p2)
+      }
+
+edges:
+  - from: __start__
+    to: init
+  - from: init
+    to: phase1_start
+  - from: phase1_start
+    to: phase1_run
+  - from: phase1_complete
+    to: phase2_start
+  - from: phase2_start
+    to: phase2_run
+  - from: phase2_complete
+    to: summary
+  - from: summary
+    to: __end__

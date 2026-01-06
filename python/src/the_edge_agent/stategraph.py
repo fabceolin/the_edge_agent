@@ -4,10 +4,17 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional, Union, Generator, Tuple
 import networkx as nx
-from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError as FuturesTimeoutError
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    Future,
+    TimeoutError as FuturesTimeoutError,
+)
 import threading
 import copy
 from queue import Queue, Empty
+
+# TEA-BUILTIN-015.5: Import HTTPResponse for early termination
+from the_edge_agent.actions.http_response_actions import HTTPResponse
 
 from the_edge_agent.checkpoint import CheckpointMixin
 from the_edge_agent.visualization import VisualizationMixin
@@ -31,6 +38,7 @@ from the_edge_agent.parallel import (
 
 START = "__start__"
 END = "__end__"
+
 
 class StateGraph(CheckpointMixin, VisualizationMixin):
     """
@@ -115,9 +123,13 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         self.checkpointer: Optional[Any] = None  # MemoryCheckpointer or compatible
         # Parallel execution reliability (TD.13)
         self.parallel_config: ParallelConfig = parallel_config or ParallelConfig()
-        self.circuit_registry: CircuitBreakerRegistry = CircuitBreakerRegistry(scope="graph")
+        self.circuit_registry: CircuitBreakerRegistry = CircuitBreakerRegistry(
+            scope="graph"
+        )
         self.callback_manager: Optional[CallbackManager] = None
-        self._max_active_threads: Optional[int] = None  # TECH-001: thread pool exhaustion prevention
+        self._max_active_threads: Optional[int] = (
+            None  # TECH-001: thread pool exhaustion prevention
+        )
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -147,9 +159,13 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         """
         if in_node not in self.graph.nodes or out_node not in self.graph.nodes:
             raise ValueError("Both nodes must exist in the graph.")
-        self.graph.add_edge(in_node, out_node, cond=lambda **kwargs: True, cond_map={True: out_node})
+        self.graph.add_edge(
+            in_node, out_node, cond=lambda **kwargs: True, cond_map={True: out_node}
+        )
 
-    def add_conditional_edges(self, in_node: str, func: Callable[..., Any], cond: Dict[Any, str]) -> None:
+    def add_conditional_edges(
+        self, in_node: str, func: Callable[..., Any], cond: Dict[Any, str]
+    ) -> None:
         """
         Add conditional edges from a node based on a function's output.
 
@@ -165,7 +181,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             raise ValueError(f"Node '{in_node}' does not exist in the graph.")
         for cond_value, out_node in cond.items():
             if out_node not in self.graph.nodes:
-                raise ValueError(f"Target node '{out_node}' does not exist in the graph.")
+                raise ValueError(
+                    f"Target node '{out_node}' does not exist in the graph."
+                )
             self.graph.add_edge(in_node, out_node, cond=func, cond_map=cond)
 
     def add_parallel_edge(
@@ -195,7 +213,11 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             ...     config=ParallelConfig(timeout_seconds=60.0)
             ... )
         """
-        if in_node not in self.graph.nodes or out_node not in self.graph.nodes or fan_in_node not in self.graph.nodes:
+        if (
+            in_node not in self.graph.nodes
+            or out_node not in self.graph.nodes
+            or fan_in_node not in self.graph.nodes
+        ):
             raise ValueError("All nodes must exist in the graph.")
         self.graph.add_edge(
             in_node,
@@ -207,7 +229,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             parallel_config=config,  # Store per-edge config
         )
 
-    def add_fanin_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
+    def add_fanin_node(
+        self, node: str, run: Optional[Callable[..., Any]] = None
+    ) -> None:
         """
         Add a fan-in node to the graph.
 
@@ -222,7 +246,12 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             raise ValueError(f"Node '{node}' already exists in the graph.")
         self.graph.add_node(node, run=run, fan_in=True)
 
-    def invoke(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None, checkpoint: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+    def invoke(
+        self,
+        input_state: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        checkpoint: Optional[str] = None,
+    ) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding interrupts and the final state.
 
@@ -270,7 +299,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
         if checkpoint is not None:
             # If input_state is provided with checkpoint, treat it as a state update
-            yield from self.resume_from_checkpoint(checkpoint, config, state_update=input_state)
+            yield from self.resume_from_checkpoint(
+                checkpoint, config, state_update=input_state
+            )
             return
 
         if config is None:
@@ -280,6 +311,24 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         state = input_state.copy()
         config = config.copy()
 
+        # TEA-BUILTIN-015.4: Validate input against schema if attached
+        input_schema = getattr(self, "_input_schema", None)
+        if input_schema is not None:
+            from the_edge_agent.validation import validate_input, ValidationError
+
+            try:
+                validated_state = validate_input(state, input_schema)
+                state = validated_state
+            except ValidationError as e:
+                # Return 422-style validation error event
+                yield {
+                    "type": "validation_error",
+                    "status_code": 422,
+                    "errors": [err.to_dict() for err in e.errors],
+                    "state": input_state.copy(),
+                }
+                return
+
         # Log execution start
         self.logger.debug(f"Starting execution with state keys: {list(state.keys())}")
         if self.log_state_values:
@@ -287,7 +336,7 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
         # Create a ThreadPoolExecutor for parallel flows
         # Allow runtime override via config, fallback to instance default
-        max_workers = config.get('max_workers', self.max_workers)
+        max_workers = config.get("max_workers", self.max_workers)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Mapping from fan-in nodes to list of futures
             fanin_futures: Dict[str, List[Future]] = {}
@@ -297,8 +346,15 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
-                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    checkpoint_path = self._auto_save_checkpoint(
+                        state, current_node, config
+                    )
+                    yield {
+                        "type": "interrupt",
+                        "node": current_node,
+                        "state": state.copy(),
+                        "checkpoint_path": checkpoint_path,
+                    }
                     return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                 # Get node data
@@ -311,23 +367,57 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                     if self.log_state_values:
                         self.logger.debug(f"Node '{current_node}' input state: {state}")
                     try:
-                        result = self._execute_node_function(run_func, state, config, current_node)
+                        result = self._execute_node_function(
+                            run_func, state, config, current_node
+                        )
                         state.update(result)
-                        self.logger.info(f"Node '{current_node}' completed successfully")
+                        self.logger.info(
+                            f"Node '{current_node}' completed successfully"
+                        )
                         if self.log_state_values:
-                            self.logger.debug(f"Node '{current_node}' output state: {state}")
+                            self.logger.debug(
+                                f"Node '{current_node}' output state: {state}"
+                            )
+                    except HTTPResponse as http_response:
+                        # TEA-BUILTIN-015.5: Handle http.respond early termination
+                        self.logger.info(
+                            f"HTTP response from node '{current_node}': status={http_response.status}"
+                        )
+                        yield {
+                            "type": "http_response",
+                            "node": current_node,
+                            "status": http_response.status,
+                            "body": http_response.body,
+                            "headers": http_response.headers,
+                            "state": state.copy(),
+                        }
+                        return
                     except Exception as e:
                         self.logger.error(f"Error in node '{current_node}': {e}")
                         if self.raise_exceptions:
-                            raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                            raise RuntimeError(
+                                f"Error in node '{current_node}': {str(e)}"
+                            ) from e
                         else:
-                            yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": str(e),
+                                "state": state.copy(),
+                            }
                             return
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    checkpoint_path = self._auto_save_checkpoint(
+                        state, current_node, config
+                    )
+                    yield {
+                        "type": "interrupt",
+                        "node": current_node,
+                        "state": state.copy(),
+                        "checkpoint_path": checkpoint_path,
+                    }
                     return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                 # Determine next node
@@ -339,14 +429,19 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 for successor in successors:
                     edge_data = self.edge(current_node, successor)
-                    if edge_data.get('parallel', False):
-                        fan_in_node = edge_data.get('fan_in_node', None)
+                    if edge_data.get("parallel", False):
+                        fan_in_node = edge_data.get("fan_in_node", None)
                         if fan_in_node is None:
                             error_msg = f"Parallel edge from '{current_node}' to '{successor}' must have 'fan_in_node' specified"
                             if self.raise_exceptions:
                                 raise RuntimeError(error_msg)
                             else:
-                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                yield {
+                                    "type": "error",
+                                    "node": current_node,
+                                    "error": error_msg,
+                                    "state": state.copy(),
+                                }
                                 return
                         parallel_edges.append((successor, fan_in_node))
                     else:
@@ -354,14 +449,18 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 # Start parallel flows
                 if parallel_edges:
-                    self.logger.info(f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'")
+                    self.logger.info(
+                        f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'"
+                    )
                 for successor, fan_in_node in parallel_edges:
                     # Get per-edge config (TD.13)
                     edge_data = self.edge(current_node, successor)
                     edge_config = self._get_parallel_config_for_edge(edge_data)
 
                     # Start a new thread for the flow starting from successor
-                    self.logger.debug(f"Launching parallel flow to node '{successor}' (fan-in: '{fan_in_node}')")
+                    self.logger.debug(
+                        f"Launching parallel flow to node '{successor}' (fan-in: '{fan_in_node}')"
+                    )
                     start_time = time.time()
 
                     # Submit with enhanced metadata for timeout/retry/circuit breaker handling
@@ -378,7 +477,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                     with fanin_lock:
                         if fan_in_node not in fanin_futures:
                             fanin_futures[fan_in_node] = []
-                        fanin_futures[fan_in_node].append((future, successor, edge_config, start_time))
+                        fanin_futures[fan_in_node].append(
+                            (future, successor, edge_config, start_time)
+                        )
 
                 # Handle normal successors
                 if normal_successors:
@@ -388,31 +489,53 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         edge_data = self.edge(current_node, successor)
                         cond_func = edge_data.get("cond", lambda **kwargs: True)
                         cond_map = edge_data.get("cond_map", None)
-                        available_params = {"state": state, "config": config, "node": current_node, "graph": self}
-                        cond_params = self._prepare_function_params(cond_func, available_params)
+                        available_params = {
+                            "state": state,
+                            "config": config,
+                            "node": current_node,
+                            "graph": self,
+                        }
+                        cond_params = self._prepare_function_params(
+                            cond_func, available_params
+                        )
                         cond_result = cond_func(**cond_params)
-                        self.logger.debug(f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}")
+                        self.logger.debug(
+                            f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}"
+                        )
 
                         if cond_map:
                             next_node_candidate = cond_map.get(cond_result, None)
                             if next_node_candidate:
                                 next_node = next_node_candidate
-                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                self.logger.debug(
+                                    f"Transitioning from '{current_node}' to '{next_node}'"
+                                )
                                 break
                         else:
                             if cond_result:
                                 next_node = successor
-                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                self.logger.debug(
+                                    f"Transitioning from '{current_node}' to '{next_node}'"
+                                )
                                 break
                     if next_node:
                         current_node = next_node
                     else:
-                        self.logger.warning(f"No valid next node found from node '{current_node}'")
-                        error_msg = f"No valid next node found from node '{current_node}'"
+                        self.logger.warning(
+                            f"No valid next node found from node '{current_node}'"
+                        )
+                        error_msg = (
+                            f"No valid next node found from node '{current_node}'"
+                        )
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
                         else:
-                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": error_msg,
+                                "state": state.copy(),
+                            }
                             return
                 else:
                     # No normal successors
@@ -429,7 +552,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                     if futures is not None:
                         # Wait for futures outside lock to avoid blocking other threads
-                        self.logger.info(f"Joining {len(futures)} parallel flow(s) at fan-in node '{current_node}'")
+                        self.logger.info(
+                            f"Joining {len(futures)} parallel flow(s) at fan-in node '{current_node}'"
+                        )
                         results: List[ParallelFlowResult] = []
                         has_failure = False
                         fail_fast_triggered = False
@@ -446,7 +571,10 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                 # Check if result is an error dict from _execute_flow_with_reliability
                                 if isinstance(raw_result, ParallelFlowResult):
                                     result = raw_result
-                                elif isinstance(raw_result, dict) and raw_result.get("type") == "error":
+                                elif (
+                                    isinstance(raw_result, dict)
+                                    and raw_result.get("type") == "error"
+                                ):
                                     # Convert legacy error dict to ParallelFlowResult
                                     result = ParallelFlowResult(
                                         branch=branch,
@@ -469,13 +597,17 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                 # Fail-fast check
                                 if not result.success and fail_fast:
                                     fail_fast_triggered = True
-                                    self.logger.warning(f"Fail-fast triggered by branch '{branch}'")
+                                    self.logger.warning(
+                                        f"Fail-fast triggered by branch '{branch}'"
+                                    )
                                     break
 
                             except FuturesTimeoutError:
                                 # Timeout handling
                                 elapsed_ms = (time.time() - start_time) * 1000
-                                self.logger.warning(f"Parallel flow '{branch}' timed out after {timeout}s")
+                                self.logger.warning(
+                                    f"Parallel flow '{branch}' timed out after {timeout}s"
+                                )
                                 future.cancel()  # Best effort cancellation
                                 result = ParallelFlowResult.from_timeout(
                                     branch=branch,
@@ -495,17 +627,23 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                         start_time=start_time,
                                         config=edge_config,
                                     )
-                                    self.callback_manager.fire_flow_timeout(context, timeout)
+                                    self.callback_manager.fire_flow_timeout(
+                                        context, timeout
+                                    )
 
                                 if fail_fast:
                                     fail_fast_triggered = True
-                                    self.logger.warning(f"Fail-fast triggered by timeout on branch '{branch}'")
+                                    self.logger.warning(
+                                        f"Fail-fast triggered by timeout on branch '{branch}'"
+                                    )
                                     break
 
                             except Exception as e:
                                 # Unexpected error during result collection
                                 elapsed_ms = (time.time() - start_time) * 1000
-                                self.logger.error(f"Error collecting result from branch '{branch}': {e}")
+                                self.logger.error(
+                                    f"Error collecting result from branch '{branch}': {e}"
+                                )
                                 result = ParallelFlowResult.from_error(
                                     branch=branch,
                                     exception=e,
@@ -520,12 +658,18 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                     fail_fast_triggered = True
                                     break
 
-                        self.logger.debug(f"All parallel flows joined at '{current_node}'")
+                        self.logger.debug(
+                            f"All parallel flows joined at '{current_node}'"
+                        )
 
                         # Check if we should abort due to failures (when fail_fast is True)
                         if fail_fast_triggered and self.raise_exceptions:
-                            failed_branches = [r.branch for r in results if not r.success]
-                            raise RuntimeError(f"Parallel execution aborted due to failures in: {failed_branches}")
+                            failed_branches = [
+                                r.branch for r in results if not r.success
+                            ]
+                            raise RuntimeError(
+                                f"Parallel execution aborted due to failures in: {failed_branches}"
+                            )
 
                         # Check for errors in parallel flows
                         # When raise_exceptions=True, propagate the first error
@@ -543,24 +687,38 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                             "type": "error",
                                             "node": result.branch,
                                             "error": result.error,
-                                            "state": result.state or state.copy()
+                                            "state": result.state or state.copy(),
                                         }
                                         return
-                            elif isinstance(result, dict) and result.get("type") == "error":
+                            elif (
+                                isinstance(result, dict)
+                                and result.get("type") == "error"
+                            ):
                                 # Legacy error dict path
-                                self.logger.error(f"Error from parallel flow: {result.get('error')}")
+                                self.logger.error(
+                                    f"Error from parallel flow: {result.get('error')}"
+                                )
                                 if self.raise_exceptions:
-                                    raise RuntimeError(f"Error in node '{result.get('node')}': {result.get('error')}")
+                                    raise RuntimeError(
+                                        f"Error in node '{result.get('node')}': {result.get('error')}"
+                                    )
                                 yield result
                                 return
 
                         # Collect the results in the state
-                        state['parallel_results'] = results
+                        state["parallel_results"] = results
 
                         # Check for interrupt before fan-in execution
                         if current_node in self.interrupt_before:
-                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            checkpoint_path = self._auto_save_checkpoint(
+                                state, current_node, config
+                            )
+                            yield {
+                                "type": "interrupt",
+                                "node": current_node,
+                                "state": state.copy(),
+                                "checkpoint_path": checkpoint_path,
+                            }
                             return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                         # Execute the fan-in node's run function
@@ -569,48 +727,106 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         if run_func:
                             self.logger.debug(f"Entering fan-in node: {current_node}")
                             try:
-                                result = self._execute_node_function(run_func, state, config, current_node)
+                                result = self._execute_node_function(
+                                    run_func, state, config, current_node
+                                )
                                 state.update(result)
-                                self.logger.info(f"Fan-in node '{current_node}' completed successfully")
+                                self.logger.info(
+                                    f"Fan-in node '{current_node}' completed successfully"
+                                )
                             except Exception as e:
-                                self.logger.error(f"Error in fan-in node '{current_node}': {e}")
+                                self.logger.error(
+                                    f"Error in fan-in node '{current_node}': {e}"
+                                )
                                 if self.raise_exceptions:
-                                    raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                                    raise RuntimeError(
+                                        f"Error in node '{current_node}': {str(e)}"
+                                    ) from e
                                 else:
-                                    yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                                    yield {
+                                        "type": "error",
+                                        "node": current_node,
+                                        "error": str(e),
+                                        "state": state.copy(),
+                                    }
                                     return
 
                         # Check for interrupt after fan-in execution
                         if current_node in self.interrupt_after:
-                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            checkpoint_path = self._auto_save_checkpoint(
+                                state, current_node, config
+                            )
+                            yield {
+                                "type": "interrupt",
+                                "node": current_node,
+                                "state": state.copy(),
+                                "checkpoint_path": checkpoint_path,
+                            }
                             return  # STOP execution - must resume via invoke(None, checkpoint=...)
 
                         # Continue to next node
                         next_node = self._get_next_node(current_node, state, config)
                         if not next_node:
-                            self.logger.warning(f"No valid next node found from fan-in node '{current_node}'")
-                            error_msg = f"No valid next node found from node '{current_node}'"
+                            self.logger.warning(
+                                f"No valid next node found from fan-in node '{current_node}'"
+                            )
+                            error_msg = (
+                                f"No valid next node found from node '{current_node}'"
+                            )
                             if self.raise_exceptions:
                                 raise RuntimeError(error_msg)
                             else:
-                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                yield {
+                                    "type": "error",
+                                    "node": current_node,
+                                    "error": error_msg,
+                                    "state": state.copy(),
+                                }
                                 return
                         current_node = next_node
                     else:
-                        error_msg = f"No valid next node found from node '{current_node}'"
+                        error_msg = (
+                            f"No valid next node found from node '{current_node}'"
+                        )
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
                         else:
-                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": error_msg,
+                                "state": state.copy(),
+                            }
                             return
         # Once END is reached, yield final state
         self.logger.info("Execution completed successfully")
         self.logger.debug(f"Final state keys: {list(state.keys())}")
         if self.log_state_values:
             self.logger.debug(f"Final state: {state}")
-        yield {"type": "final", "state": state.copy()}
 
+        # TEA-BUILTIN-015.5: Auto-apply output transformation if output_schema attached
+        final_state = state.copy()
+        output = None
+        if hasattr(self, "_output_schema") and self._output_schema is not None:
+            try:
+                from the_edge_agent.transformation import transform_output
+
+                engine = getattr(self, "_yaml_engine", None)
+                if engine is not None:
+                    output = transform_output(
+                        final_state,
+                        self._output_schema,
+                        engine._jinja_env,
+                    )
+                    self.logger.debug(
+                        f"Applied output_schema transformation: {list(output.keys())}"
+                    )
+            except Exception as e:
+                self.logger.warning(f"Error applying output transformation: {e}")
+                # Don't fail the whole execution, just skip transformation
+                output = None
+
+        yield {"type": "final", "state": final_state, "output": output}
 
     def _execute_flow(self, current_node, state, config, fan_in_node):
         """
@@ -641,7 +857,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             When raise_exceptions=True:
                 - Raises RuntimeError with message: "Error in node '<node>': <msg>"
         """
-        self.logger.info(f"Parallel flow started at node '{current_node}' (target fan-in: '{fan_in_node}')")
+        self.logger.info(
+            f"Parallel flow started at node '{current_node}' (target fan-in: '{fan_in_node}')"
+        )
         while current_node != END:
             # Check if current node is the fan-in node
             if current_node == fan_in_node:
@@ -657,33 +875,55 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             if run_func:
                 self.logger.debug(f"[Parallel] Entering node: {current_node}")
                 if self.log_state_values:
-                    self.logger.debug(f"[Parallel] Node '{current_node}' input state: {state}")
+                    self.logger.debug(
+                        f"[Parallel] Node '{current_node}' input state: {state}"
+                    )
                 try:
-                    result = self._execute_node_function(run_func, state, config, current_node)
+                    result = self._execute_node_function(
+                        run_func, state, config, current_node
+                    )
                     state.update(result)
                     self.logger.debug(f"[Parallel] Node '{current_node}' completed")
                     if self.log_state_values:
-                        self.logger.debug(f"[Parallel] Node '{current_node}' output state: {state}")
+                        self.logger.debug(
+                            f"[Parallel] Node '{current_node}' output state: {state}"
+                        )
                 except Exception as e:
                     self.logger.error(f"[Parallel] Error in node '{current_node}': {e}")
                     if self.raise_exceptions:
-                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                        raise RuntimeError(
+                            f"Error in node '{current_node}': {str(e)}"
+                        ) from e
                     else:
                         # Return consistent error dict structure
-                        return {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                        return {
+                            "type": "error",
+                            "node": current_node,
+                            "error": str(e),
+                            "state": state.copy(),
+                        }
 
             # Determine next node using _get_next_node
             try:
                 next_node = self._get_next_node(current_node, state, config)
             except Exception as e:
-                self.logger.error(f"[Parallel] Error getting next node from '{current_node}': {e}")
+                self.logger.error(
+                    f"[Parallel] Error getting next node from '{current_node}': {e}"
+                )
                 if self.raise_exceptions:
                     raise
                 else:
-                    return {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                    return {
+                        "type": "error",
+                        "node": current_node,
+                        "error": str(e),
+                        "state": state.copy(),
+                    }
 
             if next_node:
-                self.logger.debug(f"[Parallel] Transitioning from '{current_node}' to '{next_node}'")
+                self.logger.debug(
+                    f"[Parallel] Transitioning from '{current_node}' to '{next_node}'"
+                )
                 current_node = next_node
             else:
                 error_msg = f"No valid next node found from node '{current_node}' in parallel flow"
@@ -691,7 +931,12 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                 if self.raise_exceptions:
                     raise RuntimeError(error_msg)
                 else:
-                    return {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                    return {
+                        "type": "error",
+                        "node": current_node,
+                        "error": error_msg,
+                        "state": state.copy(),
+                    }
 
         # Reached END
         self.logger.debug(f"[Parallel] Flow reached END")
@@ -763,7 +1008,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         while attempt <= max_retries:
             try:
                 # Execute the flow
-                result = self._execute_flow(start_node, state.copy(), config, fan_in_node)
+                result = self._execute_flow(
+                    start_node, state.copy(), config, fan_in_node
+                )
                 elapsed_ms = (time.time() - start_time) * 1000
 
                 # Check if result is an error dict
@@ -779,16 +1026,20 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                     # Store error for retry
                     if len(attempt_errors) < max_stored_errors:
-                        attempt_errors.append({
-                            "attempt": attempt,
-                            "error": error_msg,
-                            "error_type": "ExecutionError",
-                        })
+                        attempt_errors.append(
+                            {
+                                "attempt": attempt,
+                                "error": error_msg,
+                                "error_type": "ExecutionError",
+                            }
+                        )
 
                     # Check if we should retry
                     if retry_policy and retry_policy.should_retry(exc, attempt):
                         delay = retry_policy.get_delay(attempt)
-                        self.logger.info(f"Retrying branch '{branch}' after {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                        self.logger.info(
+                            f"Retrying branch '{branch}' after {delay}s (attempt {attempt + 1}/{max_retries + 1})"
+                        )
 
                         # Fire retry callback
                         if self.callback_manager:
@@ -799,7 +1050,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                 start_time=start_time,
                                 config=parallel_config,
                             )
-                            self.callback_manager.fire_flow_retry(context, attempt + 1, delay, exc)
+                            self.callback_manager.fire_flow_retry(
+                                context, attempt + 1, delay, exc
+                            )
 
                         time.sleep(delay)
                         attempt += 1
@@ -850,7 +1103,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                     context = ParallelFlowContext(
                         branch=branch,
                         fan_in_node=fan_in_node,
-                        state_snapshot=result.copy() if isinstance(result, dict) else {},
+                        state_snapshot=(
+                            result.copy() if isinstance(result, dict) else {}
+                        ),
                         start_time=start_time,
                         config=parallel_config,
                     )
@@ -860,7 +1115,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
             except Exception as e:
                 elapsed_ms = (time.time() - start_time) * 1000
-                self.logger.error(f"Exception in branch '{branch}' (attempt {attempt + 1}): {e}")
+                self.logger.error(
+                    f"Exception in branch '{branch}' (attempt {attempt + 1}): {e}"
+                )
 
                 # Record failure for circuit breaker
                 if circuit:
@@ -869,11 +1126,13 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 # Store error
                 if len(attempt_errors) < max_stored_errors:
-                    attempt_errors.append({
-                        "attempt": attempt,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    })
+                    attempt_errors.append(
+                        {
+                            "attempt": attempt,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        }
+                    )
 
                 # Fire error callback
                 if self.callback_manager:
@@ -889,7 +1148,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                 # Check if we should retry
                 if retry_policy and retry_policy.should_retry(e, attempt):
                     delay = retry_policy.get_delay(attempt)
-                    self.logger.info(f"Retrying branch '{branch}' after {delay}s (attempt {attempt + 1}/{max_retries + 1})")
+                    self.logger.info(
+                        f"Retrying branch '{branch}' after {delay}s (attempt {attempt + 1}/{max_retries + 1})"
+                    )
 
                     # Fire retry callback
                     if self.callback_manager:
@@ -900,7 +1161,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                             start_time=start_time,
                             config=parallel_config,
                         )
-                        self.callback_manager.fire_flow_retry(context, attempt + 1, delay, e)
+                        self.callback_manager.fire_flow_retry(
+                            context, attempt + 1, delay, e
+                        )
 
                     time.sleep(delay)
                     attempt += 1
@@ -942,7 +1205,11 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             success=False,
             state=state.copy(),
             error=str(last_exception) if last_exception else error_msg,
-            error_type=type(last_exception).__name__ if last_exception else "RetryExhaustedError",
+            error_type=(
+                type(last_exception).__name__
+                if last_exception
+                else "RetryExhaustedError"
+            ),
             timing_ms=elapsed_ms,
             retry_count=attempt,
             attempt_errors=attempt_errors,
@@ -962,7 +1229,14 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
         return flow_result
 
-    def _stream_parallel_flow(self, start_node: str, state: Dict[str, Any], config: Dict[str, Any], fan_in_node: str, result_queue: Queue) -> None:
+    def _stream_parallel_flow(
+        self,
+        start_node: str,
+        state: Dict[str, Any],
+        config: Dict[str, Any],
+        fan_in_node: str,
+        result_queue: Queue,
+    ) -> None:
         """
         Execute a parallel flow and put yields into a queue for streaming.
 
@@ -984,17 +1258,23 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         current_node = start_node
         flow_state = state  # Already deep copied by caller
 
-        self.logger.info(f"[Parallel Stream] Flow started at node '{start_node}' (target fan-in: '{fan_in_node}')")
+        self.logger.info(
+            f"[Parallel Stream] Flow started at node '{start_node}' (target fan-in: '{fan_in_node}')"
+        )
 
         while current_node != END:
             # Check if current node is the fan-in node
             if current_node == fan_in_node:
-                self.logger.info(f"[Parallel Stream] Flow '{start_node}' reached fan-in node '{fan_in_node}'")
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": start_node,
-                    "state": flow_state.copy()
-                })
+                self.logger.info(
+                    f"[Parallel Stream] Flow '{start_node}' reached fan-in node '{fan_in_node}'"
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": start_node,
+                        "state": flow_state.copy(),
+                    }
+                )
                 return
 
             # Get node data
@@ -1005,86 +1285,116 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             if run_func:
                 self.logger.debug(f"[Parallel Stream] Entering node: {current_node}")
                 if self.log_state_values:
-                    self.logger.debug(f"[Parallel Stream] Node '{current_node}' input state: {flow_state}")
+                    self.logger.debug(
+                        f"[Parallel Stream] Node '{current_node}' input state: {flow_state}"
+                    )
                 try:
-                    result = self._execute_node_function(run_func, flow_state, config, current_node)
+                    result = self._execute_node_function(
+                        run_func, flow_state, config, current_node
+                    )
                     flow_state.update(result)
-                    self.logger.debug(f"[Parallel Stream] Node '{current_node}' completed")
+                    self.logger.debug(
+                        f"[Parallel Stream] Node '{current_node}' completed"
+                    )
                     if self.log_state_values:
-                        self.logger.debug(f"[Parallel Stream] Node '{current_node}' output state: {flow_state}")
+                        self.logger.debug(
+                            f"[Parallel Stream] Node '{current_node}' output state: {flow_state}"
+                        )
                     # Put state event into queue
-                    result_queue.put({
-                        "type": "parallel_state",
-                        "branch": start_node,
-                        "node": current_node,
-                        "state": flow_state.copy()
-                    })
+                    result_queue.put(
+                        {
+                            "type": "parallel_state",
+                            "branch": start_node,
+                            "node": current_node,
+                            "state": flow_state.copy(),
+                        }
+                    )
                 except Exception as e:
-                    self.logger.error(f"[Parallel Stream] Error in node '{current_node}': {e}")
-                    result_queue.put({
-                        "type": "parallel_error",
-                        "branch": start_node,
-                        "node": current_node,
-                        "error": str(e),
-                        "state": flow_state.copy()
-                    })
+                    self.logger.error(
+                        f"[Parallel Stream] Error in node '{current_node}': {e}"
+                    )
+                    result_queue.put(
+                        {
+                            "type": "parallel_error",
+                            "branch": start_node,
+                            "node": current_node,
+                            "error": str(e),
+                            "state": flow_state.copy(),
+                        }
+                    )
                     # Signal branch completion with error state
-                    result_queue.put({
-                        "type": "branch_complete",
-                        "branch": start_node,
-                        "state": flow_state.copy(),
-                        "error": True
-                    })
+                    result_queue.put(
+                        {
+                            "type": "branch_complete",
+                            "branch": start_node,
+                            "state": flow_state.copy(),
+                            "error": True,
+                        }
+                    )
                     return
 
             # Determine next node
             try:
                 next_node = self._get_next_node(current_node, flow_state, config)
             except Exception as e:
-                self.logger.error(f"[Parallel Stream] Error getting next node from '{current_node}': {e}")
-                result_queue.put({
-                    "type": "parallel_error",
-                    "branch": start_node,
-                    "node": current_node,
-                    "error": str(e),
-                    "state": flow_state.copy()
-                })
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": start_node,
-                    "state": flow_state.copy(),
-                    "error": True
-                })
+                self.logger.error(
+                    f"[Parallel Stream] Error getting next node from '{current_node}': {e}"
+                )
+                result_queue.put(
+                    {
+                        "type": "parallel_error",
+                        "branch": start_node,
+                        "node": current_node,
+                        "error": str(e),
+                        "state": flow_state.copy(),
+                    }
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": start_node,
+                        "state": flow_state.copy(),
+                        "error": True,
+                    }
+                )
                 return
 
             if next_node:
-                self.logger.debug(f"[Parallel Stream] Transitioning from '{current_node}' to '{next_node}'")
+                self.logger.debug(
+                    f"[Parallel Stream] Transitioning from '{current_node}' to '{next_node}'"
+                )
                 current_node = next_node
             else:
                 error_msg = f"No valid next node found from node '{current_node}' in parallel flow"
                 self.logger.warning(f"[Parallel Stream] {error_msg}")
-                result_queue.put({
-                    "type": "parallel_error",
-                    "branch": start_node,
-                    "node": current_node,
-                    "error": error_msg,
-                    "state": flow_state.copy()
-                })
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": start_node,
-                    "state": flow_state.copy(),
-                    "error": True
-                })
+                result_queue.put(
+                    {
+                        "type": "parallel_error",
+                        "branch": start_node,
+                        "node": current_node,
+                        "error": error_msg,
+                        "state": flow_state.copy(),
+                    }
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": start_node,
+                        "state": flow_state.copy(),
+                        "error": True,
+                    }
+                )
                 return
 
         # Reached END (should not normally happen for parallel flows)
         self.logger.debug(f"[Parallel Stream] Flow '{start_node}' reached END")
-        result_queue.put({
-            "type": "branch_complete",
-            "branch": start_node,
-            "state": flow_state.copy()
-        })
+        result_queue.put(
+            {
+                "type": "branch_complete",
+                "branch": start_node,
+                "state": flow_state.copy(),
+            }
+        )
 
     def _stream_parallel_flow_with_reliability(
         self,
@@ -1123,22 +1433,28 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             circuit_state_str = circuit.state.value
 
             if not circuit.allow_request():
-                self.logger.warning(f"[Parallel Stream] Circuit breaker open for branch '{branch}'")
-                result_queue.put({
-                    "type": "parallel_error",
-                    "branch": branch,
-                    "node": branch,
-                    "error": f"Circuit breaker '{branch}' is open",
-                    "state": state.copy(),
-                    "circuit_state": CircuitState.OPEN.value,
-                })
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": branch,
-                    "state": state.copy(),
-                    "error": True,
-                    "circuit_state": CircuitState.OPEN.value,
-                })
+                self.logger.warning(
+                    f"[Parallel Stream] Circuit breaker open for branch '{branch}'"
+                )
+                result_queue.put(
+                    {
+                        "type": "parallel_error",
+                        "branch": branch,
+                        "node": branch,
+                        "error": f"Circuit breaker '{branch}' is open",
+                        "state": state.copy(),
+                        "circuit_state": CircuitState.OPEN.value,
+                    }
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": branch,
+                        "state": state.copy(),
+                        "error": True,
+                        "circuit_state": CircuitState.OPEN.value,
+                    }
+                )
                 return
 
         # Fire on_flow_start callback
@@ -1177,21 +1493,31 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                             run_func = node_data.get("run")
 
                             if run_func:
-                                self.logger.debug(f"[Parallel Stream Retry] Entering node: {current_node}")
-                                result = self._execute_node_function(run_func, flow_state[0], config, current_node)
+                                self.logger.debug(
+                                    f"[Parallel Stream Retry] Entering node: {current_node}"
+                                )
+                                result = self._execute_node_function(
+                                    run_func, flow_state[0], config, current_node
+                                )
                                 flow_state[0].update(result)
-                                result_queue.put({
-                                    "type": "parallel_state",
-                                    "branch": start_node,
-                                    "node": current_node,
-                                    "state": flow_state[0].copy()
-                                })
+                                result_queue.put(
+                                    {
+                                        "type": "parallel_state",
+                                        "branch": start_node,
+                                        "node": current_node,
+                                        "state": flow_state[0].copy(),
+                                    }
+                                )
 
-                            next_node = self._get_next_node(current_node, flow_state[0], config)
+                            next_node = self._get_next_node(
+                                current_node, flow_state[0], config
+                            )
                             if next_node:
                                 current_node = next_node
                             else:
-                                flow_error[0] = f"No valid next node from '{current_node}'"
+                                flow_error[0] = (
+                                    f"No valid next node from '{current_node}'"
+                                )
                                 return False
                         return True
                     except Exception as e:
@@ -1207,14 +1533,16 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         circuit.record_success()
                         circuit_state_str = circuit.state.value
 
-                    result_queue.put({
-                        "type": "branch_complete",
-                        "branch": branch,
-                        "state": flow_state[0].copy(),
-                        "timing_ms": elapsed_ms,
-                        "retry_count": attempt,
-                        "circuit_state": circuit_state_str,
-                    })
+                    result_queue.put(
+                        {
+                            "type": "branch_complete",
+                            "branch": branch,
+                            "state": flow_state[0].copy(),
+                            "timing_ms": elapsed_ms,
+                            "retry_count": attempt,
+                            "circuit_state": circuit_state_str,
+                        }
+                    )
 
                     # Fire completion callback
                     if self.callback_manager:
@@ -1244,16 +1572,20 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                     circuit_state_str = circuit.state.value
 
                 if len(attempt_errors) < max_stored_errors:
-                    attempt_errors.append({
-                        "attempt": attempt,
-                        "error": error_msg,
-                        "error_type": "ExecutionError",
-                    })
+                    attempt_errors.append(
+                        {
+                            "attempt": attempt,
+                            "error": error_msg,
+                            "error_type": "ExecutionError",
+                        }
+                    )
 
                 # Check if we should retry
                 if retry_policy and retry_policy.should_retry(exc, attempt):
                     delay = retry_policy.get_delay(attempt)
-                    self.logger.info(f"[Parallel Stream] Retrying branch '{branch}' after {delay}s (attempt {attempt + 1})")
+                    self.logger.info(
+                        f"[Parallel Stream] Retrying branch '{branch}' after {delay}s (attempt {attempt + 1})"
+                    )
 
                     if self.callback_manager:
                         context = ParallelFlowContext(
@@ -1263,30 +1595,36 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                             start_time=start_time,
                             config=parallel_config,
                         )
-                        self.callback_manager.fire_flow_retry(context, attempt + 1, delay, exc)
+                        self.callback_manager.fire_flow_retry(
+                            context, attempt + 1, delay, exc
+                        )
 
                     time.sleep(delay)
                     attempt += 1
                     continue
 
                 # No more retries
-                result_queue.put({
-                    "type": "parallel_error",
-                    "branch": branch,
-                    "node": branch,
-                    "error": error_msg,
-                    "state": flow_state[0].copy(),
-                })
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": branch,
-                    "state": flow_state[0].copy(),
-                    "error": True,
-                    "timing_ms": elapsed_ms,
-                    "retry_count": attempt,
-                    "attempt_errors": attempt_errors,
-                    "circuit_state": circuit_state_str,
-                })
+                result_queue.put(
+                    {
+                        "type": "parallel_error",
+                        "branch": branch,
+                        "node": branch,
+                        "error": error_msg,
+                        "state": flow_state[0].copy(),
+                    }
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": branch,
+                        "state": flow_state[0].copy(),
+                        "error": True,
+                        "timing_ms": elapsed_ms,
+                        "retry_count": attempt,
+                        "attempt_errors": attempt_errors,
+                        "circuit_state": circuit_state_str,
+                    }
+                )
 
                 if self.callback_manager:
                     flow_result = ParallelFlowResult(
@@ -1312,18 +1650,22 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
             except Exception as e:
                 elapsed_ms = (time.time() - start_time) * 1000
-                self.logger.error(f"[Parallel Stream] Exception in branch '{branch}' (attempt {attempt + 1}): {e}")
+                self.logger.error(
+                    f"[Parallel Stream] Exception in branch '{branch}' (attempt {attempt + 1}): {e}"
+                )
 
                 if circuit:
                     circuit.record_failure()
                     circuit_state_str = circuit.state.value
 
                 if len(attempt_errors) < max_stored_errors:
-                    attempt_errors.append({
-                        "attempt": attempt,
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    })
+                    attempt_errors.append(
+                        {
+                            "attempt": attempt,
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                        }
+                    )
 
                 if self.callback_manager:
                     context = ParallelFlowContext(
@@ -1337,7 +1679,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 if retry_policy and retry_policy.should_retry(e, attempt):
                     delay = retry_policy.get_delay(attempt)
-                    self.logger.info(f"[Parallel Stream] Retrying branch '{branch}' after {delay}s")
+                    self.logger.info(
+                        f"[Parallel Stream] Retrying branch '{branch}' after {delay}s"
+                    )
 
                     if self.callback_manager:
                         context = ParallelFlowContext(
@@ -1347,29 +1691,35 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                             start_time=start_time,
                             config=parallel_config,
                         )
-                        self.callback_manager.fire_flow_retry(context, attempt + 1, delay, e)
+                        self.callback_manager.fire_flow_retry(
+                            context, attempt + 1, delay, e
+                        )
 
                     time.sleep(delay)
                     attempt += 1
                     continue
 
-                result_queue.put({
-                    "type": "parallel_error",
-                    "branch": branch,
-                    "node": branch,
-                    "error": str(e),
-                    "state": state.copy(),
-                })
-                result_queue.put({
-                    "type": "branch_complete",
-                    "branch": branch,
-                    "state": state.copy(),
-                    "error": True,
-                    "timing_ms": elapsed_ms,
-                    "retry_count": attempt,
-                    "attempt_errors": attempt_errors,
-                    "circuit_state": circuit_state_str,
-                })
+                result_queue.put(
+                    {
+                        "type": "parallel_error",
+                        "branch": branch,
+                        "node": branch,
+                        "error": str(e),
+                        "state": state.copy(),
+                    }
+                )
+                result_queue.put(
+                    {
+                        "type": "branch_complete",
+                        "branch": branch,
+                        "state": state.copy(),
+                        "error": True,
+                        "timing_ms": elapsed_ms,
+                        "retry_count": attempt,
+                        "attempt_errors": attempt_errors,
+                        "circuit_state": circuit_state_str,
+                    }
+                )
 
                 if self.callback_manager:
                     flow_result = ParallelFlowResult.from_error(
@@ -1397,23 +1747,27 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         error_msg = f"All {max_retries + 1} attempts exhausted for branch '{branch}'"
         self.logger.error(f"[Parallel Stream] {error_msg}")
 
-        result_queue.put({
-            "type": "parallel_error",
-            "branch": branch,
-            "node": branch,
-            "error": error_msg,
-            "state": state.copy(),
-        })
-        result_queue.put({
-            "type": "branch_complete",
-            "branch": branch,
-            "state": state.copy(),
-            "error": True,
-            "timing_ms": elapsed_ms,
-            "retry_count": attempt,
-            "attempt_errors": attempt_errors,
-            "circuit_state": circuit_state_str,
-        })
+        result_queue.put(
+            {
+                "type": "parallel_error",
+                "branch": branch,
+                "node": branch,
+                "error": error_msg,
+                "state": state.copy(),
+            }
+        )
+        result_queue.put(
+            {
+                "type": "branch_complete",
+                "branch": branch,
+                "state": state.copy(),
+                "error": True,
+                "timing_ms": elapsed_ms,
+                "retry_count": attempt,
+                "attempt_errors": attempt_errors,
+                "circuit_state": circuit_state_str,
+            }
+        )
 
         if self.callback_manager:
             flow_result = ParallelFlowResult(
@@ -1436,7 +1790,13 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             )
             self.callback_manager.fire_flow_complete(context, flow_result)
 
-    def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
+    def _execute_node_function(
+        self,
+        func: Callable[..., Any],
+        state: Dict[str, Any],
+        config: Dict[str, Any],
+        node: str,
+    ) -> Dict[str, Any]:
         """
         Execute the function associated with a node.
 
@@ -1452,9 +1812,14 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         Raises:
             Exception: If an exception occurs during function execution.
         """
-        available_params = {"state": state, "config": config, "node": node, "graph": self}
-        if 'parallel_results' in state:
-            available_params['parallel_results'] = state['parallel_results']
+        available_params = {
+            "state": state,
+            "config": config,
+            "node": node,
+            "graph": self,
+        }
+        if "parallel_results" in state:
+            available_params["parallel_results"] = state["parallel_results"]
         function_params = self._prepare_function_params(func, available_params)
         result = func(**function_params)
         if isinstance(result, dict):
@@ -1462,7 +1827,6 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         else:
             # If result is not a dict, wrap it in a dict
             return {"result": result}
-
 
     def set_entry_point(self, init_state: str) -> None:
         """
@@ -1476,7 +1840,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         """
         if init_state not in self.graph.nodes:
             raise ValueError(f"Node '{init_state}' does not exist in the graph.")
-        self.graph.add_edge(START, init_state, cond=lambda **kwargs: True, cond_map={True: init_state})
+        self.graph.add_edge(
+            START, init_state, cond=lambda **kwargs: True, cond_map={True: init_state}
+        )
 
     def set_finish_point(self, final_state: str) -> None:
         """
@@ -1490,7 +1856,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         """
         if final_state not in self.graph.nodes:
             raise ValueError(f"Node '{final_state}' does not exist in the graph.")
-        self.graph.add_edge(final_state, END, cond=lambda **kwargs: True, cond_map={True: END})
+        self.graph.add_edge(
+            final_state, END, cond=lambda **kwargs: True, cond_map={True: END}
+        )
 
     def compile(
         self,
@@ -1502,7 +1870,7 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         parallel_callbacks: Optional[List[ParallelFlowCallback]] = None,
         max_active_threads: Optional[int] = None,
         circuit_breaker_scope: str = "graph",
-    ) -> 'StateGraph':
+    ) -> "StateGraph":
         """
         Compile the graph and set interruption points.
 
@@ -1549,7 +1917,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         """
         for node in interrupt_before + interrupt_after:
             if node not in self.graph.nodes:
-                raise ValueError(f"Interrupt node '{node}' does not exist in the graph.")
+                raise ValueError(
+                    f"Interrupt node '{node}' does not exist in the graph."
+                )
 
         # Validate: interrupts require a checkpointer
         has_interrupts = bool(interrupt_before or interrupt_after)
@@ -1611,7 +1981,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             KeyError: If the edge is not found in the graph.
         """
         if not self.graph.has_edge(in_node, out_node):
-            raise KeyError(f"Edge from '{in_node}' to '{out_node}' not found in the graph")
+            raise KeyError(
+                f"Edge from '{in_node}' to '{out_node}' not found in the graph"
+            )
         return self.graph.edges[in_node, out_node]
 
     def successors(self, node: str) -> List[str]:
@@ -1631,7 +2003,12 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             raise KeyError(f"Node '{node}' not found in the graph")
         return list(self.graph.successors(node))
 
-    def stream(self, input_state: Optional[Dict[str, Any]] = None, config: Optional[Dict[str, Any]] = None, checkpoint: Optional[str] = None) -> Generator[Dict[str, Any], None, None]:
+    def stream(
+        self,
+        input_state: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        checkpoint: Optional[str] = None,
+    ) -> Generator[Dict[str, Any], None, None]:
         """
         Execute the graph, yielding results at each node execution, including interrupts.
 
@@ -1691,7 +2068,9 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         # Legacy support: checkpoint provided with input_state (checkpoint takes precedence)
         if checkpoint is not None:
             # If input_state is provided with checkpoint, treat it as a state update
-            yield from self._stream_from_checkpoint(checkpoint, config, state_update=input_state)
+            yield from self._stream_from_checkpoint(
+                checkpoint, config, state_update=input_state
+            )
             return
 
         if config is None:
@@ -1701,13 +2080,18 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         state = input_state.copy()
         config = config.copy()
 
+        # TEA-BUILTIN-015.1: State injection - load session data if session_id is present
+        state = self._maybe_inject_session_state(state)
+
         # Log execution start
-        self.logger.debug(f"Starting stream execution with state keys: {list(state.keys())}")
+        self.logger.debug(
+            f"Starting stream execution with state keys: {list(state.keys())}"
+        )
         if self.log_state_values:
             self.logger.debug(f"Initial state: {state}")
 
         # Create ThreadPoolExecutor for parallel flows
-        max_workers = config.get('max_workers', self.max_workers)
+        max_workers = config.get("max_workers", self.max_workers)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Queue for collecting events from parallel flows
             result_queue: Queue = Queue()
@@ -1721,8 +2105,15 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
-                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_before", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    checkpoint_path = self._auto_save_checkpoint(
+                        state, current_node, config
+                    )
+                    yield {
+                        "type": "interrupt_before",
+                        "node": current_node,
+                        "state": state.copy(),
+                        "checkpoint_path": checkpoint_path,
+                    }
                     return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                 # Get node data
@@ -1735,25 +2126,49 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                     if self.log_state_values:
                         self.logger.debug(f"Node '{current_node}' input state: {state}")
                     try:
-                        result = self._execute_node_function(run_func, state, config, current_node)
+                        result = self._execute_node_function(
+                            run_func, state, config, current_node
+                        )
                         state.update(result)
-                        self.logger.info(f"Node '{current_node}' completed successfully")
+                        self.logger.info(
+                            f"Node '{current_node}' completed successfully"
+                        )
                         if self.log_state_values:
-                            self.logger.debug(f"Node '{current_node}' output state: {state}")
+                            self.logger.debug(
+                                f"Node '{current_node}' output state: {state}"
+                            )
                         # Yield intermediate state after execution
-                        yield {"type": "state", "node": current_node, "state": state.copy()}
+                        yield {
+                            "type": "state",
+                            "node": current_node,
+                            "state": state.copy(),
+                        }
                     except Exception as e:
                         self.logger.error(f"Error in node '{current_node}': {e}")
                         if self.raise_exceptions:
-                            raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                            raise RuntimeError(
+                                f"Error in node '{current_node}': {str(e)}"
+                            ) from e
                         else:
-                            yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": str(e),
+                                "state": state.copy(),
+                            }
                             return
 
                 # Check for interrupt after
                 if current_node in self.interrupt_after:
-                    checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                    yield {"type": "interrupt_after", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                    checkpoint_path = self._auto_save_checkpoint(
+                        state, current_node, config
+                    )
+                    yield {
+                        "type": "interrupt_after",
+                        "node": current_node,
+                        "state": state.copy(),
+                        "checkpoint_path": checkpoint_path,
+                    }
                     return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                 # Determine next node - check for parallel edges
@@ -1765,14 +2180,19 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 for successor in successors:
                     edge_data = self.edge(current_node, successor)
-                    if edge_data.get('parallel', False):
-                        fan_in_node = edge_data.get('fan_in_node', None)
+                    if edge_data.get("parallel", False):
+                        fan_in_node = edge_data.get("fan_in_node", None)
                         if fan_in_node is None:
                             error_msg = f"Parallel edge from '{current_node}' to '{successor}' must have 'fan_in_node' specified"
                             if self.raise_exceptions:
                                 raise RuntimeError(error_msg)
                             else:
-                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                yield {
+                                    "type": "error",
+                                    "node": current_node,
+                                    "error": error_msg,
+                                    "state": state.copy(),
+                                }
                                 return
                         parallel_edges.append((successor, fan_in_node))
                     else:
@@ -1780,13 +2200,17 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
                 # Start parallel flows
                 if parallel_edges:
-                    self.logger.info(f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'")
+                    self.logger.info(
+                        f"Starting {len(parallel_edges)} parallel flow(s) from node '{current_node}'"
+                    )
                     for successor, fan_in_node in parallel_edges:
                         # Get per-edge config (TD.13)
                         edge_data = self.edge(current_node, successor)
                         edge_config = self._get_parallel_config_for_edge(edge_data)
 
-                        self.logger.debug(f"Launching parallel stream flow to node '{successor}' (fan-in: '{fan_in_node}')")
+                        self.logger.debug(
+                            f"Launching parallel stream flow to node '{successor}' (fan-in: '{fan_in_node}')"
+                        )
                         # Register branch with fan-in node
                         with stream_lock:
                             if fan_in_node not in active_branches:
@@ -1814,42 +2238,68 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         edge_data = self.edge(current_node, successor)
                         cond_func = edge_data.get("cond", lambda **kwargs: True)
                         cond_map = edge_data.get("cond_map", None)
-                        available_params = {"state": state, "config": config, "node": current_node, "graph": self}
-                        cond_params = self._prepare_function_params(cond_func, available_params)
+                        available_params = {
+                            "state": state,
+                            "config": config,
+                            "node": current_node,
+                            "graph": self,
+                        }
+                        cond_params = self._prepare_function_params(
+                            cond_func, available_params
+                        )
                         cond_result = cond_func(**cond_params)
-                        self.logger.debug(f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}")
+                        self.logger.debug(
+                            f"Edge '{current_node}' -> '{successor}': condition result = {cond_result}"
+                        )
 
                         if cond_map:
                             next_node_candidate = cond_map.get(cond_result, None)
                             if next_node_candidate:
                                 next_node = next_node_candidate
-                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                self.logger.debug(
+                                    f"Transitioning from '{current_node}' to '{next_node}'"
+                                )
                                 break
                         else:
                             if cond_result:
                                 next_node = successor
-                                self.logger.debug(f"Transitioning from '{current_node}' to '{next_node}'")
+                                self.logger.debug(
+                                    f"Transitioning from '{current_node}' to '{next_node}'"
+                                )
                                 break
 
                     if next_node:
                         current_node = next_node
                     else:
-                        self.logger.warning(f"No valid next node found from node '{current_node}'")
-                        error_msg = f"No valid next node found from node '{current_node}'"
+                        self.logger.warning(
+                            f"No valid next node found from node '{current_node}'"
+                        )
+                        error_msg = (
+                            f"No valid next node found from node '{current_node}'"
+                        )
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
                         else:
-                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": error_msg,
+                                "state": state.copy(),
+                            }
                             return
                 else:
                     # No normal successors - check for pending parallel flows
                     with stream_lock:
-                        pending_fan_ins = [fn for fn, branches in active_branches.items() if branches]
+                        pending_fan_ins = [
+                            fn for fn, branches in active_branches.items() if branches
+                        ]
 
                     if pending_fan_ins:
                         # Wait for parallel flows and yield their events
                         fan_in_node = pending_fan_ins[0]
-                        self.logger.info(f"Waiting for parallel flows to complete at fan-in '{fan_in_node}'")
+                        self.logger.info(
+                            f"Waiting for parallel flows to complete at fan-in '{fan_in_node}'"
+                        )
 
                         # Drain queue until all branches complete
                         while True:
@@ -1869,22 +2319,32 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                                     yield event
                                 elif event_type == "branch_complete":
                                     with stream_lock:
-                                        if event_branch in active_branches.get(fan_in_node, set()):
-                                            active_branches[fan_in_node].discard(event_branch)
+                                        if event_branch in active_branches.get(
+                                            fan_in_node, set()
+                                        ):
+                                            active_branches[fan_in_node].discard(
+                                                event_branch
+                                            )
                                             # Only collect state if no error
                                             if not event.get("error"):
-                                                branch_states[fan_in_node].append(event.get("state", {}))
-                                            self.logger.debug(f"Branch '{event_branch}' completed, {len(active_branches[fan_in_node])} remaining")
+                                                branch_states[fan_in_node].append(
+                                                    event.get("state", {})
+                                                )
+                                            self.logger.debug(
+                                                f"Branch '{event_branch}' completed, {len(active_branches[fan_in_node])} remaining"
+                                            )
                             except Empty:
                                 continue
 
                         # All branches complete - execute fan-in node
-                        self.logger.info(f"All parallel flows joined at fan-in node '{fan_in_node}'")
+                        self.logger.info(
+                            f"All parallel flows joined at fan-in node '{fan_in_node}'"
+                        )
                         with stream_lock:
                             parallel_results = branch_states.pop(fan_in_node, [])
                             active_branches.pop(fan_in_node, None)
 
-                        state['parallel_results'] = parallel_results
+                        state["parallel_results"] = parallel_results
                         current_node = fan_in_node
 
                         # Execute the fan-in node
@@ -1892,47 +2352,94 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
                         run_func = node_data.get("run")
 
                         if current_node in self.interrupt_before:
-                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt_before", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            checkpoint_path = self._auto_save_checkpoint(
+                                state, current_node, config
+                            )
+                            yield {
+                                "type": "interrupt_before",
+                                "node": current_node,
+                                "state": state.copy(),
+                                "checkpoint_path": checkpoint_path,
+                            }
                             return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                         if run_func:
                             self.logger.debug(f"Entering fan-in node: {current_node}")
                             try:
-                                result = self._execute_node_function(run_func, state, config, current_node)
+                                result = self._execute_node_function(
+                                    run_func, state, config, current_node
+                                )
                                 state.update(result)
-                                self.logger.info(f"Fan-in node '{current_node}' completed successfully")
-                                yield {"type": "state", "node": current_node, "state": state.copy()}
+                                self.logger.info(
+                                    f"Fan-in node '{current_node}' completed successfully"
+                                )
+                                yield {
+                                    "type": "state",
+                                    "node": current_node,
+                                    "state": state.copy(),
+                                }
                             except Exception as e:
-                                self.logger.error(f"Error in fan-in node '{current_node}': {e}")
+                                self.logger.error(
+                                    f"Error in fan-in node '{current_node}': {e}"
+                                )
                                 if self.raise_exceptions:
-                                    raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                                    raise RuntimeError(
+                                        f"Error in node '{current_node}': {str(e)}"
+                                    ) from e
                                 else:
-                                    yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                                    yield {
+                                        "type": "error",
+                                        "node": current_node,
+                                        "error": str(e),
+                                        "state": state.copy(),
+                                    }
                                     return
 
                         if current_node in self.interrupt_after:
-                            checkpoint_path = self._auto_save_checkpoint(state, current_node, config)
-                            yield {"type": "interrupt_after", "node": current_node, "state": state.copy(), "checkpoint_path": checkpoint_path}
+                            checkpoint_path = self._auto_save_checkpoint(
+                                state, current_node, config
+                            )
+                            yield {
+                                "type": "interrupt_after",
+                                "node": current_node,
+                                "state": state.copy(),
+                                "checkpoint_path": checkpoint_path,
+                            }
                             return  # STOP execution - must resume via stream(None, checkpoint=...)
 
                         # Continue to next node after fan-in
                         next_node = self._get_next_node(current_node, state, config)
                         if not next_node:
-                            self.logger.warning(f"No valid next node found from fan-in node '{current_node}'")
-                            error_msg = f"No valid next node found from node '{current_node}'"
+                            self.logger.warning(
+                                f"No valid next node found from fan-in node '{current_node}'"
+                            )
+                            error_msg = (
+                                f"No valid next node found from node '{current_node}'"
+                            )
                             if self.raise_exceptions:
                                 raise RuntimeError(error_msg)
                             else:
-                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                yield {
+                                    "type": "error",
+                                    "node": current_node,
+                                    "error": error_msg,
+                                    "state": state.copy(),
+                                }
                                 return
                         current_node = next_node
                     else:
-                        error_msg = f"No valid next node found from node '{current_node}'"
+                        error_msg = (
+                            f"No valid next node found from node '{current_node}'"
+                        )
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
                         else:
-                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            yield {
+                                "type": "error",
+                                "node": current_node,
+                                "error": error_msg,
+                                "state": state.copy(),
+                            }
                             return
 
         # Once END is reached, yield final state
@@ -1940,9 +2447,111 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         self.logger.debug(f"Final state keys: {list(state.keys())}")
         if self.log_state_values:
             self.logger.debug(f"Final state: {state}")
+
+        # TEA-BUILTIN-015.1: Auto-save session if configured
+        self._maybe_auto_save_session(state)
+
         yield {"type": "final", "state": state.copy()}
 
-    def _prepare_function_params(self, func: Callable[..., Any], available_params: Dict[str, Any]) -> Dict[str, Any]:
+    def _maybe_inject_session_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Inject session data into state if session_id is present.
+
+        TEA-BUILTIN-015.1 AC8: When `session_id` is in initial state,
+        session data is loaded and merged into state before execution.
+
+        The session data is merged under state (not replacing existing keys
+        unless they're from a previous session). The session_id is preserved.
+
+        Args:
+            state: Initial state that may contain session_id.
+
+        Returns:
+            State with session data merged in (if available).
+        """
+        # Check if session backend is attached by YAMLEngine
+        session_backend = getattr(self, "_session_backend", None)
+        if session_backend is None:
+            return state
+
+        # Check if session_id is in state
+        session_id = state.get("session_id")
+        if not session_id:
+            return state
+
+        # Load session data
+        try:
+            session_data = session_backend.load(session_id)
+            if session_data is None:
+                self.logger.debug(f"No session data found for {session_id}")
+                return state
+
+            # Merge session data into state (session data has lower priority)
+            # This means explicit initial state values take precedence
+            merged = session_data.copy()
+            merged.update(state)  # Initial state overrides session data
+
+            self.logger.debug(f"Injected session data for {session_id}")
+            return merged
+
+        except Exception as e:
+            self.logger.warning(f"Failed to inject session state for {session_id}: {e}")
+            return state
+
+    def _maybe_auto_save_session(self, state: Dict[str, Any]) -> None:
+        """
+        Auto-save session state if auto_save is enabled in session settings.
+
+        TEA-BUILTIN-015.1: This method is called after graph execution completes.
+        It checks if session backend and settings are attached to the graph
+        (by YAMLEngine) and if auto_save is enabled.
+
+        Args:
+            state: Final state to save to session.
+        """
+        # Check if session backend and settings are attached by YAMLEngine
+        session_backend = getattr(self, "_session_backend", None)
+        session_settings = getattr(self, "_session_settings", None)
+
+        if session_backend is None or session_settings is None:
+            return
+
+        # Check if auto_save is enabled
+        if not getattr(session_settings, "auto_save", False):
+            return
+
+        # Get session_id from state
+        session_id = state.get("session_id")
+        if not session_id:
+            self.logger.debug("Auto-save skipped: no session_id in state")
+            return
+
+        # Determine which fields to persist
+        persist_fields = getattr(session_settings, "persist_fields", None)
+        if persist_fields is not None:
+            # Save only specified fields
+            data = {k: state.get(k) for k in persist_fields if k in state}
+        else:
+            # Save entire state, excluding internal fields
+            data = {k: v for k, v in state.items() if not k.startswith("_")}
+
+        # Get TTL from settings
+        ttl = getattr(session_settings, "ttl", 0)
+        effective_ttl = ttl if ttl > 0 else None
+
+        # Save to backend
+        try:
+            success = session_backend.save(session_id, data, ttl=effective_ttl)
+            if success:
+                self.logger.debug(f"Auto-saved session {session_id}")
+            else:
+                self.logger.warning(f"Failed to auto-save session {session_id}")
+        except Exception as e:
+            self.logger.warning(f"Error during auto-save for session {session_id}: {e}")
+
+    def _prepare_function_params(
+        self, func: Callable[..., Any], available_params: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Prepare the parameters for a node function based on its signature.
 
@@ -1968,14 +2577,24 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             elif param.default is not inspect.Parameter.empty:
                 function_params[param_name] = param.default
             elif param.kind == inspect.Parameter.VAR_KEYWORD:
-                function_params.update({k: v for k, v in available_params.items() if k not in function_params})
+                function_params.update(
+                    {
+                        k: v
+                        for k, v in available_params.items()
+                        if k not in function_params
+                    }
+                )
                 break
             else:
-                raise ValueError(f"Required parameter '{param_name}' not provided for function '{func.__name__}'")
+                raise ValueError(
+                    f"Required parameter '{param_name}' not provided for function '{func.__name__}'"
+                )
 
         return function_params
 
-    def _get_next_node(self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]) -> Optional[str]:
+    def _get_next_node(
+        self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]
+    ) -> Optional[str]:
         """
         Determine the next node based on the current node's successors and conditions.
 
@@ -1993,7 +2612,12 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
             edge_data = self.edge(current_node, successor)
             cond_func = edge_data.get("cond", lambda **kwargs: True)
             cond_map = edge_data.get("cond_map", None)
-            available_params = {"state": state, "config": config, "node": current_node, "graph": self}
+            available_params = {
+                "state": state,
+                "config": config,
+                "node": current_node,
+                "graph": self,
+            }
             cond_params = self._prepare_function_params(cond_func, available_params)
             cond_result = cond_func(**cond_params)
 
@@ -2049,8 +2673,7 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         return self.circuit_registry.get_circuit_states()
 
     def _get_parallel_config_for_edge(
-        self,
-        edge_data: Dict[str, Any]
+        self, edge_data: Dict[str, Any]
     ) -> ParallelConfig:
         """
         Get the effective ParallelConfig for an edge.
@@ -2067,4 +2690,3 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         if edge_config is not None:
             return edge_config
         return self.parallel_config
-

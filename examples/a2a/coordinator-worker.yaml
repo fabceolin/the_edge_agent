@@ -1,0 +1,149 @@
+# Coordinator-Worker Pattern Example
+#
+# This example demonstrates the coordinator-worker pattern where:
+# - A coordinator discovers and assigns tasks to worker agents
+# - Workers register their capabilities
+# - The coordinator collects results from all workers
+#
+# Story: TEA-AGENT-001.5
+
+name: coordinator-worker-example
+description: Coordinator distributes tasks to worker agents and collects results
+
+state_schema:
+  tasks: list           # Tasks to distribute
+  results: list         # Collected results
+  workers: list         # Discovered workers
+  a2a_agents: list      # Discovery result
+
+settings:
+  a2a:
+    enabled: true
+    namespace: research-team
+    agent_id: coordinator
+
+nodes:
+  # Step 1: Register as coordinator
+  - name: register_coordinator
+    action: a2a.register
+    with:
+      capabilities: [coordinate, aggregate]
+      agent_type: coordinator
+
+  # Step 2: Define the tasks to distribute
+  - name: define_tasks
+    run: |
+      return {
+          "tasks": [
+              {"id": "task-1", "query": "machine learning trends 2026"},
+              {"id": "task-2", "query": "quantum computing advances"},
+              {"id": "task-3", "query": "renewable energy breakthroughs"},
+          ]
+      }
+
+  # Step 3: Discover available workers
+  - name: discover_workers
+    action: a2a.discover
+    with:
+      capability: search
+      agent_type: worker
+
+  # Step 4: Check if workers are available
+  - name: check_workers
+    run: |
+      workers = state.get("a2a_agents", [])
+      if not workers:
+          return {
+              "error": "No workers available",
+              "worker_count": 0
+          }
+      return {
+          "worker_count": len(workers),
+          "workers": workers
+      }
+
+  # Step 5: Assign tasks to workers (round-robin)
+  - name: assign_tasks
+    condition: "{{ state.worker_count > 0 }}"
+    run: |
+      workers = state.get("workers", [])
+      tasks = state.get("tasks", [])
+      assignments = []
+      for i, task in enumerate(tasks):
+          worker = workers[i % len(workers)]
+          assignments.append({
+              "worker_id": worker["agent_id"],
+              "task": task
+          })
+      return {"assignments": assignments}
+
+  # Step 6: Send tasks to workers
+  - name: send_tasks
+    condition: "{{ state.worker_count > 0 }}"
+    run: |
+      # In a real scenario, this would iterate and send to each worker
+      assignments = state.get("assignments", [])
+      return {
+          "tasks_assigned": len(assignments),
+          "status": "Tasks distributed to workers"
+      }
+
+  # Step 7: Wait for results (with timeout)
+  - name: wait_for_results
+    condition: "{{ state.worker_count > 0 }}"
+    action: a2a.receive
+    with:
+      type: task_result
+      timeout: 60s
+
+  # Step 8: Aggregate results
+  - name: aggregate_results
+    run: |
+      messages = state.get("a2a_messages", [])
+      results = [msg.get("payload", {}) for msg in messages]
+      return {
+          "results": results,
+          "total_results": len(results)
+      }
+
+  # Step 9: Store in shared state
+  - name: store_results
+    action: a2a.state.set
+    with:
+      key: research_results
+      value: "{{ state.results }}"
+      ttl: 3600
+
+  # Step 10: Broadcast completion
+  - name: broadcast_completion
+    action: a2a.broadcast
+    with:
+      message:
+        type: workflow_complete
+        payload:
+          task_count: "{{ state.total_results }}"
+          status: completed
+
+edges:
+  - from: __start__
+    to: register_coordinator
+  - from: register_coordinator
+    to: define_tasks
+  - from: define_tasks
+    to: discover_workers
+  - from: discover_workers
+    to: check_workers
+  - from: check_workers
+    to: assign_tasks
+  - from: assign_tasks
+    to: send_tasks
+  - from: send_tasks
+    to: wait_for_results
+  - from: wait_for_results
+    to: aggregate_results
+  - from: aggregate_results
+    to: store_results
+  - from: store_results
+    to: broadcast_completion
+  - from: broadcast_completion
+    to: __end__

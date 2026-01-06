@@ -1,0 +1,87 @@
+# LlamaIndex Simple RAG Example
+#
+# Demonstrates basic RAG (Retrieval-Augmented Generation) with LlamaIndex.
+# This example shows how to:
+# 1. Create an index from documents
+# 2. Query the index for relevant context
+# 3. Use the context to generate a response
+#
+# Requirements:
+#   pip install the_edge_agent[llamaindex]
+#   export OPENAI_API_KEY=your-key
+#
+# Run:
+#   tea run examples/llamaindex/llamaindex-simple-rag.yaml \
+#     --input '{"question": "What is Python used for?"}'
+
+name: llamaindex-simple-rag
+description: Simple RAG workflow with LlamaIndex
+
+settings:
+  llamaindex:
+    embedding_model: text-embedding-3-small
+    llm_model: gpt-4o-mini
+
+state_schema:
+  question: str
+  context: str
+  answer: str
+
+nodes:
+  # Step 1: Create an in-memory index with sample documents
+  - name: create_knowledge_base
+    action: rag.llamaindex.create_index
+    with:
+      documents:
+        - text: "Python is a versatile programming language used for web development, data science, machine learning, automation, and scripting. Its simple syntax makes it ideal for beginners."
+          metadata: {topic: python, type: overview}
+        - text: "Python's popular frameworks include Django and Flask for web development, pandas and numpy for data science, and TensorFlow and PyTorch for machine learning."
+          metadata: {topic: python, type: frameworks}
+        - text: "JavaScript is primarily used for web development, enabling interactive web pages. Node.js allows JavaScript to run on servers."
+          metadata: {topic: javascript, type: overview}
+        - text: "Rust is a systems programming language focused on safety, speed, and concurrency. It's used for operating systems, game engines, and WebAssembly."
+          metadata: {topic: rust, type: overview}
+      persist_path: "/tmp/simple_rag_index"
+    output: index_result
+
+  # Step 2: Query the index for relevant context
+  - name: retrieve_context
+    action: rag.llamaindex.query
+    with:
+      query: "{{ state.question }}"
+      index_path: "/tmp/simple_rag_index"
+      similarity_top_k: 3
+    output: rag_result
+
+  # Step 3: Store the retrieved context
+  - name: format_context
+    run: |
+      nodes = state.get("rag_result", {}).get("nodes", [])
+      context_parts = [node.get("text", "") for node in nodes]
+      context = "\n\n".join(context_parts)
+      return {"context": context}
+
+  # Step 4: Generate answer using LLM with retrieved context
+  - name: generate_answer
+    action: llm.call
+    with:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: |
+            You are a helpful assistant. Answer the user's question based on the provided context.
+            If the context doesn't contain relevant information, say so.
+        - role: user
+          content: |
+            Context:
+            {{ state.context }}
+
+            Question: {{ state.question }}
+    output: llm_response
+
+  # Step 5: Extract the answer
+  - name: extract_answer
+    run: |
+      response = state.get("llm_response", {})
+      answer = response.get("content", response.get("message", "No answer generated"))
+      return {"answer": answer}

@@ -25,6 +25,7 @@ Specialized actions provide checkpoint persistence, schema manipulation, documen
   - [llamaextract.get_agent](#llamaextractget_agent)
   - [llamaextract.delete_agent](#llamaextractdelete_agent)
 - [Validation Actions](#validation-actions)
+  - [validate.input](#validateinput)
   - [validate.extraction](#validateextraction)
   - [validate.generate_prompt](#validategenerate_prompt)
   - [Extraction Schema](#extraction-schema)
@@ -33,6 +34,13 @@ Specialized actions provide checkpoint persistence, schema manipulation, documen
   - [Validation Logging](#validation-logging)
 - [Retry Actions](#retry-actions)
   - [retry.loop](#retryloop)
+- [Reflection Actions](#reflection-actions)
+  - [reflection.loop](#reflectionloop)
+  - [reflection.evaluate](#reflectionevaluate)
+  - [reflection.correct](#reflectioncorrect)
+  - [Evaluator Types](#evaluator-types)
+  - [On-Failure Strategies](#on-failure-strategies)
+  - [State Variables](#state-variables)
 - [Rate Limiting Actions](#rate-limiting-actions)
   - [ratelimit.wrap](#ratelimitwrap)
   - [Parallel Rate Limiting](#parallel-rate-limiting)
@@ -43,7 +51,22 @@ Specialized actions provide checkpoint persistence, schema manipulation, documen
   - [secrets.has](#secretshas)
   - [Secrets Configuration](#secrets-configuration)
   - [Cloud Provider Backends](#cloud-provider-backends)
+- [HTTP Response Actions](#http-response-actions)
+  - [http.respond](#httprespond)
+- [Response Transformation](#response-transformation)
+  - [output_schema](#output_schema)
+  - [Field Mapping](#field-mapping)
+  - [Conditional Fields](#conditional-fields)
+  - [Default Values](#default-values)
 - [Custom Actions](#custom-actions)
+- [Server Endpoints](#server-endpoints)
+  - [Health Endpoint](#health-endpoint)
+  - [Readiness Endpoint](#readiness-endpoint)
+  - [Agents List Endpoint](#agents-list-endpoint)
+  - [Metrics Endpoint](#metrics-endpoint)
+  - [OpenAPI Endpoint](#openapi-endpoint)
+  - [Custom Health Checks](#custom-health-checks)
+  - [Kubernetes Probe Configuration](#kubernetes-probe-configuration)
 
 ---
 
@@ -321,7 +344,97 @@ Delete an extraction agent:
 
 ## Validation Actions
 
-Actions for validating LLM-extracted data using structural schemas, Prolog constraints, and semantic probes.
+Actions for validating input data and LLM-extracted data.
+
+### `validate.input`
+
+Validates input data against a schema for explicit mid-flow validation:
+
+```yaml
+- name: validate_user_input
+  uses: validate.input
+  with:
+    data: "{{ state.user_provided_data }}"
+    schema:
+      name:
+        type: str
+        required: true
+        min_length: 1
+      email:
+        type: str
+        pattern: "^[\\w.-]+@[\\w.-]+\\.\\w+$"
+      age:
+        type: int
+        min: 0
+        max: 150
+  output: validation_result
+```
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `data` | dict | No | Data to validate (defaults to entire state) |
+| `schema` | dict | Yes | Validation schema definition |
+| `raise_on_error` | bool | No | If true, raises exception on validation failure |
+
+**Returns:**
+```python
+# Success
+{"valid": True, "data": {...}}  # Coerced/defaulted data
+
+# Failure
+{
+    "valid": False,
+    "errors": [
+        {"field": "name", "error": "required", "message": "Field 'name' is required"},
+        {"field": "age", "error": "min", "message": "Field 'age' must be at least 0", "value": -5, "constraint": 0}
+    ]
+}
+```
+
+**Schema Field Options:**
+| Option | Types | Description |
+|--------|-------|-------------|
+| `type` | all | Field type: `str`, `int`, `float`, `bool`, `list`, `dict` |
+| `required` | all | Error if field is missing |
+| `default` | all | Value when field is missing |
+| `min_length` | str | Minimum string length |
+| `max_length` | str | Maximum string length |
+| `pattern` | str | Regex pattern |
+| `min` | int, float | Minimum numeric value |
+| `max` | int, float | Maximum numeric value |
+| `choices` | all | Allowed values list |
+| `properties` | dict | Nested field schemas |
+| `items` | list | Schema for list elements |
+
+**Example: Conditional Flow Based on Validation**
+
+```yaml
+nodes:
+  - name: validate
+    uses: validate.input
+    with:
+      data: "{{ state }}"
+      schema:
+        query:
+          type: str
+          required: true
+    output: result
+    goto:
+      - when: "{{ state.result.valid }}"
+        then: process
+      - then: handle_error
+
+  - name: process
+    run: |
+      return {"output": state["query"].upper()}
+    goto: __end__
+
+  - name: handle_error
+    run: |
+      return {"error": "Invalid input", "details": state["result"]["errors"]}
+    goto: __end__
+```
 
 ### `validate.extraction`
 
@@ -629,6 +742,266 @@ edges:
   - from: __start__
     to: extract_with_retry
   - from: extract_with_retry
+    to: __end__
+```
+
+---
+
+## Reflection Actions
+
+Self-correcting agents using the reflection loop pattern (TEA-AGENT-001.2). Implements automatic generate→evaluate→correct cycles with configurable evaluators and failure strategies.
+
+**Key Features:**
+- Automatic iteration loop with circuit breaker
+- Multiple evaluator types: schema, LLM, custom code
+- On-failure strategies: return_best, return_last, raise
+- Full iteration history tracking
+- Standalone evaluate and correct actions
+
+### `reflection.loop`
+
+Execute a self-correcting generation loop:
+
+```yaml
+- name: generate_with_reflection
+  uses: reflection.loop
+  with:
+    generator:
+      action: llm.call                    # Any action or inline run:
+      model: "ollama/gemma3:4b"
+      messages:
+        - role: system
+          content: "Generate valid JSON for a user profile."
+        - role: user
+          content: "{{ state.request }}"
+
+    evaluator:
+      type: schema                        # schema | llm | custom
+      schema:
+        type: object
+        required: [name, email]
+        properties:
+          name: { type: string }
+          email: { type: string, format: email }
+
+    corrector:
+      action: llm.call
+      messages:
+        - role: system
+          content: "Fix the JSON based on validation errors."
+        - role: user
+          content: |
+            Original: {{ state.reflection_output | tojson }}
+            Errors: {{ state.reflection_errors | tojson }}
+            Please fix and return valid JSON.
+
+    max_iterations: 3                     # Default: 3
+    on_failure: return_best               # return_best | return_last | raise
+
+  output: reflection_result
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `generator` | object | Yes | Generator configuration (action or run) |
+| `evaluator` | object | Yes | Evaluator configuration |
+| `corrector` | object | No | Corrector configuration (action or run) |
+| `max_iterations` | int | No | Maximum attempts (default: 3) |
+| `on_failure` | string | No | Strategy when exhausted (default: return_best) |
+
+**Returns:**
+```yaml
+reflection_iteration: 2           # Final iteration count
+reflection_output: {...}          # Final output
+reflection_errors: []             # Empty if valid
+reflection_history:               # All attempts
+  - iteration: 1
+    output: {...}
+    score: 0.0
+    valid: false
+    errors: [...]
+  - iteration: 2
+    output: {...}
+    score: 1.0
+    valid: true
+    errors: []
+reflection_best: {...}            # Best scoring output
+reflection_best_score: 1.0        # Best score
+success: true                     # True if valid output produced
+valid: true                       # True if final output is valid
+```
+
+### `reflection.evaluate`
+
+Standalone evaluation action:
+
+```yaml
+- name: evaluate_output
+  uses: reflection.evaluate
+  with:
+    data: "{{ state.generated_json }}"
+    evaluator_type: schema
+    schema:
+      type: object
+      required: [name, email]
+  output: eval_result
+```
+
+**Returns:** `{valid: bool, score: float, errors: [...], suggestions: [...]}`
+
+### `reflection.correct`
+
+Standalone correction action:
+
+```yaml
+- name: correct_output
+  uses: reflection.correct
+  with:
+    data: "{{ state.reflection_output }}"
+    errors: "{{ state.reflection_errors }}"
+    run: |
+      result = {**state['reflection_output'], 'email': 'fixed@example.com'}
+  output: corrected
+```
+
+**Returns:** `{corrected_output: any, success: bool}`
+
+### Evaluator Types
+
+#### Schema Evaluator
+
+Uses JSON Schema validation with automatic type coercion:
+
+```yaml
+evaluator:
+  type: schema
+  schema:
+    type: object
+    required: [name, email]
+    properties:
+      name: { type: string, minLength: 1 }
+      email: { type: string, format: email }
+```
+
+Supports `$ref` for external schema files:
+
+```yaml
+evaluator:
+  type: schema
+  schema:
+    $ref: "./schemas/user.json"
+```
+
+#### LLM Evaluator
+
+Uses an LLM as a judge:
+
+```yaml
+evaluator:
+  type: llm
+  prompt: |
+    Evaluate if this user profile is complete and valid:
+    {{ state.reflection_output | tojson }}
+
+    Respond with JSON: {"valid": true/false, "score": 0.0-1.0, "reason": "...", "suggestions": [...]}
+  model: "gpt-4"
+  examples:                            # Optional few-shot examples
+    - input: '{"name": "Alice"}'
+      output: '{"valid": false, "score": 0.3, "reason": "Missing email"}'
+    - input: '{"name": "Alice", "email": "a@b.com"}'
+      output: '{"valid": true, "score": 1.0, "reason": "Complete profile"}'
+```
+
+#### Custom Evaluator
+
+Inline Python/Lua code:
+
+```yaml
+evaluator:
+  type: custom
+  language: python                     # python | lua | prolog
+  run: |
+    # 'output' contains the generator output
+    # 'state' contains workflow state
+    if len(output.get('name', '')) > 0 and '@' in output.get('email', ''):
+        result = {'valid': True, 'score': 1.0, 'errors': []}
+    else:
+        result = {'valid': False, 'score': 0.0, 'errors': [{'message': 'Invalid profile'}]}
+```
+
+### On-Failure Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `return_best` | Return the highest-scoring attempt (default) |
+| `return_last` | Return the final attempt regardless of score |
+| `raise` | Raise `ReflectionFailedError` with full history |
+
+### State Variables
+
+Variables set during the reflection loop:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `reflection_iteration` | int | Current iteration (1-based) |
+| `reflection_output` | any | Current generator output |
+| `reflection_errors` | list | Errors from current evaluation |
+| `reflection_history` | list | All attempts with outputs/scores |
+| `reflection_best` | any | Best output so far |
+| `reflection_best_score` | float | Score of best output |
+
+### Complete Example
+
+JSON generation agent with schema validation:
+
+```yaml
+name: json-generation-agent
+description: Generate valid JSON with automatic correction
+
+state_schema:
+  request: str
+  result: object
+
+nodes:
+  - name: generate_json
+    uses: reflection.loop
+    with:
+      generator:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: "Generate a JSON user object with name and email fields."
+          - role: user
+            content: "{{ state.request }}"
+      evaluator:
+        type: schema
+        schema:
+          type: object
+          required: [name, email]
+          properties:
+            name: { type: string }
+            email: { type: string }
+      corrector:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: "Fix JSON validation errors."
+          - role: user
+            content: |
+              Original: {{ state.reflection_output | tojson }}
+              Errors: {{ state.reflection_errors | tojson }}
+      max_iterations: 3
+      on_failure: return_best
+    output: result
+
+edges:
+  - from: __start__
+    to: generate_json
+  - from: generate_json
     to: __end__
 ```
 
@@ -1001,6 +1374,230 @@ settings:
 
 ---
 
+## HTTP Response Actions
+
+> **TEA-BUILTIN-015.5**: HTTP response actions for early termination with custom status/body/headers.
+
+### `http.respond`
+
+Send a custom HTTP response and terminate graph execution immediately:
+
+```yaml
+- name: unauthorized_response
+  uses: http.respond
+  with:
+    status: 401
+    body:
+      error: "unauthorized"
+      message: "Invalid token"
+    headers:
+      WWW-Authenticate: "Bearer"
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | int | No | 200 | HTTP status code |
+| `body` | any | No | null | Response body (dict/list/string) |
+| `headers` | dict | No | {} | HTTP headers |
+| `content_type` | string | No | "application/json" | Content-Type header |
+
+**Behavior:**
+
+- **Terminates execution immediately** - no further nodes are executed
+- Yields an event with `type: "http_response"` containing status, body, and headers
+- Headers are automatically merged with Content-Type
+
+**Example: Conditional Early Return**
+
+```yaml
+nodes:
+  - name: check_auth
+    run: |
+      return {"authorized": check_token(state.get("token"))}
+    goto:
+      - to: error_response
+        if: "not state.authorized"
+      - to: process
+
+  - name: error_response
+    uses: http.respond
+    with:
+      status: 401
+      body:
+        error: "unauthorized"
+        message: "Please provide a valid token"
+
+  - name: process
+    run: |
+      return {"result": "processed"}
+    goto: __end__
+```
+
+---
+
+## Response Transformation
+
+> **TEA-BUILTIN-015.5**: Transform internal state to structured API responses using `output_schema`.
+
+### `output_schema`
+
+Define the structure of your API response by mapping state fields using Jinja2 templates:
+
+```yaml
+name: my_agent
+
+state_schema:
+  input: str
+  result: str
+  error_msg: str
+  has_error: bool
+
+output_schema:
+  success: "{{ not state.has_error }}"
+  data:
+    answer: "{{ state.result }}"
+    query: "{{ state.input }}"
+  error:
+    value: "{{ state.error_msg }}"
+    include_if: "state.has_error"
+```
+
+When the graph completes, the final event includes:
+- `state`: The full internal state
+- `output`: The transformed response (if `output_schema` is defined)
+
+### Field Mapping
+
+Fields in `output_schema` can be:
+
+**Static values:**
+```yaml
+output_schema:
+  version: "1.0"
+  success: true
+  count: 42
+```
+
+**Template strings:**
+```yaml
+output_schema:
+  answer: "{{ state.result }}"
+  greeting: "Hello, {{ state.user.name }}!"
+  upper_name: "{{ state.name | upper }}"
+```
+
+**Nested structures:**
+```yaml
+output_schema:
+  data:
+    user:
+      name: "{{ state.user.name }}"
+      email: "{{ state.user.email }}"
+    metadata:
+      timestamp: "{{ now() }}"
+```
+
+### Conditional Fields
+
+Use `include_if` to conditionally include fields based on state:
+
+```yaml
+output_schema:
+  # Always included
+  success: "{{ not state.has_error }}"
+  result: "{{ state.data }}"
+
+  # Only included when condition is true
+  error:
+    value: "{{ state.error_msg }}"
+    include_if: "state.has_error"
+
+  # Premium content for authorized users
+  premium_data:
+    value: "{{ state.secret_content }}"
+    include_if: "state.user.is_premium"
+```
+
+### Default Values
+
+Provide fallback values when templates evaluate to None or empty:
+
+```yaml
+output_schema:
+  result:
+    value: "{{ state.maybe_missing }}"
+    default: "No data available"
+
+  count:
+    value: "{{ state.item_count }}"
+    default: 0
+
+  metadata:
+    value: "{{ state.meta }}"
+    default:
+      version: "unknown"
+      timestamp: null
+```
+
+### Complete Example
+
+```yaml
+name: api-handler
+state_schema:
+  query: str
+  response: str
+  tokens_used: int
+  cached: bool
+
+output_schema:
+  success: true
+  data:
+    answer: "{{ state.response }}"
+    cached: "{{ state.cached }}"
+  usage:
+    value:
+      tokens: "{{ state.tokens_used }}"
+    include_if: "state.tokens_used"
+  debug:
+    value: "{{ state.debug_info }}"
+    include_if: "state.get('debug_mode', false)"
+    default: null
+
+nodes:
+  - name: process
+    uses: llm.call
+    with:
+      model: gpt-4
+      messages:
+        - role: user
+          content: "{{ state.query }}"
+    output: response
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__
+```
+
+**Result:**
+```json
+{
+  "success": true,
+  "data": {
+    "answer": "The answer to your question is...",
+    "cached": false
+  },
+  "usage": {
+    "tokens": 150
+  }
+}
+```
+
+---
+
 ## Custom Actions
 
 Register custom actions in Python:
@@ -1042,6 +1639,197 @@ def action_name(
 - Access state values, don't modify state directly
 - Raise `ValueError` for validation errors
 - Return `{"success": false, "error": str}` for recoverable errors
+
+---
+
+## Server Endpoints
+
+> **Story:** TEA-BUILTIN-015.8 (Health & Metadata Endpoints)
+
+Auto-generated server endpoints for health checks, metrics, and agent metadata.
+Configure via `settings.server` in your YAML.
+
+### Settings Schema
+
+```yaml
+settings:
+  server:
+    # Enable/disable endpoints
+    health_endpoint: true         # /health - Kubernetes liveness probe
+    readiness_endpoint: true      # /ready - Kubernetes readiness probe
+    list_agents: true             # /agents - List available agents
+    metrics: false                # /metrics - Prometheus metrics (disabled by default)
+    openapi: true                 # /openapi.json - OpenAPI specification
+
+    # Custom paths (optional)
+    paths:
+      health: "/healthz"          # Override default path
+      ready: "/readyz"
+      agents: "/api/agents"
+      metrics: "/api/metrics"
+      openapi: "/api/openapi.json"
+
+    # Service info
+    service_name: "tea-agents"
+    version: "1.0.0"
+
+    # Custom health checks
+    health_checks:
+      - name: "database"
+        type: firestore           # Built-in check type
+      - name: "llm"
+        type: http
+        url: "${LLM_HEALTH_URL}"
+        timeout: 5
+```
+
+### Health Endpoint
+
+Simple liveness check. Returns 200 if service is running.
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "tea-agents",
+  "version": "1.0.0",
+  "timestamp": "2025-01-05T12:00:00Z"
+}
+```
+
+### Readiness Endpoint
+
+Checks configured dependencies. Returns 200 if all ready, 503 if any fail.
+
+**Success Response (200):**
+```json
+{
+  "status": "ready",
+  "checks": {
+    "firestore": {"status": "ok", "latency_ms": 12},
+    "llm": {"status": "ok", "latency_ms": 45}
+  },
+  "timestamp": "2025-01-05T12:00:00Z"
+}
+```
+
+**Failure Response (503):**
+```json
+{
+  "status": "not_ready",
+  "checks": {
+    "firestore": {"status": "ok"},
+    "llm": {"status": "error", "error": "Connection timeout"}
+  }
+}
+```
+
+### Agents List Endpoint
+
+Lists all available agents with their endpoints.
+
+**Response:**
+```json
+{
+  "agents": [
+    {
+      "name": "research_agent",
+      "description": "Research agent with web search",
+      "endpoint": "/api/v1/research",
+      "method": "POST"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Metrics Endpoint
+
+Prometheus-format metrics for agent executions.
+
+**Response (text/plain):**
+```
+# HELP tea_agent_executions_total Total agent executions
+# TYPE tea_agent_executions_total counter
+tea_agent_executions_total{agent="research",status="success"} 1542
+tea_agent_executions_total{agent="research",status="error"} 23
+
+# HELP tea_agent_duration_seconds Agent execution duration
+# TYPE tea_agent_duration_seconds summary
+tea_agent_duration_seconds_sum{agent="research"} 2341.5
+tea_agent_duration_seconds_count{agent="research"} 1542
+
+# HELP tea_agent_errors_total Total agent errors by type
+# TYPE tea_agent_errors_total counter
+tea_agent_errors_total{agent="research",error_type="timeout"} 15
+```
+
+### OpenAPI Endpoint
+
+Returns OpenAPI 3.0 specification aggregating all agent endpoints.
+
+**Response:**
+```json
+{
+  "openapi": "3.0.3",
+  "info": {"title": "tea-agents", "version": "1.0.0"},
+  "paths": {
+    "/api/v1/research": {
+      "post": {
+        "summary": "Research agent",
+        "requestBody": {...},
+        "responses": {...}
+      }
+    }
+  }
+}
+```
+
+### Custom Health Checks
+
+Register custom health check functions:
+
+```python
+from the_edge_agent import YAMLEngine
+from the_edge_agent.http import register_health_check
+
+engine = YAMLEngine()
+
+# Sync health check
+@register_health_check("custom_db")
+def check_database():
+    return db.ping()
+
+# Async health check
+@register_health_check("external_api")
+async def check_external_api():
+    response = await http_client.get("http://api/health")
+    return response.status_code == 200
+```
+
+### Kubernetes Probe Configuration
+
+Example Kubernetes deployment using TEA health endpoints:
+
+```yaml
+# kubernetes/deployment.yaml
+spec:
+  containers:
+    - name: tea-agents
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 15
+
+      readinessProbe:
+        httpGet:
+          path: /ready
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 10
+```
 
 ---
 

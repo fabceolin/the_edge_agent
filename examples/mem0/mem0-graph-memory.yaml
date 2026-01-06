@@ -1,0 +1,111 @@
+# Mem0 Graph Memory Example (TEA-AGENT-001.6)
+#
+# This example demonstrates graph-based memory using Mem0g for entity
+# and relationship extraction. The agent extracts entities and relations
+# from conversations and can answer multi-hop questions.
+#
+# Usage:
+#   tea run examples/mem0/mem0-graph-memory.yaml \
+#     --input '{"user_id": "user_123", "message": "Alice works at Acme Corp and reports to Bob"}'
+#
+# Prerequisites:
+#   pip install the-edge-agent[mem0]
+#   export MEM0_API_KEY=your_api_key
+#   Note: Graph memory requires Mem0 v0.1.0+ and cloud mode
+
+name: mem0-graph-memory
+description: Knowledge graph construction from conversations using Mem0g
+
+# Configure Mem0 with graph memory enabled
+settings:
+  memory:
+    backend: mem0
+    api_key: "${MEM0_API_KEY}"
+    graph: true  # Enable Mem0g for entity/relation extraction
+
+state_schema:
+  user_id: str
+  message: str
+  entities: list
+  relations: list
+  answer: str
+
+nodes:
+  # Step 1: Store message and let Mem0g extract entities/relations
+  - name: store_with_extraction
+    uses: memory.mem0.add
+    with:
+      messages:
+        - role: user
+          content: "{{ state.message }}"
+      user_id: "{{ state.user_id }}"
+      metadata:
+        extraction_mode: graph
+    output: store_result
+
+  # Step 2: Search with relations to see extracted knowledge
+  - name: query_knowledge
+    uses: memory.mem0.search
+    with:
+      query: "{{ state.message }}"
+      user_id: "{{ state.user_id }}"
+      include_relations: true
+      limit: 10
+    output: search_result
+
+  # Step 3: Extract entities and relations from search results
+  - name: extract_graph_data
+    run: |
+      results = state.get("search_result", {})
+      entities = []
+      relations = []
+
+      # Extract from results
+      for mem in results.get("results", []):
+          memory_text = mem.get("memory", "")
+          entities.append(memory_text)
+
+      # Extract relations if available
+      for rel in results.get("relations", []):
+          relations.append({
+              "source": rel.get("source", ""),
+              "relation": rel.get("relation", rel.get("type", "")),
+              "target": rel.get("target", "")
+          })
+
+      return {
+          "entities": entities,
+          "relations": relations
+      }
+
+  # Step 4: Generate human-readable answer about the knowledge graph
+  - name: summarize_knowledge
+    uses: llm.call
+    with:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: |
+            You are a knowledge graph assistant. Based on the extracted
+            entities and relations, provide a clear summary of what we know.
+
+            Entities found:
+            {% for entity in state.entities %}
+            - {{ entity }}
+            {% endfor %}
+
+            Relations found:
+            {% for rel in state.relations %}
+            - {{ rel.source }} {{ rel.relation }} {{ rel.target }}
+            {% endfor %}
+        - role: user
+          content: "Summarize what we now know from this information."
+    output: summary_result
+
+  # Step 5: Extract final answer
+  - name: format_answer
+    run: |
+      answer = state.get("summary_result", {}).get("content", "")
+      if not answer:
+          answer = f"Stored information. Found {len(state.get('entities', []))} memories and {len(state.get('relations', []))} relations."
+      return {"answer": answer}

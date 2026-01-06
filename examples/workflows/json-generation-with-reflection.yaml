@@ -1,0 +1,106 @@
+# JSON Generation with Reflection Loop (TEA-AGENT-001.2)
+#
+# Demonstrates the reflection.loop action for self-correcting JSON generation.
+# The agent generates a user profile, validates it against a JSON schema,
+# and automatically corrects any validation errors.
+#
+# Usage:
+#   tea run examples/workflows/json-generation-with-reflection.yaml \
+#     --input '{"request": "Create a profile for software developer Alice"}'
+
+name: json-generation-with-reflection
+description: Generate valid JSON user profiles with automatic schema validation and correction
+
+state_schema:
+  request: str
+  result: object
+  llm_provider: str
+  llm_model: str
+
+settings:
+  llm:
+    provider: ollama
+    model: gemma3:4b
+
+nodes:
+  - name: generate_user_profile
+    uses: reflection.loop
+    with:
+      generator:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are a JSON generator. Generate a user profile with the following fields:
+              - name (string): Full name
+              - email (string): Email address
+              - age (integer): Age in years
+              - role (string): Job title
+
+              Respond with ONLY valid JSON, no markdown or explanation.
+          - role: user
+            content: "{{ state.request }}"
+
+      evaluator:
+        type: schema
+        schema:
+          type: object
+          required:
+            - name
+            - email
+            - age
+            - role
+          properties:
+            name:
+              type: string
+              minLength: 1
+            email:
+              type: string
+              pattern: "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$"
+            age:
+              type: integer
+              minimum: 0
+              maximum: 150
+            role:
+              type: string
+              minLength: 1
+
+      corrector:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are a JSON fixer. The following JSON has validation errors.
+              Fix the errors and return ONLY valid JSON.
+          - role: user
+            content: |
+              Original JSON:
+              {{ state.reflection_output | tojson }}
+
+              Validation errors:
+              {{ state.reflection_errors | tojson }}
+
+              Fix the issues and return valid JSON.
+
+      max_iterations: 3
+      on_failure: return_best
+
+    output: result
+
+  - name: format_output
+    run: |
+      # Add metadata to the result
+      result["generation_attempts"] = state.get("reflection_iteration", 1)
+      result["validation_successful"] = state.get("valid", False)
+      return result
+    output: result
+
+edges:
+  - from: __start__
+    to: generate_user_profile
+  - from: generate_user_profile
+    to: format_output
+  - from: format_output
+    to: __end__

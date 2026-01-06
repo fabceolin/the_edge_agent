@@ -57,6 +57,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol
 
+from .serialization import TeaJSONEncoder
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 
 
@@ -135,7 +136,7 @@ class FileHandler:
         """Append event to file as JSON line."""
         with self._lock:
             with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event, default=str) + "\n")
+                f.write(json.dumps(event, cls=TeaJSONEncoder) + "\n")
 
 
 class CallbackHandler:

@@ -1,0 +1,111 @@
+# Custom Evaluator Example (TEA-AGENT-001.2)
+#
+# Demonstrates using custom Python code as the evaluator in a reflection loop.
+# Useful for domain-specific validation logic that can't be expressed in JSON Schema.
+#
+# Usage:
+#   tea run examples/reflection/custom-evaluator-example.yaml --input '{"min_words": 50}'
+
+name: custom-evaluator-example
+version: "1.0"
+
+description: |
+  Example using custom Python code for evaluation.
+  Shows how to implement domain-specific validation logic.
+
+state_schema:
+  min_words: int
+  content: str
+  word_count: int
+
+nodes:
+  - name: generate_content
+    uses: reflection.loop
+    with:
+      generator:
+        run: |
+          iteration = state.get("reflection_iteration", 1)
+          min_words = state.get("min_words", 50)
+
+          # Simulate content generation that improves with iterations
+          base_text = "This is generated content. "
+          multiplier = iteration * 5  # More content each iteration
+
+          result = {
+            "content": base_text * multiplier,
+            "generated_at": "2024-01-15"
+          }
+
+      evaluator:
+        type: custom
+        language: python
+        run: |
+          # Custom evaluation logic
+          content = output.get("content", "")
+          min_words = state.get("min_words", 50)
+
+          word_count = len(content.split())
+          word_ratio = min(word_count / min_words, 1.0)
+
+          # Check multiple criteria
+          errors = []
+          if word_count < min_words:
+            errors.append({
+              "message": f"Content has {word_count} words, need at least {min_words}",
+              "type": "word_count"
+            })
+
+          if len(content) < 100:
+            errors.append({
+              "message": "Content too short (< 100 characters)",
+              "type": "length"
+            })
+
+          # Calculate score based on multiple factors
+          score = word_ratio * 0.7  # Word count is 70% of score
+          if len(content) >= 100:
+            score += 0.3  # Length adds 30%
+
+          result = {
+            "valid": len(errors) == 0,
+            "score": score,
+            "errors": errors,
+            "metadata": {
+              "word_count": word_count,
+              "char_count": len(content)
+            }
+          }
+
+      corrector:
+        run: |
+          errors = state.get("reflection_errors", [])
+          hints = []
+          for e in errors:
+            if e.get("type") == "word_count":
+              hints.append("Add more detail and examples")
+            elif e.get("type") == "length":
+              hints.append("Expand on the key points")
+          result = {"correction_hints": hints}
+
+      max_iterations: 5
+      on_failure: return_best
+
+  - name: summarize
+    run: |
+      output = state.get("reflection_output", {})
+      content = output.get("content", "")
+
+      return {
+        "content": content,
+        "word_count": len(content.split()),
+        "iterations_needed": state.get("reflection_iteration", 1),
+        "final_score": state.get("reflection_best_score", 0)
+      }
+
+edges:
+  - from: __start__
+    to: generate_content
+  - from: generate_content
+    to: summarize
+  - from: summarize
+    to: __end__

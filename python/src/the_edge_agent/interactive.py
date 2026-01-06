@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional, Callable
 from enum import Enum
 from datetime import datetime, timezone
 
+from .serialization import TeaJSONEncoder
+
 
 def _sanitize_state_name(name: str) -> str:
     """
@@ -1078,16 +1080,16 @@ class InteractiveRunner:
         else:
             # Display full state
             if self.display_format == "json":
-                print(json.dumps(state))
+                print(json.dumps(state, cls=TeaJSONEncoder))
             elif self.display_format == "raw":
                 print(repr(state))
             else:
-                print(json.dumps(state, indent=2))
+                print(json.dumps(state, indent=2, cls=TeaJSONEncoder))
 
     def _format_value(self, value: Any) -> str:
         """Format a value based on display_format setting."""
         if self.display_format == "json":
-            return json.dumps(value)
+            return json.dumps(value, cls=TeaJSONEncoder)
         elif self.display_format == "raw":
             return repr(value)
         else:  # pretty
@@ -1101,7 +1103,7 @@ class InteractiveRunner:
                 items = [str(v) if not isinstance(v, str) else v for v in value]
                 return ", ".join(items)
             elif isinstance(value, dict):
-                return json.dumps(value, indent=2)
+                return json.dumps(value, indent=2, cls=TeaJSONEncoder)
             else:
                 return str(value)
 

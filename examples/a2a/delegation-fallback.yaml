@@ -1,0 +1,114 @@
+# Delegation with Fallback Example
+#
+# This example demonstrates the delegation pattern with fallback:
+# - Attempts to delegate a task to a specialist agent
+# - If the specialist times out, falls back to local execution
+# - Useful for resilient multi-agent systems
+#
+# Story: TEA-AGENT-001.5
+
+name: delegation-fallback-example
+description: Delegate task with timeout fallback
+
+state_schema:
+  query: str
+  a2a_delegation_result: any
+  a2a_delegation_success: bool
+  a2a_delegation_fallback: bool
+  final_result: any
+
+settings:
+  a2a:
+    enabled: true
+    namespace: research-team
+    agent_id: researcher
+
+nodes:
+  # Step 1: Register this agent
+  - name: register
+    action: a2a.register
+    with:
+      capabilities: [research, coordinate]
+      agent_type: researcher
+
+  # Step 2: Define the research query
+  - name: define_query
+    run: |
+      return {"query": "latest advances in fusion energy"}
+
+  # Step 3: Try to delegate to search specialist
+  - name: delegate_search
+    action: a2a.delegate
+    with:
+      to: search-specialist
+      task:
+        type: web_search
+        query: "{{ state.query }}"
+        max_results: 10
+      timeout: 10s
+      on_timeout: fallback_local
+      fallback:
+        action: llm.call
+        with:
+          model: gpt-4o-mini
+          messages:
+            - role: user
+              content: "Research: {{ state.query }}"
+
+  # Step 4: Process delegation result
+  - name: process_result
+    run: |
+      result = state.get("a2a_delegation_result", {})
+      success = state.get("a2a_delegation_success", False)
+      used_fallback = state.get("a2a_delegation_fallback", False)
+
+      if success:
+          source = "specialist"
+      elif used_fallback:
+          source = "local_fallback"
+      else:
+          source = "failed"
+
+      return {
+          "final_result": result,
+          "source": source,
+          "delegation_success": success,
+          "used_fallback": used_fallback
+      }
+
+  # Step 5: Store result in shared state
+  - name: store_result
+    action: a2a.state.set
+    with:
+      key: "search_result_{{ state.query | hash }}"
+      value:
+        query: "{{ state.query }}"
+        result: "{{ state.final_result }}"
+        source: "{{ state.source }}"
+      ttl: 7200
+
+  # Step 6: Report completion
+  - name: report
+    run: |
+      return {
+          "status": "completed",
+          "query": state.get("query"),
+          "source": state.get("source"),
+          "has_result": state.get("final_result") is not None
+      }
+
+edges:
+  - from: __start__
+    to: register
+  - from: register
+    to: define_query
+  - from: define_query
+    to: delegate_search
+  - from: delegate_search
+    to: process_result
+  - from: process_result
+    to: store_result
+  - from: store_result
+    to: report
+  - from: report
+    to: __end__

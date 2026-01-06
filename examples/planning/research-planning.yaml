@@ -1,0 +1,122 @@
+# Research Planning Example
+# Demonstrates plan.decompose with hierarchical strategy for research tasks
+#
+# Usage:
+#   tea run examples/planning/research-planning.yaml --input '{"topic": "quantum computing applications"}'
+
+name: research-planning-agent
+version: "1.0"
+description: Research a topic using hierarchical planning and execution
+
+state_schema:
+  topic: str
+  plan: dict
+  research_results: dict
+  final_summary: str
+
+settings:
+  llm:
+    model: "${OPENAI_MODEL:-gpt-4}"
+    api_key: "${OPENAI_API_KEY}"
+
+nodes:
+  - name: create_research_plan
+    action: plan.decompose
+    with:
+      goal: "Research and create a comprehensive summary about: {{ state.topic }}"
+      planner:
+        model: "{{ settings.llm.model }}"
+        strategy: hierarchical
+        max_depth: 2
+        prompt_template: |
+          You are a research planning assistant. Break down this research goal into subtasks.
+
+          Goal: {{ goal }}
+
+          Create a plan with these phases:
+          1. Information gathering (search for sources, identify key areas)
+          2. Deep analysis (analyze each key area in depth)
+          3. Synthesis (combine findings into coherent summary)
+
+          Return a JSON object with:
+          {
+            "subtasks": [
+              {
+                "id": "unique_id",
+                "description": "what to do",
+                "dependencies": ["list of subtask ids this depends on"]
+              }
+            ]
+          }
+
+          Ensure dependencies form a valid DAG (no cycles).
+    output: plan
+
+  - name: execute_research
+    action: plan.execute
+    with:
+      plan: "{{ state.plan }}"
+      parallel: true
+      max_concurrent: 3
+      subtask_executor:
+        action: llm.call
+        with:
+          model: "{{ settings.llm.model }}"
+          messages:
+            - role: system
+              content: |
+                You are a research assistant. Execute the following subtask and return your findings.
+                Be thorough but concise.
+            - role: user
+              content: |
+                Topic: {{ state.topic }}
+                Task: {{ subtask.description }}
+
+                Previous results available:
+                {{ state.subtask_results | tojson }}
+      on_subtask_failure: retry
+      max_retries: 2
+    output: research_results
+
+  - name: check_status
+    action: plan.status
+    with:
+      include_completed: true
+      include_details: true
+    output: plan_status
+
+  - name: synthesize_findings
+    action: llm.call
+    with:
+      model: "{{ settings.llm.model }}"
+      messages:
+        - role: system
+          content: You are a research synthesizer. Create a comprehensive summary from research findings.
+        - role: user
+          content: |
+            Topic: {{ state.topic }}
+
+            Research Findings:
+            {% for subtask_id, result in state.research_results.items() %}
+            ## {{ subtask_id }}
+            {{ result }}
+            {% endfor %}
+
+            Create a well-structured summary with:
+            1. Executive Summary (2-3 sentences)
+            2. Key Findings (bullet points)
+            3. Detailed Analysis (organized by theme)
+            4. Conclusions and Future Directions
+    output: final_summary
+
+edges:
+  - from: __start__
+    to: create_research_plan
+  - from: create_research_plan
+    to: execute_research
+  - from: execute_research
+    to: check_status
+  - from: check_status
+    to: synthesize_findings
+  - from: synthesize_findings
+    to: __end__

@@ -1,0 +1,115 @@
+# Code Generation with Reflection Loop (TEA-AGENT-001.2)
+#
+# Demonstrates using LLM-as-judge evaluation for code generation.
+# The agent generates Python code, evaluates it using an LLM judge,
+# and automatically refines based on feedback.
+#
+# Usage:
+#   tea run examples/workflows/code-generation-with-reflection.yaml \
+#     --input '{"task": "Write a function to calculate fibonacci numbers"}'
+
+name: code-generation-with-reflection
+description: Generate Python code with LLM-based evaluation and refinement
+
+state_schema:
+  task: str
+  code: str
+  evaluation: object
+  llm_provider: str
+  llm_model: str
+
+settings:
+  llm:
+    provider: ollama
+    model: gemma3:4b
+
+nodes:
+  - name: generate_code
+    uses: reflection.loop
+    with:
+      generator:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are an expert Python programmer. Generate clean, well-documented code.
+
+              Requirements:
+              1. Include a docstring explaining the function
+              2. Handle edge cases appropriately
+              3. Use type hints
+              4. Follow PEP 8 style guidelines
+
+              Respond with ONLY the Python code, no markdown fences or explanation.
+          - role: user
+            content: "{{ state.task }}"
+
+      evaluator:
+        type: llm
+        model: "ollama/gemma3:4b"
+        prompt: |
+          You are a code review expert. Evaluate the following Python code.
+
+          Code to evaluate:
+          ```python
+          {{ state.reflection_output }}
+          ```
+
+          Original task: {{ state.task }}
+
+          Evaluate based on these criteria:
+          1. Correctness: Does the code solve the problem correctly?
+          2. Documentation: Does it have a proper docstring?
+          3. Type hints: Are type hints present and correct?
+          4. Edge cases: Are edge cases handled?
+          5. Style: Does it follow PEP 8?
+
+          Respond with a JSON object:
+          {
+            "pass": true/false,
+            "score": 0.0-1.0,
+            "reason": "explanation",
+            "suggestions": ["list", "of", "improvements"]
+          }
+
+      corrector:
+        action: llm.call
+        model: "ollama/gemma3:4b"
+        messages:
+          - role: system
+            content: |
+              You are an expert Python programmer. Improve the code based on feedback.
+              Respond with ONLY the improved Python code, no markdown or explanation.
+          - role: user
+            content: |
+              Original code:
+              {{ state.reflection_output }}
+
+              Evaluation feedback:
+              {{ state.reflection_errors | tojson }}
+
+              Please fix the issues and improve the code.
+
+      max_iterations: 3
+      on_failure: return_best
+
+    output: code
+
+  - name: capture_evaluation
+    run: |
+      # Capture the final evaluation result
+      return {
+          "evaluation": state.get("reflection_history", [{}])[-1].get("evaluation", {}),
+          "iterations": state.get("reflection_iteration", 1),
+          "success": state.get("valid", False)
+      }
+    output: evaluation
+
+edges:
+  - from: __start__
+    to: generate_code
+  - from: generate_code
+    to: capture_evaluation
+  - from: capture_evaluation
+    to: __end__
