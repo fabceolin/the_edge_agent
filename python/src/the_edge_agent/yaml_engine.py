@@ -830,6 +830,9 @@ class YAMLEngine:
         # Get directory of YAML file for relative path resolution
         yaml_dir = os.path.dirname(os.path.abspath(yaml_path))
 
+        # Store the current yaml_path for remote config usage (TEA-PARALLEL-001.3)
+        self._current_yaml_path = os.path.abspath(yaml_path)
+
         return self.load_from_dict(
             config, checkpoint=checkpoint, checkpointer=checkpointer, yaml_dir=yaml_dir
         )
@@ -1302,9 +1305,73 @@ class YAMLEngine:
 
         # Create graph
         compile_config = config.get("config", {})
+
+        # TEA-PARALLEL-001.1: Parse parallel execution settings from YAML
+        # Supports: settings.parallel.strategy ("thread", "process", or "remote")
+        # Supports: settings.parallel.max_workers (int or null for default)
+        # TEA-PARALLEL-001.4: Supports: settings.parallel.remote.env_vars for remote strategy
+        parallel_settings = settings.get("parallel", {})
+        parallel_strategy = parallel_settings.get("strategy", "thread")
+        parallel_max_workers = parallel_settings.get("max_workers")
+
+        # Validate strategy
+        valid_strategies = ("thread", "process", "remote")
+        if parallel_strategy not in valid_strategies:
+            logger.warning(
+                f"Invalid parallel strategy '{parallel_strategy}' in settings. "
+                f"Valid values: {valid_strategies}. Using default 'thread'."
+            )
+            parallel_strategy = "thread"
+
+        # TEA-PARALLEL-001.3/001.4: Parse remote configuration including env_vars
+        remote_config = None
+        if parallel_strategy == "remote":
+            remote_settings = parallel_settings.get("remote", {})
+            if remote_settings:
+                from .parallel_executors import RemoteConfig
+
+                # Parse env_vars configuration
+                env_vars_dict = remote_settings.get("env_vars")
+
+                # Get yaml_path from engine's yaml_dir if available
+                # The yaml_path is set on RemoteConfig for the execute() method
+                yaml_path_for_remote = remote_settings.get("yaml_path")
+                if not yaml_path_for_remote and hasattr(self, "_yaml_dir"):
+                    # Try to construct from yaml_dir if available
+                    yaml_path_for_remote = getattr(self, "_current_yaml_path", None)
+
+                remote_config = RemoteConfig(
+                    hosts=remote_settings.get("hosts", []),
+                    basefile=remote_settings.get("basefile", "./tea"),
+                    workdir=remote_settings.get("workdir", "/tmp/tea-jobs"),
+                    cleanup=remote_settings.get("cleanup", True),
+                    yaml_path=yaml_path_for_remote,
+                    env_vars=env_vars_dict,
+                )
+
+                # Store remote config for use in parallel execution
+                self._remote_config = remote_config
+
+                # Store full settings for backend warnings
+                self._parallel_settings = settings
+
+        # Create ParallelConfig with strategy from settings
+        from .parallel import ParallelConfig
+
+        default_parallel_config = ParallelConfig(
+            strategy=parallel_strategy,
+            max_workers=parallel_max_workers,
+        )
+
+        # Store remote config reference in ParallelConfig if remote strategy
+        if remote_config:
+            default_parallel_config.remote_config = remote_config
+
         graph = StateGraph(
             state_schema=config.get("state_schema", {}),
             raise_exceptions=compile_config.get("raise_exceptions", False),
+            max_workers=parallel_max_workers,
+            parallel_config=default_parallel_config,
         )
 
         # Store reference for checkpoint actions

@@ -77,6 +77,16 @@ pub struct SettingsConfig {
     /// ```
     #[serde(default)]
     pub rate_limiters: HashMap<String, RateLimiterConfig>,
+
+    /// Allow cycles in the graph (for feedback loops like QA retry patterns)
+    /// Default: false (cycles will cause "Cycle detected in graph" error)
+    #[serde(default)]
+    pub allow_cycles: bool,
+
+    /// Maximum iterations for cyclic graphs (prevents infinite loops)
+    /// Default: 1000
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
 }
 
 /// Configuration for a single rate limiter
@@ -532,8 +542,17 @@ impl YamlEngine {
         self.infer_entry_finish(&mut graph, &config)?;
 
         // TEA-RUST-RL-001: Initialize rate limiters from settings
+        // TEA-RUST-044: Apply cycle settings
         if let Some(settings) = &config.settings {
             self.initialize_rate_limiters(&settings.rate_limiters);
+
+            // Apply cycle settings to graph
+            if settings.allow_cycles {
+                graph = graph.allow_cycles();
+            }
+            if let Some(max_iter) = settings.max_iterations {
+                graph = graph.with_max_iterations(max_iter);
+            }
         }
 
         Ok(graph)

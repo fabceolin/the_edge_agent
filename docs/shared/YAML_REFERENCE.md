@@ -25,6 +25,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 - [Python API](#python-api)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [Parallel Execution Strategies](#parallel-execution-strategies)
 - [Comparison with GitHub Actions](#comparison-with-github-actions)
 
 ---
@@ -1061,6 +1062,154 @@ Quick reference for common issues:
 | Prolog not found | Not installed | Install SWI-Prolog 9.1+ and janus-swi |
 
 For complete troubleshooting guide including Prolog issues, see [Troubleshooting](./yaml-reference/troubleshooting.md).
+
+---
+
+## Parallel Execution Strategies
+
+TEA supports three parallel execution strategies for fan-out edges, allowing you to choose the optimal execution backend for your workload.
+
+### Strategy Comparison
+
+| Strategy | Use Case | Pros | Cons |
+|----------|----------|------|------|
+| `thread` | I/O-bound tasks, API calls | Low overhead, shared memory | GIL limits CPU parallelism |
+| `process` | CPU-bound tasks | True parallelism, bypasses GIL | Serialization overhead |
+| `remote` | Distributed execution | Horizontal scaling | Network latency, setup complexity |
+
+### Configuration
+
+```yaml
+# Global default
+settings:
+  parallel:
+    strategy: thread  # thread | process | remote
+    max_workers: 4
+
+# Per-edge override
+edges:
+  - from: prepare
+    to: [branch_a, branch_b]
+    parallel: true
+    parallel_strategy: process  # Overrides global
+    fan_in: merge
+```
+
+### Thread Strategy (Default)
+
+Best for I/O-bound operations like API calls, file reads, or network requests.
+
+```yaml
+settings:
+  parallel:
+    strategy: thread
+    max_workers: 10  # Concurrent threads
+
+edges:
+  - from: prepare
+    to: [fetch_api_a, fetch_api_b, fetch_api_c]
+    parallel: true
+    fan_in: combine_results
+```
+
+**Characteristics:**
+- Shared memory (state modifications visible across threads)
+- GIL prevents true CPU parallelism
+- Low overhead, fast context switching
+- Rate limiters and caches are shared
+
+### Process Strategy
+
+Best for CPU-bound operations like data processing, calculations, or transformations.
+
+```yaml
+settings:
+  parallel:
+    strategy: process
+    max_workers: 4  # Concurrent processes
+
+edges:
+  - from: load_data
+    to: [process_chunk_1, process_chunk_2, process_chunk_3]
+    parallel: true
+    parallel_strategy: process
+    fan_in: merge_results
+```
+
+**Characteristics:**
+- True parallelism, bypasses GIL
+- State must be picklable (no lambdas, connections, file handles)
+- Higher memory usage (process isolation)
+- Rate limiters and caches are per-process
+
+**Serialization Requirements:**
+- ✅ `dict`, `list`, `str`, `int`, `float`, `bool`
+- ✅ `dataclass` (with picklable fields)
+- ❌ `lambda` functions
+- ❌ Open file handles
+- ❌ Database connections
+
+### Remote Strategy
+
+Best for distributed execution across multiple machines.
+
+```yaml
+settings:
+  parallel:
+    strategy: remote
+    remote:
+      hosts:
+        - user@server1
+        - user@server2
+      basefile: ./tea
+      workdir: /tmp/tea-jobs
+      cleanup: true
+      env_vars:
+        include:
+          - OPENAI_API_KEY
+          - LOG_LEVEL
+        exclude_patterns:
+          - "*_SECRET"
+        mode: ssh_env
+
+edges:
+  - from: prepare
+    to: [analyze_region_1, analyze_region_2, analyze_region_3]
+    parallel: true
+    parallel_strategy: remote
+    fan_in: aggregate
+```
+
+**Characteristics:**
+- Horizontal scaling across machines
+- State must be JSON-serializable
+- Requires SSH access to remote hosts
+- Full TEA engine runs on each remote
+- Rate limiters and caches are per-host
+
+**Requirements:**
+- SSH key authentication configured
+- TEA binary compatible with remote OS/arch
+- Sufficient disk space on remotes
+
+### Error Handling
+
+| Strategy | Error Type | Behavior |
+|----------|------------|----------|
+| All | Timeout | Configurable via `ParallelConfig.timeout_seconds` |
+| `process` | Pickle error | Fail fast with clear message before execution |
+| `remote` | SSH auth failure | Fail fast with setup instructions |
+| `remote` | Network timeout | Retry with exponential backoff |
+| All | Partial failure | Configurable `fail_fast` or collect all results |
+
+### Feature Interactions
+
+| Feature | `thread` | `process` | `remote` |
+|---------|----------|-----------|----------|
+| Rate limiting | Shared | Per-process | Per-host |
+| Caching | Shared | Per-process | Per-host |
+| LTM | Shared | Shared | Distributed backend required |
+| Interrupts | ✅ | ✅ | ❌ Not in remote scope |
 
 ---
 

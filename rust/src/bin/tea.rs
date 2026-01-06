@@ -136,6 +136,16 @@ enum Commands {
         /// Input timeout in seconds (for automated testing)
         #[arg(long)]
         input_timeout: Option<u64>,
+
+        /// Allow cycles in the graph (for feedback loops like QA retry patterns)
+        /// Overrides YAML settings.allow_cycles
+        #[arg(long)]
+        allow_cycles: bool,
+
+        /// Maximum iterations for cyclic graphs (prevents infinite loops)
+        /// Overrides YAML settings.max_iterations
+        #[arg(long)]
+        max_iterations: Option<usize>,
     },
 
     /// Resume execution from a checkpoint
@@ -252,6 +262,8 @@ fn main() -> Result<()> {
             display_key,
             display_format,
             input_timeout,
+            allow_cycles,
+            max_iterations,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -284,6 +296,8 @@ fn main() -> Result<()> {
                 display_key,
                 display_format,
                 input_timeout,
+                allow_cycles,
+                max_iterations,
             )
         }
 
@@ -334,6 +348,8 @@ fn run_workflow(
     display_key: Option<String>,
     display_format: String,
     input_timeout: Option<u64>,
+    allow_cycles: bool,
+    max_iterations: Option<usize>,
 ) -> Result<()> {
     // Load workflow
     let mut engine = YamlEngine::new();
@@ -345,9 +361,17 @@ fn run_workflow(
         tracing::debug!("Loaded {} secrets", engine.secrets().len());
     }
 
-    let graph = engine
+    let mut graph = engine
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
+
+    // TEA-RUST-044: Apply CLI cycle overrides (CLI takes precedence over YAML settings)
+    if allow_cycles {
+        graph = graph.allow_cycles();
+    }
+    if let Some(max_iter) = max_iterations {
+        graph = graph.with_max_iterations(max_iter);
+    }
 
     // Compile graph with interrupts
     let mut compiled = graph.compile()?;

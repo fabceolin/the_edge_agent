@@ -1,0 +1,139 @@
+# Parallel Strategies Demo
+# Demonstrates all three parallel execution strategies: thread, process, remote
+#
+# This example shows how to configure and use different parallel strategies
+# for fan-out/fan-in patterns based on workload characteristics.
+#
+# Usage:
+#   tea run examples/parallel_strategies_demo.yaml --input '{"input": "demo"}'
+
+name: parallel-strategies-demo
+description: Demonstrates all three parallel execution strategies
+
+state_schema:
+  input: str
+  thread_results: list
+  process_results: list
+  final_output: dict
+
+settings:
+  parallel:
+    strategy: thread  # Default strategy
+    max_workers: 4
+
+nodes:
+  # Entry point - prepare data for parallel processing
+  - name: start
+    run: |
+      return {
+        "input": state.get("input", "demo data"),
+        "timestamp": __import__("time").time()
+      }
+
+  # Thread strategy tasks - I/O bound simulation
+  - name: thread_task_1
+    run: |
+      import time
+      time.sleep(0.1)  # Simulate I/O operation
+      return {"thread_result": "task_1_done", "task_id": 1}
+
+  - name: thread_task_2
+    run: |
+      import time
+      time.sleep(0.1)  # Simulate I/O operation
+      return {"thread_result": "task_2_done", "task_id": 2}
+
+  # Fan-in for thread results
+  - name: thread_merge
+    fan_in: true
+    run: |
+      # parallel_results contains results from all parallel branches
+      results = [r.get("thread_result") for r in parallel_results if r.get("thread_result")]
+      return {"thread_results": results}
+
+  # Process strategy tasks - CPU bound simulation
+  - name: process_task_1
+    run: |
+      # CPU-intensive calculation (bypasses GIL with process strategy)
+      result = sum(i * i for i in range(10000))
+      return {"process_result": result, "task_id": 1}
+
+  - name: process_task_2
+    run: |
+      # CPU-intensive calculation
+      result = sum(i * i for i in range(10000))
+      return {"process_result": result, "task_id": 2}
+
+  # Fan-in for process results
+  - name: process_merge
+    fan_in: true
+    run: |
+      results = [r.get("process_result") for r in parallel_results if r.get("process_result")]
+      return {"process_results": results}
+
+  # Final aggregation
+  - name: end
+    run: |
+      return {
+        "final_output": {
+          "thread_results": state.get("thread_results", []),
+          "process_results": state.get("process_results", []),
+          "status": "completed"
+        }
+      }
+
+# Parallel edges require type: parallel and separate edge definitions
+edges:
+  # Start -> Thread parallel (using default thread strategy)
+  - from: __start__
+    to: start
+
+  # Thread parallel branches - each edge is defined separately with type: parallel
+  - from: start
+    to: thread_task_1
+    type: parallel
+    parallel_strategy: thread
+    fan_in: thread_merge
+
+  - from: start
+    to: thread_task_2
+    type: parallel
+    parallel_strategy: thread
+    fan_in: thread_merge
+
+  # Explicit edges from parallel nodes to fan-in
+  - from: thread_task_1
+    to: thread_merge
+
+  - from: thread_task_2
+    to: thread_merge
+
+  # Thread merge -> Process parallel (override to process strategy)
+  - from: thread_merge
+    to: process_task_1
+    type: parallel
+    parallel_strategy: process
+    fan_in: process_merge
+
+  - from: thread_merge
+    to: process_task_2
+    type: parallel
+    parallel_strategy: process
+    fan_in: process_merge
+
+  # Explicit edges from parallel nodes to fan-in
+  - from: process_task_1
+    to: process_merge
+
+  - from: process_task_2
+    to: process_merge
+
+  # Process merge -> End
+  - from: process_merge
+    to: end
+
+  - from: end
+    to: __end__
+
+config:
+  raise_exceptions: true

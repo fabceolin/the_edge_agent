@@ -1,0 +1,187 @@
+# Parallel Remote Distributed Execution Demo
+# Demonstrates remote execution strategy for distributed workflows across multiple SSH hosts.
+#
+# This example shows how to configure and use the remote parallel strategy
+# for horizontal scaling across multiple machines.
+#
+# Prerequisites:
+#   - SSH key authentication configured to remote hosts
+#   - TEA binary available (will be transferred to remotes)
+#   - Remote hosts have sufficient disk space in workdir
+#
+# Usage:
+#   tea run examples/parallel_remote_distributed.yaml --input '{"dataset": "sales_2024"}'
+#
+# Note: For testing without actual remote hosts, use --parallel-strategy thread
+#       to run locally with thread-based execution.
+
+name: distributed-analysis
+description: Distributed execution across remote hosts for large-scale data analysis
+
+state_schema:
+  dataset: str
+  region_results: dict
+  final_report: str
+
+settings:
+  parallel:
+    strategy: remote
+    remote:
+      hosts:
+        - analyst@region-us.example.com
+        - analyst@region-eu.example.com
+        - analyst@region-asia.example.com
+      basefile: ./tea
+      workdir: /tmp/tea-analysis
+      cleanup: true
+      env_vars:
+        include:
+          - OPENAI_API_KEY
+          - DATABASE_URL
+        mode: ssh_env
+
+  # LTM configuration for shared state across hosts
+  ltm:
+    backend: duckdb
+    storage:
+      uri: "s3://company-data/ltm/"
+
+nodes:
+  # Prepare dataset metadata for distributed processing
+  - name: prepare_datasets
+    run: |
+      dataset = state.get("dataset", "global_sales_2024")
+      return {
+        "dataset": dataset,
+        "regions": ["us", "eu", "asia"],
+        "analysis_timestamp": __import__("time").time()
+      }
+
+  # Regional analysis nodes - each runs on a different remote host
+  - name: analyze_region_us
+    run: |
+      # This node runs on region-us host
+      # In production, this would access local data stores
+      region = "us"
+      dataset = state.get("dataset", "unknown")
+
+      # Simulated analysis result
+      analysis = {
+        "total_sales": 1500000,
+        "top_product": "Widget A",
+        "growth_rate": 0.15
+      }
+      return {"region": region, "analysis": analysis}
+
+  - name: analyze_region_eu
+    run: |
+      # This node runs on region-eu host
+      region = "eu"
+      dataset = state.get("dataset", "unknown")
+
+      analysis = {
+        "total_sales": 1200000,
+        "top_product": "Widget B",
+        "growth_rate": 0.12
+      }
+      return {"region": region, "analysis": analysis}
+
+  - name: analyze_region_asia
+    run: |
+      # This node runs on region-asia host
+      region = "asia"
+      dataset = state.get("dataset", "unknown")
+
+      analysis = {
+        "total_sales": 1800000,
+        "top_product": "Widget C",
+        "growth_rate": 0.22
+      }
+      return {"region": region, "analysis": analysis}
+
+  # Aggregate results from all regions
+  - name: aggregate_results
+    fan_in: true
+    run: |
+      # Collect results from parallel regional analysis
+      results = {}
+      for r in parallel_results:
+        region = r.get("region")
+        if region:
+          results[region] = r.get("analysis", {})
+      return {"region_results": results}
+
+  # Generate final report from aggregated data
+  - name: generate_report
+    run: |
+      region_results = state.get("region_results", {})
+      dataset = state.get("dataset", "unknown")
+
+      # Calculate global metrics
+      total_global_sales = sum(
+        r.get("total_sales", 0) for r in region_results.values()
+      )
+
+      avg_growth = sum(
+        r.get("growth_rate", 0) for r in region_results.values()
+      ) / max(len(region_results), 1)
+
+      report = f"""
+      Global Sales Report for {dataset}
+      ==================================
+      Total Global Sales: ${total_global_sales:,.2f}
+      Average Growth Rate: {avg_growth:.1%}
+
+      Regional Breakdown:
+      """
+
+      for region, data in region_results.items():
+        report += f"  - {region.upper()}: ${data.get('total_sales', 0):,.2f} ({data.get('growth_rate', 0):.1%} growth)\n"
+
+      return {"final_report": report.strip()}
+
+# Parallel edges require type: parallel and separate edge definitions
+edges:
+  # Start -> Prepare
+  - from: __start__
+    to: prepare_datasets
+
+  # Distributed regional analysis - each edge goes to a separate branch
+  - from: prepare_datasets
+    to: analyze_region_us
+    type: parallel
+    parallel_strategy: remote
+    fan_in: aggregate_results
+
+  - from: prepare_datasets
+    to: analyze_region_eu
+    type: parallel
+    parallel_strategy: remote
+    fan_in: aggregate_results
+
+  - from: prepare_datasets
+    to: analyze_region_asia
+    type: parallel
+    parallel_strategy: remote
+    fan_in: aggregate_results
+
+  # Explicit edges from parallel nodes to fan-in
+  - from: analyze_region_us
+    to: aggregate_results
+
+  - from: analyze_region_eu
+    to: aggregate_results
+
+  - from: analyze_region_asia
+    to: aggregate_results
+
+  # Aggregate -> Report
+  - from: aggregate_results
+    to: generate_report
+
+  # Report -> End
+  - from: generate_report
+    to: __end__
+
+config:
+  raise_exceptions: true

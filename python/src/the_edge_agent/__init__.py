@@ -19,6 +19,19 @@ from .parallel import (
     CallbackManager,
 )
 
+# Parallel Executors (TEA-PARALLEL-001.1)
+from .parallel_executors import (
+    ParallelExecutor,
+    ThreadExecutor,
+    ProcessExecutor,
+    FlowTask,
+    ExecutorResult,
+    PickleValidationError,
+    get_executor,
+    register_executor,
+    available_strategies,
+)
+
 # Tracing (TEA-BUILTIN-001.3)
 from .tracing import (
     TraceContext,
@@ -93,6 +106,16 @@ __all__ = [
     "ParallelFlowCallback",
     "ParallelFlowContext",
     "CallbackManager",
+    # Parallel Executors (TEA-PARALLEL-001.1)
+    "ParallelExecutor",
+    "ThreadExecutor",
+    "ProcessExecutor",
+    "FlowTask",
+    "ExecutorResult",
+    "PickleValidationError",
+    "get_executor",
+    "register_executor",
+    "available_strategies",
     # Tracing (TEA-BUILTIN-001.3)
     "TraceContext",
     "TraceExporter",

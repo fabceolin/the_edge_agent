@@ -1,0 +1,116 @@
+# Quality Gate: TEA-PARALLEL-001.2
+# CLI Scoped Execution
+# Powered by BMAD Core
+
+schema: 1
+story: "TEA-PARALLEL-001.2"
+story_title: "CLI Scoped Execution"
+gate: PASS
+status_reason: "All 9 acceptance criteria met with 41 tests (86% above estimate). Implementation follows coding standards, proper validation, and critical exit-point semantic preserved."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-06T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+expires: "2026-01-20T00:00:00Z"
+
+evidence:
+  tests_reviewed: 41
+  tests_passing: 41
+  tests_estimated: 22
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Input validation on entry/exit points, proper JSON error handling, no path traversal risks"
+  performance:
+    status: PASS
+    notes: "BFS path validation O(V+E), shallow copy for state, appropriate for target use case"
+  reliability:
+    status: PASS
+    notes: "Comprehensive error handling with raise_exceptions modes, _scoped_error state key for non-throwing mode"
+  maintainability:
+    status: PASS
+    notes: "Clean separation of concerns, Google-style docstrings, type hints throughout"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding --timeout flag for scoped execution in future stories"
+      refs: ["python/src/the_edge_agent/cli.py"]
+
+test_summary:
+  unit_tests:
+    count: 23
+    file: "python/tests/test_scoped_execution.py"
+    classes:
+      - TestExecuteScoped
+      - TestPathExists
+      - TestScopedExecutionWithRaiseExceptions
+      - TestScopedExecutionWithExplicitStartEnd
+  integration_tests:
+    count: 18
+    file: "python/tests/test_cli_scoped_execution.py"
+    classes:
+      - TestCliScopedExecutionFlags
+      - TestCliScopedExecutionWarnings
+      - TestCliLinearChainE2E
+
+acceptance_criteria_verification:
+  - ac: 1
+    description: "--entry-point starts execution at specified node"
+    tests: ["001.2-UNIT-017", "001.2-INT-024"]
+    status: PASS
+  - ac: 2
+    description: "--exit-point stops BEFORE specified node (not executed)"
+    tests: ["001.2-UNIT-018", "001.2-INT-025", "001.2-INT-004"]
+    status: PASS
+  - ac: 3
+    description: "--input loads state from JSON file"
+    tests: ["001.2-UNIT-022", "001.2-INT-027", "001.2-INT-006"]
+    status: PASS
+  - ac: 4
+    description: "--output writes final state to JSON file"
+    tests: ["001.2-UNIT-023", "001.2-INT-010", "001.2-INT-011"]
+    status: PASS
+  - ac: 5
+    description: "execute_scoped() method works programmatically"
+    tests: ["001.2-INT-026"]
+    status: PASS
+  - ac: 6
+    description: "Validation: entry-point must exist"
+    tests: ["001.2-UNIT-019"]
+    status: PASS
+  - ac: 7
+    description: "Validation: exit-point must exist"
+    tests: ["001.2-UNIT-020"]
+    status: PASS
+  - ac: 8
+    description: "Validation: path must exist entry to exit"
+    tests: ["001.2-UNIT-021"]
+    status: PASS
+  - ac: 9
+    description: "Linear subgraph execution supported"
+    tests: ["001.2-E2E-001", "001.2-E2E-004"]
+    status: PASS
+
+code_files_reviewed:
+  - path: "python/src/the_edge_agent/stategraph.py"
+    methods: ["execute_scoped", "_path_exists", "_run_scoped"]
+    lines: "1956-2150"
+  - path: "python/src/the_edge_agent/cli.py"
+    methods: ["run"]
+    lines: "461-677"

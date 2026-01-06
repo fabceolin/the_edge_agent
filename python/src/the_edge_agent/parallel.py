@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 
 class CircuitState(Enum):
     """Circuit breaker states."""
-    CLOSED = "closed"      # Normal operation - requests flow through
-    OPEN = "open"          # Failing fast - requests rejected immediately
+
+    CLOSED = "closed"  # Normal operation - requests flow through
+    OPEN = "open"  # Failing fast - requests rejected immediately
     HALF_OPEN = "half_open"  # Testing recovery - limited requests allowed
 
 
@@ -63,6 +64,7 @@ class RetryPolicy:
         >>> policy = RetryPolicy(max_retries=3, base_delay=1.0, backoff_multiplier=2.0)
         >>> # Delays: 1s, 2s, 4s for attempts 1, 2, 3
     """
+
     max_retries: int = 0
     base_delay: float = 1.0
     max_delay: float = 60.0
@@ -80,7 +82,7 @@ class RetryPolicy:
 
     def get_delay(self, attempt: int) -> float:
         """Calculate delay for the given attempt number (0-indexed)."""
-        delay = self.base_delay * (self.backoff_multiplier ** attempt)
+        delay = self.base_delay * (self.backoff_multiplier**attempt)
         return min(delay, self.max_delay)
 
 
@@ -98,6 +100,7 @@ class CircuitBreakerConfig:
         reset_timeout: Seconds before attempting recovery (half-open)
         half_open_max_calls: Max concurrent calls allowed in half-open state
     """
+
     failure_threshold: int = 5
     reset_timeout: float = 30.0
     half_open_max_calls: int = 1
@@ -146,7 +149,9 @@ class CircuitBreaker:
         self._half_open_calls = 0
         self._half_open_active = 0  # Track active half-open calls
         self._lock = threading.RLock()  # RLock for nested call safety (TECH-006)
-        self._state_change_callbacks: List[Callable[[CircuitState, CircuitState], None]] = []
+        self._state_change_callbacks: List[
+            Callable[[CircuitState, CircuitState], None]
+        ] = []
 
     @property
     def state(self) -> CircuitState:
@@ -228,7 +233,9 @@ class CircuitBreaker:
         old_state = self._state
         if old_state != new_state:
             self._state = new_state
-            logger.info(f"Circuit '{self.name}' state change: {old_state.value} -> {new_state.value}")
+            logger.info(
+                f"Circuit '{self.name}' state change: {old_state.value} -> {new_state.value}"
+            )
             # Fire callbacks outside the critical section to prevent deadlocks
             callbacks = self._state_change_callbacks.copy()
             # Release lock before callbacks to prevent deadlocks
@@ -236,14 +243,14 @@ class CircuitBreaker:
             threading.Thread(
                 target=self._fire_callbacks,
                 args=(callbacks, old_state, new_state),
-                daemon=True
+                daemon=True,
             ).start()
 
     def _fire_callbacks(
         self,
         callbacks: List[Callable[[CircuitState, CircuitState], None]],
         old_state: CircuitState,
-        new_state: CircuitState
+        new_state: CircuitState,
     ) -> None:
         """Fire state change callbacks (runs in separate thread)."""
         for callback in callbacks:
@@ -266,8 +273,7 @@ class CircuitBreaker:
             self._half_open_active = 0
 
     def add_state_change_callback(
-        self,
-        callback: Callable[[CircuitState, CircuitState], None]
+        self, callback: Callable[[CircuitState, CircuitState], None]
     ) -> None:
         """
         Add a callback for state changes.
@@ -364,20 +370,28 @@ class ParallelConfig:
         fail_fast: If True, abort entire workflow on first timeout/failure
         retry_policy: Retry configuration for failed flows
         circuit_breaker: Circuit breaker configuration for this flow
+        strategy: Parallel execution strategy ("thread", "process", or "remote")
+        max_workers: Maximum number of workers (overrides graph default)
+        remote_config: Remote execution configuration (for "remote" strategy)
 
     Example:
         >>> config = ParallelConfig(
         ...     timeout_seconds=30.0,
         ...     fail_fast=False,
-        ...     retry_policy=RetryPolicy(max_retries=3)
+        ...     retry_policy=RetryPolicy(max_retries=3),
+        ...     strategy="process"  # Use processes for CPU-bound tasks
         ... )
     """
+
     timeout_seconds: Optional[float] = None  # Per-attempt timeout
-    timeout_total: Optional[float] = None    # Total budget across retries
+    timeout_total: Optional[float] = None  # Total budget across retries
     fail_fast: bool = False
     retry_policy: Optional[RetryPolicy] = None
     circuit_breaker: Optional[CircuitBreakerConfig] = None
     include_traceback: bool = False  # SEC-001: Disabled by default for production
+    strategy: str = "thread"  # "thread", "process", or "remote"
+    max_workers: Optional[int] = None  # Override for max_workers
+    remote_config: Optional[Any] = None  # RemoteConfig for "remote" strategy
 
 
 @dataclass
@@ -420,6 +434,7 @@ class ParallelFlowResult:
         >>> result["state"]["value"]
         42
     """
+
     branch: str
     success: bool
     state: Optional[Dict[str, Any]] = None
@@ -454,14 +469,22 @@ class ParallelFlowResult:
 
         # First try direct attribute access for ParallelFlowResult fields
         result_attrs = {
-            'branch', 'success', 'error', 'error_type', 'traceback',
-            'timeout', 'timing_ms', 'retry_count', 'circuit_state', 'attempt_errors'
+            "branch",
+            "success",
+            "error",
+            "error_type",
+            "traceback",
+            "timeout",
+            "timing_ms",
+            "retry_count",
+            "circuit_state",
+            "attempt_errors",
         }
         if key in result_attrs:
             return getattr(self, key)
 
         # For 'state', return the dict itself
-        if key == 'state':
+        if key == "state":
             return self.state
 
         # Try state dict if it exists (backwards compatibility - main use case)
@@ -487,8 +510,17 @@ class ParallelFlowResult:
 
         # Check result attributes
         result_attrs = {
-            'branch', 'success', 'state', 'error', 'error_type', 'traceback',
-            'timeout', 'timing_ms', 'retry_count', 'circuit_state', 'attempt_errors'
+            "branch",
+            "success",
+            "state",
+            "error",
+            "error_type",
+            "traceback",
+            "timeout",
+            "timing_ms",
+            "retry_count",
+            "circuit_state",
+            "attempt_errors",
         }
         if key in result_attrs:
             return True
@@ -518,9 +550,17 @@ class ParallelFlowResult:
     def keys(self) -> List[str]:
         """Return list of available keys for dict-like iteration."""
         base_keys = [
-            'branch', 'success', 'state', 'error', 'error_type',
-            'traceback', 'timeout', 'timing_ms', 'retry_count',
-            'circuit_state', 'attempt_errors'
+            "branch",
+            "success",
+            "state",
+            "error",
+            "error_type",
+            "traceback",
+            "timeout",
+            "timing_ms",
+            "retry_count",
+            "circuit_state",
+            "attempt_errors",
         ]
         if self.state:
             base_keys.extend(self.state.keys())
@@ -533,17 +573,17 @@ class ParallelFlowResult:
         Useful for serialization or when a true dict is needed.
         """
         return {
-            'branch': self.branch,
-            'success': self.success,
-            'state': self.state,
-            'error': self.error,
-            'error_type': self.error_type,
-            'traceback': self.traceback,
-            'timeout': self.timeout,
-            'timing_ms': self.timing_ms,
-            'retry_count': self.retry_count,
-            'circuit_state': self.circuit_state,
-            'attempt_errors': self.attempt_errors,
+            "branch": self.branch,
+            "success": self.success,
+            "state": self.state,
+            "error": self.error,
+            "error_type": self.error_type,
+            "traceback": self.traceback,
+            "timeout": self.timeout,
+            "timing_ms": self.timing_ms,
+            "retry_count": self.retry_count,
+            "circuit_state": self.circuit_state,
+            "attempt_errors": self.attempt_errors,
         }
 
     @classmethod
@@ -553,8 +593,8 @@ class ParallelFlowResult:
         state: Dict[str, Any],
         timing_ms: float,
         retry_count: int = 0,
-        circuit_state: Optional[str] = None
-    ) -> 'ParallelFlowResult':
+        circuit_state: Optional[str] = None,
+    ) -> "ParallelFlowResult":
         """
         Create a successful result.
 
@@ -587,8 +627,8 @@ class ParallelFlowResult:
         include_traceback: bool = False,
         retry_count: int = 0,
         attempt_errors: Optional[List[Dict[str, Any]]] = None,
-        circuit_state: Optional[str] = None
-    ) -> 'ParallelFlowResult':
+        circuit_state: Optional[str] = None,
+    ) -> "ParallelFlowResult":
         """
         Create an error result from an exception.
 
@@ -627,8 +667,8 @@ class ParallelFlowResult:
         timing_ms: float,
         timeout_seconds: float,
         retry_count: int = 0,
-        circuit_state: Optional[str] = None
-    ) -> 'ParallelFlowResult':
+        circuit_state: Optional[str] = None,
+    ) -> "ParallelFlowResult":
         """
         Create a timeout result.
 
@@ -656,11 +696,7 @@ class ParallelFlowResult:
         )
 
     @classmethod
-    def from_circuit_open(
-        cls,
-        branch: str,
-        circuit_name: str
-    ) -> 'ParallelFlowResult':
+    def from_circuit_open(cls, branch: str, circuit_name: str) -> "ParallelFlowResult":
         """
         Create a result for when circuit breaker is open.
 
@@ -705,31 +741,43 @@ class ParallelFlowCallback(Protocol):
         ...         print(f"Flow {context.branch} completed in {result.timing_ms}ms")
     """
 
-    def on_flow_start(self, context: 'ParallelFlowContext') -> None:
+    def on_flow_start(self, context: "ParallelFlowContext") -> None:
         """Called when a parallel flow starts."""
         ...
 
-    def on_flow_complete(self, context: 'ParallelFlowContext', result: ParallelFlowResult) -> None:
+    def on_flow_complete(
+        self, context: "ParallelFlowContext", result: ParallelFlowResult
+    ) -> None:
         """Called when a parallel flow completes (success or failure)."""
         ...
 
-    def on_flow_error(self, context: 'ParallelFlowContext', error: Exception, attempt: int) -> None:
+    def on_flow_error(
+        self, context: "ParallelFlowContext", error: Exception, attempt: int
+    ) -> None:
         """Called when an error occurs in a parallel flow."""
         ...
 
-    def on_flow_timeout(self, context: 'ParallelFlowContext', timeout_seconds: float) -> None:
+    def on_flow_timeout(
+        self, context: "ParallelFlowContext", timeout_seconds: float
+    ) -> None:
         """Called when a parallel flow times out."""
         ...
 
-    def on_flow_retry(self, context: 'ParallelFlowContext', attempt: int, delay: float, error: Exception) -> None:
+    def on_flow_retry(
+        self,
+        context: "ParallelFlowContext",
+        attempt: int,
+        delay: float,
+        error: Exception,
+    ) -> None:
         """Called before a retry attempt."""
         ...
 
     def on_circuit_state_change(
         self,
-        context: 'ParallelFlowContext',
+        context: "ParallelFlowContext",
         old_state: CircuitState,
-        new_state: CircuitState
+        new_state: CircuitState,
     ) -> None:
         """Called when a circuit breaker changes state."""
         ...
@@ -751,6 +799,7 @@ class ParallelFlowContext:
         config: ParallelConfig for this flow
         graph_name: Optional graph identifier
     """
+
     branch: str
     fan_in_node: str
     state_snapshot: Dict[str, Any]
@@ -780,7 +829,7 @@ class CallbackManager:
         self,
         callbacks: Optional[List[ParallelFlowCallback]] = None,
         timeout: float = 5.0,
-        error_policy: str = "log"
+        error_policy: str = "log",
     ):
         """
         Initialize the callback manager.
@@ -794,7 +843,9 @@ class CallbackManager:
         self.timeout = timeout
         self.error_policy = error_policy
         self._lock = threading.Lock()
-        self._error_callbacks: List[Callable[[ParallelFlowCallback, Exception], None]] = []
+        self._error_callbacks: List[
+            Callable[[ParallelFlowCallback, Exception], None]
+        ] = []
 
     def add_callback(self, callback: ParallelFlowCallback) -> None:
         """Add a callback."""
@@ -807,7 +858,9 @@ class CallbackManager:
             if callback in self.callbacks:
                 self.callbacks.remove(callback)
 
-    def add_error_handler(self, handler: Callable[[ParallelFlowCallback, Exception], None]) -> None:
+    def add_error_handler(
+        self, handler: Callable[[ParallelFlowCallback, Exception], None]
+    ) -> None:
         """Add a handler for callback errors (on_callback_error meta-callback)."""
         with self._lock:
             self._error_callbacks.append(handler)
@@ -817,7 +870,7 @@ class CallbackManager:
         callback: ParallelFlowCallback,
         method_name: str,
         *args: Any,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Invoke a single callback method with error isolation."""
         method = getattr(callback, method_name, None)
@@ -850,7 +903,9 @@ class CallbackManager:
                 raise exception[0]
 
         except Exception as e:
-            logger.warning(f"Callback {callback.__class__.__name__}.{method_name} error: {e}")
+            logger.warning(
+                f"Callback {callback.__class__.__name__}.{method_name} error: {e}"
+            )
 
             # Notify error handlers
             for handler in self._error_callbacks:
@@ -883,24 +938,26 @@ class CallbackManager:
         """Fire on_flow_start event."""
         self.fire_event("on_flow_start", context)
 
-    def fire_flow_complete(self, context: ParallelFlowContext, result: ParallelFlowResult) -> None:
+    def fire_flow_complete(
+        self, context: ParallelFlowContext, result: ParallelFlowResult
+    ) -> None:
         """Fire on_flow_complete event."""
         self.fire_event("on_flow_complete", context, result)
 
-    def fire_flow_error(self, context: ParallelFlowContext, error: Exception, attempt: int) -> None:
+    def fire_flow_error(
+        self, context: ParallelFlowContext, error: Exception, attempt: int
+    ) -> None:
         """Fire on_flow_error event."""
         self.fire_event("on_flow_error", context, error, attempt)
 
-    def fire_flow_timeout(self, context: ParallelFlowContext, timeout_seconds: float) -> None:
+    def fire_flow_timeout(
+        self, context: ParallelFlowContext, timeout_seconds: float
+    ) -> None:
         """Fire on_flow_timeout event."""
         self.fire_event("on_flow_timeout", context, timeout_seconds)
 
     def fire_flow_retry(
-        self,
-        context: ParallelFlowContext,
-        attempt: int,
-        delay: float,
-        error: Exception
+        self, context: ParallelFlowContext, attempt: int, delay: float, error: Exception
     ) -> None:
         """Fire on_flow_retry event."""
         self.fire_event("on_flow_retry", context, attempt, delay, error)
@@ -909,7 +966,7 @@ class CallbackManager:
         self,
         context: ParallelFlowContext,
         old_state: CircuitState,
-        new_state: CircuitState
+        new_state: CircuitState,
     ) -> None:
         """Fire on_circuit_state_change event."""
         self.fire_event("on_circuit_state_change", context, old_state, new_state)
@@ -944,11 +1001,7 @@ class CircuitBreakerRegistry:
         self._graph_circuits: Dict[str, CircuitBreaker] = {}
         self._lock = threading.Lock()
 
-    def get_or_create(
-        self,
-        name: str,
-        config: CircuitBreakerConfig
-    ) -> CircuitBreaker:
+    def get_or_create(self, name: str, config: CircuitBreakerConfig) -> CircuitBreaker:
         """
         Get an existing circuit breaker or create a new one.
 
@@ -962,7 +1015,9 @@ class CircuitBreakerRegistry:
         if self.scope == "global":
             with CircuitBreakerRegistry._global_lock:
                 if name not in CircuitBreakerRegistry._global_circuits:
-                    CircuitBreakerRegistry._global_circuits[name] = CircuitBreaker(config, name)
+                    CircuitBreakerRegistry._global_circuits[name] = CircuitBreaker(
+                        config, name
+                    )
                 return CircuitBreakerRegistry._global_circuits[name]
         else:
             with self._lock:

@@ -457,6 +457,23 @@ def run(
     # Deprecated aliases (hidden)
     state: Optional[str] = typer.Option(None, "--state", hidden=True),
     state_file: Optional[Path] = typer.Option(None, "--state-file", hidden=True),
+    # TEA-PARALLEL-001.2: Scoped execution flags
+    entry_point: Optional[str] = typer.Option(
+        None,
+        "--entry-point",
+        help="Start execution at this node instead of __start__ (for remote parallel branches)",
+    ),
+    exit_point: Optional[str] = typer.Option(
+        None,
+        "--exit-point",
+        help="Stop execution BEFORE this node (node is NOT executed, for remote parallel branches)",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write final state to JSON file (useful with --entry-point/--exit-point)",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -596,6 +613,71 @@ def run(
             typer.echo(f"Error in interactive mode: {e}", err=True)
             raise typer.Exit(1)
 
+    # TEA-PARALLEL-001.2: Scoped execution mode (for remote parallel branches)
+    if entry_point or exit_point:
+        # Warn if entry_point used without input
+        if entry_point and not input:
+            typer.echo(
+                "Warning: --entry-point without --input means starting with empty state",
+                err=True,
+            )
+
+        # Default entry_point to __start__ if only exit_point specified
+        effective_entry = entry_point or "__start__"
+        # Default exit_point to __end__ if only entry_point specified
+        effective_exit = exit_point or "__end__"
+
+        if not quiet:
+            typer.echo("=" * 80)
+            typer.echo(
+                f"Running scoped execution: {effective_entry} → (stop before {effective_exit})"
+            )
+            typer.echo(f"Workflow: {file}")
+            typer.echo("=" * 80)
+            if initial_state:
+                typer.echo(f"\nInitial state: {json.dumps(initial_state, indent=2)}\n")
+
+        try:
+            result = compiled.execute_scoped(
+                initial_state=initial_state,
+                entry_point=effective_entry,
+                exit_point=effective_exit,
+            )
+
+            # Check for scoped execution errors
+            if "_scoped_error" in result:
+                error_info = result["_scoped_error"]
+                typer.echo(
+                    f"Error in node '{error_info['node']}': {error_info['error']}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # Write output to file if requested
+            if output_file:
+                with open(output_file, "w") as f:
+                    json.dump(result, f, indent=2, cls=TeaJSONEncoder)
+                if not quiet:
+                    typer.echo(f"\nOutput written to: {output_file}")
+
+            if not quiet:
+                typer.echo("\n" + "=" * 80)
+                typer.echo("✓ Scoped execution completed")
+                typer.echo("=" * 80)
+                typer.echo(
+                    f"Final state: {json.dumps(result, indent=2, cls=TeaJSONEncoder)}"
+                )
+
+        except ValueError as e:
+            # Validation errors from execute_scoped
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        except RuntimeError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        return  # Exit after scoped execution
+
     if not quiet and not stream:
         typer.echo("=" * 80)
         typer.echo(f"Running agent from: {file}")
@@ -633,7 +715,12 @@ def run(
                             "interrupt", node=node, state=event.get("state", {})
                         )
                     elif event_type == "final":
-                        emit_ndjson_event("complete", state=event.get("state", {}))
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                        emit_ndjson_event("complete", state=final_state)
                         completed = True
                         break
                     elif event_type == "error":
@@ -687,12 +774,19 @@ def run(
                         raise typer.Exit(1)
 
                     elif event_type == "final":
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                            if not quiet:
+                                typer.echo(f"\nOutput written to: {output_file}")
                         if not quiet:
                             typer.echo("\n" + "=" * 80)
                             typer.echo("✓ Completed")
                             typer.echo("=" * 80)
                             typer.echo(
-                                f"Final state: {json.dumps(event.get('state', {}), indent=2, cls=TeaJSONEncoder)}"
+                                f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
                             )
                         completed = True
                         break
@@ -1101,6 +1195,11 @@ def from_dot(
         help="Use command attribute from DOT nodes. Each node MUST have "
         'command="..." attribute. Mutually exclusive with --command.',
     ),
+    allow_cycles: bool = typer.Option(
+        False,
+        "--allow-cycles",
+        help="Allow cycles in the graph (for feedback loops like QA retry patterns).",
+    ),
 ):
     """
     Convert DOT/Graphviz diagram to TEA YAML workflow.
@@ -1168,6 +1267,7 @@ def from_dot(
             tmux_session=session,
             validate=validate_output,
             use_node_commands=use_node_commands,
+            allow_cycles=allow_cycles,
         )
 
         if output:

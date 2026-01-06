@@ -1,0 +1,48 @@
+# Quality Gate: TD.11 - Split test_stategraph.py into Smaller Files
+schema: 1
+story: "TD.11"
+story_title: "Split test_stategraph.py into Smaller Files"
+gate: PASS
+status_reason: "All 7 acceptance criteria verified. Test split executed correctly with 136 tests passing. Original files removed, imports self-contained."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-06T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 95
+
+evidence:
+  tests_reviewed: 136
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Test reorganization only - no security-sensitive changes"
+  performance:
+    status: PASS
+    notes: "136 tests complete in 9.00s - no regression"
+  reliability:
+    status: PASS
+    notes: "All tests pass consistently"
+  maintainability:
+    status: PASS
+    notes: "Split improves maintainability - tests easier to navigate and run selectively"
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Dev Record test count (81) differs from actual (136) - minor doc discrepancy"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Update Dev Agent Record test count from 81 to 136"
+      refs: ["docs/stories/TD.11.split-test-stategraph.md"]

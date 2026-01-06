@@ -20,6 +20,24 @@ import pydot
 import yaml
 
 
+class LiteralBlockDumper(yaml.SafeDumper):
+    """Custom YAML Dumper that uses literal block style (|) for multi-line strings."""
+
+    pass
+
+
+def _literal_str_representer(dumper: yaml.Dumper, data: str) -> yaml.ScalarNode:
+    """Represent multi-line strings with literal block style (|)."""
+    if "\n" in data:
+        # Use literal block style for multi-line strings
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+# Register the custom representer
+LiteralBlockDumper.add_representer(str, _literal_str_representer)
+
+
 @dataclass
 class DotNode:
     """Represents a node extracted from a DOT graph."""
@@ -250,9 +268,19 @@ def _get_attr(obj: Any, name: str, default: Any) -> Any:
     if value is None:
         return default
     if isinstance(value, str):
-        return value.strip('"').strip("'")
+        # Only strip matching outer quotes (DOT uses double quotes for attributes)
+        if value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        elif value.startswith("'") and value.endswith("'"):
+            value = value[1:-1]
+        return value
     if isinstance(value, list) and value:
-        return str(value[0]).strip('"').strip("'")
+        v = str(value[0])
+        if v.startswith('"') and v.endswith('"'):
+            v = v[1:-1]
+        elif v.startswith("'") and v.endswith("'"):
+            v = v[1:-1]
+        return v
     return default
 
 
@@ -283,7 +311,11 @@ def _get_command_attr(obj: Any) -> Optional[str]:
     Returns:
         Command string if present, None otherwise
     """
-    return _get_attr(obj, "command", None)
+    cmd = _get_attr(obj, "command", None)
+    if cmd:
+        # Unescape DOT escape sequences - pydot keeps them as-is
+        cmd = cmd.replace('\\"', '"').replace("\\'", "'")
+    return cmd
 
 
 # ==============================================================================
@@ -317,18 +349,19 @@ class AnalyzedGraph:
     )  # TEA-TOOLS-002: label -> command mapping
 
 
-def analyze_graph(parsed: ParsedGraph) -> AnalyzedGraph:
+def analyze_graph(parsed: ParsedGraph, allow_cycles: bool = False) -> AnalyzedGraph:
     """
     Analyze a parsed DOT graph to detect parallel phases and flow structure.
 
     Args:
         parsed: ParsedGraph from parse_dot()
+        allow_cycles: If True, skip cycle validation (for feedback loops)
 
     Returns:
         AnalyzedGraph with detected phases and structure
 
     Raises:
-        CircularDependencyError: If circular dependencies are detected
+        CircularDependencyError: If circular dependencies are detected (unless allow_cycles=True)
     """
     # Build adjacency lists
     outgoing: Dict[str, List[str]] = {n: [] for n in parsed.nodes}
@@ -424,8 +457,9 @@ def analyze_graph(parsed: ParsedGraph) -> AnalyzedGraph:
         if node.command:
             node_commands[node.label] = node.command
 
-    # Validate for circular dependencies
-    _validate_no_cycles(parsed, phases)
+    # Validate for circular dependencies (skip if allow_cycles=True)
+    if not allow_cycles:
+        _validate_no_cycles(parsed, phases)
 
     return AnalyzedGraph(
         name=parsed.name,
@@ -637,8 +671,14 @@ def generate_yaml(
     config["nodes"] = nodes
     config["edges"] = edges
 
-    # Generate YAML with comments
-    yaml_str = yaml.dump(config, default_flow_style=False, sort_keys=False)
+    # Generate YAML with comments using literal block style for multi-line strings
+    yaml_str = yaml.dump(
+        config,
+        Dumper=LiteralBlockDumper,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+    )
 
     # Add header comment
     # TEA-TOOLS-002: Include per-node command info in header
@@ -680,7 +720,8 @@ def _generate_setup_node(
     setup_code_lines = ["# Initialize phase items for parallel execution"]
 
     for i, phase in enumerate(analyzed.phases):
-        items_str = ", ".join(f'"{item}"' for item in phase.items)
+        # Use repr() for proper escaping of special characters in item names
+        items_str = ", ".join(repr(item) for item in phase.items)
         setup_code_lines.append(f'state["phase{i + 1}_items"] = [{items_str}]')
 
     # TEA-TOOLS-002: Add command mappings when using per-node commands
@@ -696,12 +737,11 @@ def _generate_setup_node(
                     phase_commands[item] = analyzed.node_commands[item]
 
             if phase_commands:
-                # Generate dict literal safely
+                # Generate dict literal using repr() for proper escaping
                 cmd_items = []
                 for item, cmd in phase_commands.items():
-                    # Escape quotes in command
-                    escaped_cmd = cmd.replace("\\", "\\\\").replace('"', '\\"')
-                    cmd_items.append(f'    "{item}": "{escaped_cmd}"')
+                    # Use repr() to get proper Python string escaping
+                    cmd_items.append(f"    {repr(item)}: {repr(cmd)}")
                 cmd_dict_str = "{\n" + ",\n".join(cmd_items) + "\n}"
                 setup_code_lines.append(
                     f'state["_phase{i + 1}_commands"] = {cmd_dict_str}'
@@ -824,10 +864,12 @@ def _generate_tmux_execution_code(
     session = tmux_session or "tea-workflow"
     return f'''import subprocess
 import time
+import re as _re
 
 item = state.get("item", "")
 session = "{session}"
-window_name = f"{{item[:20].replace(' ', '_')}}"
+# Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
 cmd = f"""{command_template}"""
 
 try:
@@ -838,16 +880,14 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window for this task
+    # Create new window and run command in one step (avoids race condition)
+    # Use double quotes for tmux argument to avoid nested single-quote conflicts
+    escaped_cmd = cmd.replace("'", "'\\''")
+    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
+    # Escape double quotes for the outer tmux argument wrapper
+    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
     subprocess.run(
-        f"tmux new-window -t {{session}} -n {{window_name}}",
-        shell=True,
-        executable='/bin/bash'
-    )
-
-    # Send command to window
-    subprocess.run(
-        f"tmux send-keys -t {{session}}:{{window_name}} '{{cmd}}' Enter",
+        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
         shell=True,
         executable='/bin/bash'
     )
@@ -857,7 +897,7 @@ try:
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command sent to tmux window. Check tmux attach -t {session}"
+        "note": "Command running in tmux window. Check tmux attach -t {session}"
     }}
 except Exception as e:
     return {{
@@ -950,7 +990,9 @@ if not cmd:
     }}
 
 session = "{session}"
-window_name = f"{{item[:20].replace(' ', '_')}}"
+# Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+import re as _re
+window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
 
 try:
     # Create or attach to tmux session
@@ -960,16 +1002,14 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window for this task
+    # Create new window and run command in one step (avoids race condition)
+    # Use double quotes for tmux argument to avoid nested single-quote conflicts
+    escaped_cmd = cmd.replace("'", "'\\''")
+    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
+    # Escape double quotes for the outer tmux argument wrapper
+    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
     subprocess.run(
-        f"tmux new-window -t {{session}} -n {{window_name}}",
-        shell=True,
-        executable='/bin/bash'
-    )
-
-    # Send command to window
-    subprocess.run(
-        f"tmux send-keys -t {{session}}:{{window_name}} '{{cmd}}' Enter",
+        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
         shell=True,
         executable='/bin/bash'
     )
@@ -980,7 +1020,7 @@ try:
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command sent to tmux window. Check tmux attach -t {session}"
+        "note": "Command running in tmux window. Check tmux attach -t {session}"
     }}
 except Exception as e:
     return {{
@@ -1033,6 +1073,7 @@ def dot_to_yaml(
     tmux_session: Optional[str] = None,
     validate: bool = False,
     use_node_commands: bool = False,  # TEA-TOOLS-002: Per-node command mode
+    allow_cycles: bool = False,  # Allow cycles for feedback loops
 ) -> str:
     """
     Convert a DOT file to TEA YAML workflow.
@@ -1049,20 +1090,21 @@ def dot_to_yaml(
         tmux_session: Tmux session name (required if use_tmux is True)
         validate: Validate generated YAML before returning
         use_node_commands: TEA-TOOLS-002 - Use per-node command attribute from DOT
+        allow_cycles: Allow cycles in the graph (for feedback loops)
 
     Returns:
         Generated YAML string
 
     Raises:
         DotParseError: If DOT parsing fails
-        CircularDependencyError: If circular dependencies detected
+        CircularDependencyError: If circular dependencies detected (unless allow_cycles=True)
         ValueError: If validation fails or --use-node-commands without any commands
     """
     # Parse DOT file
     parsed = parse_dot(file_path)
 
     # Analyze graph structure
-    analyzed = analyze_graph(parsed)
+    analyzed = analyze_graph(parsed, allow_cycles=allow_cycles)
 
     # TEA-TOOLS-002: Validate that ALL execution nodes have commands when use_node_commands is set
     # Exclude special nodes (Start/End markers with ellipse/circle shapes)

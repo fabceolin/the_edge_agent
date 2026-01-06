@@ -28,7 +28,7 @@ setup(
     ],
     python_requires=">=3.7",
     install_requires=[
-        "networkx==3.3",
+        "networkx>=3.3",
         # "pygraphviz==1.13",  # REMOVED: Requires gcc, not available in Firebase emulator
         "pyyaml>=6.0",
         "jinja2>=3.0",  # TEA-YAML-001: Template engine for declarative workflows
