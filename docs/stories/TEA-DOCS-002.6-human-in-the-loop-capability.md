@@ -1,5 +1,10 @@
 # TEA-DOCS-002.6: Human-in-the-Loop Capability Landing Page
 
+## Status
+
+Ready for Development
+
+
 ## Story Metadata
 
 | Field | Value |

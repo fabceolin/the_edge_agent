@@ -2,6 +2,7 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/fabceolin/the_edge_agent?style=social)](https://github.com/fabceolin/the_edge_agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-github.io-blue)](https://fabceolin.github.io/the_edge_agent/)
 
 > **Small LLMs hallucinate. TEA fixes that with Prolog.**
 

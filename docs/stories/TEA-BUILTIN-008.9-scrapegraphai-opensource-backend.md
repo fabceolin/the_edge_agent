@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.9: ScrapeGraphAI Open-Source Backend Option
 
+## Status
+
+Ready for Development
+
+
 ## Status: Deferred ⏸️
 
 **Priority: Very Low**

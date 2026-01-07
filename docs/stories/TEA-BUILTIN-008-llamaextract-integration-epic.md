@@ -1,6 +1,10 @@
 # TEA-BUILTIN-008: LlamaExtract Integration Epic
 
-## Status: Ready for Dev
+## Status
+
+Ready for Development
+
+
 
 ## Epic Overview
 

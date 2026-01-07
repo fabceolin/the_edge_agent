@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.7: LlamaExtract Workflow Primitives
 
+## Status
+
+Ready for Development
+
+
 ## Status: Ready for Development
 
 **QA Validation:** Passed (2024-12-30)

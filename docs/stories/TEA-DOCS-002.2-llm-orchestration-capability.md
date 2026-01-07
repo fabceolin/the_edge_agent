@@ -1,5 +1,10 @@
 # TEA-DOCS-002.2: LLM Orchestration Capability Landing Page
 
+## Status
+
+Ready for Development
+
+
 ## Story Metadata
 
 | Field | Value |

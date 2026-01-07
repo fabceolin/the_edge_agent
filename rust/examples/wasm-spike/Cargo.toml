@@ -1,0 +1,67 @@
+[package]
+name = "tea-wasm-spike"
+version = "0.1.0"
+edition = "2021"
+description = "WebAssembly feasibility spike for The Edge Agent"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Core graph data structure (WASM compatible)
+petgraph = "0.6"
+
+# Serialization (WASM compatible)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Template engine (WASM compatible - pure Rust)
+tera = "1.19"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# WASM bindings
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1.7"
+
+# Web APIs for browser
+[dependencies.web-sys]
+version = "0.3"
+features = [
+    "console",
+    "Window",
+    "Document",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+    "Crypto",
+    "SubtleCrypto",
+    "Storage",
+]
+
+# WASM-compatible random generation (enable js feature for wasm32)
+# Force getrandom to use js feature - this propagates to tera's rand dependency
+getrandom = { version = "0.2", features = ["js"] }
+
+# Console logging for WASM panic hooks
+console_error_panic_hook = { version = "0.1", optional = false }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# Force getrandom to use js feature for all dependents
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+lto = true
+opt-level = "z"

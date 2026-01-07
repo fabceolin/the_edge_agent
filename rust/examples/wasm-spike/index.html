@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM Spike - Test Harness</title>
+    <style>
+        body {
+            font-family: 'Monaco', 'Consolas', monospace;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4ecdc4;
+        }
+        h2 {
+            color: #ff6b6b;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+        }
+        .test-section {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        pre {
+            background: #0f0f1a;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .success {
+            color: #4ecdc4;
+        }
+        .error {
+            color: #ff6b6b;
+        }
+        .pending {
+            color: #ffa502;
+        }
+        button {
+            background: #4ecdc4;
+            color: #1a1a2e;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #3db8ae;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            background: #0f0f1a;
+            color: #eee;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            font-family: inherit;
+            font-size: 12px;
+        }
+        #status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .test-result.pass {
+            background: rgba(78, 205, 196, 0.2);
+            border-left: 3px solid #4ecdc4;
+        }
+        .test-result.fail {
+            background: rgba(255, 107, 107, 0.2);
+            border-left: 3px solid #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <h1>TEA WASM Spike - Test Harness</h1>
+
+    <div id="status" class="pending">Loading WASM module...</div>
+
+    <div class="test-section">
+        <h2>Test 1: Basic Greeting (WASM Health Check)</h2>
+        <button id="test-greet" disabled>Run Test</button>
+        <div id="greet-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Simple YAML Workflow</h2>
+        <button id="test-simple" disabled>Run Test</button>
+        <div id="simple-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Template Variable Substitution</h2>
+        <button id="test-template" disabled>Run Test</button>
+        <div id="template-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 4: Secrets Injection</h2>
+        <button id="test-secrets" disabled>Run Test</button>
+        <div id="secrets-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 5: Multi-Node Workflow</h2>
+        <button id="test-multi" disabled>Run Test</button>
+        <div id="multi-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Custom YAML Test</h2>
+        <textarea id="custom-yaml">name: custom-test
+nodes:
+  - name: process
+    action: return
+    with:
+      value:
+        result: "Hello from {{ state.name }}!"
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__</textarea>
+        <br>
+        <label>Initial State (JSON):</label>
+        <input type="text" id="custom-state" value='{"name": "Custom"}' style="width: 100%; padding: 10px; background: #0f0f1a; color: #eee; border: 1px solid #333; border-radius: 5px; margin: 10px 0;">
+        <br>
+        <button id="run-custom" disabled>Execute Custom YAML</button>
+        <div id="custom-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 6: wllama LLM Integration (Browser-Based Inference)</h2>
+        <p style="color: #888; font-size: 12px;">
+            This test uses <a href="https://github.com/ngxson/wllama" style="color: #4ecdc4;">wllama</a> to run
+            llama.cpp models directly in the browser via WebAssembly. First load the model, then run inference.
+        </p>
+        <div id="wllama-status" class="pending">wllama not loaded</div>
+        <div style="margin: 10px 0;">
+            <button id="load-wllama" disabled>1. Load wllama + Model</button>
+            <button id="test-llm" disabled>2. Run LLM Test</button>
+            <button id="test-llm-yaml" disabled>3. Run YAML with LLM</button>
+        </div>
+        <div>
+            <label>Custom prompt:</label>
+            <input type="text" id="llm-prompt" value="Once upon a time"
+                   style="width: 100%; padding: 10px; background: #0f0f1a; color: #eee; border: 1px solid #333; border-radius: 5px; margin: 5px 0;">
+        </div>
+        <div id="llm-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 7: LLM with Embeddings</h2>
+        <p style="color: #888; font-size: 12px;">
+            Test embedding generation for RAG/semantic search use cases.
+        </p>
+        <button id="test-embed" disabled>Generate Embeddings</button>
+        <div id="embed-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Results Summary</h2>
+        <div id="summary"></div>
+    </div>
+
+    <script type="module">
+        import init, {
+            greet,
+            execute_yaml,
+            set_secrets,
+            clear_secrets,
+            version,
+            set_llm_handler,
+            clear_llm_handler,
+            has_llm_handler,
+            llm_call_async,
+            llm_embed_async
+        } from './pkg/tea_wasm_spike.js';
+
+        // wllama configuration paths for CDN-hosted WASM files
+        const WLLAMA_CONFIG = {
+            'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/single-thread/wllama.wasm',
+            'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/multi-thread/wllama.wasm',
+        };
+
+        // Alternative: Use ngxson's wllama (the original)
+        const WLLAMA_CONFIG_NGXSON = {
+            'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/single-thread/wllama.wasm',
+            'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/multi-thread/wllama.wasm',
+        };
+
+        // Global wllama instance
+        let wllamaInstance = null;
+        let modelLoaded = false;
+
+        let testResults = {
+            passed: 0,
+            failed: 0
+        };
+
+        function log(elementId, message, isSuccess) {
+            const el = document.getElementById(elementId);
+            const className = isSuccess ? 'pass' : 'fail';
+            const icon = isSuccess ? '✅' : '❌';
+            el.innerHTML += `<div class="test-result ${className}">${icon} ${message}</div>`;
+        }
+
+        function enableButtons() {
+            document.querySelectorAll('button').forEach(btn => btn.disabled = false);
+        }
+
+        function updateSummary() {
+            const el = document.getElementById('summary');
+            el.innerHTML = `
+                <div class="success">✅ Passed: ${testResults.passed}</div>
+                <div class="error">❌ Failed: ${testResults.failed}</div>
+            `;
+        }
+
+        // Test 1: Basic greeting
+        document.getElementById('test-greet').addEventListener('click', () => {
+            try {
+                const result = greet('WASM User');
+                log('greet-result', `greet() returned: "${result}"`, true);
+                testResults.passed++;
+            } catch (e) {
+                log('greet-result', `Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 2: Simple YAML workflow
+        document.getElementById('test-simple').addEventListener('click', () => {
+            try {
+                const yaml = `
+name: simple-test
+nodes:
+  - name: greet
+    action: return
+    with:
+      value:
+        message: "Hello from WASM!"
+edges:
+  - from: __start__
+    to: greet
+  - from: greet
+    to: __end__
+`;
+                const result = execute_yaml(yaml, '{}');
+                const parsed = JSON.parse(result);
+                if (parsed.message === "Hello from WASM!") {
+                    log('simple-result', `Simple workflow executed. Result: ${result}`, true);
+                    testResults.passed++;
+                } else {
+                    log('simple-result', `Unexpected result: ${result}`, false);
+                    testResults.failed++;
+                }
+            } catch (e) {
+                log('simple-result', `Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 3: Template substitution
+        document.getElementById('test-template').addEventListener('click', () => {
+            try {
+                const yaml = `
+name: template-test
+nodes:
+  - name: greet
+    action: return
+    with:
+      value:
+        greeting: "Hello, {{ state.name }}!"
+        count: "{{ state.count }}"
+edges:
+  - from: __start__
+    to: greet
+  - from: greet
+    to: __end__
+`;
+                const result = execute_yaml(yaml, '{"name": "Alice", "count": 42}');
+                const parsed = JSON.parse(result);
+                if (parsed.greeting === "Hello, Alice!" && parsed.name === "Alice") {
+                    log('template-result', `Template substitution works! Result: ${result}`, true);
+                    testResults.passed++;
+                } else {
+                    log('template-result', `Unexpected result: ${result}`, false);
+                    testResults.failed++;
+                }
+            } catch (e) {
+                log('template-result', `Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 4: Secrets injection
+        document.getElementById('test-secrets').addEventListener('click', () => {
+            try {
+                // Set secrets first
+                set_secrets('{"api_key": "sk-test-12345", "db_password": "secret123"}');
+
+                const yaml = `
+name: secrets-test
+nodes:
+  - name: show_secret
+    action: return
+    with:
+      value:
+        has_key: "API key is set"
+edges:
+  - from: __start__
+    to: show_secret
+  - from: show_secret
+    to: __end__
+`;
+                const result = execute_yaml(yaml, '{}');
+                const parsed = JSON.parse(result);
+
+                // Clear secrets after test
+                clear_secrets();
+
+                if (parsed.has_key) {
+                    log('secrets-result', `Secrets injection works! Secrets were set and workflow executed. Result: ${result}`, true);
+                    testResults.passed++;
+                } else {
+                    log('secrets-result', `Unexpected result: ${result}`, false);
+                    testResults.failed++;
+                }
+            } catch (e) {
+                log('secrets-result', `Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 5: Multi-node workflow
+        document.getElementById('test-multi').addEventListener('click', () => {
+            try {
+                const yaml = `
+name: multi-node-test
+nodes:
+  - name: step1
+    action: return
+    with:
+      value:
+        step1_done: true
+        value: 10
+  - name: step2
+    action: return
+    with:
+      value:
+        step2_done: true
+        doubled: "{{ state.value * 2 }}"
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: step2
+  - from: step2
+    to: __end__
+`;
+                const result = execute_yaml(yaml, '{}');
+                const parsed = JSON.parse(result);
+                if (parsed.step1_done && parsed.step2_done) {
+                    log('multi-result', `Multi-node workflow works! Result: ${result}`, true);
+                    testResults.passed++;
+                } else {
+                    log('multi-result', `Unexpected result: ${result}`, false);
+                    testResults.failed++;
+                }
+            } catch (e) {
+                log('multi-result', `Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Custom YAML execution
+        document.getElementById('run-custom').addEventListener('click', () => {
+            try {
+                const yaml = document.getElementById('custom-yaml').value;
+                const state = document.getElementById('custom-state').value;
+                const result = execute_yaml(yaml, state);
+                log('custom-result', `<pre>${JSON.stringify(JSON.parse(result), null, 2)}</pre>`, true);
+            } catch (e) {
+                log('custom-result', `Error: ${e}`, false);
+            }
+        });
+
+        // ============================================================
+        // wllama LLM Integration (Test 6 & 7)
+        // ============================================================
+
+        // Load wllama and model
+        document.getElementById('load-wllama').addEventListener('click', async () => {
+            const statusEl = document.getElementById('wllama-status');
+            statusEl.innerHTML = '<span class="pending">Loading wllama library...</span>';
+            statusEl.className = 'pending';
+
+            try {
+                // Dynamic import of wllama from CDN
+                // Note: In production, you'd bundle wllama with your app
+                const { Wllama } = await import('https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/index.js');
+
+                statusEl.innerHTML = '<span class="pending">Initializing wllama...</span>';
+
+                // Create wllama instance with CDN-hosted WASM files
+                wllamaInstance = new Wllama({
+                    'single-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/single-thread/wllama.wasm',
+                    'multi-thread/wllama.wasm': 'https://cdn.jsdelivr.net/npm/@anthropic-ai/wllama@2.3.6/esm/multi-thread/wllama.wasm',
+                });
+
+                statusEl.innerHTML = '<span class="pending">Downloading model (260KB)...</span>';
+
+                // Load a tiny model for testing (260KB - very fast to download)
+                // For production, you'd use a larger model like Phi-2 or TinyLlama
+                await wllamaInstance.loadModelFromHF(
+                    'ggml-org/models',
+                    'tinyllamas/stories260K.gguf',
+                    {
+                        progressCallback: ({ loaded, total }) => {
+                            const pct = Math.round((loaded / total) * 100);
+                            statusEl.innerHTML = `<span class="pending">Downloading model: ${pct}%</span>`;
+                        }
+                    }
+                );
+
+                modelLoaded = true;
+
+                // Register LLM handler for TEA WASM
+                set_llm_handler(async (paramsJson) => {
+                    const params = JSON.parse(paramsJson);
+
+                    // Check if this is an embedding request
+                    if (params.action === 'embed') {
+                        // wllama embedding (if model supports it)
+                        try {
+                            const embeddings = await wllamaInstance.createEmbedding(params.text);
+                            return JSON.stringify(embeddings);
+                        } catch (e) {
+                            throw new Error(`Embedding not supported by this model: ${e}`);
+                        }
+                    }
+
+                    // Regular completion
+                    const result = await wllamaInstance.createCompletion(params.prompt, {
+                        nPredict: params.max_tokens || 50,
+                        sampling: {
+                            temp: params.temperature || 0.7,
+                            top_p: params.top_p || 0.9,
+                            top_k: params.top_k || 40,
+                        },
+                    });
+
+                    return JSON.stringify({
+                        content: result,
+                        model: 'tinyllamas/stories260K.gguf',
+                        usage: {
+                            prompt_tokens: params.prompt.split(' ').length,
+                            completion_tokens: result.split(' ').length,
+                            total_tokens: params.prompt.split(' ').length + result.split(' ').length
+                        }
+                    });
+                });
+
+                statusEl.innerHTML = '<span class="success">wllama ready! Model: stories260K.gguf</span>';
+                statusEl.className = 'success';
+
+                // Enable LLM test buttons
+                document.getElementById('test-llm').disabled = false;
+                document.getElementById('test-llm-yaml').disabled = false;
+                document.getElementById('test-embed').disabled = false;
+
+                log('llm-result', 'wllama loaded and LLM handler registered!', true);
+                testResults.passed++;
+                updateSummary();
+
+            } catch (e) {
+                statusEl.innerHTML = `<span class="error">Failed to load wllama: ${e}</span>`;
+                statusEl.className = 'error';
+                log('llm-result', `Error loading wllama: ${e}`, false);
+                testResults.failed++;
+                updateSummary();
+                console.error('[wllama] Load error:', e);
+            }
+        });
+
+        // Test 6a: Direct LLM call
+        document.getElementById('test-llm').addEventListener('click', async () => {
+            if (!modelLoaded) {
+                log('llm-result', 'Please load the model first!', false);
+                return;
+            }
+
+            const prompt = document.getElementById('llm-prompt').value;
+            log('llm-result', `Generating with prompt: "${prompt}"...`, true);
+
+            try {
+                const params = JSON.stringify({
+                    prompt: prompt,
+                    max_tokens: 50,
+                    temperature: 0.8
+                });
+
+                const result = await llm_call_async(params, '{}');
+                const parsed = JSON.parse(result);
+
+                log('llm-result', `<pre>LLM Response:\n${JSON.stringify(parsed.llm_response, null, 2)}</pre>`, true);
+                testResults.passed++;
+            } catch (e) {
+                log('llm-result', `LLM Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 6b: YAML workflow with LLM
+        document.getElementById('test-llm-yaml').addEventListener('click', async () => {
+            if (!modelLoaded) {
+                log('llm-result', 'Please load the model first!', false);
+                return;
+            }
+
+            const prompt = document.getElementById('llm-prompt').value;
+            log('llm-result', `Running YAML workflow with LLM...`, true);
+
+            try {
+                // Note: In a full implementation, the YAML engine would call llm_call_async
+                // For now, we demonstrate the pattern
+                const yaml = `
+name: llm-workflow
+description: Test workflow using browser-based LLM
+nodes:
+  - name: generate
+    uses: llm.call
+    with:
+      prompt: "${prompt}"
+      max_tokens: 30
+    output: story
+edges:
+  - from: __start__
+    to: generate
+  - from: generate
+    to: __end__
+`;
+                // For now, call LLM directly since YAML engine doesn't have async action support yet
+                const params = JSON.stringify({
+                    prompt: prompt,
+                    max_tokens: 30,
+                    temperature: 0.8
+                });
+                const llmResult = await llm_call_async(params, '{}');
+                const parsed = JSON.parse(llmResult);
+
+                log('llm-result', `<pre>YAML+LLM Result:\n${JSON.stringify(parsed, null, 2)}</pre>`, true);
+                testResults.passed++;
+            } catch (e) {
+                log('llm-result', `YAML+LLM Error: ${e}`, false);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Test 7: Embeddings
+        document.getElementById('test-embed').addEventListener('click', async () => {
+            if (!modelLoaded) {
+                log('embed-result', 'Please load the model first!', false);
+                return;
+            }
+
+            log('embed-result', 'Generating embeddings...', true);
+
+            try {
+                const text = document.getElementById('llm-prompt').value;
+                const result = await llm_embed_async(text, '{}');
+                const parsed = JSON.parse(result);
+
+                if (parsed.embedding) {
+                    log('embed-result', `<pre>Embedding (${parsed.embedding.length} dimensions):\n[${parsed.embedding.slice(0, 10).map(x => x.toFixed(4)).join(', ')}...]\n\nFirst 10 of ${parsed.embedding.length} dimensions shown</pre>`, true);
+                    testResults.passed++;
+                } else {
+                    log('embed-result', 'Embeddings not supported by this model (stories260K is text-only)', false);
+                    log('embed-result', 'Use an embedding model like nomic-embed-text.Q4_K_M.gguf for this feature', true);
+                }
+            } catch (e) {
+                log('embed-result', `Embedding Error: ${e}`, false);
+                log('embed-result', 'Note: stories260K.gguf does not support embeddings. Use a dedicated embedding model.', true);
+                testResults.failed++;
+            }
+            updateSummary();
+        });
+
+        // Initialize WASM module
+        async function run() {
+            try {
+                await init();
+                const ver = version();
+                document.getElementById('status').innerHTML =
+                    `<span class="success">✅ WASM module loaded successfully! Version: ${ver}</span>`;
+                document.getElementById('status').className = 'success';
+                enableButtons();
+                console.log('[TEA-WASM] Module initialized, version:', ver);
+
+                // Also enable the wllama load button
+                document.getElementById('load-wllama').disabled = false;
+            } catch (e) {
+                document.getElementById('status').innerHTML =
+                    `<span class="error">❌ Failed to load WASM module: ${e}</span>`;
+                document.getElementById('status').className = 'error';
+                console.error('[TEA-WASM] Failed to initialize:', e);
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

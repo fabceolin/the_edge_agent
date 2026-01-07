@@ -1,5 +1,10 @@
 # TEA-DOCS-002: Capability Documentation Epic
 
+## Status
+
+Ready for Development
+
+
 ## Epic Metadata
 
 | Field | Value |

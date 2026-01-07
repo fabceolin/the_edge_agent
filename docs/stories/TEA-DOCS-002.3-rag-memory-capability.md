@@ -1,5 +1,10 @@
 # TEA-DOCS-002.3: RAG & Memory Capability Landing Page
 
+## Status
+
+Ready for Development
+
+
 ## Story Metadata
 
 | Field | Value |

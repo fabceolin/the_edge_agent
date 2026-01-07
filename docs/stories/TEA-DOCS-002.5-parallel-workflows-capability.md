@@ -1,5 +1,10 @@
 # TEA-DOCS-002.5: Parallel Workflows Capability Landing Page
 
+## Status
+
+Ready for Development
+
+
 ## Story Metadata
 
 | Field | Value |

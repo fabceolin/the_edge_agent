@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.4: ScrapeGraphAI Integration (Python Only)
 
+## Status
+
+Ready for Development
+
+
 ## Status: Complete ✅
 
 **Story Quality Score: 95/100** (up from 85/100)

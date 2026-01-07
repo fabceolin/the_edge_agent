@@ -1,5 +1,10 @@
 # DOC-002: YAML Reference Modularization Epic
 
+## Status
+
+Draft
+
+
 ## Executive Summary
 
 This epic modularizes the monolithic `docs/shared/YAML_REFERENCE.md` (~3500+ lines) into a hierarchical structure of linked sub-documents, improving maintainability, navigation, and developer experience.

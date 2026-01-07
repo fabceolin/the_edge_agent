@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.6: LlamaExtract Async Polling Configuration
 
+## Status
+
+Ready for Development
+
+
 ## Status: Ready for Development
 
 **QA Gate Passed:** 2024-12-30
