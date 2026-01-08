@@ -42,12 +42,17 @@ class StoryStatusAuditor:
     """Analyzes story files and extracts status information."""
 
     STATUS_CATEGORIES = {
+        # Order matters: more specific patterns first to avoid substring collisions
+        "ready_review": [
+            "ready for review",
+            "ready for merge",
+        ],
         "ready_dev": [
             "ready for dev",
             "ready for development",
             "ready to develop",
-            "ready",
             "approved - ready for development",
+            "ready",  # Generic "ready" MUST come after ready_review check
         ],
         "draft": [
             "draft",
@@ -57,10 +62,6 @@ class StoryStatusAuditor:
             "backlog",
             "proposed",
             "pending",
-        ],
-        "ready_review": [
-            "ready for review",
-            "ready for merge",
         ],
         "approved": [
             "approved",
@@ -78,6 +79,7 @@ class StoryStatusAuditor:
             "superseded",
             "qa approved",
             "qa pass",
+            "qa approved - ready for deployment",  # QA approved states
         ],
     }
 

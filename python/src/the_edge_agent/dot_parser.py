@@ -568,6 +568,7 @@ def generate_yaml(
     use_tmux: bool = False,
     tmux_session: Optional[str] = None,
     use_node_commands: bool = False,  # TEA-TOOLS-002: Per-node command mode
+    tea_executable: Optional[str] = None,  # Override tea executable name
 ) -> str:
     """
     Generate TEA YAML from an analyzed graph.
@@ -580,10 +581,19 @@ def generate_yaml(
         use_tmux: Generate tmux-based execution
         tmux_session: Tmux session name (required if use_tmux is True)
         use_node_commands: TEA-TOOLS-002 - Use per-node command attribute from DOT
+        tea_executable: Override "tea" in commands with this executable (e.g., "tea-python", "tea-rust")
 
     Returns:
         YAML string for TEA workflow
     """
+
+    # Helper function to replace tea executable in commands
+    def replace_tea_executable(cmd: str) -> str:
+        """Replace 'tea' at the start of command with tea_executable if specified."""
+        if tea_executable and cmd.strip().startswith("tea "):
+            return cmd.strip().replace("tea ", f"{tea_executable} ", 1)
+        return cmd
+
     name = workflow_name or analyzed.name or "generated-workflow"
     name = _sanitize_name(name)
 
@@ -601,6 +611,7 @@ def generate_yaml(
         setup_node = _generate_setup_node(
             analyzed,
             use_node_commands=use_node_commands,
+            tea_executable=tea_executable,
         )
         nodes.append(setup_node)
         edges.append({"from": "__start__", "to": "setup"})
@@ -650,6 +661,15 @@ def generate_yaml(
             node_command = (
                 analyzed.node_commands.get(label) if use_node_commands else None
             )
+            # Apply tea executable replacement if specified
+            if (
+                node_command
+                and tea_executable
+                and node_command.strip().startswith("tea ")
+            ):
+                node_command = node_command.strip().replace(
+                    "tea ", f"{tea_executable} ", 1
+                )
             exec_node = _generate_simple_exec_node(
                 node_id,
                 label,
@@ -710,12 +730,16 @@ def _sanitize_name(name: str) -> str:
 def _generate_setup_node(
     analyzed: AnalyzedGraph,
     use_node_commands: bool = False,
+    tea_executable: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Generate the setup node that initializes phase items.
 
     TEA-TOOLS-002: When use_node_commands is True, also initializes command
     mappings for per-node command dispatch.
+
+    Args:
+        tea_executable: If specified, replaces "tea" in commands with this executable name
     """
     setup_code_lines = ["# Initialize phase items for parallel execution"]
 
@@ -734,7 +758,11 @@ def _generate_setup_node(
             phase_commands = {}
             for item in phase.items:
                 if item in analyzed.node_commands:
-                    phase_commands[item] = analyzed.node_commands[item]
+                    # Apply tea executable replacement if specified
+                    cmd = analyzed.node_commands[item]
+                    if tea_executable and cmd.strip().startswith("tea "):
+                        cmd = cmd.strip().replace("tea ", f"{tea_executable} ", 1)
+                    phase_commands[item] = cmd
 
             if phase_commands:
                 # Generate dict literal using repr() for proper escaping
@@ -1074,6 +1102,7 @@ def dot_to_yaml(
     validate: bool = False,
     use_node_commands: bool = False,  # TEA-TOOLS-002: Per-node command mode
     allow_cycles: bool = False,  # Allow cycles for feedback loops
+    tea_executable: Optional[str] = None,  # Override tea executable name in commands
 ) -> str:
     """
     Convert a DOT file to TEA YAML workflow.
@@ -1091,6 +1120,7 @@ def dot_to_yaml(
         validate: Validate generated YAML before returning
         use_node_commands: TEA-TOOLS-002 - Use per-node command attribute from DOT
         allow_cycles: Allow cycles in the graph (for feedback loops)
+        tea_executable: Override "tea" in commands with this executable name (e.g., "tea-python", "tea-rust")
 
     Returns:
         Generated YAML string
@@ -1139,6 +1169,7 @@ def dot_to_yaml(
         use_tmux=use_tmux,
         tmux_session=tmux_session,
         use_node_commands=use_node_commands,
+        tea_executable=tea_executable,
     )
 
     # Optionally validate

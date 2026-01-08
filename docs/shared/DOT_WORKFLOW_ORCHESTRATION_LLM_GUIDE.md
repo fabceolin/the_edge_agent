@@ -259,7 +259,33 @@ tea from dot workflow.dot --use-node-commands -n "my-pipeline" -o workflow.yaml
 
 # Validate before writing
 tea from dot workflow.dot --use-node-commands --validate -o workflow.yaml
+
+# Specify tea executable name (for multiple implementations)
+tea from dot workflow.dot --use-node-commands --tea-executable tea-python -o workflow.yaml
+tea from dot workflow.dot --use-node-commands --tea-executable tea-rust -o workflow.yaml
 ```
+
+### Tea Executable Override
+
+When you have multiple tea implementations (Python, Rust, or different versions), use `--tea-executable` to specify which one should be used in the generated commands:
+
+```bash
+# DOT file contains: command="tea run workflow.yaml ..."
+# With --tea-executable tea-python, generates: command="tea-python run workflow.yaml ..."
+
+tea from dot workflow.dot --use-node-commands --tea-executable tea-python -o workflow.yaml
+```
+
+**Use Cases:**
+- **Python implementation**: `--tea-executable tea-python`
+- **Rust implementation**: `--tea-executable tea-rust`
+- **Specific version**: `--tea-executable tea-v0.9.3`
+- **Custom binary**: `--tea-executable /usr/local/bin/my-tea`
+
+**How it works:**
+1. DOT file contains commands starting with `tea` (e.g., `command="tea run ..."`)
+2. The `--tea-executable` flag replaces `tea` with the specified executable name
+3. If no flag is provided, `tea` is used as-is (default behavior)
 
 ### Execute Generated Workflow
 
@@ -381,13 +407,25 @@ digraph epic_implementation {
 ### Generation Command
 
 ```bash
+# Default (uses "tea" in generated commands)
 tea from dot epic_implementation.dot --use-node-commands -o epic_implementation.yaml
+
+# Specify Python implementation
+tea from dot epic_implementation.dot --use-node-commands --tea-executable tea-python -o epic_implementation.yaml
+
+# Specify Rust implementation
+tea from dot epic_implementation.dot --use-node-commands --tea-executable tea-rust -o epic_implementation.yaml
 ```
 
 ### Execution
 
 ```bash
+# Execute with default tea
 tea run epic_implementation.yaml
+
+# Execute with specific implementation (if generated with --tea-executable)
+tea-python run epic_implementation.yaml
+tea-rust run epic_implementation.yaml
 ```
 
 ---

@@ -1200,6 +1200,12 @@ def from_dot(
         "--allow-cycles",
         help="Allow cycles in the graph (for feedback loops like QA retry patterns).",
     ),
+    tea_executable: Optional[str] = typer.Option(
+        None,
+        "--tea-executable",
+        help="Override tea executable name in commands (e.g., tea-python, tea-rust). "
+        "Replaces 'tea' at start of command with the specified executable name.",
+    ),
 ):
     """
     Convert DOT/Graphviz diagram to TEA YAML workflow.
@@ -1268,6 +1274,7 @@ def from_dot(
             validate=validate_output,
             use_node_commands=use_node_commands,
             allow_cycles=allow_cycles,
+            tea_executable=tea_executable,
         )
 
         if output:
