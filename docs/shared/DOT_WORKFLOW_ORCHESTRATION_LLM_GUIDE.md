@@ -203,16 +203,16 @@ digraph mixed_deps {
 
 ### Story Development Workflow
 
-Use `@file` syntax for cleaner commands (no JSON escaping needed):
+Use JSON input format with `arg` key:
 
 ```dot
-command="tea run examples/workflows/bmad-story-development.yaml --input @docs/stories/<STORY-ID>.md"
+command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
 ```
 
 ### Story Validation Workflow
 
 ```dot
-command="tea run examples/workflows/bmad-story-validation.yaml --input @docs/stories/<STORY-ID>.md"
+command="tea run examples/workflows/bmad-story-validation.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
 ```
 
 ### Custom Workflow with JSON Inputs
@@ -438,18 +438,18 @@ tea-rust run epic_implementation.yaml
 - Labels are used as dict keys and tmux window names
 
 ### Commands
-- **Use `@file` syntax**: `--input @path/to/file.md` instead of JSON with escaped quotes
-- **Avoid nested quotes**: If you must use JSON, prefer environment variables or file references
+- **Use JSON input format**: `--input '{\"arg\": \"path/to/file.md\"}'` with proper escaping
+- **Escape double quotes**: Use `\"` for quotes inside the command string
 - **Test commands independently**: Run the command in a shell before embedding in DOT
 
 ### Example: Good vs Bad
 
 ```dot
-// GOOD - simple label, @file syntax
-story_1 [label="STORY-001", command="tea run workflow.yaml --input @docs/story.md"];
+// GOOD - simple label, JSON input format
+story_1 [label="STORY-001", command="tea run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
 
-// BAD - multi-line label, escaped JSON
-story_1 [label="STORY-001\nDescription", command="tea run workflow.yaml --input '{\"arg\": \"value\"}'"];
+// BAD - multi-line label
+story_1 [label="STORY-001\nDescription", command="tea run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
 ```
 
 ---
@@ -464,7 +464,7 @@ Before generating:
 - [ ] Edges define correct execution order
 - [ ] No circular dependencies
 - [ ] Labels contain only alphanumeric, `-`, `_`, `.` characters
-- [ ] Commands use `@file` syntax instead of JSON with quotes
+- [ ] Commands use JSON input format with proper escaping: `'{\"arg\": \"<path>\"}'`
 - [ ] File paths are correct and exist
 
 ---

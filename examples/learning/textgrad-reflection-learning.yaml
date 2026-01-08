@@ -1,0 +1,256 @@
+# TextGrad Reflection Learning Example
+# Demonstrates TextGrad integration with reflection loops
+#
+# This example shows how to:
+# 1. Use reflection.loop for iterative output improvement
+# 2. Integrate TextGrad as a corrector that kicks in after failures
+# 3. Automatically optimize prompts when simple corrections don't work
+#
+# The key insight: reflection.loop handles simple corrections, but when
+# repeated failures occur, TextGrad optimizes the underlying prompt.
+#
+# Prerequisites:
+# - pip install the_edge_agent[textgrad]
+# - Set OPENAI_API_KEY environment variable
+#
+# Usage:
+#   tea run examples/learning/textgrad-reflection-learning.yaml \
+#     --set query="Write a haiku about Python programming"
+
+name: textgrad-reflection-learning
+version: "1.0"
+description: |
+  A self-improving agent that uses reflection for quick fixes and
+  TextGrad for deeper prompt optimization when reflection alone
+  isn't sufficient.
+
+settings:
+  textgrad:
+    enabled: true
+    optimizer_model: gpt-4
+    max_iterations: 2
+
+state_schema:
+  query: str
+  system_prompt: str
+  current_output: str
+  final_output: str
+  learning_stats: object
+
+nodes:
+  # Step 1: Initialize the optimizable system prompt
+  - name: init_learning
+    action: learn.textgrad.variable
+    with:
+      name: creative_prompt
+      initial_value: |
+        You are a creative writer. Generate content that follows
+        the requested format precisely and demonstrates creativity.
+      role_description: "System prompt for creative writing tasks"
+      constraints:
+        - "Must emphasize format adherence"
+        - "Should encourage creativity"
+        - "Keep under 75 words"
+    output: prompt_init
+    next: set_prompt
+
+  - name: set_prompt
+    action: state.set
+    with:
+      system_prompt: "{{ state.prompt_init.variable.current_value }}"
+      learning_stats:
+        reflections_used: 0
+        textgrad_triggered: false
+        prompt_versions: 1
+    next: generate_with_reflection
+
+  # Step 2: Run reflection loop with TextGrad corrector
+  - name: generate_with_reflection
+    action: reflection.loop
+    with:
+      # Generator: Create content using current prompt
+      generator:
+        action: llm.call
+        with:
+          model: gpt-4
+          system: "{{ state.system_prompt }}"
+          prompt: "{{ state.query }}"
+
+      # Evaluator: Check if output meets requirements
+      evaluator:
+        type: llm
+        model: gpt-4
+        prompt: |
+          Evaluate this creative writing output:
+          ---
+          {{ output }}
+          ---
+
+          Original request: {{ state.query }}
+
+          Check:
+          1. Does it follow the requested format exactly?
+          2. Is it creative and engaging?
+          3. Is it complete and polished?
+
+          Return JSON: {"pass": true/false, "score": 0.0-1.0, "errors": ["list", "of", "issues"]}
+        score_threshold: 0.8
+
+      # Corrector: Uses TextGrad after threshold failures
+      corrector:
+        action: learn.textgrad.reflection_corrector
+        with:
+          variable: creative_prompt
+          trigger_threshold: 2      # Trigger TextGrad after 2 failures
+          optimization_iterations: 2 # Run 2 TextGrad iterations when triggered
+
+      max_iterations: 5
+      return_best: true
+    output: reflection_result
+    next: process_result
+
+  # Step 3: Process and store results
+  - name: process_result
+    action: state.set
+    with:
+      final_output: "{{ state.reflection_result.output }}"
+      learning_stats:
+        reflections_used: "{{ state.reflection_result.iterations }}"
+        final_score: "{{ state.reflection_result.score }}"
+        converged: "{{ state.reflection_result.success }}"
+        textgrad_triggered: "{{ state.reflection_result.textgrad_used | default(false) }}"
+    next: output_result
+
+  # Step 4: Return final result
+  - name: output_result
+    action: core.return
+    with:
+      status: "{{ 'success' if state.reflection_result.success else 'best_effort' }}"
+      output: "{{ state.final_output }}"
+      query: "{{ state.query }}"
+      stats: "{{ state.learning_stats }}"
+      prompt_evolved: "{{ state.system_prompt != state.prompt_init.variable.initial_value }}"
+      message: |
+        {% if state.reflection_result.success %}
+        Task completed successfully!
+        {% elif state.learning_stats.textgrad_triggered %}
+        TextGrad optimization was triggered to improve the underlying prompt.
+        {% else %}
+        Best effort result after {{ state.learning_stats.reflections_used }} attempts.
+        {% endif %}
+
+edges:
+  - from: __start__
+    to: init_learning
+
+---
+# Alternative: Explicit TextGrad Integration Pattern
+#
+# For more control, you can manually integrate TextGrad into
+# a custom reflection-like loop:
+
+name: textgrad-explicit-learning
+version: "1.0"
+description: Explicit TextGrad integration without reflection.loop
+
+settings:
+  textgrad:
+    enabled: true
+    optimizer_model: gpt-4
+
+state_schema:
+  task: str
+  prompt: str
+  output: str
+  history: list
+  iteration: int
+
+nodes:
+  - name: init
+    action: learn.textgrad.variable
+    with:
+      name: task_prompt
+      initial_value: "You are a helpful assistant."
+    output: var_result
+    next: set_state
+
+  - name: set_state
+    action: state.set
+    with:
+      prompt: "{{ state.var_result.variable.current_value }}"
+      history: []
+      iteration: 0
+    next: generate
+
+  - name: generate
+    action: llm.call
+    with:
+      model: gpt-4
+      system: "{{ state.prompt }}"
+      prompt: "{{ state.task }}"
+    output: output
+    next: evaluate
+
+  - name: evaluate
+    action: learn.textgrad.feedback
+    with:
+      output: "{{ state.output }}"
+      evaluation_criteria:
+        - "Is the response helpful?"
+        - "Is it accurate?"
+      aspects:
+        - helpfulness
+        - accuracy
+    output: feedback
+    next: record_history
+
+  - name: record_history
+    action: state.set
+    with:
+      history: |
+        {{ state.history + [{"iteration": state.iteration, "output": state.output, "score": state.feedback.scores.overall | default(0.5)}] }}
+      iteration: "{{ state.iteration + 1 }}"
+    next: check_done
+
+  - name: check_done
+    action: core.switch
+    with:
+      value: "{{ state.feedback.scores.overall | default(0) >= 0.8 or state.iteration >= 3 }}"
+    edges:
+      "true": finish
+      "false": optimize
+
+  - name: optimize
+    action: learn.textgrad.optimize_prompt
+    with:
+      variable: task_prompt
+      loss_fn: |
+        Previous attempts and scores:
+        {% for h in state.history %}
+        - Attempt {{ h.iteration }}: score {{ h.score }}
+        {% endfor %}
+
+        Latest output: {{ state.output }}
+        Feedback: {{ state.feedback.feedback }}
+
+        Improve the prompt to get better responses.
+      iterations: 1
+    output: opt_result
+    next: apply_optimized
+
+  - name: apply_optimized
+    action: state.set
+    with:
+      prompt: "{{ state.opt_result.optimized_value }}"
+    next: generate
+
+  - name: finish
+    action: core.return
+    with:
+      final_output: "{{ state.output }}"
+      iterations: "{{ state.iteration }}"
+      history: "{{ state.history }}"
+
+edges:
+  - from: __start__
+    to: init

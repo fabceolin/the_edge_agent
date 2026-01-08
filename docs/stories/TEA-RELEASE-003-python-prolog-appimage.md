@@ -1,7 +1,7 @@
 # TEA-RELEASE-003: Python Prolog Binaries and AppImage Distribution
 
 ## Status
-Ready for Merge
+Ready for Done
 
 ## Story
 

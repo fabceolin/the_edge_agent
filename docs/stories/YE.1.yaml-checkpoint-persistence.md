@@ -1,7 +1,13 @@
 # Story YE.1: YAML Engine Checkpoint Persistence
 
 ## Status
-Draft
+Ready for Development
+
+**Story Validation:** 2026-01-07 by Bob (Scrum Master)
+**Assessment:** All checklist criteria PASSED (5/5)
+**Clarity Score:** 10/10
+**QA Test Design:** Complete (34 test scenarios, priority-ranked)
+**Next Action:** Assign to dev agent for implementation
 
 ## Story
 **As a** developer using YAML-based agent configurations,
@@ -213,7 +219,129 @@ def checkpoint_load(state, path, **kwargs):
 - **Mitigation:** Extend `_create_action_function` to optionally inject graph context
 - **Rollback:** Feature is additive; can be removed without breaking existing YAML workflows
 
+## QA Notes
+
+**Test Design Completed:** 2026-01-07
+**Test Architect:** Quinn
+**Test Assessment:** `docs/qa/assessments/YE.1-test-design-20260107.md`
+
+### Test Coverage Summary
+
+**Total Test Scenarios:** 34
+- **Unit Tests:** 22 (65%) - API contracts, parsing logic, template variables
+- **Integration Tests:** 12 (35%) - YAML→graph→checkpoint roundtrip scenarios
+- **E2E Tests:** 0 (appropriate for developer-facing API feature)
+
+**Priority Distribution:**
+- **P0 (Critical):** 16 scenarios - Data integrity, core resume functionality, backward compatibility
+- **P1 (Important):** 14 scenarios - Error handling, complex workflows, template features
+- **P2 (Nice-to-have):** 4 scenarios - Documentation validation, edge cases
+
+### Risk Areas Identified
+
+1. **RISK-001: Checkpoint File Corruption** (P0)
+   - Covered by: YE.1-UNIT-001, YE.1-INT-001, YE.1-INT-007, YE.1-INT-015/17
+   - Mitigation: Validate checkpoint data integrity after save/load roundtrip
+
+2. **RISK-006: Breaking Existing YAML Workflows** (P0)
+   - Covered by: YE.1-UNIT-005/007, YE.1-INT-022/023, YE.1-INT-028
+   - Mitigation: All existing YAMLEngine tests must pass unchanged
+
+3. **RISK-005: State Corruption on Resume** (P0)
+   - Covered by: YE.1-INT-008/009/010, YE.1-INT-013
+   - Mitigation: Verify resumed execution starts at correct node with correct state values
+
+4. **RISK-010: Parallel Flow State Corruption** (P1)
+   - Covered by: YE.1-INT-024, YE.1-INT-025
+   - Mitigation: Test checkpoint during parallel flows captures main thread state correctly
+
+5. **RISK-008: Template Variable Resolution Errors** (P1)
+   - Covered by: YE.1-UNIT-014/015, YE.1-INT-018/019/020/021
+   - Mitigation: Test {{ state.var }}, {{ checkpoint.dir }}, {{ checkpoint.last }}
+
+### Recommended Test Scenarios (Priority Order)
+
+**Phase 1: Fail-Fast (P0 Unit Tests)**
+- API contract validation (checkpoint parameter on load methods)
+- Action registration (checkpoint.save, checkpoint.load)
+- Return contract validation (action response schemas)
+
+**Phase 2: Core Integration (P0 Integration Tests)**
+- Auto-save at interrupt points
+- Resume from YAML config.checkpoint parameter
+- Backward compatibility (existing tests pass, no checkpoint_dir works unchanged)
+
+**Phase 3: Robustness (P1)**
+- Template variable resolution in dynamic paths
+- Parallel flows and conditional edges with checkpoints
+- Error handling (missing/corrupt checkpoint files)
+
+**Phase 4: Polish (P2 - Time Permitting)**
+- Documentation verification
+- Edge cases (no checkpoints yet scenario)
+
+### Critical Quality Gates
+
+✅ **MUST PASS:**
+1. All existing YAMLEngine tests pass without modification (AC16, AC19)
+2. P0 integration tests for auto-save and resume (AC1-4)
+3. Backward compatibility tests (AC16, YE.1-INT-022/023/028)
+
+⚠️ **CONCERNS IF FAIL:**
+1. Template variable resolution in complex scenarios (RISK-008)
+2. Parallel flow checkpoint integrity (RISK-010)
+3. Error message clarity (AC20)
+
+❌ **BLOCKER IF FAIL:**
+1. Checkpoint data corruption detected (RISK-001)
+2. Existing workflows break (RISK-006)
+3. State corruption on resume (RISK-005)
+
+### Test Implementation Notes
+
+- Use `tempfile.TemporaryDirectory()` for all checkpoint file operations
+- Unit tests: Mock StateGraph checkpoint methods for isolation
+- Integration tests: Use real checkpoint files in temp directories
+- Performance target: Unit <100ms, Integration <1s, Total suite <30s
+
+### Coverage Gaps
+
+**None identified.** All 23 acceptance criteria have explicit test coverage across 34 test scenarios.
+
+### Testability Assessment
+
+**Controllability:** ✅ Excellent
+- YAML config provides full control over checkpoint behavior
+- Built-in actions allow explicit checkpoint operations within workflows
+
+**Observability:** ✅ Excellent
+- Actions return explicit success/failure indicators
+- Checkpoint file paths are predictable and configurable
+- Error messages required by AC20
+
+**Debuggability:** ✅ Good
+- Template variables support dynamic checkpoint naming for debug scenarios
+- {{ checkpoint.last }} allows inspection of auto-save history
+- Recommend: Add checkpoint file introspection utility for troubleshooting
+
+### Recommendations
+
+1. **Priority:** Implement P0 tests first - backward compatibility is critical
+2. **Action Context Injection:** Watch for complexity in extending `_create_action_function` to inject graph/node context (noted in story Dev Notes)
+3. **Template Context Tracking:** Ensure `_last_checkpoint_path` is thread-safe if parallel flows call checkpoint.save
+4. **Documentation:** Include troubleshooting guide for common checkpoint errors (missing file, corrupt data, wrong format)
+5. **Future Enhancement:** Consider `checkpoint.list` action to enumerate available checkpoints in a directory
+
+### QA Sign-Off Criteria
+
+- [ ] All P0 tests pass (16 scenarios)
+- [ ] No regressions in existing test suite
+- [ ] Error messages follow AC20 clarity requirements
+- [ ] Test coverage ≥90% for new YAMLEngine methods
+- [ ] Documentation includes checkpoint examples and troubleshooting guide
+
 ## Change Log
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
+| 2026-01-07 | 0.2 | Added QA Notes with test design assessment | Quinn (Test Architect) |
 | 2025-12-06 | 0.1 | Initial draft | Sarah (PO Agent) |

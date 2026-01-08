@@ -3,9 +3,9 @@ schema: 1
 story: "TEA-KIROKU-002"
 story_title: "Citation Insertion Built-in Action"
 gate: PASS
-status_reason: "v2.1: All previous concerns addressed. Error handling added, timeout implemented, dead code removed. 20 tests passing. Production-ready."
+status_reason: "v3.0 Test Design: 27 scenarios identified (20 implemented, 7 gaps). Existing coverage adequate for production. Gaps are future enhancements."
 reviewer: "Quinn (Test Architect)"
-updated: "2025-12-27T23:45:00Z"
+updated: "2026-01-07T00:00:00Z"
 
 waiver: { active: false }
 
@@ -110,13 +110,64 @@ algorithm_comparison:
     pros: ["Semantic understanding", "Matches by meaning not keywords", "Original Kiroku algorithm"]
     cons: ["Requires OpenAI API key", "Cost per document", "Network dependency"]
 
+test_design_v3:
+  date: "2026-01-07"
+  document: "docs/qa/assessments/TEA-KIROKU-002-test-design-20260107.md"
+  scenarios_total: 27
+  scenarios_implemented: 20
+  scenarios_gap: 7
+  by_level:
+    unit: 18
+    integration: 7
+    e2e: 2
+  by_priority:
+    p0: 8
+    p1: 12
+    p2: 7
+  coverage_gaps:
+    - id: "UNIT-003"
+      description: "Custom embedding model parameter validation"
+      priority: "P1"
+    - id: "UNIT-004"
+      description: "Custom API key parameter override"
+      priority: "P2"
+    - id: "UNIT-012"
+      description: "Empty line separator validation"
+      priority: "P2"
+    - id: "UNIT-021"
+      description: "Markdown images/tables preservation"
+      priority: "P2"
+    - id: "UNIT-022"
+      description: "Unicode character handling"
+      priority: "P2"
+    - id: "UNIT-023"
+      description: "Large document performance (100+ sentences)"
+      priority: "P2"
+    - id: "INT-006"
+      description: "Documentation example execution"
+      priority: "P2"
+  rust_considerations:
+    - "Use punkt crate for sentence tokenization"
+    - "Use async-openai crate for API calls"
+    - "Use reqwest with timeout support"
+    - "Use mockito for HTTP mocking in tests"
+    - "Implement all 27 scenarios for feature parity"
+
 recommendations:
-  immediate: []
+  immediate:
+    - action: "Implement 7 gap scenarios to reach 100% coverage"
+      priority: "P2"
+      refs: ["docs/qa/assessments/TEA-KIROKU-002-test-design-20260107.md"]
+    - action: "Add performance benchmark for large documents"
+      priority: "P2"
   future:
     - action: "Consider adding LiteLLM support for alternative embedding providers"
       refs: ["python/src/the_edge_agent/actions/text_actions.py:170"]
     - action: "Consider caching embeddings for documents with repeated processing"
       refs: ["python/src/the_edge_agent/actions/text_actions.py:202-213"]
+    - action: "Evaluate similarity threshold parameter to filter low-confidence citations"
   completed:
     - action: "Refactored from keyword matching to semantic embedding matching"
       version: "2.0"
+    - action: "Comprehensive test design refresh with 27 scenarios"
+      version: "3.0"

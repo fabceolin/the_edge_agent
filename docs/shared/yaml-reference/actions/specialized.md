@@ -6,7 +6,7 @@
 
 ## Overview
 
-Specialized actions provide checkpoint persistence, schema manipulation, document extraction (LlamaExtract), extraction validation, retry loops, and custom action registration.
+Specialized actions provide checkpoint persistence, schema manipulation, document extraction (LlamaExtract), extraction validation, retry loops, semantic search (SemTools), and custom action registration.
 
 ---
 
@@ -67,6 +67,10 @@ Specialized actions provide checkpoint persistence, schema manipulation, documen
   - [OpenAPI Endpoint](#openapi-endpoint)
   - [Custom Health Checks](#custom-health-checks)
   - [Kubernetes Probe Configuration](#kubernetes-probe-configuration)
+- [SemTools Semantic Search](#semtools-semantic-search)
+  - [semtools.search](#semtoolssearch)
+  - [Semantic Routing Example](#semantic-routing-example)
+  - [Document Similarity Search](#document-similarity-search)
 
 ---
 
@@ -1833,6 +1837,140 @@ spec:
 
 ---
 
+## SemTools Semantic Search
+
+> **Story:** [TEA-BUILTIN-014](../../../stories/TEA-BUILTIN-014-semtools-semantic-search.md)
+
+Local semantic search using [SemTools CLI](https://github.com/run-llama/semtools), enabling grep-like semantic similarity search without API calls or vector databases.
+
+**Prerequisites:**
+```bash
+# Install SemTools CLI (one of the following)
+npm i -g @llamaindex/semtools
+cargo install semtools
+```
+
+### `semtools.search`
+
+Perform semantic search across text files:
+
+```yaml
+- name: find_related_code
+  uses: semtools.search
+  with:
+    query: "error handling exception catch"    # Semantic search query
+    files: "src/**/*.py"                       # Glob pattern or file list
+    max_distance: 0.3                          # 0.0 = exact, 1.0 = unrelated
+    n_results: 10                              # Max results to return
+    n_lines: 3                                 # Context lines around match
+  output: search_results
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `query` | string | Yes | - | Semantic search query |
+| `files` | string/list | Yes | - | File path(s) or glob pattern |
+| `max_distance` | float | No | 0.5 | Maximum cosine distance (0.0-1.0) |
+| `n_results` | int | No | 10 | Maximum number of matches |
+| `n_lines` | int | No | 0 | Context lines around each match |
+| `timeout` | int | No | 60 | Timeout in seconds |
+
+**Returns:**
+
+```json
+{
+  "success": true,
+  "matches": [
+    {
+      "file": "src/handler.py",
+      "line": 42,
+      "score": 0.87,
+      "text": "except ValueError as e:"
+    }
+  ],
+  "best_match": {"file": "...", "line": 42, "score": 0.87, "text": "..."},
+  "has_matches": true,
+  "total_matches": 5,
+  "query": "error handling exception catch"
+}
+```
+
+**Helper Fields:**
+- `has_matches`: Boolean for easy conditional routing
+- `best_match`: Highest-scoring result (or null if no matches)
+- `total_matches`: Number of matches returned
+
+**Error Handling:**
+
+When SemTools is not installed:
+```json
+{
+  "success": false,
+  "error": "semtools CLI not found. Please install it first.",
+  "error_type": "prerequisite_missing",
+  "install_hint": "Install with: npm i -g @llamaindex/semtools"
+}
+```
+
+### Semantic Routing Example
+
+Use semantic search results for conditional routing:
+
+```yaml
+nodes:
+  - name: check_concerns
+    uses: semtools.search
+    with:
+      query: "quality concerns issues blockers problems"
+      files: "docs/stories/{{ state.story_id }}.md"
+      max_distance: 0.25
+      n_results: 3
+    output: concern_search
+
+  - name: route_on_concerns
+    run: |
+      results = state.get("concern_search", {})
+      if results.get("has_matches"):
+        return {"status": "CONCERNS"}
+      return {"status": "PASS"}
+
+edges:
+  - from: check_concerns
+    to: route_on_concerns
+  - from: route_on_concerns
+    to: fix_concerns
+    when: "state.get('status') == 'CONCERNS'"
+  - from: route_on_concerns
+    to: complete
+    when: "state.get('status') == 'PASS'"
+```
+
+### Document Similarity Search
+
+Find semantically similar documents:
+
+```yaml
+- name: find_similar
+  uses: semtools.search
+  with:
+    query: "{{ state.reference_text }}"
+    files: "docs/**/*.md"
+    max_distance: 0.2
+    n_results: 5
+    n_lines: 3
+  output: similar_docs
+```
+
+**Notes:**
+- SemTools uses model2vec embeddings (local, no API calls)
+- Fast execution: Rust-based implementation
+- Works offline after initial model download
+- Graceful degradation when CLI not installed
+
+---
+
 ## Dual Namespace
 
 All specialized actions are available via dual namespaces:
@@ -1842,6 +1980,7 @@ All specialized actions are available via dual namespaces:
 - `validate.*` and `actions.validate_*`
 - `retry.*` and `actions.retry_*`
 - `ratelimit.*` and `actions.ratelimit_*`
+- `semtools.*` and `actions.semtools_*`
 
 ---
 

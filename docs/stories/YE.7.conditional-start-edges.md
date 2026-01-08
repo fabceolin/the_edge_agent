@@ -1,7 +1,7 @@
 # Story YE.7: Conditional Edges on __start__ Node
 
 ## Status
-Ready for Review
+Ready for Done
 
 ## Story
 **As a** YAML agent developer,

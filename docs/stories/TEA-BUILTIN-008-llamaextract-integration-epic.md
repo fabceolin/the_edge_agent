@@ -2,7 +2,7 @@
 
 ## Status
 
-Ready for Development
+In Progress (6/10 stories complete, 2 ready for development, 1 deferred)
 
 
 
@@ -53,11 +53,17 @@ GIT_SSH_KEY_PATH        # Path to SSH key file (alternative)
 
 ## Stories
 
-| Story | Title | Estimate | Priority |
-|-------|-------|----------|----------|
-| [TEA-BUILTIN-008.1](TEA-BUILTIN-008.1-llamaextract-actions.md) | Core LlamaExtract Actions | L | P0 |
-| [TEA-BUILTIN-008.2](TEA-BUILTIN-008.2-schema-git-loading.md) | Schema Loading with Git Refs & Remote Storage | L | P0 |
-| [TEA-BUILTIN-008.3](TEA-BUILTIN-008.3-schema-deep-merge.md) | Schema Deep Merge CLI & Algorithm | M | P1 |
+| Story | Title | Status | Priority |
+|-------|-------|--------|----------|
+| [TEA-BUILTIN-008.1](TEA-BUILTIN-008.1-llamaextract-actions.md) | Core LlamaExtract Actions | ✅ Complete | P0 |
+| [TEA-BUILTIN-008.2](TEA-BUILTIN-008.2-schema-git-loading.md) | Schema Loading with Git Refs & Remote Storage | ✅ Complete | P0 |
+| [TEA-BUILTIN-008.3](TEA-BUILTIN-008.3-schema-deep-merge.md) | Schema Deep Merge CLI & Algorithm | ✅ Complete | P1 |
+| [TEA-BUILTIN-008.4](TEA-BUILTIN-008.4-scrapegraphai-integration.md) | ScrapeGraphAI Integration | ✅ Complete | P0 |
+| [TEA-BUILTIN-008.5](TEA-BUILTIN-008.5-llamaextract-direct-rest-api.md) | LlamaExtract Direct REST API | ✅ Complete | P0 |
+| [TEA-BUILTIN-008.6](TEA-BUILTIN-008.6-llamaextract-async-polling.md) | Async Polling Configuration | 🟡 Ready for Dev | P1 |
+| [TEA-BUILTIN-008.7](TEA-BUILTIN-008.7-llamaextract-primitives.md) | LlamaExtract Workflow Primitives | 🟡 Ready for Dev | P1 |
+| [TEA-BUILTIN-008.7](TEA-BUILTIN-008.7-scrapegraphai-cache.md) | ScrapeGraphAI Result Caching | ✅ Complete | P2 |
+| [TEA-BUILTIN-008.9](TEA-BUILTIN-008.9-scrapegraphai-opensource-backend.md) | ScrapeGraphAI Open-Source Backend | ⏸️ Deferred | P3 |
 
 > **Note**: Rankellix Schema Conversion (formerly TEA-BUILTIN-008.4) moved to `spa-base` as [RANKELLIX-001](../../spa-base/docs/stories/RANKELLIX-001-schema-conversion-upload.md) - project-specific tooling.
 
@@ -204,11 +210,15 @@ Version follows semantic versioning (MAJOR.MINOR.PATCH):
 
 ## Definition of Done (Epic)
 
-- [ ] All 3 stories completed and merged
-- [ ] Documentation updated (YAML_REFERENCE.md, actions-reference.md)
-- [ ] CI/CD passing for both Python and Rust
-- [ ] Example agents demonstrating the feature
-- [ ] Cross-runtime parity tests passing
+- [x] Core stories (008.1-008.5) completed and merged (6/9 stories complete)
+- [x] Documentation updated (YAML_REFERENCE.md, actions-reference.md)
+- [x] CI/CD passing for Python (Rust deferred for LlamaExtract - Python-only SDK)
+- [x] Example agents demonstrating the feature
+- [x] Schema loading and merging with cross-runtime parity (Python + Rust)
+- [ ] Advanced async features (008.6-008.7) - Ready for Development
+- [x] ScrapeGraphAI integration and caching complete
+
+**Epic Status**: 6/9 stories complete (67%), core functionality delivered and production-ready
 
 ## Change Log
 
@@ -218,3 +228,4 @@ Version follows semantic versioning (MAJOR.MINOR.PATCH):
 | 2024-12-22 | 0.2.0 | Added fsspec URI support to Story 008.2 | Sarah (PO) |
 | 2024-12-22 | 0.3.0 | Test designs created (178 total scenarios), stories Ready for Dev | Quinn (QA) |
 | 2024-12-22 | 0.4.0 | Story checklist validation PASSED on all 4 stories | Bob (SM) |
+| 2026-01-07 | 0.5.0 | Status update: 6/9 stories complete, core functionality production-ready | Sarah (PO) |

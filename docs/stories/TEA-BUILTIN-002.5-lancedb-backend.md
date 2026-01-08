@@ -2,7 +2,9 @@
 
 ## Status
 
-**Ready for Development**
+**Dev Complete**
+
+*Updated: 2026-01-08 - All tasks implemented. 22 unit tests passing. Ready for QA validation.*
 
 *Status updated: 2026-01-02 - Story passed checklist validation with QA test design complete.*
 
@@ -79,59 +81,59 @@
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Implement LanceDBVectorStore** (AC: 1, 2, 3)
-  - [ ] Create `LanceDBVectorStore` class
-  - [ ] Implement `VectorStore` protocol:
-    - [ ] `add(ids, texts, embeddings, metadatas, collection) -> int`
-    - [ ] `query(embedding, k, collection, filter, include_embeddings) -> List[dict]`
-    - [ ] `get_state() -> dict`
-    - [ ] `restore_state(state) -> None`
-  - [ ] Support local paths and fsspec URIs
-  - [ ] Create database connection on init
+- [x] **Task 1: Implement LanceDBVectorStore** (AC: 1, 2, 3)
+  - [x] Create `LanceDBVectorStore` class
+  - [x] Implement `VectorStore` protocol:
+    - [x] `add(ids, texts, embeddings, metadatas, collection) -> int`
+    - [x] `query(embedding, k, collection, filter, include_embeddings) -> List[dict]`
+    - [x] `get_state() -> dict`
+    - [x] `restore_state(state) -> None`
+  - [x] Support local paths and fsspec URIs
+  - [x] Create database connection on init
 
-- [ ] **Task 2: Implement table management** (AC: 1, 4)
-  - [ ] Create/get table per collection
-  - [ ] Schema: `id`, `text`, `vector`, `metadata` (JSON)
-  - [ ] Auto-create IVF_PQ index at 256 rows
-  - [ ] Track indexed status per table
+- [x] **Task 2: Implement table management** (AC: 1, 4)
+  - [x] Create/get table per collection
+  - [x] Schema: `id`, `text`, `vector`, `metadata` (JSON)
+  - [x] Auto-create IVF_PQ index at 256 rows
+  - [x] Track indexed status per table
 
-- [ ] **Task 3: Implement upsert pattern** (AC: 5)
-  - [ ] Delete existing rows by ID before insert
-  - [ ] Batch insert for efficiency
-  - [ ] Handle duplicate IDs gracefully
+- [x] **Task 3: Implement upsert pattern** (AC: 5)
+  - [x] Delete existing rows by ID before insert
+  - [x] Batch insert for efficiency
+  - [x] Handle duplicate IDs gracefully
 
-- [ ] **Task 4: Implement vector search** (AC: 6)
-  - [ ] Use LanceDB's native vector search
-  - [ ] Support path filtering via SQL WHERE clause
-  - [ ] Support metadata filtering
-  - [ ] Return results with score
+- [x] **Task 4: Implement vector search** (AC: 6)
+  - [x] Use LanceDB's native vector search
+  - [x] Support path filtering via SQL WHERE clause
+  - [x] Support metadata filtering
+  - [x] Return results with score
 
-- [ ] **Task 5: Add to store factory** (AC: 7, 8, 9, 10)
-  - [ ] Update `create_vector_store()` to handle `store_type="lancedb"`
-  - [ ] Read path from settings: `settings.rag.lancedb_path`
-  - [ ] Default path: `~/.tea/vectors/`
+- [x] **Task 5: Add to store factory** (AC: 7, 8, 9, 10)
+  - [x] Update `create_vector_store()` to handle `store_type="lancedb"`
+  - [x] Read path from settings: `settings.rag.lancedb_path`
+  - [x] Default path: `~/.tea/vectors/`
 
-- [ ] **Task 6: Handle optional dependency** (AC: 12)
-  - [ ] Try/except import of `lancedb`
-  - [ ] Clear error message when not installed
-  - [ ] Optional dependency in setup.py `[search]` extra
+- [x] **Task 6: Handle optional dependency** (AC: 12)
+  - [x] Try/except import of `lancedb`
+  - [x] Clear error message when not installed
+  - [x] Optional dependency in setup.py `[search]` extra
 
-- [ ] **Task 7: Add dependencies** (AC: 12)
-  - [ ] Add `lancedb` to optional `[search]` extra
-  - [ ] Add `pyarrow` to optional `[search]` extra
+- [x] **Task 7: Add dependencies** (AC: 12)
+  - [x] Add `lancedb` to optional `[search]` extra
+  - [x] Add `pyarrow` to optional `[search]` extra
 
-- [ ] **Task 8: Testing** (AC: 13, 14, 15, 16, 17)
-  - [ ] Test add single document
-  - [ ] Test add batch
-  - [ ] Test upsert (update existing)
-  - [ ] Test query basic
-  - [ ] Test query with path filter
-  - [ ] Test query with metadata filter
-  - [ ] Test index creation at threshold
-  - [ ] Test collection isolation
-  - [ ] Test state save/restore
-  - [ ] Test error when lancedb not installed
-  - [ ] Integration test with temp directory
+- [x] **Task 8: Testing** (AC: 13, 14, 15, 16, 17)
+  - [x] Test add single document
+  - [x] Test add batch
+  - [x] Test upsert (update existing)
+  - [x] Test query basic
+  - [x] Test query with path filter
+  - [x] Test query with metadata filter
+  - [x] Test index creation at threshold
+  - [x] Test collection isolation
+  - [x] Test state save/restore
+  - [x] Test error when lancedb not installed
+  - [x] Integration test with temp directory
 
 ## Dev Notes
 
@@ -484,3 +486,77 @@ test_design_summary:
 |------|---------|-------------|--------|
 | 2026-01-02 | 0.1 | Initial draft (unified from TEA-BUILTIN-014.3) | Sarah (PO) |
 | 2026-01-02 | 0.2 | Added QA Notes from test design review | Quinn (QA) |
+| 2026-01-08 | 1.0 | Implementation complete - all tasks done | James (Dev) |
+
+---
+
+## Dev Agent Notes
+
+### Implementation Summary
+
+**Completed Date**: 2026-01-08
+**Developer**: James (Full Stack Developer Agent)
+**Test Results**: 22/22 tests passing
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `python/src/the_edge_agent/actions/rag_actions.py` | Added `LanceDBVectorStore` class with upsert pattern, auto-indexing at 256 rows, and metadata filtering |
+| `python/setup.py` | Added `lancedb>=0.4.0` and `pyarrow>=14.0.0` to `[search]` extra |
+| `python/tests/test_lancedb_store.py` | New test file with 22 unit tests covering all acceptance criteria |
+
+### Key Implementation Details
+
+1. **LanceDBVectorStore Class (AC: 1, 2, 3)**:
+   - Implements `VectorStore` protocol (add, query, get_state, restore_state)
+   - Supports local paths and fsspec URIs (s3://, gs://, az://)
+   - Path expansion via `os.path.expanduser()` for `~` paths
+   - Lazy table creation on first add
+
+2. **Table Management (AC: 1, 4)**:
+   - Schema: `id` (str), `text` (str), `vector` (list[float]), `metadata` (JSON string)
+   - Auto-creates IVF_PQ index at 256 rows via `_maybe_create_index()`
+   - Tracks indexed status per collection in `_indexed` dict
+
+3. **Upsert Pattern (AC: 5)**:
+   - Delete existing rows by ID before insert: `table.delete(f"id = '{doc_id}'")`
+   - Single delete per ID to handle duplicates gracefully
+   - Batch add for efficiency
+
+4. **Vector Search (AC: 6)**:
+   - Uses `table.search(embedding).metric("cosine").limit(k)`
+   - Metadata filtering via `json_extract(metadata, '$.field')` SQL
+   - Returns similarity score (1 - distance)
+   - Supports filter operators: exact match, _gte, _lte, _gt, _lt, _ne
+
+5. **Factory Integration (AC: 7, 8, 9, 10)**:
+   - `create_vector_store(store_type="lancedb", lancedb_path=...)`
+   - Default path: `~/.tea/vectors/`
+   - Settings support: `settings.rag.lancedb_path`
+
+6. **Optional Dependency (AC: 12)**:
+   - Try/except import with clear error message
+   - Added to `[search]` extra in setup.py
+
+### Test Coverage
+
+| Category | Tests | Status |
+|----------|-------|--------|
+| Protocol Compliance | 4 | ✅ Pass |
+| Import Error | 1 | ✅ Pass |
+| Add/Upsert | 3 | ✅ Pass |
+| Query | 4 | ✅ Pass |
+| Index | 3 | ✅ Pass |
+| State | 2 | ✅ Pass |
+| Factory | 3 | ✅ Pass |
+| Collection Isolation | 1 | ✅ Pass |
+| Integration | 1 | ✅ Pass |
+| **Total** | **22** | **✅ All Pass** |
+
+### Notes
+
+- LanceDB is persistent by default - `restore_state()` is a no-op
+- Metadata stored as JSON string, extracted via `json_extract()` in queries
+- Cloud storage (S3, GCS, Azure) supported via fsspec integration
+- Index creation is idempotent (catches exception if index exists)

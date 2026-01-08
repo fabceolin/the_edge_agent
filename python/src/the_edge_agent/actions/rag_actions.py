@@ -1,9 +1,9 @@
 """
-RAG Actions for YAMLEngine (TEA-BUILTIN-002.2).
+RAG Actions for YAMLEngine (TEA-BUILTIN-002.2, TEA-BUILTIN-002.3).
 
 This module provides Retrieval-Augmented Generation (RAG) actions for
 YAMLEngine workflows. Actions support embedding creation, vector storage,
-and semantic similarity search.
+semantic similarity search, and file indexing.
 
 Embedding Providers:
     - OpenAI (local/remote compatible API): text-embedding-3-small, text-embedding-3-large, ada-002
@@ -17,6 +17,7 @@ Actions:
     - embedding.create: Generate embeddings from text
     - vector.store: Store documents with embeddings
     - vector.query: Semantic similarity search
+    - vector.index_files: Index files/directories into vector store (TEA-BUILTIN-002.3)
 
 Example:
     >>> # Create embedding
@@ -46,14 +47,61 @@ Example:
 
 import json
 import math
+import os
+import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Protocol, Union
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
+
+# Optional fsspec import for cloud URI support
+try:
+    import fsspec
+
+    FSSPEC_AVAILABLE = True
+except ImportError:
+    fsspec = None  # type: ignore
+    FSSPEC_AVAILABLE = False
+
+
+# =============================================================================
+# File Indexing Data Structures (TEA-BUILTIN-002.3)
+# =============================================================================
+
+
+class ChunkStrategy(Enum):
+    """Chunking strategies for file content (AC: 4)."""
+
+    LINE = "line"
+    PARAGRAPH = "paragraph"
+    DOCUMENT = "document"
+
+
+@dataclass
+class Chunk:
+    """Represents a chunk of file content with line information (AC: 7)."""
+
+    text: str
+    start_line: int  # 0-based
+    end_line: int  # Exclusive
+    chunk_type: str
+
+
+@dataclass
+class FileState:
+    """Tracks file state for incremental updates (AC: 8)."""
+
+    path: str
+    size: int
+    mtime: float
+    indexed_at: float
 
 
 # =============================================================================
 # Embedding Provider Abstraction (AC: 4)
 # =============================================================================
+
 
 class EmbeddingProvider(Protocol):
     """Protocol for embedding providers (AC: 4)."""
@@ -107,7 +155,7 @@ class OpenAIEmbeddingProvider:
         model: str = "text-embedding-3-small",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        dimensions: Optional[int] = None
+        dimensions: Optional[int] = None,
     ):
         """
         Initialize OpenAI embedding provider.
@@ -159,10 +207,7 @@ class OpenAIEmbeddingProvider:
             texts = [texts]
 
         # Build request params
-        params: Dict[str, Any] = {
-            "model": self._model,
-            "input": texts
-        }
+        params: Dict[str, Any] = {"model": self._model, "input": texts}
 
         # Add dimensions for text-embedding-3-* models
         if self._model.startswith("text-embedding-3-") and self._dimensions:
@@ -184,6 +229,83 @@ class OpenAIEmbeddingProvider:
     @property
     def model_name(self) -> str:
         return self._model
+
+
+class Model2VecEmbeddingProvider:
+    """
+    Local embedding provider using model2vec (TEA-BUILTIN-002.4).
+
+    Uses minishlab/potion-multilingual-128M model (128 dimensions).
+    Model is lazy-loaded and cached at module level.
+
+    Features:
+    - No API calls or external services required
+    - ~500MB model downloaded from HuggingFace on first use
+    - Cached in ~/.cache/huggingface/
+    - Efficient batch encoding
+
+    Requires: pip install model2vec
+    """
+
+    MODEL_NAME = "minishlab/potion-multilingual-128M"
+    DIMENSIONS = 128
+
+    _model = None  # Module-level cache
+
+    def __init__(self, model: Optional[str] = None):
+        """
+        Initialize model2vec provider.
+
+        Args:
+            model: Model name (default: minishlab/potion-multilingual-128M)
+        """
+        self._model_name = model or self.MODEL_NAME
+
+    def _get_model(self):
+        """Lazy load model (cached at class level)."""
+        if Model2VecEmbeddingProvider._model is None:
+            try:
+                from model2vec import StaticModel
+            except ImportError:
+                raise ImportError(
+                    "model2vec not installed. Install with: pip install model2vec"
+                )
+
+            Model2VecEmbeddingProvider._model = StaticModel.from_pretrained(
+                self._model_name
+            )
+
+        return Model2VecEmbeddingProvider._model
+
+    def embed(self, texts: Union[str, List[str]]) -> List[List[float]]:
+        """Generate embeddings using model2vec."""
+        model = self._get_model()
+
+        # Normalize to list
+        if isinstance(texts, str):
+            texts = [texts]
+
+        # Encode batch
+        embeddings = model.encode(texts)
+
+        # Convert numpy to list if needed
+        try:
+            import numpy as np
+
+            if isinstance(embeddings, np.ndarray):
+                return embeddings.tolist()
+        except ImportError:
+            pass
+
+        return embeddings
+
+    @property
+    def dimensions(self) -> int:
+        return self.DIMENSIONS
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 
 
 class OllamaEmbeddingProvider:
@@ -211,7 +333,7 @@ class OllamaEmbeddingProvider:
         self,
         model: str = "nomic-embed-text",
         base_url: str = "http://localhost:11434",
-        timeout: float = 60.0
+        timeout: float = 60.0,
     ):
         """
         Initialize Ollama embedding provider.
@@ -239,7 +361,7 @@ class OllamaEmbeddingProvider:
             response = requests.post(
                 f"{self._base_url}/api/embeddings",
                 json={"model": self._model, "prompt": text},
-                timeout=self._timeout
+                timeout=self._timeout,
             )
 
             if response.status_code == 404:
@@ -267,6 +389,7 @@ class OllamaEmbeddingProvider:
 # Vector Store Abstraction (AC: 5)
 # =============================================================================
 
+
 class VectorStore(ABC):
     """Abstract base class for vector stores (AC: 5)."""
 
@@ -277,7 +400,7 @@ class VectorStore(ABC):
         texts: List[str],
         embeddings: List[List[float]],
         metadatas: Optional[List[Dict[str, Any]]] = None,
-        collection: str = "default"
+        collection: str = "default",
     ) -> int:
         """
         Add documents to the vector store.
@@ -301,7 +424,7 @@ class VectorStore(ABC):
         k: int = 5,
         collection: str = "default",
         filter: Optional[Dict[str, Any]] = None,
-        include_embeddings: bool = False
+        include_embeddings: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Query the vector store for similar documents.
@@ -353,9 +476,12 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 # Try to use numpy for efficient similarity calculation
 try:
     import numpy as np
+
     _HAS_NUMPY = True
 
-    def cosine_similarity_batch(query: List[float], embeddings: List[List[float]]) -> List[float]:
+    def cosine_similarity_batch(
+        query: List[float], embeddings: List[List[float]]
+    ) -> List[float]:
         """Batch cosine similarity using numpy."""
         query_arr = np.array(query)
         emb_arr = np.array(embeddings)
@@ -371,7 +497,9 @@ try:
 except ImportError:
     _HAS_NUMPY = False
 
-    def cosine_similarity_batch(query: List[float], embeddings: List[List[float]]) -> List[float]:
+    def cosine_similarity_batch(
+        query: List[float], embeddings: List[List[float]]
+    ) -> List[float]:
         """Batch cosine similarity using pure Python."""
         return [cosine_similarity(query, emb) for emb in embeddings]
 
@@ -397,7 +525,7 @@ class InMemoryVectorStore(VectorStore):
         texts: List[str],
         embeddings: List[List[float]],
         metadatas: Optional[List[Dict[str, Any]]] = None,
-        collection: str = "default"
+        collection: str = "default",
     ) -> int:
         """Add documents to collection."""
         if collection not in self._collections:
@@ -430,7 +558,7 @@ class InMemoryVectorStore(VectorStore):
             self._collections[collection][doc_id] = {
                 "text": texts[i],
                 "embedding": embeddings[i],
-                "metadata": metadatas[i] if i < len(metadatas) else {}
+                "metadata": metadatas[i] if i < len(metadatas) else {},
             }
             added += 1
 
@@ -442,7 +570,7 @@ class InMemoryVectorStore(VectorStore):
         k: int = 5,
         collection: str = "default",
         filter: Optional[Dict[str, Any]] = None,
-        include_embeddings: bool = False
+        include_embeddings: bool = False,
     ) -> List[Dict[str, Any]]:
         """Query for similar documents."""
         if collection not in self._collections:
@@ -478,7 +606,7 @@ class InMemoryVectorStore(VectorStore):
                 "id": doc_id,
                 "text": doc["text"],
                 "score": score,
-                "metadata": doc["metadata"]
+                "metadata": doc["metadata"],
             }
             if include_embeddings:
                 result["embedding"] = doc["embedding"]
@@ -541,6 +669,198 @@ class InMemoryVectorStore(VectorStore):
         self._collections = state.get("collections", {})
 
 
+class LanceDBVectorStore(VectorStore):
+    """
+    LanceDB vector store implementation (TEA-BUILTIN-002.5).
+
+    Provides persistent vector storage with:
+    - Automatic vector indexing at 256+ rows
+    - Efficient upsert operations (delete + insert)
+    - Path and metadata filtering
+    - Cloud storage support via fsspec (s3://, gs://, az://)
+
+    Requires: pip install lancedb pyarrow
+    """
+
+    INDEX_THRESHOLD = 256  # Create index when table has this many rows
+
+    def __init__(self, path: str = "~/.tea/vectors/"):
+        """
+        Initialize LanceDB vector store.
+
+        Args:
+            path: Database path (local or fsspec URI like s3://)
+        """
+        try:
+            import lancedb
+        except ImportError:
+            raise ImportError(
+                "lancedb not installed. Install with: pip install lancedb pyarrow"
+            )
+
+        self._path = os.path.expanduser(path)
+        self._db = lancedb.connect(self._path)
+        self._tables: Dict[str, Any] = {}
+        self._indexed: Dict[str, bool] = {}
+
+    def _get_table(self, collection: str):
+        """Get or create table for collection."""
+        if collection not in self._tables:
+            try:
+                self._tables[collection] = self._db.open_table(collection)
+            except Exception:
+                # Table doesn't exist yet, will create on first add
+                self._tables[collection] = None
+        return self._tables[collection]
+
+    def add(
+        self,
+        ids: List[str],
+        texts: List[str],
+        embeddings: List[List[float]],
+        metadatas: Optional[List[Dict[str, Any]]] = None,
+        collection: str = "default",
+    ) -> int:
+        """Add documents with upsert semantics (delete existing, then insert)."""
+        metadatas = metadatas or [{}] * len(ids)
+
+        # Build records
+        records = [
+            {
+                "id": ids[i],
+                "text": texts[i],
+                "vector": embeddings[i],
+                "metadata": json.dumps(metadatas[i]),
+            }
+            for i in range(len(ids))
+        ]
+
+        table = self._get_table(collection)
+
+        if table is None:
+            # Create new table
+            self._tables[collection] = self._db.create_table(collection, records)
+        else:
+            # Upsert: delete existing, then add
+            for doc_id in ids:
+                try:
+                    table.delete(f"id = '{doc_id}'")
+                except Exception:
+                    pass  # No existing row to delete
+            table.add(records)
+
+        # Check if we should create index
+        self._maybe_create_index(collection)
+
+        return len(ids)
+
+    def query(
+        self,
+        embedding: List[float],
+        k: int = 5,
+        collection: str = "default",
+        filter: Optional[Dict[str, Any]] = None,
+        include_embeddings: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Query for similar documents."""
+        table = self._get_table(collection)
+        if table is None:
+            return []
+
+        # Build query
+        query = table.search(embedding).metric("cosine").limit(k)
+
+        # Apply filters
+        if filter:
+            where_clauses = []
+            for key, value in filter.items():
+                # Handle filter operators
+                if key.endswith("_gte"):
+                    field = key[:-4]
+                    where_clauses.append(
+                        f"json_extract(metadata, '$.{field}') >= {value}"
+                    )
+                elif key.endswith("_lte"):
+                    field = key[:-4]
+                    where_clauses.append(
+                        f"json_extract(metadata, '$.{field}') <= {value}"
+                    )
+                elif key.endswith("_gt"):
+                    field = key[:-3]
+                    where_clauses.append(
+                        f"json_extract(metadata, '$.{field}') > {value}"
+                    )
+                elif key.endswith("_lt"):
+                    field = key[:-3]
+                    where_clauses.append(
+                        f"json_extract(metadata, '$.{field}') < {value}"
+                    )
+                elif key.endswith("_ne"):
+                    field = key[:-3]
+                    if isinstance(value, str):
+                        where_clauses.append(
+                            f"json_extract(metadata, '$.{field}') != '{value}'"
+                        )
+                    else:
+                        where_clauses.append(
+                            f"json_extract(metadata, '$.{field}') != {value}"
+                        )
+                else:
+                    # Exact match
+                    if isinstance(value, str):
+                        where_clauses.append(
+                            f"json_extract(metadata, '$.{key}') = '{value}'"
+                        )
+                    else:
+                        where_clauses.append(
+                            f"json_extract(metadata, '$.{key}') = {value}"
+                        )
+            if where_clauses:
+                query = query.where(" AND ".join(where_clauses))
+
+        results = query.to_list()
+
+        # Format results
+        output = []
+        for row in results:
+            result = {
+                "id": row["id"],
+                "text": row["text"],
+                "score": 1 - row["_distance"],  # Convert distance to similarity
+                "metadata": json.loads(row["metadata"]) if row.get("metadata") else {},
+            }
+            if include_embeddings:
+                result["embedding"] = row["vector"]
+            output.append(result)
+
+        return output
+
+    def _maybe_create_index(self, collection: str):
+        """Create vector index if threshold reached."""
+        if self._indexed.get(collection):
+            return
+
+        table = self._get_table(collection)
+        if table and table.count_rows() >= self.INDEX_THRESHOLD:
+            try:
+                table.create_index(metric="cosine")
+                self._indexed[collection] = True
+            except Exception:
+                pass  # Index might already exist
+
+    def get_state(self) -> Dict[str, Any]:
+        """Get state for checkpointing."""
+        return {
+            "type": "lancedb",
+            "path": self._path,
+            "collections": list(self._tables.keys()),
+        }
+
+    def restore_state(self, state: Dict[str, Any]) -> None:
+        """Restore from checkpoint (no-op, LanceDB is persistent)."""
+        pass
+
+
 class ChromaVectorStore(VectorStore):
     """
     Chroma vector store wrapper (AC: 5).
@@ -575,8 +895,7 @@ class ChromaVectorStore(VectorStore):
         """Get or create a Chroma collection."""
         if name not in self._collections:
             self._collections[name] = self._client.get_or_create_collection(
-                name=name,
-                metadata={"hnsw:space": "cosine"}
+                name=name, metadata={"hnsw:space": "cosine"}
             )
         return self._collections[name]
 
@@ -586,7 +905,7 @@ class ChromaVectorStore(VectorStore):
         texts: List[str],
         embeddings: List[List[float]],
         metadatas: Optional[List[Dict[str, Any]]] = None,
-        collection: str = "default"
+        collection: str = "default",
     ) -> int:
         """Add documents to Chroma collection."""
         coll = self._get_collection(collection)
@@ -619,7 +938,7 @@ class ChromaVectorStore(VectorStore):
         k: int = 5,
         collection: str = "default",
         filter: Optional[Dict[str, Any]] = None,
-        include_embeddings: bool = False
+        include_embeddings: bool = False,
     ) -> List[Dict[str, Any]]:
         """Query Chroma collection."""
         coll = self._get_collection(collection)
@@ -634,10 +953,7 @@ class ChromaVectorStore(VectorStore):
             include.append("embeddings")
 
         results = coll.query(
-            query_embeddings=[embedding],
-            n_results=k,
-            where=where,
-            include=include
+            query_embeddings=[embedding], n_results=k, where=where, include=include
         )
 
         # Format results
@@ -646,9 +962,14 @@ class ChromaVectorStore(VectorStore):
             for i, doc_id in enumerate(results["ids"][0]):
                 result = {
                     "id": doc_id,
-                    "text": results["documents"][0][i] if results.get("documents") else "",
-                    "score": 1 - results["distances"][0][i],  # Convert distance to similarity
-                    "metadata": results["metadatas"][0][i] if results.get("metadatas") else {}
+                    "text": (
+                        results["documents"][0][i] if results.get("documents") else ""
+                    ),
+                    "score": 1
+                    - results["distances"][0][i],  # Convert distance to similarity
+                    "metadata": (
+                        results["metadatas"][0][i] if results.get("metadatas") else {}
+                    ),
                 }
                 if include_embeddings and results.get("embeddings"):
                     result["embedding"] = results["embeddings"][0][i]
@@ -702,19 +1023,20 @@ class ChromaVectorStore(VectorStore):
 # Provider/Store Factory
 # =============================================================================
 
+
 def create_embedding_provider(
     provider: str = "openai",
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     dimensions: Optional[int] = None,
-    timeout: float = 60.0
+    timeout: float = 60.0,
 ) -> EmbeddingProvider:
     """
     Factory function to create embedding providers.
 
     Args:
-        provider: Provider type - "openai" or "ollama"
+        provider: Provider type - "openai", "ollama", or "model2vec"
         model: Model name (provider-specific defaults)
         base_url: Custom API base URL
         api_key: API key (for OpenAI)
@@ -729,13 +1051,17 @@ def create_embedding_provider(
             model=model or "text-embedding-3-small",
             base_url=base_url,
             api_key=api_key,
-            dimensions=dimensions
+            dimensions=dimensions,
         )
     elif provider == "ollama":
         return OllamaEmbeddingProvider(
             model=model or "nomic-embed-text",
             base_url=base_url or "http://localhost:11434",
-            timeout=timeout
+            timeout=timeout,
+        )
+    elif provider == "model2vec":
+        return Model2VecEmbeddingProvider(
+            model=model  # Uses default MODEL_NAME if None
         )
     else:
         raise ValueError(f"Unknown embedding provider: {provider}")
@@ -743,14 +1069,16 @@ def create_embedding_provider(
 
 def create_vector_store(
     store_type: str = "memory",
-    chroma_path: Optional[str] = None
+    chroma_path: Optional[str] = None,
+    lancedb_path: Optional[str] = None,
 ) -> VectorStore:
     """
     Factory function to create vector stores.
 
     Args:
-        store_type: Store type - "memory" or "chroma"
+        store_type: Store type - "memory", "chroma", or "lancedb"
         chroma_path: Path for Chroma persistence
+        lancedb_path: Path for LanceDB persistence (default: ~/.tea/vectors/)
 
     Returns:
         VectorStore instance
@@ -759,6 +1087,8 @@ def create_vector_store(
         return InMemoryVectorStore()
     elif store_type == "chroma":
         return ChromaVectorStore(persist_directory=chroma_path)
+    elif store_type == "lancedb":
+        return LanceDBVectorStore(path=lancedb_path or "~/.tea/vectors/")
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 
@@ -766,6 +1096,7 @@ def create_vector_store(
 # =============================================================================
 # Action Registration (AC: 7, 8)
 # =============================================================================
+
 
 def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     """
@@ -777,9 +1108,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     """
 
     # Store provider and vector store instances on engine
-    if not hasattr(engine, '_rag_provider'):
+    if not hasattr(engine, "_rag_provider"):
         engine._rag_provider = None
-    if not hasattr(engine, '_rag_vector_store'):
+    if not hasattr(engine, "_rag_vector_store"):
         engine._rag_vector_store = None
 
     def _get_provider(state: Dict[str, Any], **kwargs) -> EmbeddingProvider:
@@ -793,12 +1124,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         timeout = kwargs.get("timeout", 60.0)
 
         # Check engine settings (from YAML)
-        if hasattr(engine, 'variables'):
+        if hasattr(engine, "variables"):
             settings = engine.variables.get("settings", {})
             rag_settings = settings.get("rag", {})
             provider_type = rag_settings.get("embedding_provider", provider_type)
             model = model or rag_settings.get("embedding_model")
-            base_url = base_url or rag_settings.get("openai_base_url") or rag_settings.get("ollama_base_url")
+            base_url = (
+                base_url
+                or rag_settings.get("openai_base_url")
+                or rag_settings.get("ollama_base_url")
+            )
             timeout = rag_settings.get("ollama_timeout", timeout)
 
         # Create or reuse provider
@@ -809,7 +1144,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 base_url=base_url,
                 api_key=api_key,
                 dimensions=dimensions,
-                timeout=timeout
+                timeout=timeout,
             )
 
         return engine._rag_provider
@@ -818,19 +1153,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         """Get or create vector store based on config."""
         store_type = kwargs.get("store_type", "memory")
         chroma_path = kwargs.get("chroma_path")
+        lancedb_path = kwargs.get("lancedb_path")
 
         # Check engine settings
-        if hasattr(engine, 'variables'):
+        if hasattr(engine, "variables"):
             settings = engine.variables.get("settings", {})
             rag_settings = settings.get("rag", {})
             store_type = rag_settings.get("vector_store", store_type)
             chroma_path = chroma_path or rag_settings.get("chroma_path")
+            lancedb_path = lancedb_path or rag_settings.get("lancedb_path")
 
         # Create or reuse store
         if engine._rag_vector_store is None:
             engine._rag_vector_store = create_vector_store(
                 store_type=store_type,
-                chroma_path=chroma_path
+                chroma_path=chroma_path,
+                lancedb_path=lancedb_path,
             )
 
         return engine._rag_vector_store
@@ -844,7 +1182,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         text: Union[str, List[str]],
         model: Optional[str] = None,
         batch: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Create embeddings from text.
@@ -878,23 +1216,20 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "embeddings": embeddings,
                     "model": provider.model_name,
                     "count": len(embeddings),
-                    "dimensions": provider.dimensions
+                    "dimensions": provider.dimensions,
                 }
             else:
                 return {
                     "embedding": embeddings[0],
                     "model": provider.model_name,
-                    "dimensions": provider.dimensions
+                    "dimensions": provider.dimensions,
                 }
 
         except Exception as e:
-            return {
-                "error": f"Embedding creation failed: {str(e)}",
-                "success": False
-            }
+            return {"error": f"Embedding creation failed: {str(e)}", "success": False}
 
-    registry['embedding.create'] = embedding_create
-    registry['actions.embedding_create'] = embedding_create
+    registry["embedding.create"] = embedding_create
+    registry["actions.embedding_create"] = embedding_create
 
     # =========================================================================
     # vector.store (AC: 2, 6, 7, 8)
@@ -907,7 +1242,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         ids: Optional[List[str]] = None,
         metadata: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         collection: str = "default",
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Store documents with embeddings in vector store.
@@ -936,7 +1271,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             elif len(ids) != len(texts):
                 return {
                     "error": f"Number of IDs ({len(ids)}) doesn't match texts ({len(texts)})",
-                    "success": False
+                    "success": False,
                 }
 
             # Auto-generate embeddings if not provided
@@ -946,7 +1281,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             elif len(embeddings) != len(texts):
                 return {
                     "error": f"Number of embeddings ({len(embeddings)}) doesn't match texts ({len(texts)})",
-                    "success": False
+                    "success": False,
                 }
 
             # Normalize metadata
@@ -965,23 +1300,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 texts=texts,
                 embeddings=embeddings,
                 metadatas=metadatas,
-                collection=collection
+                collection=collection,
             )
 
-            return {
-                "stored": stored,
-                "collection": collection,
-                "ids": ids
-            }
+            return {"stored": stored, "collection": collection, "ids": ids}
 
         except Exception as e:
-            return {
-                "error": f"Vector store failed: {str(e)}",
-                "success": False
-            }
+            return {"error": f"Vector store failed: {str(e)}", "success": False}
 
-    registry['vector.store'] = vector_store
-    registry['actions.vector_store'] = vector_store
+    registry["vector.store"] = vector_store
+    registry["actions.vector_store"] = vector_store
 
     # =========================================================================
     # vector.query (AC: 3, 7, 8)
@@ -994,7 +1322,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         collection: str = "default",
         filter: Optional[Dict[str, Any]] = None,
         include_embeddings: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Query vector store for similar documents.
@@ -1021,10 +1349,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             # Validate filter syntax
             if filter is not None:
                 if not isinstance(filter, dict):
-                    return {
-                        "error": "Filter must be a dictionary",
-                        "success": False
-                    }
+                    return {"error": "Filter must be a dictionary", "success": False}
 
             # Generate query embedding
             provider = _get_provider(state, **kwargs)
@@ -1037,24 +1362,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 k=k,
                 collection=collection,
                 filter=filter,
-                include_embeddings=include_embeddings
+                include_embeddings=include_embeddings,
             )
 
             return {
                 "results": results,
                 "query": query,
                 "collection": collection,
-                "k": k
+                "k": k,
             }
 
         except Exception as e:
-            return {
-                "error": f"Vector query failed: {str(e)}",
-                "success": False
-            }
+            return {"error": f"Vector query failed: {str(e)}", "success": False}
 
-    registry['vector.query'] = vector_query
-    registry['actions.vector_query'] = vector_query
+    registry["vector.query"] = vector_query
+    registry["actions.vector_query"] = vector_query
 
     # =========================================================================
     # Utility functions for checkpoint integration
@@ -1075,3 +1397,460 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     # Attach to engine for checkpoint access
     engine.get_rag_state = get_rag_state
     engine.restore_rag_state = restore_rag_state
+
+    # =========================================================================
+    # File Indexing Helpers (TEA-BUILTIN-002.3)
+    # =========================================================================
+
+    def _list_files(
+        paths: List[str],
+        pattern: str = "**/*",
+        recursive: bool = True,
+        extensions: Optional[List[str]] = None,
+    ) -> List[str]:
+        """
+        List files matching pattern and extensions (AC: 2, 3, 5, 6).
+
+        Args:
+            paths: List of file/directory paths (local or fsspec URIs)
+            pattern: Glob pattern (default: "**/*")
+            recursive: Whether to traverse directories recursively
+            extensions: List of file extensions to filter (e.g., [".py", ".md"])
+
+        Returns:
+            List of file paths matching criteria
+        """
+        files = []
+        extensions_lower = [e.lower() for e in (extensions or [])]
+
+        for path in paths:
+            # Check if it's a URI (contains ://) or local path
+            is_uri = "://" in path
+
+            if is_uri:
+                if not FSSPEC_AVAILABLE:
+                    raise ImportError(
+                        "fsspec not installed. Install with: pip install fsspec "
+                        "(and s3fs for S3, gcsfs for GCS)"
+                    )
+                fs, resolved_path = fsspec.core.url_to_fs(path)
+            else:
+                fs = None
+                resolved_path = os.path.abspath(os.path.expanduser(path))
+
+            # Check if path is a file or directory
+            if fs:
+                is_file = fs.isfile(resolved_path)
+                is_dir = fs.isdir(resolved_path)
+            else:
+                is_file = os.path.isfile(resolved_path)
+                is_dir = os.path.isdir(resolved_path)
+
+            if is_file:
+                # Single file
+                if extensions_lower:
+                    _, ext = os.path.splitext(resolved_path)
+                    if ext.lower() not in extensions_lower:
+                        continue
+                files.append(path)
+            elif is_dir:
+                # Directory - apply glob pattern
+                if fs:
+                    # fsspec glob
+                    full_pattern = f"{resolved_path.rstrip('/')}/{pattern}"
+                    matches = fs.glob(full_pattern)
+                    for match in matches:
+                        if fs.isfile(match):
+                            if extensions_lower:
+                                _, ext = os.path.splitext(match)
+                                if ext.lower() not in extensions_lower:
+                                    continue
+                            # Reconstruct URI
+                            proto = path.split("://")[0]
+                            files.append(f"{proto}://{match}")
+                else:
+                    # Local glob
+                    import glob as glob_module
+
+                    if recursive:
+                        full_pattern = os.path.join(resolved_path, pattern)
+                    else:
+                        # Non-recursive: only top-level
+                        full_pattern = os.path.join(resolved_path, "*")
+                    matches = glob_module.glob(full_pattern, recursive=recursive)
+                    for match in matches:
+                        if os.path.isfile(match):
+                            if extensions_lower:
+                                _, ext = os.path.splitext(match)
+                                if ext.lower() not in extensions_lower:
+                                    continue
+                            files.append(match)
+
+        return files
+
+    def _chunk_file(content: str, strategy: ChunkStrategy) -> List[Chunk]:
+        """
+        Chunk file content based on strategy (AC: 4, 7).
+
+        Args:
+            content: File content as string
+            strategy: Chunking strategy
+
+        Returns:
+            List of Chunk objects with line information
+        """
+        chunks = []
+        lines = content.split("\n")
+
+        if strategy == ChunkStrategy.LINE:
+            # Line-by-line chunking
+            for i, line in enumerate(lines):
+                if line.strip():  # Skip empty lines
+                    chunks.append(
+                        Chunk(
+                            text=line, start_line=i, end_line=i + 1, chunk_type="line"
+                        )
+                    )
+
+        elif strategy == ChunkStrategy.PARAGRAPH:
+            # Paragraph chunking (split on double newlines)
+            paragraphs = []
+            current_para = []
+            current_start = 0
+            line_idx = 0
+
+            for i, line in enumerate(lines):
+                if not line.strip():  # Empty line
+                    if current_para:
+                        paragraphs.append((current_para, current_start, i))
+                        current_para = []
+                else:
+                    if not current_para:
+                        current_start = i
+                    current_para.append(line)
+                line_idx = i
+
+            # Handle last paragraph
+            if current_para:
+                paragraphs.append((current_para, current_start, line_idx + 1))
+
+            for para_lines, start, end in paragraphs:
+                text = "\n".join(para_lines)
+                if text.strip():
+                    chunks.append(
+                        Chunk(
+                            text=text,
+                            start_line=start,
+                            end_line=end,
+                            chunk_type="paragraph",
+                        )
+                    )
+
+        elif strategy == ChunkStrategy.DOCUMENT:
+            # Entire document as one chunk
+            if content.strip():
+                chunks.append(
+                    Chunk(
+                        text=content,
+                        start_line=0,
+                        end_line=len(lines),
+                        chunk_type="document",
+                    )
+                )
+
+        return chunks
+
+    def _get_file_state(path: str) -> Optional[FileState]:
+        """
+        Get file state for change detection (AC: 8).
+
+        Args:
+            path: File path (local or URI)
+
+        Returns:
+            FileState or None if file doesn't exist
+        """
+        try:
+            is_uri = "://" in path
+
+            if is_uri:
+                if not FSSPEC_AVAILABLE:
+                    return None
+                fs, resolved_path = fsspec.core.url_to_fs(path)
+                info = fs.info(resolved_path)
+                return FileState(
+                    path=path,
+                    size=info.get("size", 0),
+                    mtime=info.get("mtime", 0) or info.get("LastModified", 0) or 0,
+                    indexed_at=0,
+                )
+            else:
+                stat = os.stat(path)
+                return FileState(
+                    path=path, size=stat.st_size, mtime=stat.st_mtime, indexed_at=0
+                )
+        except Exception:
+            return None
+
+    def _read_file(path: str) -> Optional[str]:
+        """
+        Read file content.
+
+        Args:
+            path: File path (local or URI)
+
+        Returns:
+            File content as string, or None if read fails
+        """
+        try:
+            is_uri = "://" in path
+
+            if is_uri:
+                if not FSSPEC_AVAILABLE:
+                    return None
+                with fsspec.open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    return f.read()
+            else:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    return f.read()
+        except Exception:
+            return None
+
+    def _is_binary_file(path: str) -> bool:
+        """
+        Check if a file is binary (AC: 16).
+
+        Args:
+            path: File path
+
+        Returns:
+            True if file appears to be binary
+        """
+        try:
+            is_uri = "://" in path
+
+            if is_uri:
+                if not FSSPEC_AVAILABLE:
+                    return True
+                with fsspec.open(path, "rb") as f:
+                    chunk = f.read(8192)
+            else:
+                with open(path, "rb") as f:
+                    chunk = f.read(8192)
+
+            # Check for null bytes (common in binary files)
+            if b"\x00" in chunk:
+                return True
+
+            # Check for high ratio of non-text characters
+            text_chars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)))
+            non_text = sum(1 for b in chunk if b not in text_chars)
+            if len(chunk) > 0 and non_text / len(chunk) > 0.3:
+                return True
+
+            return False
+        except Exception:
+            return True
+
+    # =========================================================================
+    # vector.index_files (AC: 1-17, TEA-BUILTIN-002.3)
+    # =========================================================================
+
+    def vector_index_files(
+        state: Dict[str, Any],
+        paths: Union[str, List[str]],
+        pattern: str = "**/*",
+        chunk_by: str = "line",
+        collection: str = "default",
+        recursive: bool = True,
+        extensions: Optional[List[str]] = None,
+        incremental: bool = True,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Index files/directories into vector store (AC: 1-13).
+
+        Reads files from local or cloud storage, chunks them based on
+        strategy, generates embeddings, and stores in vector store.
+
+        Args:
+            state: Current state dictionary
+            paths: File/directory paths (local or fsspec URIs like s3://, gs://)
+            pattern: Glob pattern for file filtering (default: "**/*")
+            chunk_by: Chunking strategy - "line", "paragraph", or "document"
+            collection: Vector store collection name
+            recursive: Whether to traverse directories recursively
+            extensions: File extensions to filter (e.g., [".py", ".md"])
+            incremental: Skip unchanged files (default: True)
+            **kwargs: Additional embedding/store configuration
+
+        Returns:
+            {
+                "success": True,
+                "indexed": int,
+                "skipped": int,
+                "errors": List[str],
+                "collection": str,
+                "files": int
+            }
+            Error: {"success": False, "error": str}
+
+        Example YAML:
+            - name: index_codebase
+              uses: vector.index_files
+              with:
+                paths:
+                  - src/
+                  - docs/
+                pattern: "**/*.py"
+                chunk_by: line
+                collection: codebase
+                extensions: [".py", ".md"]
+              output: index_result
+        """
+        try:
+            # Normalize paths to list
+            if isinstance(paths, str):
+                paths = [paths]
+
+            # Parse chunk strategy
+            try:
+                strategy = ChunkStrategy(chunk_by.lower())
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid chunk_by value: {chunk_by}. "
+                    f"Must be one of: line, paragraph, document",
+                }
+
+            # Get provider and store
+            provider = _get_provider(state, **kwargs)
+            store = _get_vector_store(**kwargs)
+
+            # List files
+            try:
+                files = _list_files(
+                    paths=paths,
+                    pattern=pattern,
+                    recursive=recursive,
+                    extensions=extensions,
+                )
+            except ImportError as e:
+                return {"success": False, "error": str(e)}
+            except Exception as e:
+                return {"success": False, "error": f"File listing failed: {str(e)}"}
+
+            # Get file states collection name for tracking
+            state_collection = f"_file_states_{collection}"
+
+            indexed = 0
+            skipped = 0
+            errors = []
+
+            for file_path in files:
+                try:
+                    # Check if binary
+                    if _is_binary_file(file_path):
+                        skipped += 1
+                        continue
+
+                    # Get file state
+                    file_state = _get_file_state(file_path)
+                    if file_state is None:
+                        errors.append(f"Cannot access: {file_path}")
+                        continue
+
+                    # Check for incremental update
+                    if incremental:
+                        # Query for existing file state
+                        existing = store.query(
+                            embedding=[0.0] * provider.dimensions,  # Dummy embedding
+                            k=1,
+                            collection=state_collection,
+                            filter={"path": file_path},
+                        )
+                        if existing:
+                            stored_state = existing[0].get("metadata", {})
+                            if (
+                                stored_state.get("size") == file_state.size
+                                and stored_state.get("mtime") == file_state.mtime
+                            ):
+                                skipped += 1
+                                continue
+
+                    # Read file
+                    content = _read_file(file_path)
+                    if content is None:
+                        errors.append(f"Cannot read: {file_path}")
+                        continue
+
+                    # Chunk content
+                    chunks = _chunk_file(content, strategy)
+                    if not chunks:
+                        skipped += 1
+                        continue
+
+                    # Prepare texts and metadata
+                    texts = [c.text for c in chunks]
+                    ids = [f"{file_path}:{c.start_line}" for c in chunks]
+                    metadatas = [
+                        {
+                            "file": file_path,
+                            "line": c.start_line,
+                            "start_line": c.start_line,
+                            "end_line": c.end_line,
+                            "chunk_type": c.chunk_type,
+                        }
+                        for c in chunks
+                    ]
+
+                    # Generate embeddings
+                    embeddings = provider.embed(texts)
+
+                    # Store chunks
+                    store.add(
+                        ids=ids,
+                        texts=texts,
+                        embeddings=embeddings,
+                        metadatas=metadatas,
+                        collection=collection,
+                    )
+
+                    indexed += len(chunks)
+
+                    # Store file state for incremental updates
+                    if incremental:
+                        state_id = f"state:{file_path}"
+                        state_embedding = [0.0] * provider.dimensions  # Dummy
+                        store.add(
+                            ids=[state_id],
+                            texts=[file_path],
+                            embeddings=[state_embedding],
+                            metadatas=[
+                                {
+                                    "path": file_path,
+                                    "size": file_state.size,
+                                    "mtime": file_state.mtime,
+                                    "indexed_at": time.time(),
+                                }
+                            ],
+                            collection=state_collection,
+                        )
+
+                except Exception as e:
+                    errors.append(f"Error indexing {file_path}: {str(e)}")
+
+            return {
+                "success": True,
+                "indexed": indexed,
+                "skipped": skipped,
+                "errors": errors,
+                "collection": collection,
+                "files": len(files),
+            }
+
+        except Exception as e:
+            return {"success": False, "error": f"File indexing failed: {str(e)}"}
+
+    registry["vector.index_files"] = vector_index_files
+    registry["actions.vector_index_files"] = vector_index_files

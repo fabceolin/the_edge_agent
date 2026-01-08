@@ -347,14 +347,11 @@ class StoryStatusReporter:
             print(f"\n{label} ({len(stories_list)} stories)")
             print("-" * 80)
 
-            for story in sorted(stories_list, key=lambda s: s["filename"])[:30]:
+            for story in sorted(stories_list, key=lambda s: s["filename"]):
                 status_display = (
                     f"[{story['status_raw']}] " if story["status_raw"] else ""
                 )
                 print(f"  {status_display}{story['filename']}")
-
-            if len(stories_list) > 30:
-                print(f"  ... and {len(stories_list) - 30} more")
 
         if summary:
             self._print_summary()

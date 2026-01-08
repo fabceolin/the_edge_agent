@@ -2,7 +2,7 @@
 
 ## Status
 
-Ready for Review
+Ready for Done
 
 ## Story
 

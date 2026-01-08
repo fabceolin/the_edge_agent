@@ -69,6 +69,12 @@ setup(
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
+        "search": [
+            "model2vec>=0.3.0",  # TEA-BUILTIN-002.4: Local embeddings
+            "lancedb>=0.4.0",  # TEA-BUILTIN-002.5: Persistent vector store
+            "pyarrow>=14.0.0",  # Required by lancedb
+            "numpy>=2.1.0",
+        ],
         "llm": ["openai>=1.13.3"],
         "litellm": ["litellm>=1.0.0"],  # TEA-LLM-003: LiteLLM multi-provider support
         "web": ["requests>=2.32.5"],

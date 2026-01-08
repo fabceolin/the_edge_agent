@@ -11,7 +11,7 @@ Ready for Development
 |-------|-------|
 | **Epic ID** | TEA-DOCS-002 |
 | **Type** | Documentation Epic |
-| **Status** | Done |
+| **Status** | Ready for Development |
 | **Priority** | High |
 | **Depends On** | TEA-DOCS-001 (README restructure) |
 | **Created** | 2025-12-26 |

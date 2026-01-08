@@ -1,0 +1,41 @@
+schema: 1
+story: "TEA-TOOLS-002"
+story_title: "Per-Node Command Attributes"
+gate: "PASS"
+status_reason: "All 7 acceptance criteria met with clean implementation. Mutually exclusive modes provide clear separation of concerns. 34 tests pass including 15 new tests for this story."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-07T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 93
+
+evidence:
+  files_modified: 3
+  files_created: 3
+  tests_total: 34
+  tests_new: 15
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
+
+nfr_validation:
+  backward_compatibility: { status: PASS, notes: "Without --use-node-commands, behavior identical to TEA-TOOLS-001" }
+  usability: { status: PASS, notes: "Clear separation between template mode and per-node mode" }
+  error_handling: { status: PASS, notes: "Strict validation with clear error messages listing missing commands" }
+  maintainability: { status: PASS, notes: "Clean implementation with dispatch pattern generators" }
+
+recommendations:
+  future:
+    - action: "Consider adding per-node timeout and environment variable support"
+      refs: ["Story mentions this is out of scope"]
+    - action: "Document command quoting and escaping best practices in LLM reference guide"
+      refs: ["docs/shared/DOT_TO_YAML_LLM_REFERENCE.md"]

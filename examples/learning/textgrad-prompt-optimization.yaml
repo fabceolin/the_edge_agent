@@ -1,0 +1,172 @@
+# TextGrad Prompt Optimization Example
+# Demonstrates gradient-based prompt optimization using TextGrad
+#
+# This example shows how to:
+# 1. Define a prompt as an optimizable variable
+# 2. Evaluate LLM outputs with multi-aspect feedback
+# 3. Optimize prompts using textual gradients
+#
+# Prerequisites:
+# - pip install the_edge_agent[textgrad]
+# - Set OPENAI_API_KEY environment variable
+#
+# Usage:
+#   tea run examples/learning/textgrad-prompt-optimization.yaml \
+#     --set task="Explain quantum computing to a beginner"
+
+name: textgrad-prompt-optimization
+version: "1.0"
+description: |
+  Demonstrates TextGrad prompt optimization where a system prompt
+  is iteratively improved based on LLM feedback.
+
+settings:
+  textgrad:
+    enabled: true
+    optimizer_model: gpt-4
+    max_iterations: 3
+    early_stopping_threshold: 0.01
+
+state_schema:
+  task: str
+  system_prompt: str
+  response: str
+  feedback: str
+  quality_score: float
+  optimization_result: object
+  iteration: int
+
+nodes:
+  # Step 1: Define the system prompt as an optimizable variable
+  - name: init_prompt
+    action: learn.textgrad.variable
+    with:
+      name: system_prompt
+      initial_value: |
+        You are an assistant. Answer questions clearly.
+      role_description: "System instruction that guides the LLM response style"
+      constraints:
+        - "Must be under 100 words"
+        - "Must encourage clear explanations"
+        - "Should be appropriate for general audiences"
+    output: prompt_var
+    next: set_initial_prompt
+
+  # Step 2: Set the prompt in state for use
+  - name: set_initial_prompt
+    action: state.set
+    with:
+      system_prompt: "{{ state.prompt_var.variable.current_value }}"
+      iteration: 0
+    next: generate_response
+
+  # Step 3: Generate a response using current prompt
+  - name: generate_response
+    action: llm.call
+    with:
+      model: gpt-4
+      system: "{{ state.system_prompt }}"
+      prompt: "{{ state.task }}"
+    output: response
+    next: evaluate_response
+
+  # Step 4: Get feedback on the response
+  - name: evaluate_response
+    action: learn.textgrad.feedback
+    with:
+      output: "{{ state.response }}"
+      evaluation_criteria:
+        - "Is the explanation clear and easy to understand?"
+        - "Is the content accurate and complete?"
+        - "Is the response appropriate for a beginner?"
+      aspects:
+        - clarity
+        - accuracy
+        - accessibility
+    output: feedback_result
+    next: extract_score
+
+  # Step 5: Extract quality score from feedback
+  - name: extract_score
+    action: state.set
+    with:
+      feedback: "{{ state.feedback_result.feedback }}"
+      quality_score: "{{ state.feedback_result.scores.overall | default(0.5) }}"
+    next: check_quality
+
+  # Step 6: Decide if optimization is needed
+  - name: check_quality
+    action: core.switch
+    with:
+      value: "{{ state.quality_score >= 0.8 }}"
+    edges:
+      "true": output_success
+      "false": should_optimize
+
+  # Step 7: Check if we've hit max iterations
+  - name: should_optimize
+    action: core.switch
+    with:
+      value: "{{ state.iteration < 3 }}"
+    edges:
+      "true": optimize_prompt
+      "false": output_result
+
+  # Step 8: Run TextGrad optimization
+  - name: optimize_prompt
+    action: learn.textgrad.optimize_prompt
+    with:
+      variable: system_prompt
+      loss_fn: |
+        The current system prompt produced this response:
+        ---
+        {{ state.response }}
+        ---
+
+        Feedback on the response:
+        {{ state.feedback }}
+        Quality score: {{ state.quality_score }}
+
+        The response should be clearer, more accurate, and more accessible
+        for beginners. What changes to the system prompt would improve
+        these aspects?
+      iterations: 1
+      constraints:
+        - "Keep the prompt under 100 words"
+        - "Maintain a helpful, patient tone"
+    output: optimization_result
+    next: update_prompt
+
+  # Step 9: Apply optimized prompt and retry
+  - name: update_prompt
+    action: state.set
+    with:
+      system_prompt: "{{ state.optimization_result.optimized_value }}"
+      iteration: "{{ state.iteration + 1 }}"
+    next: generate_response
+
+  # Step 10: Output success
+  - name: output_success
+    action: core.return
+    with:
+      status: "success"
+      message: "High quality response achieved!"
+      final_response: "{{ state.response }}"
+      final_prompt: "{{ state.system_prompt }}"
+      quality_score: "{{ state.quality_score }}"
+      iterations_used: "{{ state.iteration }}"
+
+  # Step 11: Output result after max iterations
+  - name: output_result
+    action: core.return
+    with:
+      status: "completed"
+      message: "Optimization completed (max iterations reached)"
+      final_response: "{{ state.response }}"
+      final_prompt: "{{ state.system_prompt }}"
+      quality_score: "{{ state.quality_score }}"
+      optimization_history: "{{ state.optimization_result.improvement_trace | default([]) }}"
+
+edges:
+  - from: __start__
+    to: init_prompt
