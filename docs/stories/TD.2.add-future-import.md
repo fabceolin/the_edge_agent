@@ -1,7 +1,7 @@
 # Story TD.2: Add Missing Future Import
 
 ## Status
-Ready for Done
+Done
 
 ## Story
 **As a** developer using parallel execution features,

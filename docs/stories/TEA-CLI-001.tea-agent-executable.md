@@ -1,7 +1,7 @@
 # Story: TEA-CLI-001 - tea-agent CLI Executable
 
 ## Status
-Ready for Done
+Done
 
 ## User Story
 

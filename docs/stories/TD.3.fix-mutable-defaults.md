@@ -1,7 +1,7 @@
 # Story TD.3: Fix Mutable Default Arguments
 
 ## Status
-Ready for Done
+Done
 
 ## Story
 **As a** developer calling invoke() or stream() multiple times,

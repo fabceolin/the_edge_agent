@@ -6,9 +6,14 @@ AI-powered extraction API.
 
 TEA-BUILTIN-008.1: Core LlamaExtract Actions
 TEA-BUILTIN-008.5: Direct REST API Integration
+TEA-BUILTIN-008.6: Async Polling Configuration
+TEA-BUILTIN-008.7: Workflow Primitives
 
 Actions:
     - llamaextract.extract: Extract structured data from documents (REST API)
+    - llamaextract.submit_job: Submit async extraction job (TEA-BUILTIN-008.7)
+    - llamaextract.poll_status: Check job status (TEA-BUILTIN-008.7)
+    - llamaextract.get_result: Retrieve extraction result (TEA-BUILTIN-008.7)
     - llamaextract.upload_agent: Create or update extraction agent
     - llamaextract.list_agents: List available extraction agents
     - llamaextract.get_agent: Get agent details
@@ -151,16 +156,24 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             return {"file": {"data": content, "mime_type": _get_mime_type(file)}}
 
     def _poll_job_status(
-        job_id: str, headers: Dict[str, str], timeout: int, poll_interval: int = 5
+        job_id: str,
+        headers: Dict[str, str],
+        timeout: int,
+        poll_interval: Union[int, float] = 5,
+        max_attempts: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Poll job status until completion or timeout.
+        Poll job status until completion, timeout, or max attempts exceeded.
+
+        TEA-BUILTIN-008.6: Configurable polling parameters.
 
         Args:
             job_id: The extraction job ID
             headers: HTTP headers with authorization
             timeout: Maximum time to wait for completion (seconds)
-            poll_interval: Time between polls (seconds)
+            poll_interval: Time between polls (seconds), accepts floats (AC-2, AC-7)
+            max_attempts: Maximum number of poll attempts (AC-3, AC-8)
+                          None means no limit (only timeout applies)
 
         Returns:
             Dict with success status and extracted data or error info
@@ -174,7 +187,24 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "error_type": "dependency",
             }
 
+        # Validate poll_interval (AC-25: clear error messages)
+        if poll_interval <= 0:
+            return {
+                "success": False,
+                "error": f"polling_interval must be positive, got {poll_interval}",
+                "error_type": "validation",
+            }
+
+        # Validate max_attempts if specified (AC-25)
+        if max_attempts is not None and max_attempts <= 0:
+            return {
+                "success": False,
+                "error": f"max_poll_attempts must be positive, got {max_attempts}",
+                "error_type": "validation",
+            }
+
         start_time = time.time()
+        attempt_count = 0
         status_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}"
         result_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}/result"
 
@@ -247,7 +277,24 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         }
 
                 elif status in ("PENDING", "RUNNING"):
-                    # Still processing, wait and retry
+                    # Still processing, increment attempt counter
+                    attempt_count += 1
+
+                    # Check max_attempts limit (AC-8)
+                    if max_attempts is not None and attempt_count >= max_attempts:
+                        elapsed = time.time() - start_time
+                        return {
+                            "success": False,
+                            "error": (
+                                f"Max poll attempts ({max_attempts}) exceeded "
+                                f"after {elapsed:.1f}s"
+                            ),
+                            "error_type": "timeout",
+                            "job_id": job_id,
+                            "attempts": attempt_count,
+                        }
+
+                    # Wait and retry
                     time.sleep(poll_interval)
                     continue
 
@@ -260,6 +307,20 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     }
 
             except requests.Timeout:
+                attempt_count += 1
+                # Check max_attempts on timeout too (AC-8)
+                if max_attempts is not None and attempt_count >= max_attempts:
+                    elapsed = time.time() - start_time
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Max poll attempts ({max_attempts}) exceeded "
+                            f"after {elapsed:.1f}s (request timeout)"
+                        ),
+                        "error_type": "timeout",
+                        "job_id": job_id,
+                        "attempts": attempt_count,
+                    }
                 time.sleep(poll_interval)
                 continue
             except Exception as e:
@@ -270,11 +331,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "job_id": job_id,
                 }
 
+        elapsed = time.time() - start_time
         return {
             "success": False,
-            "error": f"Job timed out after {timeout}s",
+            "error": f"Job timed out after {elapsed:.1f}s ({attempt_count} attempts)",
             "error_type": "timeout",
             "job_id": job_id,
+            "attempts": attempt_count,
         }
 
     def _execute_rest_with_retry(
@@ -507,6 +570,205 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/run"
         return _execute_rest_with_retry(url, payload, headers, timeout, max_retries)
 
+    def _extract_via_async(
+        file: str,
+        schema: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
+        mode: str = "BALANCED",
+        timeout: int = 300,
+        max_retries: int = 3,
+        polling_interval: Union[int, float] = 5,
+        max_poll_attempts: int = 120,
+    ) -> Dict[str, Any]:
+        """
+        Extract structured data using LlamaExtract async /jobs endpoint.
+
+        TEA-BUILTIN-008.6: Async extraction with configurable polling.
+
+        Uses the async endpoint: POST /api/v1/extraction/jobs
+
+        Args:
+            file: Document source - URL, base64 content, or local file path
+            schema: JSON Schema defining the structure to extract
+            agent_id: ID of existing extraction agent to use
+            mode: Extraction mode - BALANCED, MULTIMODAL, PREMIUM, or FAST
+            timeout: Overall operation timeout in seconds (AC-4, AC-9)
+            max_retries: Maximum retry attempts for submission
+            polling_interval: Seconds between poll requests (AC-2, AC-7)
+            max_poll_attempts: Maximum poll attempts before timeout (AC-3, AC-8)
+
+        Returns:
+            Dict with 'success', 'data', 'status', 'job_id', or error info
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed. Install with: pip install requests",
+                "error_type": "dependency",
+            }
+
+        # Validate mode
+        mode_upper = mode.upper()
+        if mode_upper not in EXTRACTION_MODES:
+            return {
+                "success": False,
+                "error": f"Invalid extraction mode: {mode}. Valid modes: {EXTRACTION_MODES}",
+                "error_type": "validation",
+            }
+
+        # Get API key
+        api_key = _get_api_key()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY environment variable not set",
+                "error_type": "configuration",
+            }
+
+        # Prepare file content
+        try:
+            file_data = _prepare_file_content(file)
+        except FileNotFoundError as e:
+            return {"success": False, "error": str(e), "error_type": "file_not_found"}
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "file_download_error",
+            }
+        except ImportError as e:
+            return {"success": False, "error": str(e), "error_type": "dependency"}
+
+        # Build request payload
+        payload = {**file_data, "config": {"extraction_mode": mode_upper}}
+
+        # Add schema or agent_id
+        if agent_id:
+            payload["agent_id"] = agent_id
+        elif schema:
+            payload["data_schema"] = schema
+
+        # Build headers
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Submit to async /jobs endpoint (AC-6)
+        url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs"
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=min(timeout, 120),  # Initial request timeout
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    job_id = data.get("id")
+
+                    if not job_id:
+                        return {
+                            "success": False,
+                            "error": "No job_id returned from async endpoint",
+                            "error_type": "api_error",
+                        }
+
+                    # Poll for job completion with configurable parameters (AC-7, AC-8)
+                    return _poll_job_status(
+                        job_id=job_id,
+                        headers=headers,
+                        timeout=timeout,
+                        poll_interval=polling_interval,
+                        max_attempts=max_poll_attempts,
+                    )
+
+                elif response.status_code == 429:
+                    # Rate limit - retry with backoff
+                    last_error = {
+                        "success": False,
+                        "error": "Rate limit exceeded",
+                        "error_type": "rate_limit",
+                        "status_code": 429,
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    return last_error
+
+                elif response.status_code >= 500:
+                    # Server error - retry with backoff
+                    last_error = {
+                        "success": False,
+                        "error": f"Server error: {response.status_code}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    return last_error
+
+                elif response.status_code == 401:
+                    return {
+                        "success": False,
+                        "error": "Authentication failed. Check API key.",
+                        "error_type": "configuration",
+                        "status_code": 401,
+                    }
+
+                elif response.status_code in (400, 422):
+                    try:
+                        error_detail = response.json()
+                        error_msg = error_detail.get("detail", response.text)
+                    except Exception:
+                        error_msg = response.text
+                    return {
+                        "success": False,
+                        "error": f"Validation error: {error_msg}",
+                        "error_type": "validation",
+                        "status_code": response.status_code,
+                    }
+
+                else:
+                    return {
+                        "success": False,
+                        "error": f"HTTP {response.status_code}: {response.text}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+
+            except requests.Timeout:
+                return {
+                    "success": False,
+                    "error": f"Request timed out after {timeout}s",
+                    "error_type": "timeout",
+                }
+            except requests.ConnectionError as e:
+                last_error = {
+                    "success": False,
+                    "error": f"Connection error: {str(e)}",
+                    "error_type": "api_error",
+                }
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                return last_error
+            except Exception as e:
+                return {"success": False, "error": str(e), "error_type": "api_error"}
+
+        return last_error or {
+            "success": False,
+            "error": "Max retries exceeded",
+            "error_type": "api_error",
+        }
+
     def _get_client():
         """Get LlamaExtract client."""
         try:
@@ -601,6 +863,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         timeout: int = 300,
         max_retries: int = 3,
         use_rest: bool = False,
+        async_mode: bool = False,
+        polling_interval: Union[int, float] = 5,
+        max_poll_attempts: int = 120,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -608,6 +873,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         Uses SDK by default for client-side validation before sending to server.
         Set use_rest=True for direct REST API calls (fewer dependencies).
+
+        TEA-BUILTIN-008.6: Async polling configuration parameters.
 
         Args:
             state: Current workflow state
@@ -620,6 +887,12 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             timeout: HTTP request timeout in seconds (default: 300)
             max_retries: Maximum retry attempts for transient failures
             use_rest: If True, use direct REST API instead of SDK (default: False)
+            async_mode: If True, use async /jobs endpoint explicitly (AC-1, AC-6)
+                       Requires use_rest=True. When False (default), uses sync behavior.
+            polling_interval: Seconds between poll requests (default: 5) (AC-2, AC-7)
+                             Accepts floats for sub-second precision.
+            max_poll_attempts: Maximum number of poll attempts (default: 120) (AC-3, AC-8)
+                              Combined with polling_interval, default allows ~10 min.
 
         Returns:
             Dict with 'success', 'data' (extracted data), 'status', etc.
@@ -638,6 +911,18 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             ...     mode="PREMIUM",
             ...     timeout=300
             ... )
+
+        Example with async mode (for large documents):
+            >>> result = llamaextract_extract(
+            ...     state={},
+            ...     file="large-contract.pdf",
+            ...     schema={...},
+            ...     use_rest=True,
+            ...     async_mode=True,
+            ...     polling_interval=10,
+            ...     max_poll_attempts=60,
+            ...     timeout=900
+            ... )
         """
         # Validate inputs
         if not file:
@@ -654,7 +939,42 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "error_type": "validation",
             }
 
-        # TEA-BUILTIN-008.5: Use REST API when explicitly requested
+        # TEA-BUILTIN-008.6: Validate async_mode requires use_rest (AC-1, AC-6)
+        if async_mode and not use_rest:
+            return {
+                "success": False,
+                "error": "async_mode=True requires use_rest=True",
+                "error_type": "validation",
+            }
+
+        # TEA-BUILTIN-008.6: Validate polling parameters (AC-2, AC-3)
+        if polling_interval <= 0:
+            return {
+                "success": False,
+                "error": f"polling_interval must be positive, got {polling_interval}",
+                "error_type": "validation",
+            }
+        if max_poll_attempts <= 0:
+            return {
+                "success": False,
+                "error": f"max_poll_attempts must be positive, got {max_poll_attempts}",
+                "error_type": "validation",
+            }
+
+        # TEA-BUILTIN-008.6: Async mode - use /jobs endpoint directly (AC-1, AC-6)
+        if async_mode and use_rest and not agent_name:
+            return _extract_via_async(
+                file=file,
+                schema=schema,
+                agent_id=agent_id,
+                mode=mode,
+                timeout=timeout,
+                max_retries=max_retries,
+                polling_interval=polling_interval,
+                max_poll_attempts=max_poll_attempts,
+            )
+
+        # TEA-BUILTIN-008.5: Use REST API when explicitly requested (sync mode)
         # Note: REST API doesn't support agent_name lookup, only agent_id
         if use_rest and not agent_name:
             return _extract_via_rest(
@@ -757,6 +1077,558 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 error_type = "not_found"
 
             return {"success": False, "error": error_str, "error_type": error_type}
+
+    # ============================================================
+    # TEA-BUILTIN-008.7: Workflow Primitives
+    # ============================================================
+
+    # ============================================================
+    # llamaextract.submit_job - Submit async extraction job
+    # ============================================================
+
+    def llamaextract_submit_job(
+        state,
+        file: str,
+        schema: Optional[Dict[str, Any]] = None,
+        agent_id: Optional[str] = None,
+        mode: str = "BALANCED",
+        max_retries: int = 3,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Submit async extraction job to LlamaExtract.
+
+        TEA-BUILTIN-008.7: Workflow primitive for job submission.
+
+        This primitive submits a document extraction job and returns immediately
+        with the job_id. Use llamaextract.poll_status and llamaextract.get_result
+        to monitor and retrieve results.
+
+        Args:
+            state: Current workflow state
+            file: Document source - URL, base64 content, or local file path
+            schema: JSON Schema defining the structure to extract
+            agent_id: ID of existing extraction agent to use
+            mode: Extraction mode - BALANCED, MULTIMODAL, PREMIUM, or FAST
+            max_retries: Maximum retry attempts for job submission
+
+        Returns:
+            Dict with:
+            - success: True if job submitted successfully
+            - job_id: The extraction job ID for polling
+            - status: "PENDING" on successful submission
+            - error/error_type: On failure
+
+        Example:
+            >>> result = llamaextract_submit_job(
+            ...     state={},
+            ...     file="invoice.pdf",
+            ...     schema={"type": "object", "properties": {"total": {"type": "number"}}},
+            ...     mode="FAST"
+            ... )
+            >>> if result['success']:
+            ...     job_id = result['job_id']  # Use for polling
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed. Install with: pip install requests",
+                "error_type": "dependency",
+            }
+
+        # Validate inputs (AC-1)
+        if not file:
+            return {
+                "success": False,
+                "error": "file parameter is required",
+                "error_type": "validation",
+            }
+
+        if not schema and not agent_id:
+            return {
+                "success": False,
+                "error": "Either schema or agent_id must be provided",
+                "error_type": "validation",
+            }
+
+        # Validate mode (AC-4)
+        mode_upper = mode.upper()
+        if mode_upper not in EXTRACTION_MODES:
+            return {
+                "success": False,
+                "error": f"Invalid extraction mode: {mode}. Valid modes: {EXTRACTION_MODES}",
+                "error_type": "validation",
+            }
+
+        # Get API key (AC-12)
+        api_key = _get_api_key()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY environment variable not set",
+                "error_type": "configuration",
+            }
+
+        # Prepare file content (AC-1: handles path, URL, base64)
+        try:
+            file_data = _prepare_file_content(file)
+        except FileNotFoundError as e:
+            return {"success": False, "error": str(e), "error_type": "file_not_found"}
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "file_download_error",
+            }
+        except ImportError as e:
+            return {"success": False, "error": str(e), "error_type": "dependency"}
+
+        # Build request payload
+        payload = {**file_data, "config": {"extraction_mode": mode_upper}}
+
+        # Add schema or agent_id
+        if agent_id:
+            payload["agent_id"] = agent_id
+        elif schema:
+            payload["data_schema"] = schema
+
+        # Build headers
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Submit to async /jobs endpoint (AC-1, AC-2)
+        url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs"
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers=headers,
+                    timeout=120,  # Submission timeout
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    job_id = data.get("id")
+                    status = data.get("status", "PENDING")
+
+                    if not job_id:
+                        return {
+                            "success": False,
+                            "error": "No job_id returned from async endpoint",
+                            "error_type": "api_error",
+                        }
+
+                    # AC-2: Return job_id and PENDING status
+                    return {
+                        "success": True,
+                        "job_id": job_id,
+                        "status": status,
+                    }
+
+                elif response.status_code == 401:
+                    # AC-3: Authentication error
+                    return {
+                        "success": False,
+                        "error": "Authentication failed. Check API key.",
+                        "error_type": "configuration",
+                        "status_code": 401,
+                    }
+
+                elif response.status_code == 400:
+                    # AC-3: Bad request
+                    try:
+                        error_detail = response.json()
+                        error_msg = error_detail.get("detail", response.text)
+                    except Exception:
+                        error_msg = response.text
+                    return {
+                        "success": False,
+                        "error": f"Bad request: {error_msg}",
+                        "error_type": "validation",
+                        "status_code": 400,
+                    }
+
+                elif response.status_code == 429:
+                    # Rate limit - retry with backoff (AC-13)
+                    last_error = {
+                        "success": False,
+                        "error": "Rate limit exceeded",
+                        "error_type": "rate_limit",
+                        "status_code": 429,
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    return last_error
+
+                elif response.status_code >= 500:
+                    # Server error - retry with backoff (AC-13)
+                    last_error = {
+                        "success": False,
+                        "error": f"Server error: {response.status_code}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    return last_error
+
+                else:
+                    # AC-3: Structured error
+                    return {
+                        "success": False,
+                        "error": f"HTTP {response.status_code}: {response.text}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+
+            except requests.Timeout:
+                return {
+                    "success": False,
+                    "error": "Request timed out during job submission",
+                    "error_type": "timeout",
+                }
+            except requests.ConnectionError as e:
+                last_error = {
+                    "success": False,
+                    "error": f"Connection error: {str(e)}",
+                    "error_type": "api_error",
+                }
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                return last_error
+            except Exception as e:
+                return {"success": False, "error": str(e), "error_type": "api_error"}
+
+        return last_error or {
+            "success": False,
+            "error": "Max retries exceeded",
+            "error_type": "api_error",
+        }
+
+    # ============================================================
+    # llamaextract.poll_status - Check job status
+    # ============================================================
+
+    def llamaextract_poll_status(
+        state,
+        job_id: Optional[str] = None,
+        timeout: int = 10,
+        max_retries: int = 3,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Poll job status from LlamaExtract.
+
+        TEA-BUILTIN-008.7: Workflow primitive for status polling.
+
+        This primitive checks the current status of an extraction job.
+        Use in custom polling loops for advanced workflow control.
+
+        Args:
+            state: Current workflow state
+            job_id: The extraction job ID from submit_job
+            timeout: HTTP request timeout in seconds (default: 10)
+            max_retries: Maximum retry attempts for transient failures
+
+        Returns:
+            Dict with:
+            - success: True if status retrieved successfully
+            - status: "PENDING", "RUNNING", "SUCCESS", "ERROR", "PARTIAL_SUCCESS"
+            - progress: Progress percentage (0-100) if available
+            - error: Error message when status is ERROR
+            - error_type: On API failure
+
+        Example:
+            >>> result = llamaextract_poll_status(
+            ...     state={},
+            ...     job_id="job_abc123"
+            ... )
+            >>> if result['success'] and result['status'] == 'SUCCESS':
+            ...     # Ready to get result
+            ...     pass
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed. Install with: pip install requests",
+                "error_type": "dependency",
+            }
+
+        # Validate inputs (AC-5)
+        if not job_id:
+            return {
+                "success": False,
+                "error": "job_id parameter is required",
+                "error_type": "validation",
+            }
+
+        # Get API key (AC-12)
+        api_key = _get_api_key()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY environment variable not set",
+                "error_type": "configuration",
+            }
+
+        # Build headers
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        status_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}"
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # AC-8: Configurable timeout for individual poll
+                response = requests.get(status_url, headers=headers, timeout=timeout)
+
+                if response.status_code == 200:
+                    job_data = response.json()
+                    status = job_data.get("status", "UNKNOWN")
+                    progress = job_data.get("progress", 0)
+
+                    # AC-6: Return status with progress
+                    result = {
+                        "success": True,
+                        "status": status,
+                        "progress": progress,
+                        "job_id": job_id,
+                    }
+
+                    # AC-7: Include error field when status is ERROR
+                    if status == "ERROR":
+                        result["error"] = job_data.get("error", "Extraction failed")
+
+                    return result
+
+                elif response.status_code == 401:
+                    return {
+                        "success": False,
+                        "error": "Authentication failed. Check API key.",
+                        "error_type": "configuration",
+                        "status_code": 401,
+                    }
+
+                elif response.status_code == 404:
+                    return {
+                        "success": False,
+                        "error": f"Job not found: {job_id}",
+                        "error_type": "not_found",
+                        "status_code": 404,
+                    }
+
+                elif response.status_code >= 500:
+                    # Server error - retry (AC-13)
+                    last_error = {
+                        "success": False,
+                        "error": f"Server error: {response.status_code}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+                    if attempt < max_retries - 1:
+                        time.sleep(2**attempt)
+                        continue
+                    return last_error
+
+                else:
+                    return {
+                        "success": False,
+                        "error": f"HTTP {response.status_code}: {response.text}",
+                        "error_type": "api_error",
+                        "status_code": response.status_code,
+                    }
+
+            except requests.Timeout:
+                last_error = {
+                    "success": False,
+                    "error": f"Request timed out after {timeout}s",
+                    "error_type": "timeout",
+                }
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                return last_error
+            except requests.ConnectionError as e:
+                last_error = {
+                    "success": False,
+                    "error": f"Connection error: {str(e)}",
+                    "error_type": "api_error",
+                }
+                if attempt < max_retries - 1:
+                    time.sleep(2**attempt)
+                    continue
+                return last_error
+            except Exception as e:
+                return {"success": False, "error": str(e), "error_type": "api_error"}
+
+        return last_error or {
+            "success": False,
+            "error": "Max retries exceeded",
+            "error_type": "api_error",
+        }
+
+    # ============================================================
+    # llamaextract.get_result - Retrieve extraction result
+    # ============================================================
+
+    def llamaextract_get_result(
+        state,
+        job_id: Optional[str] = None,
+        timeout: int = 30,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Get extraction result for a completed job.
+
+        TEA-BUILTIN-008.7: Workflow primitive for result retrieval.
+
+        This primitive retrieves the extracted data for a completed job.
+        Only call after poll_status returns SUCCESS or PARTIAL_SUCCESS.
+
+        Args:
+            state: Current workflow state
+            job_id: The extraction job ID
+            timeout: HTTP request timeout in seconds (default: 30)
+
+        Returns:
+            Dict with:
+            - success: True if result retrieved successfully
+            - data: Extracted data when job is complete
+            - job_id: The job ID for reference
+            - error/error_type: If job not complete or failed
+
+        Example:
+            >>> result = llamaextract_get_result(
+            ...     state={},
+            ...     job_id="job_abc123"
+            ... )
+            >>> if result['success']:
+            ...     extracted_data = result['data']
+        """
+        try:
+            import requests
+        except ImportError:
+            return {
+                "success": False,
+                "error": "requests package not installed. Install with: pip install requests",
+                "error_type": "dependency",
+            }
+
+        # Validate inputs (AC-9)
+        if not job_id:
+            return {
+                "success": False,
+                "error": "job_id parameter is required",
+                "error_type": "validation",
+            }
+
+        # Get API key (AC-12)
+        api_key = _get_api_key()
+        if not api_key:
+            return {
+                "success": False,
+                "error": "LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY environment variable not set",
+                "error_type": "configuration",
+            }
+
+        # Build headers
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        result_url = f"{LLAMAEXTRACT_API_BASE}/api/v1/extraction/jobs/{job_id}/result"
+
+        try:
+            response = requests.get(result_url, headers=headers, timeout=timeout)
+
+            if response.status_code == 200:
+                result_data = response.json()
+                # AC-10: Return data with job_id
+                return {
+                    "success": True,
+                    "data": result_data.get("data", result_data),
+                    "job_id": job_id,
+                }
+
+            elif response.status_code == 401:
+                return {
+                    "success": False,
+                    "error": "Authentication failed. Check API key.",
+                    "error_type": "configuration",
+                    "status_code": 401,
+                }
+
+            elif response.status_code == 404:
+                # AC-11: Job not found or not complete
+                return {
+                    "success": False,
+                    "error": f"Result not found for job: {job_id}. Job may not be complete.",
+                    "error_type": "not_found",
+                    "status_code": 404,
+                    "job_id": job_id,
+                }
+
+            elif response.status_code == 400:
+                # AC-11: Job not ready or failed
+                try:
+                    error_detail = response.json()
+                    error_msg = error_detail.get("detail", response.text)
+                except Exception:
+                    error_msg = response.text
+                return {
+                    "success": False,
+                    "error": f"Cannot get result: {error_msg}",
+                    "error_type": "job_incomplete",
+                    "status_code": 400,
+                    "job_id": job_id,
+                }
+
+            else:
+                return {
+                    "success": False,
+                    "error": f"HTTP {response.status_code}: {response.text}",
+                    "error_type": "api_error",
+                    "status_code": response.status_code,
+                    "job_id": job_id,
+                }
+
+        except requests.Timeout:
+            return {
+                "success": False,
+                "error": f"Request timed out after {timeout}s",
+                "error_type": "timeout",
+                "job_id": job_id,
+            }
+        except requests.ConnectionError as e:
+            return {
+                "success": False,
+                "error": f"Connection error: {str(e)}",
+                "error_type": "api_error",
+                "job_id": job_id,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "api_error",
+                "job_id": job_id,
+            }
 
     # ============================================================
     # llamaextract.upload_agent - Create or update extraction agent
@@ -1051,9 +1923,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     registry["llamaextract.get_agent"] = llamaextract_get_agent
     registry["llamaextract.delete_agent"] = llamaextract_delete_agent
 
+    # TEA-BUILTIN-008.7: Workflow Primitives
+    registry["llamaextract.submit_job"] = llamaextract_submit_job
+    registry["llamaextract.poll_status"] = llamaextract_poll_status
+    registry["llamaextract.get_result"] = llamaextract_get_result
+
     # Also register with actions. prefix for compatibility
     registry["actions.llamaextract_extract"] = llamaextract_extract
     registry["actions.llamaextract_upload_agent"] = llamaextract_upload_agent
     registry["actions.llamaextract_list_agents"] = llamaextract_list_agents
     registry["actions.llamaextract_get_agent"] = llamaextract_get_agent
     registry["actions.llamaextract_delete_agent"] = llamaextract_delete_agent
+    registry["actions.llamaextract_submit_job"] = llamaextract_submit_job
+    registry["actions.llamaextract_poll_status"] = llamaextract_poll_status
+    registry["actions.llamaextract_get_result"] = llamaextract_get_result

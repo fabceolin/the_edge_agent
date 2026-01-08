@@ -1,7 +1,7 @@
 # Story: TEA-CLI-003 - Interactive Interrupt Support
 
 ## Status
-Ready for Done
+Done
 
 ## Dependencies
 - **Requires:** TEA-CLI-001 (tea-agent CLI Executable) - MUST be completed first

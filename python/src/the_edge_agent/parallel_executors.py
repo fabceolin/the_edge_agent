@@ -345,16 +345,27 @@ def _process_flow_wrapper(
 
 class ProcessExecutor:
     """
-    Process-based parallel executor.
+    Process-based parallel executor with optional pipe streaming support.
 
     This executor uses Python's ProcessPoolExecutor for parallel execution,
     which bypasses the Global Interpreter Lock (GIL). It's suitable for
     CPU-bound tasks that benefit from true parallelism.
 
+    When a StreamRegistry is provided to execute(), processes are launched
+    with their stdin/stdout wired to named pipe channels for streaming data
+    flow between processes.
+
     Serialization:
         State must be picklable for process execution. Non-picklable objects
         (lambdas, open files, database connections, etc.) will cause errors.
         Use validate_state() to check before submission.
+
+    Stream Support:
+        When stream_registry is provided to execute():
+        - Processes are launched with asyncio.create_subprocess_exec
+        - stdin/stdout are wired to named pipe channels
+        - State is passed via TEA_STATE environment variable
+        - SIGPIPE is handled gracefully
 
     Attributes:
         max_workers: Maximum number of worker processes
@@ -363,10 +374,15 @@ class ProcessExecutor:
     Example:
         executor = ProcessExecutor(max_workers=4)
         with executor:
-            # Validate state before submission
+            # Standard execution
             executor.validate_state(state)
             future = executor.submit(my_function, arg1, arg2)
             result = future.result()
+
+            # Stream execution
+            from the_edge_agent.streams import StreamRegistry
+            registry = StreamRegistry()
+            results = executor.execute(flows, config, stream_registry=registry)
     """
 
     def __init__(self, max_workers: Optional[int] = None):
@@ -499,6 +515,319 @@ class ProcessExecutor:
                 pickle.dumps(value)
             except (pickle.PicklingError, TypeError, AttributeError) as e:
                 raise PickleValidationError(key, flow_index, e)
+
+    def execute(
+        self,
+        flows: List[Dict[str, Any]],
+        config: ParallelConfig,
+        stream_registry: Optional[Any] = None,
+    ) -> List[ParallelFlowResult]:
+        """
+        Execute flows in parallel processes.
+
+        If stream_registry is provided, connects process stdin/stdout
+        to named stream channels for pipe-based streaming.
+
+        Args:
+            flows: List of flow dicts, each containing:
+                - node_name: Name of the node/flow
+                - state: State dict for this flow
+                - streams: Optional dict with stdin/stdout channel names
+                - yaml_path: Path to workflow YAML (for stream execution)
+                - entry_point: Starting node (for stream execution)
+                - exit_point: Ending node (for stream execution)
+            config: ParallelConfig with timeout, retry, etc.
+            stream_registry: Optional StreamRegistry for pipe wiring
+
+        Returns:
+            List of ParallelFlowResult, one per flow
+
+        Example:
+            >>> flows = [
+            ...     {"node_name": "producer", "state": {"value": 1},
+            ...      "streams": {"stdout": "data_pipe"}},
+            ...     {"node_name": "consumer", "state": {},
+            ...      "streams": {"stdin": "data_pipe"}},
+            ... ]
+            >>> results = executor.execute(flows, config, stream_registry)
+        """
+        if stream_registry and stream_registry.channels:
+            return self._execute_with_streams(flows, config, stream_registry)
+        else:
+            return self._execute_standard(flows, config)
+
+    def _execute_standard(
+        self,
+        flows: List[Dict[str, Any]],
+        config: ParallelConfig,
+    ) -> List[ParallelFlowResult]:
+        """Standard execution without streams using ProcessPoolExecutor."""
+        # Validate all states first
+        for i, flow in enumerate(flows):
+            self.validate_state(flow.get("state", {}), i)
+
+        results: List[ParallelFlowResult] = []
+        start_time = time.time()
+
+        with ProcessPoolExecutor(max_workers=self._max_workers) as executor:
+            futures = []
+            for flow in flows:
+                future = executor.submit(
+                    _process_flow_standard_wrapper,
+                    flow.get("run"),
+                    flow.get("state", {}),
+                )
+                futures.append((flow, future))
+
+            for flow, future in futures:
+                try:
+                    result_state = future.result(timeout=config.timeout_seconds)
+                    timing_ms = (time.time() - start_time) * 1000
+                    results.append(
+                        ParallelFlowResult(
+                            branch=flow.get("node_name", "unknown"),
+                            success=True,
+                            state=result_state,
+                            timing_ms=timing_ms,
+                            exit_code=0,
+                        )
+                    )
+                except Exception as e:
+                    timing_ms = (time.time() - start_time) * 1000
+                    results.append(
+                        ParallelFlowResult(
+                            branch=flow.get("node_name", "unknown"),
+                            success=False,
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            timing_ms=timing_ms,
+                            exit_code=-1,
+                        )
+                    )
+
+        return results
+
+    def _execute_with_streams(
+        self,
+        flows: List[Dict[str, Any]],
+        config: ParallelConfig,
+        stream_registry: Any,
+    ) -> List[ParallelFlowResult]:
+        """Execute with pipe streaming between processes."""
+        # Install SIGPIPE handler
+        stream_registry.install_sigpipe_handler()
+
+        # Create all pipes
+        stream_registry.create_all_pipes()
+
+        try:
+            # Run async event loop for non-blocking pipe management
+            return asyncio.run(self._execute_async(flows, config, stream_registry))
+        finally:
+            stream_registry.cleanup()
+
+    async def _execute_async(
+        self,
+        flows: List[Dict[str, Any]],
+        config: ParallelConfig,
+        stream_registry: Any,
+    ) -> List[ParallelFlowResult]:
+        """Async execution with pipe management."""
+        processes: List[Tuple[Dict[str, Any], asyncio.subprocess.Process]] = []
+
+        for flow in flows:
+            proc = await self._launch_process(flow, stream_registry)
+            processes.append((flow, proc))
+
+        # Wait for all processes with timeout
+        results = await self._collect_results_async(
+            processes,
+            timeout=config.timeout_seconds,
+        )
+
+        return results
+
+    async def _launch_process(
+        self,
+        flow: Dict[str, Any],
+        stream_registry: Any,
+    ) -> asyncio.subprocess.Process:
+        """Launch a single process with stream wiring."""
+        node_streams = flow.get("streams", {})
+
+        # Determine stdin/stdout based on stream config
+        stdin_fd: Optional[int] = None
+        stdout_fd: Optional[int] = None
+
+        # Wire stdin from stream channel
+        if "stdin" in node_streams:
+            channel_name = node_streams["stdin"]
+            channel = stream_registry.get(channel_name)
+            if channel and channel.read_fd is not None:
+                stdin_fd = channel.read_fd
+
+        # Wire stdout to stream channel
+        if "stdout" in node_streams:
+            channel_name = node_streams["stdout"]
+            channel = stream_registry.get(channel_name)
+            if channel and channel.write_fd is not None:
+                stdout_fd = channel.write_fd
+
+        # Build command
+        cmd = self._build_subprocess_command(flow)
+
+        # Build environment with state
+        env = self._build_env_with_state(flow.get("state", {}))
+
+        # Launch process with wired file descriptors
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=stdin_fd if stdin_fd else asyncio.subprocess.PIPE,
+            stdout=stdout_fd if stdout_fd else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
+        # Close our copy of write_fd in parent - only child should write
+        if stdout_fd:
+            try:
+                os.close(stdout_fd)
+                # Update channel to reflect fd is closed in parent
+                channel = stream_registry.get(node_streams["stdout"])
+                if channel:
+                    channel.write_fd = None
+            except OSError:
+                pass
+
+        return proc
+
+    async def _collect_results_async(
+        self,
+        processes: List[Tuple[Dict[str, Any], asyncio.subprocess.Process]],
+        timeout: Optional[float],
+    ) -> List[ParallelFlowResult]:
+        """Collect results from all processes."""
+        results: List[ParallelFlowResult] = []
+        start_time = time.time()
+
+        for flow, proc in processes:
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout,
+                )
+
+                timing_ms = (time.time() - start_time) * 1000
+
+                # Parse result from stdout (if not piped to stream)
+                if flow.get("streams", {}).get("stdout") is None:
+                    result_state = self._parse_result(stdout)
+                else:
+                    result_state = flow.get("state", {})
+
+                results.append(
+                    ParallelFlowResult(
+                        branch=flow.get("node_name", "unknown"),
+                        success=proc.returncode == 0,
+                        state=result_state,
+                        timing_ms=timing_ms,
+                        exit_code=proc.returncode,
+                        error=(
+                            stderr.decode() if proc.returncode != 0 and stderr else None
+                        ),
+                    )
+                )
+
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                timing_ms = (time.time() - start_time) * 1000
+                results.append(
+                    ParallelFlowResult(
+                        branch=flow.get("node_name", "unknown"),
+                        success=False,
+                        error=f"Process timed out after {timeout}s",
+                        timeout=True,
+                        timing_ms=timing_ms,
+                        exit_code=-1,
+                    )
+                )
+            except Exception as e:
+                timing_ms = (time.time() - start_time) * 1000
+                results.append(
+                    ParallelFlowResult(
+                        branch=flow.get("node_name", "unknown"),
+                        success=False,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        timing_ms=timing_ms,
+                        exit_code=getattr(proc, "returncode", -1),
+                    )
+                )
+
+        return results
+
+    def _build_subprocess_command(self, flow: Dict[str, Any]) -> List[str]:
+        """Build command to execute flow in subprocess."""
+        # Execute via tea CLI with scoped execution
+        return [
+            "python",
+            "-m",
+            "the_edge_agent.cli",
+            "run",
+            flow.get("yaml_path", "workflow.yaml"),
+            "--entry-point",
+            flow.get("entry_point", "__start__"),
+            "--exit-point",
+            flow.get("exit_point", "__end__"),
+            "--input",
+            flow.get("input_file", "/dev/stdin"),
+            "--output",
+            flow.get("output_file", "/dev/stdout"),
+        ]
+
+    def _build_env_with_state(self, state: Dict[str, Any]) -> Dict[str, str]:
+        """Build environment with serialized state."""
+        env = os.environ.copy()
+        state_json = json.dumps(state)
+
+        # If state is too large (>128KB), write to temp file
+        if len(state_json) > 131072:
+            fd, temp_path = tempfile.mkstemp(suffix=".json")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(state_json)
+                env["TEA_STATE_FILE"] = temp_path
+            except Exception:
+                os.close(fd)
+                raise
+        else:
+            env["TEA_STATE"] = state_json
+
+        return env
+
+    def _parse_result(self, stdout: bytes) -> Dict[str, Any]:
+        """Parse JSON result from process stdout."""
+        if not stdout:
+            return {}
+        try:
+            return json.loads(stdout.decode())
+        except json.JSONDecodeError:
+            return {"_raw_output": stdout.decode()}
+
+
+def _process_flow_standard_wrapper(
+    run_fn: Optional[Callable[..., Any]],
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Wrapper for standard process execution without streams.
+
+    This function is picklable and runs in a child process.
+    """
+    if callable(run_fn):
+        return run_fn(state)
+    return state
 
 
 class RemoteExecutionError(Exception):

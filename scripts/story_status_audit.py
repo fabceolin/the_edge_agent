@@ -47,12 +47,15 @@ class StoryStatusAuditor:
             "ready for review",
             "ready for merge",
         ],
+        "ready_done": [
+            "ready for done",
+        ],
         "ready_dev": [
             "ready for dev",
             "ready for development",
             "ready to develop",
             "approved - ready for development",
-            "ready",  # Generic "ready" MUST come after ready_review check
+            "ready",  # Generic "ready" MUST come after ready_review and ready_done check
         ],
         "draft": [
             "draft",
@@ -63,14 +66,6 @@ class StoryStatusAuditor:
             "proposed",
             "pending",
         ],
-        "approved": [
-            "approved",
-        ],
-        "in_progress": [
-            "in progress",
-            "wip",
-            "work in progress",
-        ],
         "done": [
             "done",
             "complete",
@@ -80,6 +75,14 @@ class StoryStatusAuditor:
             "qa approved",
             "qa pass",
             "qa approved - ready for deployment",  # QA approved states
+        ],
+        "approved": [
+            "approved",
+        ],
+        "in_progress": [
+            "in progress",
+            "wip",
+            "work in progress",
         ],
     }
 
@@ -317,6 +320,7 @@ class StoryStatusReporter:
 
         category_labels = {
             "ready_dev": "✅ READY FOR DEVELOPMENT",
+            "ready_done": "🏁 READY FOR DONE",
             "draft": "📝 DRAFT",
             "backlog": "📦 BACKLOG",
             "ready_review": "👀 READY FOR REVIEW",
@@ -329,6 +333,7 @@ class StoryStatusReporter:
 
         for category in [
             "ready_dev",
+            "ready_done",
             "draft",
             "approved",
             "backlog",
@@ -428,6 +433,7 @@ class StoryStatusReporter:
 
         category_labels = {
             "ready_dev": "✅ Ready for Development",
+            "ready_done": "🏁 Ready for Done",
             "draft": "📝 Draft",
             "backlog": "📦 Backlog",
             "ready_review": "👀 Ready for Review",
@@ -487,6 +493,7 @@ def main():
             "draft",
             "no-status",
             "ready_dev",
+            "ready_done",
             "backlog",
             "ready_review",
             "approved",

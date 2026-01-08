@@ -1,7 +1,7 @@
 # Story TD.1: Remove Duplicate _execute_node_function Method
 
 ## Status
-Ready for Done
+Done
 
 ## Story
 **As a** developer maintaining the StateGraph codebase,

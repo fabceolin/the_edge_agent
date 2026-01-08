@@ -66,7 +66,7 @@ from .observability import ObservabilityContext, EventStream
 from .observability import ConsoleHandler, FileHandler, CallbackHandler
 from .actions import build_actions_registry, register_cache_jinja_filters
 from .yaml_templates import TemplateProcessor, DotDict
-from .yaml_nodes import NodeFactory
+from .yaml_nodes import NodeFactory, NodeStreamsConfig, StreamSettings
 from .yaml_edges import EdgeFactory
 from .yaml_imports import ImportLoader
 from .yaml_config import EngineConfig
@@ -1367,6 +1367,10 @@ class YAMLEngine:
         if remote_config:
             default_parallel_config.remote_config = remote_config
 
+        # TEA-STREAM-001.4: Build and validate stream registry from YAML configuration
+        stream_registry = self._build_stream_registry(config, parallel_strategy)
+        self._stream_registry = stream_registry
+
         graph = StateGraph(
             state_schema=config.get("state_schema", {}),
             raise_exceptions=compile_config.get("raise_exceptions", False),
@@ -1517,6 +1521,179 @@ class YAMLEngine:
 
         # Resume from checkpoint
         yield from graph.resume_from_checkpoint(checkpoint_path, config)
+
+    def _build_stream_registry(
+        self,
+        config: Dict[str, Any],
+        parallel_strategy: str,
+    ) -> Optional[Any]:
+        """
+        Build StreamRegistry from parsed YAML configuration.
+
+        TEA-STREAM-001.4: Creates and validates stream registry from YAML.
+
+        Args:
+            config: Full YAML configuration dict
+            parallel_strategy: Current parallel execution strategy
+
+        Returns:
+            StreamRegistry if streams enabled, None otherwise
+
+        Raises:
+            ValueError: If stream configuration is invalid
+        """
+        settings = config.get("settings", {})
+        stream_settings = StreamSettings.from_dict(settings)
+
+        if not stream_settings.enabled:
+            return None  # Streams not enabled, return early
+
+        # Import streams module (only when needed)
+        from .streams import StreamRegistry, StreamDirection, validate_platform
+
+        # Validate platform (Windows not supported)
+        validate_platform()
+
+        # Validate parallel strategy (must be process for streams)
+        if parallel_strategy != "process":
+            raise ValueError(
+                f"Streams require parallel_strategy: process, got '{parallel_strategy}'. "
+                f"Add 'settings.parallel.strategy: process' to your YAML."
+            )
+
+        registry = StreamRegistry()
+
+        # Track producers and consumers
+        producers: Dict[str, str] = {}  # channel_name -> node_name
+        consumers: Dict[str, List[str]] = {}  # channel_name -> [node_names]
+
+        # Parse all nodes and register stream channels
+        for node in config.get("nodes", []):
+            node_name = node.get("name")
+            streams_config = NodeStreamsConfig.from_dict(node)
+
+            if not streams_config:
+                continue
+
+            # Register producer (stdout)
+            if streams_config.stdout:
+                if streams_config.stdout in producers:
+                    raise ValueError(
+                        f"Stream '{streams_config.stdout}' has multiple producers: "
+                        f"'{producers[streams_config.stdout]}' and '{node_name}'. "
+                        f"Each stream can only have one producer."
+                    )
+                producers[streams_config.stdout] = node_name
+                registry.register(
+                    name=streams_config.stdout,
+                    direction=StreamDirection.STDOUT,
+                    node_name=node_name,
+                    buffer_size=stream_settings.buffer_size,
+                )
+
+            # Register producer (stderr)
+            if streams_config.stderr:
+                if streams_config.stderr in producers:
+                    raise ValueError(
+                        f"Stream '{streams_config.stderr}' has multiple producers."
+                    )
+                producers[streams_config.stderr] = node_name
+                registry.register(
+                    name=streams_config.stderr,
+                    direction=StreamDirection.STDERR,
+                    node_name=node_name,
+                    buffer_size=stream_settings.buffer_size,
+                )
+
+            # Register consumer (stdin)
+            if streams_config.stdin:
+                if streams_config.stdin not in consumers:
+                    consumers[streams_config.stdin] = []
+                consumers[streams_config.stdin].append(node_name)
+                registry.register(
+                    name=streams_config.stdin,
+                    direction=StreamDirection.STDIN,
+                    node_name=node_name,
+                    buffer_size=stream_settings.buffer_size,
+                )
+
+        # Validate all consumed streams have producers
+        for channel_name, consumer_nodes in consumers.items():
+            if channel_name not in producers:
+                raise ValueError(
+                    f"Stream '{channel_name}' is consumed by {consumer_nodes} "
+                    f"but has no producer. Add a node with "
+                    f"'streams.stdout: {channel_name}'."
+                )
+
+        # Validate stream_mode on edges
+        for edge in config.get("edges", []):
+            stream_mode = edge.get("stream_mode")
+            if stream_mode:
+                if stream_mode not in ("direct", "broadcast"):
+                    raise ValueError(
+                        f"Invalid stream_mode: '{stream_mode}'. "
+                        f"Must be 'direct' or 'broadcast'."
+                    )
+
+                targets = edge.get("to", [])
+                if isinstance(targets, str):
+                    targets = [targets]
+
+                if stream_mode == "direct" and len(targets) > 1:
+                    raise ValueError(
+                        f"stream_mode: direct requires single target, "
+                        f"got {len(targets)}. Use stream_mode: broadcast "
+                        f"for multiple targets."
+                    )
+
+        # Validate no interrupts on stream nodes
+        self._validate_no_interrupts_on_stream_nodes(config, producers, consumers)
+
+        return registry
+
+    def _validate_no_interrupts_on_stream_nodes(
+        self,
+        config: Dict[str, Any],
+        producers: Dict[str, str],
+        consumers: Dict[str, List[str]],
+    ) -> None:
+        """
+        Validate that nodes with streams don't have interrupt points.
+
+        Stream nodes cannot be checkpointed because stream position
+        cannot be restored.
+
+        Args:
+            config: Full YAML configuration
+            producers: Dict of channel -> producer node
+            consumers: Dict of channel -> consumer nodes
+
+        Raises:
+            ValueError: If stream node has interrupt configuration
+        """
+        stream_nodes = set(producers.values())
+        for consumer_list in consumers.values():
+            stream_nodes.update(consumer_list)
+
+        for node in config.get("nodes", []):
+            node_name = node.get("name")
+            if node_name not in stream_nodes:
+                continue
+
+            if node.get("interrupt_before") or node.get("interrupt") == "before":
+                raise ValueError(
+                    f"Node '{node_name}' has streams and interrupt_before=True. "
+                    f"Stream nodes cannot be checkpointed. Remove interrupt_before "
+                    f"or move checkpoint to a non-streaming node."
+                )
+
+            if node.get("interrupt_after") or node.get("interrupt") == "after":
+                raise ValueError(
+                    f"Node '{node_name}' has streams and interrupt_after=True. "
+                    f"Stream nodes cannot be checkpointed. Remove interrupt_after "
+                    f"or move checkpoint to a non-streaming node."
+                )
 
     def _add_node_from_config(
         self, graph: StateGraph, node_config: Dict[str, Any]

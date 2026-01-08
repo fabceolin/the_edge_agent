@@ -1,7 +1,7 @@
 # TEA-RELEASE-002: Rust Prolog Binaries and AppImage Distribution
 
 ## Status
-Ready for Done
+Done
 
 ## Story
 

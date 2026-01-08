@@ -1,7 +1,7 @@
 # Story TD.7: Add Parallel Execution Support to stream()
 
 ## Status
-Ready for Done
+Done
 
 ## Story
 **As a** developer debugging parallel workflows,

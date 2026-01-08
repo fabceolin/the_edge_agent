@@ -26,6 +26,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 - [Parallel Execution Strategies](#parallel-execution-strategies)
+- [Stream Channels](#stream-channels)
 - [Comparison with GitHub Actions](#comparison-with-github-actions)
 
 ---
@@ -47,6 +48,7 @@ This reference is organized into focused modules for easier navigation:
 | Template Syntax | [yaml-reference/templates.md](./yaml-reference/templates.md) |
 | Lua & Prolog | [yaml-reference/advanced-runtimes.md](./yaml-reference/advanced-runtimes.md) |
 | Extraction Validation | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md#validation-actions) |
+| Stream Channels | [yaml-reference/streams.md](./yaml-reference/streams.md) |
 
 ### Built-in Actions
 | Category | Document |
@@ -1210,6 +1212,81 @@ edges:
 | Caching | Shared | Per-process | Per-host |
 | LTM | Shared | Shared | Distributed backend required |
 | Interrupts | ✅ | ✅ | ❌ Not in remote scope |
+
+---
+
+## Stream Channels
+
+> **Version**: 0.9.0+
+> **Platforms**: Linux, macOS (Windows not supported)
+> **Full documentation**: [yaml-reference/streams.md](./yaml-reference/streams.md)
+
+Stream channels enable Unix-style pipe streaming between nodes for real-time data flow.
+
+### Quick Example
+
+```yaml
+settings:
+  parallel:
+    strategy: process    # Required
+    streams:
+      enabled: true
+
+nodes:
+  - name: producer
+    run: |
+      import sys
+      for i in range(1000):
+        print(f"record_{i}", file=sys.stdout, flush=True)
+      return {"count": 1000}
+    streams:
+      stdout: data_stream
+
+  - name: consumer
+    run: |
+      import sys
+      for line in sys.stdin:
+        process(line)
+      return {"status": "done"}
+    streams:
+      stdin: data_stream
+
+edges:
+  - from: __start__
+    to: producer
+  - from: producer
+    to: consumer
+  - from: consumer
+    to: __end__
+```
+
+### Stream vs State
+
+| Model | Transfer | Serialization | Checkpoint | Use Case |
+|-------|----------|---------------|------------|----------|
+| **State** | Discrete batches | JSON/Pickle | Yes | Structured data, metadata |
+| **Stream** | Continuous flow | Raw bytes | No | Large files, logs, events |
+
+### Broadcasting
+
+```yaml
+edges:
+  - from: producer
+    to: [consumer_a, consumer_b]
+    parallel: true
+    parallel_strategy: process
+    stream_mode: broadcast  # All consumers get same data
+    fan_in: merger
+```
+
+### Limitations
+
+1. **No checkpointing** on stream nodes (`interrupt_before`/`interrupt_after` not allowed)
+2. **Process strategy only** (`parallel_strategy: thread` not supported)
+3. **Unix only** (Windows not supported)
+4. **Single producer** per stream channel
+
+For complete documentation including troubleshooting, see [Stream Channels Reference](./yaml-reference/streams.md).
 
 ---
 

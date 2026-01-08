@@ -2,7 +2,45 @@
 
 ## Status
 
-Ready
+Dev Complete
+
+## Dev Agent Notes (2026-01-08)
+
+**Implementation Summary:**
+
+Fixed the `llm_call` wrapper in `validation_actions.py` to properly use configured providers and handle errors gracefully.
+
+### Changes Made:
+
+1. **Engine Settings as Defaults (AC-1, AC-2):**
+   - Now reads `llm.provider` and `llm.model` from engine settings (`engine._settings`)
+   - Falls back to `ollama/gemma3:4b` only if not configured anywhere
+
+2. **State-Level Override (AC-3):**
+   - State's `llm_provider` and `llm_model` override engine defaults
+   - Maintains backward compatibility with existing workflows
+
+3. **All Providers Supported (AC-4, AC-5):**
+   - Added support for: `ollama`, `azure`, `openai`, `anthropic`, `auto`
+   - Unknown providers passed through as `{provider}/{model}`
+   - Model format follows `llm_actions.py` pattern
+
+4. **Error Handling (AC-6, AC-7, AC-8):**
+   - When `llm.call` unavailable: Returns structured error with `error_type: "llm_call_error"`
+   - When LLM call fails: Error includes provider, model, and failure reason
+   - No more silent failures returning empty strings
+
+**Files Modified:**
+- `python/src/the_edge_agent/actions/validation_actions.py` - Fixed llm_call wrapper
+- `python/tests/test_validation_actions_llm.py` - 10 new tests (all passing)
+
+**Backward Compatibility:**
+- Existing `validate.extraction` calls continue to work unchanged
+- Existing state-level provider/model settings still honored
+- No changes to validation action interface
+
+
+## Status: Dev Complete
 
 ## Story
 

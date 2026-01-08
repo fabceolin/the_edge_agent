@@ -2,7 +2,7 @@
 
 ## Status
 
-Ready for Done
+Done
 
 ## Story
 

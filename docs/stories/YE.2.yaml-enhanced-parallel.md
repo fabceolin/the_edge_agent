@@ -1,7 +1,7 @@
 # Story YE.2: YAML Engine Enhanced Parallel Execution
 
 ## Status
-Ready for Development
+Dev Complete
 
 **QA Test Design:** ✅ Approved (2026-01-07)
 - Test design completed and validated
@@ -9,6 +9,49 @@ Ready for Development
 - All 28 acceptance criteria covered
 - No blockers identified
 - Backward compatibility explicitly validated
+
+**Implementation:** Complete - 19 tests passing
+
+## Dev Agent Notes (2026-01-08)
+
+**Implementation Summary:**
+
+Added two new parallel execution patterns to the YAML Engine:
+
+### Matrix Strategy (`strategy.matrix`)
+- Supports GitHub Actions-style static matrix combinations (AC: 1-7)
+- Generates all combinations using `itertools.product`
+- Implements `fail_fast` option to cancel remaining branches on first failure
+- Implements `max_parallel` option to limit concurrent executions
+- Results include matrix parameters for traceability (AC: 17)
+
+### Dynamic Parallelism (`parallel_each`)
+- Supports runtime iteration over state lists (AC: 8-13)
+- Injected variables: `item`, `item_index` in state context
+- Empty list handled correctly (skips to fan-in with empty results)
+- Per-node `max_workers` override supported (AC: 16)
+- Results include item and index for traceability (AC: 18)
+
+### Key Implementation Details:
+1. Both features added to `NodeFactory.add_node_from_config()` in `yaml_nodes.py`
+2. New methods: `_create_matrix_strategy_function()`, `_create_parallel_each_function()`
+3. Uses existing `ParallelFlowResult` dataclass for consistent result structure
+4. Uses existing `CancellationToken` for fail_fast implementation
+5. Results sorted by index for deterministic ordering (AC: 19)
+6. Thread-safe execution using `ThreadPoolExecutor`
+
+**Files Modified:**
+- `python/src/the_edge_agent/yaml_nodes.py` - Added matrix and parallel_each handlers
+- `python/tests/test_yaml_enhanced_parallel.py` - 19 new tests
+
+**Backward Compatibility:**
+- Existing parallel edge syntax (`type: parallel`, `fan_in:`) unchanged
+- All 40 existing parallel tests pass
+- No modifications to existing APIs
+
+**Template Usage Note:**
+When using `parallel_each` with state keys that conflict with dict methods (like `items`),
+use bracket notation: `{{ state['items'] }}` instead of `{{ state.items }}`
 
 ## Story
 **As a** developer using YAML-based agent configurations,

@@ -755,6 +755,52 @@ class TestDynamicParallelConcurrencyControl:
         # Max concurrent should be limited to 2
         assert concurrent_count["max"] <= 2
 
+    def test_max_concurrency_top_level_syntax(self):
+        """Test that top-level max_concurrency parameter works (TEA-YAML-006.1 AC: 7)."""
+        # Track concurrent execution count
+        concurrent_count = {"max": 0, "current": 0}
+        lock = threading.Lock()
+
+        def track_concurrent(state, **kwargs):
+            with lock:
+                concurrent_count["current"] += 1
+                concurrent_count["max"] = max(
+                    concurrent_count["max"], concurrent_count["current"]
+                )
+            time.sleep(0.05)  # Hold for a bit
+            with lock:
+                concurrent_count["current"] -= 1
+            return {"processed": state.get("item")}
+
+        config = {
+            "nodes": [
+                {
+                    "name": "process",
+                    "type": "dynamic_parallel",
+                    "items": "{{ state.my_items }}",
+                    "max_concurrency": 2,  # TOP LEVEL (not in parallel_config)
+                    "action": {"uses": "test.concurrent", "with": {}},
+                    "fan_in": "collect",
+                },
+                {"name": "collect", "fan_in": True, "run": "return state"},
+            ],
+            "edges": [
+                {"from": "__start__", "to": "process"},
+                {"from": "collect", "to": "__end__"},
+            ],
+        }
+        engine = YAMLEngine(actions_registry={"test.concurrent": track_concurrent})
+        graph = engine.load_from_dict(config)
+
+        result = None
+        for event in graph.invoke({"my_items": list(range(6))}):
+            if event.get("type") == "final":
+                result = event.get("state")
+
+        assert result is not None
+        # Max concurrent should be limited to 2 with top-level syntax
+        assert concurrent_count["max"] <= 2
+
 
 class TestDynamicParallelFailFast:
     """Test fail_fast behavior (AC: 8)."""
@@ -848,6 +894,58 @@ class TestDynamicParallelFailFast:
         assert result is not None
         parallel_results = result.get("parallel_results", [])
         # At least one branch should have failed
+        failures = [r for r in parallel_results if not r.success]
+        assert len(failures) >= 1
+
+    def test_fail_fast_top_level_syntax(self):
+        """Test that top-level fail_fast parameter works (TEA-YAML-006.1 AC: 8)."""
+        execution_order = []
+        lock = threading.Lock()
+
+        def slow_failing_action(state, **kwargs):
+            item = state.get("item")
+            with lock:
+                execution_order.append(("start", item))
+
+            if item == 0:
+                # First item fails immediately
+                raise ValueError("First item failure")
+
+            # Other items take time
+            time.sleep(0.2)
+            with lock:
+                execution_order.append(("end", item))
+            return {"processed": item}
+
+        config = {
+            "nodes": [
+                {
+                    "name": "process",
+                    "type": "dynamic_parallel",
+                    "items": "{{ state.my_items }}",
+                    "fail_fast": True,  # TOP LEVEL (not in parallel_config)
+                    "max_concurrency": 10,  # Also top-level
+                    "action": {"uses": "test.slow_failing", "with": {}},
+                    "fan_in": "collect",
+                },
+                {"name": "collect", "fan_in": True, "run": "return state"},
+            ],
+            "edges": [
+                {"from": "__start__", "to": "process"},
+                {"from": "collect", "to": "__end__"},
+            ],
+        }
+        engine = YAMLEngine(actions_registry={"test.slow_failing": slow_failing_action})
+        graph = engine.load_from_dict(config)
+
+        result = None
+        for event in graph.invoke({"my_items": [0, 1, 2, 3, 4]}):
+            if event.get("type") == "final":
+                result = event.get("state")
+
+        assert result is not None
+        parallel_results = result.get("parallel_results", [])
+        # At least one branch should have failed with top-level fail_fast
         failures = [r for r in parallel_results if not r.success]
         assert len(failures) >= 1
 

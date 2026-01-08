@@ -446,6 +446,7 @@ class ParallelFlowResult:
     retry_count: int = 0
     circuit_state: Optional[str] = None
     attempt_errors: List[Dict[str, Any]] = field(default_factory=list)
+    exit_code: Optional[int] = None  # Process exit code (for process/stream execution)
 
     def __getitem__(self, key: str) -> Any:
         """
@@ -479,6 +480,7 @@ class ParallelFlowResult:
             "retry_count",
             "circuit_state",
             "attempt_errors",
+            "exit_code",
         }
         if key in result_attrs:
             return getattr(self, key)
@@ -521,6 +523,7 @@ class ParallelFlowResult:
             "retry_count",
             "circuit_state",
             "attempt_errors",
+            "exit_code",
         }
         if key in result_attrs:
             return True
@@ -561,6 +564,7 @@ class ParallelFlowResult:
             "retry_count",
             "circuit_state",
             "attempt_errors",
+            "exit_code",
         ]
         if self.state:
             base_keys.extend(self.state.keys())
@@ -584,6 +588,7 @@ class ParallelFlowResult:
             "retry_count": self.retry_count,
             "circuit_state": self.circuit_state,
             "attempt_errors": self.attempt_errors,
+            "exit_code": self.exit_code,
         }
 
     @classmethod
