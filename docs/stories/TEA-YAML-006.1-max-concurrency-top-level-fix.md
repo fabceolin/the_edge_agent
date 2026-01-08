@@ -1,7 +1,12 @@
 # Story TEA-YAML-006.1: Fix max_concurrency Top-Level Parameter Support
 
 ## Status
-**Ready for Review**
+
+**Done**
+
+**QA Review Date:** 2026-01-08
+**QA Reviewer:** Quinn (Test Architect)
+**Gate:** PASS - docs/qa/gates/TEA-YAML-006.1-max-concurrency-top-level-fix.yml
 
 ## Story
 
