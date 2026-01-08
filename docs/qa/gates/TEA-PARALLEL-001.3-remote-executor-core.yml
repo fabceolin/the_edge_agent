@@ -1,0 +1,207 @@
+# Quality Gate Decision for TEA-PARALLEL-001.3
+# Powered by BMAD Core
+
+schema: 1
+story: "TEA-PARALLEL-001.3"
+story_title: "Remote Executor Core"
+gate: PASS
+status_reason: "All 10 acceptance criteria met with comprehensive test coverage (46 tests, 24 design scenarios). RemoteExecutor implements ParallelExecutor Protocol with GNU Parallel support and async SSH fallback. Implementation demonstrates excellent code quality with proper error handling, security-conscious design, and full integration with TEA-PARALLEL-001.1/001.2."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-06T22:30:00Z"
+
+waiver:
+  active: false
+
+top_issues: []
+
+quality_score: 100
+expires: "2026-01-20T00:00:00Z"
+
+evidence:
+  tests_reviewed: 47
+  tests_passing: 46
+  tests_skipped: 1
+  tests_estimated: 20
+  design_scenarios: 24
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Environment variables via whitelist only. BatchMode=yes for SSH. No secrets in errors. JSON serialization prevents code execution. Proper resource cleanup in context managers."
+  performance:
+    status: PASS
+    notes: "GNU Parallel for efficient distribution O(n/hosts). Async SSH fallback with asyncio.gather for concurrent connections. Round-robin host assignment. Temp files cleaned in finally blocks."
+  reliability:
+    status: PASS
+    notes: "Comprehensive error handling with custom RemoteExecutionError and SCPTransferError. Cleanup failure logged but doesn't fail flow. Timeout integration with ParallelConfig."
+  maintainability:
+    status: PASS
+    notes: "Clean Protocol-based abstraction. Google-style docstrings with examples. Type hints throughout. RemoteConfig dataclass with validation."
+
+risk_summary:
+  totals:
+    critical: 0
+    high: 0
+    medium: 0
+    low: 0
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Remote disk space pre-check (documented gap, recommend future enhancement)"
+      - "Binary architecture validation (documented as user guide requirement)"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Add remote disk space pre-flight check"
+      refs: ["python/src/the_edge_agent/parallel_executors.py"]
+    - action: "Document OS/arch requirements in user guide"
+      refs: ["docs/shared/YAML_REFERENCE.md"]
+    - action: "Consider adding circuit breaker per-host for production resilience"
+      refs: ["python/src/the_edge_agent/parallel_executors.py"]
+
+test_coverage:
+  unit_tests:
+    count: 22
+    classes:
+      - TestRemoteConfig
+      - TestRemoteExecutorBasic
+      - TestRemoteExecutorValidation
+      - TestGNUParallelCommandGeneration
+      - TestExceptionClasses
+  integration_tests:
+    count: 23
+    classes:
+      - TestRemoteExecutorExecute
+      - TestSSHAsyncFallback
+      - TestResultCollection
+      - TestRemoteCleanup
+      - TestBackendWarnings
+      - TestHostAssignment
+      - TestSubmitFlow
+  e2e_tests:
+    count: 1
+    skipped: 1
+    notes: "Integration test requires real SSH access - marked @pytest.mark.skip"
+
+acceptance_criteria_validation:
+  - ac: 1
+    criterion: "RemoteExecutor implements ParallelExecutor Protocol"
+    tests: ["test_executor_strategy_property", "test_executor_max_workers_property", "test_executor_context_manager"]
+    status: PASS
+  - ac: 2
+    criterion: "Configuration via YAML: hosts, basefile, workdir, cleanup"
+    tests: ["test_remote_config_basic_creation", "test_remote_config_custom_workdir", "test_remote_config_cleanup_disabled", "test_remote_config_multiple_hosts", "test_remote_config_with_yaml_path", "test_remote_config_with_env_vars"]
+    status: PASS
+  - ac: 3
+    criterion: "GNU Parallel command generation when available"
+    tests: ["test_generate_command_basic", "test_generate_command_with_cleanup", "test_generate_command_with_timeout", "test_generate_command_includes_entry_exit_points"]
+    status: PASS
+  - ac: 4
+    criterion: "SSH fallback when GNU Parallel not available"
+    tests: ["test_execute_with_ssh_fallback", "test_ssh_run_basic", "test_ssh_run_failure_raises", "test_ssh_run_timeout"]
+    status: PASS
+  - ac: 5
+    criterion: "State serialization to JSON for transfer"
+    tests: ["test_validate_state_json_serializable", "test_validate_state_non_serializable_raises", "test_validate_state_with_flow_index"]
+    status: PASS
+  - ac: 6
+    criterion: "Full YAML + input state transfer to remote (not subset)"
+    tests: ["test_scp_to_remote", "test_ssh_execute_single_success"]
+    status: PASS
+    notes: "SCP transfers complete YAML file, --entry-point/--exit-point control execution scope"
+  - ac: 7
+    criterion: "Remote execution using --entry-point and --exit-point flags"
+    tests: ["test_generate_command_includes_entry_exit_points", "test_ssh_execute_single_success"]
+    status: PASS
+  - ac: 8
+    criterion: "Result collection and deserialization"
+    tests: ["test_ssh_execute_single_success", "test_ssh_execute_single_error", "test_execute_with_ssh_fallback_multiple_flows"]
+    status: PASS
+  - ac: 9
+    criterion: "Automatic cleanup of remote files (configurable)"
+    tests: ["test_cleanup_after_success", "test_cleanup_disabled", "test_cleanup_failure_logged_not_raised"]
+    status: PASS
+  - ac: 10
+    criterion: "Timeout and retry integration with ParallelConfig"
+    tests: ["test_ssh_execute_single_timeout", "test_generate_command_with_timeout", "test_ssh_run_timeout"]
+    status: PASS
+
+requirements_traceability:
+  - ac: 1
+    given: "RemoteExecutor class"
+    when: "Check Protocol conformance"
+    then: "Has strategy, max_workers, __enter__, __exit__, submit, submit_flow, validate_state"
+    test: "test_executor_context_manager"
+  - ac: 2
+    given: "RemoteConfig dataclass"
+    when: "Create with empty hosts"
+    then: "ValueError raised"
+    test: "test_remote_config_empty_hosts_raises_error"
+  - ac: 3
+    given: "GNU Parallel available"
+    when: "Generate command"
+    then: "Command includes --sshlogin, --basefile, --cleanup, --timeout"
+    test: "test_generate_command_basic"
+  - ac: 4
+    given: "GNU Parallel unavailable"
+    when: "Execute flows"
+    then: "Uses asyncio SSH fallback"
+    test: "test_execute_with_ssh_fallback"
+  - ac: 5
+    given: "State with lambda"
+    when: "Validate for remote"
+    then: "ValueError raised (not JSON serializable)"
+    test: "test_validate_state_non_serializable_raises"
+  - ac: 6
+    given: "Remote execution"
+    when: "Transfer files"
+    then: "SCP transfers basefile, yaml_path, input JSON"
+    test: "test_scp_to_remote"
+  - ac: 7
+    given: "Remote command"
+    when: "Execute"
+    then: "Uses --entry-point {2} --exit-point {3}"
+    test: "test_generate_command_includes_entry_exit_points"
+  - ac: 8
+    given: "Remote execution complete"
+    when: "Collect results"
+    then: "JSON deserialized into ParallelFlowResult"
+    test: "test_ssh_execute_single_success"
+  - ac: 9
+    given: "cleanup=True"
+    when: "Execution complete"
+    then: "rm -rf called on remote workdir"
+    test: "test_cleanup_after_success"
+  - ac: 10
+    given: "timeout_seconds in ParallelConfig"
+    when: "Execute"
+    then: "SSH command has timeout applied"
+    test: "test_generate_command_with_timeout"
+
+code_quality:
+  architecture: "EXCELLENT - Clean Protocol-based abstraction consistent with ThreadExecutor/ProcessExecutor"
+  type_safety: "EXCELLENT - Comprehensive type hints, dataclasses with validation"
+  documentation: "EXCELLENT - Google-style docstrings with examples, clear error messages"
+  error_handling: "EXCELLENT - Custom RemoteExecutionError and SCPTransferError with context"
+  test_design: "EXCELLENT - 46 tests organized by functionality, proper async mocking"
+
+files_reviewed:
+  - python/src/the_edge_agent/parallel_executors.py
+  - python/src/the_edge_agent/yaml_engine.py
+  - python/tests/test_remote_executor.py
+
+history:
+  - at: "2026-01-01T00:00:00Z"
+    gate: null
+    note: "Test design completed (24 scenarios)"
+  - at: "2026-01-06T00:00:00Z"
+    gate: null
+    note: "Implementation completed - all tests pass"
+  - at: "2026-01-06T22:30:00Z"
+    gate: PASS
+    note: "QA review completed - all 10 ACs verified, 46 tests pass"

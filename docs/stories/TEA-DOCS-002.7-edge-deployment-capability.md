@@ -1,5 +1,10 @@
 # TEA-DOCS-002.7: Edge Deployment Capability Landing Page
 
+## Status
+
+Done
+
+
 ## Story Metadata
 
 | Field | Value |

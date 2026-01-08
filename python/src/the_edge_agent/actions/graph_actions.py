@@ -61,7 +61,7 @@ Example:
 
 from typing import Any, Callable, Dict, List, Optional
 
-from ..memory import COZO_AVAILABLE, KUZU_AVAILABLE
+from ..memory import COZO_AVAILABLE, KUZU_AVAILABLE, NEO4J_AVAILABLE
 from ..memory.graph import DUCKPGQ_AVAILABLE
 
 
@@ -1090,3 +1090,314 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     registry["graph.list_graphs"] = graph_list_graphs
     registry["actions.graph_list_graphs"] = graph_list_graphs
+
+    # =========================================================================
+    # NEO4J VECTOR INDEX ACTIONS (TEA-BUILTIN-001.7.3)
+    # =========================================================================
+
+    def graph_vector_search(
+        state,
+        embedding,
+        limit=10,
+        index_name="entity_embeddings",
+        threshold=None,
+        **kwargs,
+    ):
+        """
+        Perform vector similarity search using Neo4j Vector Index.
+
+        This action uses Neo4j's native vector search capabilities (Neo4j 5.11+)
+        to find entities with similar embeddings.
+
+        Args:
+            state: Current state dictionary
+            embedding: Query embedding vector (list of floats)
+            limit: Maximum number of results (default: 10)
+            index_name: Name of the vector index to query (default: "entity_embeddings")
+            threshold: Minimum similarity score filter (optional)
+
+        Returns:
+            {
+                "success": True,
+                "results": [
+                    {"entity_id": str, "entity_type": str, "properties": dict, "score": float},
+                    ...
+                ],
+                "count": int
+            }
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: find_similar
+              uses: graph.vector_search
+              with:
+                embedding: "{{ state.query_embedding }}"
+                limit: 10
+                index_name: entity_embeddings
+                threshold: 0.8
+              output: similar_entities
+        """
+        if not NEO4J_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Neo4j not available. Install with: pip install neo4j",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "Neo4jBackend":
+            return {
+                "success": False,
+                "error": f"graph.vector_search requires Neo4jBackend, but {backend_class} is configured. "
+                "Use YAMLEngine(graph_backend='neo4j') to enable Neo4j.",
+                "error_type": "configuration_error",
+            }
+
+        if not embedding:
+            return {
+                "success": False,
+                "error": "embedding is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.vector_search(
+            embedding=embedding,
+            limit=int(limit) if limit else 10,
+            index_name=str(index_name) if index_name else "entity_embeddings",
+            threshold=float(threshold) if threshold else None,
+        )
+
+    registry["graph.vector_search"] = graph_vector_search
+    registry["actions.graph_vector_search"] = graph_vector_search
+
+    def graph_create_vector_index(
+        state,
+        index_name,
+        label="Entity",
+        property_name="_embedding",
+        dimensions=None,
+        similarity="cosine",
+        **kwargs,
+    ):
+        """
+        Create a vector index in Neo4j for similarity search.
+
+        Creates a native vector index in Neo4j 5.11+ for efficient similarity
+        search on embeddings stored in entity properties.
+
+        Args:
+            state: Current state dictionary
+            index_name: Name for the vector index
+            label: Node label to index (default: "Entity")
+            property_name: Property containing embeddings (default: "_embedding")
+            dimensions: Embedding dimensions (default: backend's embedding_dim)
+            similarity: Similarity function - "cosine", "euclidean", or "dot_product"
+
+        Returns:
+            {"success": True, "index_name": str, "created": bool}
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: setup_index
+              uses: graph.create_vector_index
+              with:
+                index_name: knowledge_embeddings
+                label: Entity
+                dimensions: 1536
+                similarity: cosine
+              output: index_result
+        """
+        if not NEO4J_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Neo4j not available. Install with: pip install neo4j",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "Neo4jBackend":
+            return {
+                "success": False,
+                "error": f"graph.create_vector_index requires Neo4jBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        if not index_name:
+            return {
+                "success": False,
+                "error": "index_name is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.create_vector_index(
+            index_name=str(index_name),
+            label=str(label) if label else "Entity",
+            property_name=str(property_name) if property_name else "_embedding",
+            dimensions=int(dimensions) if dimensions else None,
+            similarity=str(similarity) if similarity else "cosine",
+        )
+
+    registry["graph.create_vector_index"] = graph_create_vector_index
+    registry["actions.graph_create_vector_index"] = graph_create_vector_index
+
+    def graph_drop_vector_index(state, index_name, **kwargs):
+        """
+        Drop a vector index from Neo4j.
+
+        Args:
+            state: Current state dictionary
+            index_name: Name of the index to drop
+
+        Returns:
+            {"success": True, "index_name": str, "dropped": bool}
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: cleanup_index
+              uses: graph.drop_vector_index
+              with:
+                index_name: knowledge_embeddings
+        """
+        if not NEO4J_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Neo4j not available. Install with: pip install neo4j",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "Neo4jBackend":
+            return {
+                "success": False,
+                "error": f"graph.drop_vector_index requires Neo4jBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        if not index_name:
+            return {
+                "success": False,
+                "error": "index_name is required",
+                "error_type": "validation_error",
+            }
+
+        return backend.drop_vector_index(index_name=str(index_name))
+
+    registry["graph.drop_vector_index"] = graph_drop_vector_index
+    registry["actions.graph_drop_vector_index"] = graph_drop_vector_index
+
+    def graph_list_vector_indexes(state, **kwargs):
+        """
+        List all vector indexes in Neo4j.
+
+        Args:
+            state: Current state dictionary
+
+        Returns:
+            {
+                "success": True,
+                "indexes": [
+                    {"name": str, "label": str, "property": str, "dimensions": int, "similarity": str},
+                    ...
+                ],
+                "count": int
+            }
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: check_indexes
+              uses: graph.list_vector_indexes
+              output: available_indexes
+        """
+        if not NEO4J_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Neo4j not available. Install with: pip install neo4j",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "Neo4jBackend":
+            return {
+                "success": False,
+                "error": f"graph.list_vector_indexes requires Neo4jBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        return backend.list_vector_indexes()
+
+    registry["graph.list_vector_indexes"] = graph_list_vector_indexes
+    registry["actions.graph_list_vector_indexes"] = graph_list_vector_indexes
+
+    def graph_check_vector_support(state, **kwargs):
+        """
+        Check if the Neo4j instance supports vector indexes.
+
+        Vector indexes require Neo4j 5.11 or higher. This action checks
+        the Neo4j version and reports whether vector operations are available.
+
+        Args:
+            state: Current state dictionary
+
+        Returns:
+            {
+                "success": True,
+                "supported": bool,
+                "version": str,
+                "message": str
+            }
+            or {"success": False, "error": str, "error_type": str} on failure
+
+        Example YAML:
+            - name: check_vector
+              uses: graph.check_vector_support
+              output: vector_support
+            - name: maybe_create_index
+              when: "{{ state.vector_support.supported }}"
+              uses: graph.create_vector_index
+              with:
+                index_name: entity_embeddings
+        """
+        if not NEO4J_AVAILABLE:
+            return {
+                "success": False,
+                "error": "Neo4j not available. Install with: pip install neo4j",
+                "error_type": "dependency_missing",
+            }
+
+        if not hasattr(engine, "_graph_backend") or engine._graph_backend is None:
+            return _graph_not_configured_error()
+
+        backend = engine._graph_backend
+        backend_class = backend.__class__.__name__
+
+        if backend_class != "Neo4jBackend":
+            return {
+                "success": False,
+                "error": f"graph.check_vector_support requires Neo4jBackend, but {backend_class} is configured.",
+                "error_type": "configuration_error",
+            }
+
+        return backend.check_vector_support()
+
+    registry["graph.check_vector_support"] = graph_check_vector_support
+    registry["actions.graph_check_vector_support"] = graph_check_vector_support

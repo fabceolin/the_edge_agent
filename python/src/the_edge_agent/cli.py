@@ -457,6 +457,23 @@ def run(
     # Deprecated aliases (hidden)
     state: Optional[str] = typer.Option(None, "--state", hidden=True),
     state_file: Optional[Path] = typer.Option(None, "--state-file", hidden=True),
+    # TEA-PARALLEL-001.2: Scoped execution flags
+    entry_point: Optional[str] = typer.Option(
+        None,
+        "--entry-point",
+        help="Start execution at this node instead of __start__ (for remote parallel branches)",
+    ),
+    exit_point: Optional[str] = typer.Option(
+        None,
+        "--exit-point",
+        help="Stop execution BEFORE this node (node is NOT executed, for remote parallel branches)",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write final state to JSON file (useful with --entry-point/--exit-point)",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -596,6 +613,71 @@ def run(
             typer.echo(f"Error in interactive mode: {e}", err=True)
             raise typer.Exit(1)
 
+    # TEA-PARALLEL-001.2: Scoped execution mode (for remote parallel branches)
+    if entry_point or exit_point:
+        # Warn if entry_point used without input
+        if entry_point and not input:
+            typer.echo(
+                "Warning: --entry-point without --input means starting with empty state",
+                err=True,
+            )
+
+        # Default entry_point to __start__ if only exit_point specified
+        effective_entry = entry_point or "__start__"
+        # Default exit_point to __end__ if only entry_point specified
+        effective_exit = exit_point or "__end__"
+
+        if not quiet:
+            typer.echo("=" * 80)
+            typer.echo(
+                f"Running scoped execution: {effective_entry} → (stop before {effective_exit})"
+            )
+            typer.echo(f"Workflow: {file}")
+            typer.echo("=" * 80)
+            if initial_state:
+                typer.echo(f"\nInitial state: {json.dumps(initial_state, indent=2)}\n")
+
+        try:
+            result = compiled.execute_scoped(
+                initial_state=initial_state,
+                entry_point=effective_entry,
+                exit_point=effective_exit,
+            )
+
+            # Check for scoped execution errors
+            if "_scoped_error" in result:
+                error_info = result["_scoped_error"]
+                typer.echo(
+                    f"Error in node '{error_info['node']}': {error_info['error']}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # Write output to file if requested
+            if output_file:
+                with open(output_file, "w") as f:
+                    json.dump(result, f, indent=2, cls=TeaJSONEncoder)
+                if not quiet:
+                    typer.echo(f"\nOutput written to: {output_file}")
+
+            if not quiet:
+                typer.echo("\n" + "=" * 80)
+                typer.echo("✓ Scoped execution completed")
+                typer.echo("=" * 80)
+                typer.echo(
+                    f"Final state: {json.dumps(result, indent=2, cls=TeaJSONEncoder)}"
+                )
+
+        except ValueError as e:
+            # Validation errors from execute_scoped
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        except RuntimeError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+        return  # Exit after scoped execution
+
     if not quiet and not stream:
         typer.echo("=" * 80)
         typer.echo(f"Running agent from: {file}")
@@ -633,7 +715,12 @@ def run(
                             "interrupt", node=node, state=event.get("state", {})
                         )
                     elif event_type == "final":
-                        emit_ndjson_event("complete", state=event.get("state", {}))
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                        emit_ndjson_event("complete", state=final_state)
                         completed = True
                         break
                     elif event_type == "error":
@@ -687,12 +774,19 @@ def run(
                         raise typer.Exit(1)
 
                     elif event_type == "final":
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                            if not quiet:
+                                typer.echo(f"\nOutput written to: {output_file}")
                         if not quiet:
                             typer.echo("\n" + "=" * 80)
                             typer.echo("✓ Completed")
                             typer.echo("=" * 80)
                             typer.echo(
-                                f"Final state: {json.dumps(event.get('state', {}), indent=2, cls=TeaJSONEncoder)}"
+                                f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
                             )
                         completed = True
                         break
@@ -1056,6 +1150,153 @@ schema_app = typer.Typer(
 app.add_typer(schema_app, name="schema")
 
 
+# ============================================================
+# From Subcommands (TEA-TOOLS-001)
+# ============================================================
+
+from_app = typer.Typer(
+    name="from",
+    help="Convert external formats to TEA YAML workflows",
+    no_args_is_help=True,
+)
+app.add_typer(from_app, name="from")
+
+
+@from_app.command("dot")
+def from_dot(
+    file: Path = typer.Argument(..., help="Path to DOT/Graphviz file"),
+    command: Optional[str] = typer.Option(
+        None,
+        "--command",
+        "-c",
+        help="Command template to execute per item (use {{ item }} placeholder). "
+        "Required when NOT using --use-node-commands.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Output YAML path (default: stdout)"
+    ),
+    max_concurrency: int = typer.Option(
+        3, "--max-concurrency", "-m", help="Maximum parallel executions"
+    ),
+    name: Optional[str] = typer.Option(
+        None, "--name", "-n", help="Workflow name (default: derived from graph)"
+    ),
+    tmux: bool = typer.Option(False, "--tmux", help="Generate tmux-based execution"),
+    session: Optional[str] = typer.Option(
+        None, "--session", "-s", help="Tmux session name (only with --tmux)"
+    ),
+    validate_output: bool = typer.Option(
+        False, "--validate", help="Validate generated YAML before output"
+    ),
+    # TEA-TOOLS-002: Per-node command support
+    use_node_commands: bool = typer.Option(
+        False,
+        "--use-node-commands",
+        help="Use command attribute from DOT nodes. Each node MUST have "
+        'command="..." attribute. Mutually exclusive with --command.',
+    ),
+    allow_cycles: bool = typer.Option(
+        False,
+        "--allow-cycles",
+        help="Allow cycles in the graph (for feedback loops like QA retry patterns).",
+    ),
+    tea_executable: Optional[str] = typer.Option(
+        None,
+        "--tea-executable",
+        help="Override tea executable name in commands (e.g., tea-python, tea-rust). "
+        "Replaces 'tea' at start of command with the specified executable name.",
+    ),
+):
+    """
+    Convert DOT/Graphviz diagram to TEA YAML workflow.
+
+    Parses DOT files with cluster subgraphs and generates parallel workflow
+    YAML using dynamic_parallel and fan_in patterns.
+
+    Two modes of operation:
+
+    1. Template mode (--command): Same command for all nodes, use {{ item }} for node label
+
+    2. Per-node mode (--use-node-commands): Each node specifies its own command attribute
+
+    Examples:
+
+        # Template mode - same command, different items
+        tea from dot workflow.dot -c "make build-{{ item }}" -o out.yaml
+
+        # Per-node mode - each node has its own command
+        tea from dot workflow.dot --use-node-commands -o out.yaml
+
+        # With tmux
+        tea from dot workflow.dot --use-node-commands --tmux -s my-session
+    """
+    from the_edge_agent.dot_parser import (
+        dot_to_yaml,
+        DotParseError,
+        CircularDependencyError,
+    )
+
+    # Validate file exists
+    if not file.exists():
+        typer.echo(f"Error: DOT file not found: {file}", err=True)
+        raise typer.Exit(1)
+
+    # Validate tmux options
+    if session and not tmux:
+        typer.echo("Error: --session requires --tmux flag", err=True)
+        raise typer.Exit(1)
+
+    # TEA-TOOLS-002: Validate command mode (mutually exclusive)
+    if use_node_commands and command:
+        typer.echo(
+            "Error: --use-node-commands and --command are mutually exclusive. "
+            "Use --command for template mode OR --use-node-commands for per-node mode.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    if not use_node_commands and not command:
+        typer.echo(
+            "Error: --command is required (or use --use-node-commands for per-node mode)",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        yaml_content = dot_to_yaml(
+            file_path=str(file),
+            command_template=command or "",
+            output_path=str(output) if output else None,
+            max_concurrency=max_concurrency,
+            workflow_name=name,
+            use_tmux=tmux,
+            tmux_session=session,
+            validate=validate_output,
+            use_node_commands=use_node_commands,
+            allow_cycles=allow_cycles,
+            tea_executable=tea_executable,
+        )
+
+        if output:
+            typer.echo(f"Generated YAML written to {output}", err=True)
+        else:
+            # Print to stdout
+            print(yaml_content)
+
+    except DotParseError as e:
+        typer.echo(f"Error: Invalid DOT syntax: {e}", err=True)
+        raise typer.Exit(1)
+    except CircularDependencyError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    except ValueError as e:
+        typer.echo(f"Error: Validation failed: {e}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
 @schema_app.command("merge")
 def schema_merge(
     files: List[Path] = typer.Argument(
@@ -1175,6 +1416,7 @@ def main_callback(
             "validate",
             "inspect",
             "schema",
+            "from",
         ]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):

@@ -502,14 +502,54 @@ class Neo4jBackend:
             if entity_id:
                 entities, relations = self._expand_from_entity(entity_id, hops, limit)
             elif embedding:
-                return {
-                    "success": True,
-                    "entities": [],
-                    "relations": [],
-                    "context_summary": "Vector search not natively supported in Neo4jBackend. "
-                    "Use entity_id for graph traversal, or consider adding "
-                    "Neo4j Vector Index plugin for embedding search.",
-                }
+                # Use vector search to find starting entities, then expand
+                vector_result = self.vector_search(
+                    embedding=embedding, limit=limit, index_name="entity_embeddings"
+                )
+
+                if not vector_result.get("success"):
+                    # If vector search fails (e.g., no index), return helpful error
+                    if vector_result.get("error_type") == "version_error":
+                        return {
+                            "success": True,
+                            "entities": [],
+                            "relations": [],
+                            "context_summary": vector_result.get(
+                                "error", "Vector search requires Neo4j 5.11+"
+                            ),
+                        }
+                    elif vector_result.get("error_type") == "index_not_found":
+                        return {
+                            "success": True,
+                            "entities": [],
+                            "relations": [],
+                            "context_summary": "No vector index found. Create one with create_vector_index() first.",
+                        }
+                    return vector_result
+
+                # Convert vector search results to entities
+                for result in vector_result.get("results", []):
+                    entities.append(
+                        {
+                            "id": result["entity_id"],
+                            "type": result.get("entity_type"),
+                            "properties": result.get("properties", {}),
+                            "score": result.get("score", 0.0),
+                        }
+                    )
+
+                # If we have entities and hops > 0, expand context
+                if entities and hops > 0:
+                    # Get entity IDs to expand from
+                    entity_ids = [e["id"] for e in entities]
+                    expanded_entities, relations = self._expand_from_entities(
+                        entity_ids, hops, limit
+                    )
+                    # Add expanded entities (avoiding duplicates)
+                    existing_ids = {e["id"] for e in entities}
+                    for exp_e in expanded_entities:
+                        if exp_e["id"] not in existing_ids:
+                            entities.append(exp_e)
             elif query:
                 return {
                     "success": True,
@@ -617,6 +657,75 @@ class Neo4jBackend:
 
         return entities, relations
 
+    def _expand_from_entities(
+        self, entity_ids: List[str], hops: int, limit: int
+    ) -> tuple:
+        """Expand N hops from multiple entities using Cypher."""
+        entities = []
+        relations = []
+
+        def work(session):
+            nonlocal entities, relations
+
+            if not entity_ids:
+                return [], []
+
+            # Find connected entities within N hops from any of the source entities
+            if hops >= 1:
+                hop_query = f"""
+                    MATCH (start)-[*1..{hops}]-(connected)
+                    WHERE start.id IN $entity_ids
+                    RETURN DISTINCT
+                        connected.id AS id,
+                        connected.type AS type,
+                        connected.properties AS properties
+                    LIMIT {limit}
+                """
+                hop_result = session.run(hop_query, entity_ids=entity_ids)
+
+                for record in hop_result:
+                    if record["id"] not in entity_ids:
+                        props = record.get("properties", "{}")
+                        entities.append(
+                            {
+                                "id": record["id"],
+                                "type": record.get("type"),
+                                "properties": json.loads(props) if props else {},
+                            }
+                        )
+
+            # Get relations between all entities
+            all_entity_ids = entity_ids + [e["id"] for e in entities]
+            if all_entity_ids:
+                rel_query = """
+                    MATCH (a)-[r]->(b)
+                    WHERE a.id IN $entity_ids AND b.id IN $entity_ids
+                    RETURN
+                        a.id AS from_id,
+                        type(r) AS rel_type,
+                        r.properties AS properties,
+                        b.id AS to_id
+                """
+                rel_result = session.run(rel_query, entity_ids=all_entity_ids)
+
+                for record in rel_result:
+                    props = record.get("properties", "{}")
+                    relations.append(
+                        {
+                            "from": record["from_id"],
+                            "to": record["to_id"],
+                            "type": record["rel_type"],
+                            "properties": json.loads(props) if props else {},
+                        }
+                    )
+
+            return entities, relations
+
+        with self._lock:
+            entities, relations = self._execute_with_retry(work)
+
+        return entities, relations
+
     def _build_context_summary(
         self, entities: List[Dict], relations: List[Dict]
     ) -> str:
@@ -641,6 +750,406 @@ class Neo4jBackend:
             )
 
         return " ".join(summary_parts)
+
+    # =========================================================================
+    # VECTOR INDEX SUPPORT (TEA-BUILTIN-001.7.3)
+    # =========================================================================
+
+    def check_vector_support(self) -> Dict[str, Any]:
+        """
+        Check if Neo4j version supports vector indexes (5.11+).
+
+        Returns:
+            {
+                "success": True,
+                "supported": bool,
+                "version": str,
+                "message": str
+            }
+        """
+        try:
+
+            def work(session):
+                result = session.run("CALL dbms.components()")
+                for record in result:
+                    if record["name"] == "Neo4j Kernel":
+                        versions = record["versions"]
+                        if versions:
+                            return versions[0]
+                return None
+
+            with self._lock:
+                version = self._execute_with_retry(work)
+
+            if version is None:
+                return {
+                    "success": True,
+                    "supported": False,
+                    "version": "unknown",
+                    "message": "Could not determine Neo4j version",
+                }
+
+            # Parse version (e.g., "5.11.0" or "5.11")
+            parts = version.split(".")
+            try:
+                major = int(parts[0])
+                minor = int(parts[1]) if len(parts) > 1 else 0
+            except (ValueError, IndexError):
+                return {
+                    "success": True,
+                    "supported": False,
+                    "version": version,
+                    "message": f"Could not parse version: {version}",
+                }
+
+            supported = (major, minor) >= (5, 11)
+
+            return {
+                "success": True,
+                "supported": supported,
+                "version": version,
+                "message": (
+                    "Vector indexes supported"
+                    if supported
+                    else "Vector indexes require Neo4j 5.11+"
+                ),
+            }
+
+        except ConnectionError as e:
+            return {"success": False, "error": str(e), "error_type": "connection_error"}
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to check version: {type(e).__name__}",
+                "error_type": "query_error",
+            }
+
+    def create_vector_index(
+        self,
+        index_name: str,
+        label: str = "Entity",
+        property_name: str = "_embedding",
+        dimensions: int = None,
+        similarity: str = "cosine",
+    ) -> Dict[str, Any]:
+        """
+        Create a vector index in Neo4j.
+
+        Args:
+            index_name: Name for the vector index
+            label: Node label to index (default: "Entity")
+            property_name: Property containing embeddings (default: "_embedding")
+            dimensions: Embedding dimensions (default: self.embedding_dim)
+            similarity: Similarity function - "cosine", "euclidean", or "dot_product"
+
+        Returns:
+            {"success": True, "index_name": str, "created": bool}
+        """
+        # Validate inputs
+        if not index_name:
+            return {
+                "success": False,
+                "error": "index_name is required",
+                "error_type": "validation_error",
+            }
+
+        valid_similarities = ["cosine", "euclidean", "dot_product"]
+        if similarity not in valid_similarities:
+            return {
+                "success": False,
+                "error": f"similarity must be one of: {valid_similarities}",
+                "error_type": "validation_error",
+            }
+
+        # Check vector support
+        version_check = self.check_vector_support()
+        if not version_check.get("success"):
+            return version_check
+        if not version_check.get("supported"):
+            return {
+                "success": False,
+                "error": f"Vector indexes require Neo4j 5.11+. Current version: {version_check.get('version')}",
+                "error_type": "version_error",
+            }
+
+        dims = dimensions or self.embedding_dim
+
+        try:
+            import re
+
+            safe_label = re.sub(r"[^a-zA-Z0-9_]", "_", str(label))
+            if not safe_label or not safe_label[0].isalpha():
+                safe_label = "Entity_" + safe_label
+
+            # Neo4j 5.11+ vector index syntax
+            query = f"""
+                CREATE VECTOR INDEX {index_name} IF NOT EXISTS
+                FOR (n:{safe_label})
+                ON n.{property_name}
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: {dims},
+                        `vector.similarity_function`: '{similarity}'
+                    }}
+                }}
+            """
+
+            def work(session):
+                session.run(query)
+                return True
+
+            with self._lock:
+                self._execute_with_retry(work)
+
+            return {
+                "success": True,
+                "index_name": index_name,
+                "label": safe_label,
+                "property": property_name,
+                "dimensions": dims,
+                "similarity": similarity,
+                "created": True,
+            }
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "already exists" in error_msg:
+                return {
+                    "success": True,
+                    "index_name": index_name,
+                    "created": False,
+                    "message": "Index already exists",
+                }
+            return {
+                "success": False,
+                "error": f"Failed to create vector index: {type(e).__name__}: {str(e)}",
+                "error_type": "query_error",
+            }
+
+    def drop_vector_index(self, index_name: str) -> Dict[str, Any]:
+        """
+        Drop a vector index.
+
+        Args:
+            index_name: Name of the index to drop
+
+        Returns:
+            {"success": True, "dropped": bool}
+        """
+        if not index_name:
+            return {
+                "success": False,
+                "error": "index_name is required",
+                "error_type": "validation_error",
+            }
+
+        try:
+            query = f"DROP INDEX {index_name} IF EXISTS"
+
+            def work(session):
+                session.run(query)
+                return True
+
+            with self._lock:
+                self._execute_with_retry(work)
+
+            return {"success": True, "index_name": index_name, "dropped": True}
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to drop vector index: {type(e).__name__}",
+                "error_type": "query_error",
+            }
+
+    def list_vector_indexes(self) -> Dict[str, Any]:
+        """
+        List all vector indexes in the database.
+
+        Returns:
+            {
+                "success": True,
+                "indexes": [
+                    {"name": str, "label": str, "property": str, "dimensions": int, "similarity": str},
+                    ...
+                ],
+                "count": int
+            }
+        """
+        try:
+            query = """
+                SHOW INDEXES
+                WHERE type = 'VECTOR'
+            """
+
+            def work(session):
+                result = session.run(query)
+                indexes = []
+                for record in result:
+                    # Extract relevant fields from index metadata
+                    index_info = {
+                        "name": record.get("name"),
+                        "label": (
+                            record.get("labelsOrTypes", [None])[0]
+                            if record.get("labelsOrTypes")
+                            else None
+                        ),
+                        "property": (
+                            record.get("properties", [None])[0]
+                            if record.get("properties")
+                            else None
+                        ),
+                        "state": record.get("state"),
+                        "type": record.get("type"),
+                    }
+                    # Try to extract dimension and similarity from options
+                    options = record.get("options", {})
+                    if options:
+                        index_config = options.get("indexConfig", {})
+                        index_info["dimensions"] = index_config.get("vector.dimensions")
+                        index_info["similarity"] = index_config.get(
+                            "vector.similarity_function"
+                        )
+                    indexes.append(index_info)
+                return indexes
+
+            with self._lock:
+                indexes = self._execute_with_retry(work)
+
+            return {"success": True, "indexes": indexes, "count": len(indexes)}
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "unknown" in error_msg or "syntax" in error_msg:
+                # Older Neo4j version without SHOW INDEXES WHERE
+                return {
+                    "success": True,
+                    "indexes": [],
+                    "count": 0,
+                    "message": "Vector indexes not available (Neo4j 5.11+ required)",
+                }
+            return {
+                "success": False,
+                "error": f"Failed to list vector indexes: {type(e).__name__}",
+                "error_type": "query_error",
+            }
+
+    def vector_search(
+        self,
+        embedding: List[float],
+        limit: int = 10,
+        index_name: str = "entity_embeddings",
+        threshold: float = None,
+    ) -> Dict[str, Any]:
+        """
+        Perform vector similarity search using Neo4j Vector Index.
+
+        Args:
+            embedding: Query embedding vector
+            limit: Maximum number of results (default: 10)
+            index_name: Name of the vector index to query
+            threshold: Minimum similarity score filter (optional)
+
+        Returns:
+            {
+                "success": True,
+                "results": [
+                    {
+                        "entity_id": str,
+                        "entity_type": str,
+                        "properties": dict,
+                        "score": float
+                    },
+                    ...
+                ],
+                "count": int
+            }
+        """
+        if not embedding:
+            return {
+                "success": False,
+                "error": "embedding is required",
+                "error_type": "validation_error",
+            }
+
+        if not isinstance(embedding, list) or not all(
+            isinstance(x, (int, float)) for x in embedding
+        ):
+            return {
+                "success": False,
+                "error": "embedding must be a list of numbers",
+                "error_type": "validation_error",
+            }
+
+        # Check vector support
+        version_check = self.check_vector_support()
+        if not version_check.get("success"):
+            return version_check
+        if not version_check.get("supported"):
+            return {
+                "success": False,
+                "error": f"Vector search requires Neo4j 5.11+. Current version: {version_check.get('version')}",
+                "error_type": "version_error",
+            }
+
+        try:
+            # Neo4j 5.11+ vector query
+            query = """
+                CALL db.index.vector.queryNodes($index_name, $k, $embedding)
+                YIELD node, score
+                RETURN
+                    node.id AS entity_id,
+                    node.type AS entity_type,
+                    node.properties AS properties,
+                    score
+                ORDER BY score DESC
+            """
+
+            def work(session):
+                result = session.run(
+                    query, index_name=index_name, k=limit, embedding=embedding
+                )
+                results = []
+                for record in result:
+                    score = record.get("score", 0.0)
+
+                    # Apply threshold filter if specified
+                    if threshold is not None and score < threshold:
+                        continue
+
+                    props = record.get("properties", "{}")
+                    results.append(
+                        {
+                            "entity_id": record["entity_id"],
+                            "entity_type": record.get("entity_type"),
+                            "properties": (
+                                json.loads(props) if isinstance(props, str) else props
+                            ),
+                            "score": score,
+                        }
+                    )
+                return results
+
+            with self._lock:
+                results = self._execute_with_retry(work)
+
+            return {"success": True, "results": results, "count": len(results)}
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "index" in error_msg and (
+                "not found" in error_msg or "does not exist" in error_msg
+            ):
+                return {
+                    "success": False,
+                    "error": f"Vector index '{index_name}' not found. Create it first with create_vector_index().",
+                    "error_type": "index_not_found",
+                }
+            return {
+                "success": False,
+                "error": f"Vector search failed: {type(e).__name__}: {str(e)}",
+                "error_type": "query_error",
+            }
 
     def close(self) -> None:
         """Close the backend and release resources."""

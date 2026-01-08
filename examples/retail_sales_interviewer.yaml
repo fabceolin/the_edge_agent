@@ -1,0 +1,789 @@
+# retail_sales_interviewer.yaml
+#
+# Autonomous interview agent for retail sales positions.
+# Uses dynamic LLM-generated questions to assess soft skills and sales techniques.
+#
+# USAGE:
+#   tea-python run --interactive retail_sales_interviewer.yaml \
+#     --input '{"candidate_name": "John Smith", "candidate_id": "cand_001"}'
+#
+# The bot will ask for an introduction and dynamically generate follow-up
+# questions based on identified competency gaps.
+
+name: retail_sales_interviewer
+description: |
+  Autonomous interview agent for retail sales positions.
+  Uses dynamic LLM-generated questions to assess soft skills and sales techniques.
+
+# ============================================================================
+# STATE SCHEMA
+# ============================================================================
+state_schema:
+  # Candidate info
+  candidate_id: str
+  candidate_name: str
+
+  # Knowledge base
+  question_bank: dict
+  selected_competencies: list
+
+  # Interview state
+  initial_narrative: str
+  accumulated_narrative: str
+  follow_up_responses: list
+
+  # Extraction results
+  extracted_responses: list
+  gaps: list
+
+  # Loop control
+  iteration_count: int
+  followup_count: int
+  resume_from_followup: bool
+
+  # Decisions
+  sufficient: bool
+  should_force_exit: bool
+  force_exit_reason: str
+
+  # Final Output
+  profile_sales_tech: str
+  profile_resilience: str
+  profile_ethics: str
+  profile_logistics: str
+  hiring_recommendation: str
+  justification: str
+  interview_complete: bool
+
+# ============================================================================
+# NODES
+# ============================================================================
+nodes:
+  # ==========================================================================
+  # ENTRY ROUTER
+  # ==========================================================================
+  - name: entry_router
+    run: |
+      resume = state.get("resume_from_followup", False)
+      return {
+          "route_to_setup": not resume,
+          "route_to_resume": resume
+      }
+
+  - name: load_session_memory
+    run: |
+      import json
+      import os
+
+      candidate_id = state.get("candidate_id", "unknown")
+      memory_file = f"/tmp/retail_interview_{candidate_id}.json"
+
+      if not os.path.exists(memory_file):
+          return {"memory_loaded": False}
+
+      try:
+          with open(memory_file, "r") as f:
+              mem = json.load(f)
+
+          if not mem:
+              return {"memory_loaded": False}
+
+          return {
+              "memory_loaded": True,
+              "extracted_responses": mem.get("extracted_responses", []),
+              "gaps": mem.get("gaps", []),
+              "accumulated_narrative": mem.get("accumulated_narrative", ""),
+              "follow_up_responses": mem.get("follow_up_responses", []),
+              "iteration_count": mem.get("iteration_count", 0),
+              "followup_count": mem.get("followup_count", 0),
+              "question_bank": mem.get("question_bank", {}),
+              "selected_competencies": mem.get("selected_competencies", [])
+          }
+      except Exception as e:
+          return {"memory_loaded": False, "memory_error": str(e)}
+
+  # ==========================================================================
+  # PHASE 1: SETUP - Load Question Bank
+  # ==========================================================================
+  - name: load_question_bank
+    run: |
+      initial_narrative = state.get("initial_narrative", "")
+      response = state.get("response", "")
+      candidate_name = state.get("candidate_name", "Candidate")
+
+      # Use response as narrative if initial is empty
+      if response and not initial_narrative:
+          initial_narrative = response
+
+      if not initial_narrative:
+          return {
+              "error": "awaiting_intro",
+              "next_question": f"Hello {candidate_name}! Welcome to the interview for Sales Associate at TechStore. To start, tell me about yourself: your experience with sales and why you want to work with us?",
+              "interview_complete": False
+          }
+
+      # EMBEDDED QUESTION BANK - Retail Sales Competencies
+      question_bank = {
+          "competencies": {
+              "sales_technique": {
+                  "name": "Sales Technique",
+                  "questions": [
+                      {
+                          "id": "V1",
+                          "text": "How do you approach a customer who is just browsing?",
+                          "criteria": "Probing",
+                          "weight": 3
+                      },
+                      {
+                          "id": "V2",
+                          "text": "The customer says 'it's too expensive'. How do you respond?",
+                          "criteria": "Objection Handling",
+                          "weight": 3
+                      },
+                      {
+                          "id": "V3",
+                          "text": "How do you close a sale without seeming pushy?",
+                          "criteria": "Closing",
+                          "weight": 3
+                      },
+                      {
+                          "id": "V4",
+                          "text": "The customer is buying a phone. What else do you offer?",
+                          "criteria": "Upselling",
+                          "weight": 2
+                      }
+                  ]
+              },
+              "emotional_intelligence": {
+                  "name": "Emotional Intelligence",
+                  "questions": [
+                      {
+                          "id": "E1",
+                          "text": "A customer starts yelling at you in front of other shoppers. What do you do?",
+                          "criteria": "Conflict Management",
+                          "weight": 3
+                      },
+                      {
+                          "id": "E2",
+                          "text": "You spent the entire day without closing a single sale. How do you feel and what do you do?",
+                          "criteria": "Resilience",
+                          "weight": 3
+                      },
+                      {
+                          "id": "E3",
+                          "text": "How do you identify if a customer is in a hurry or wants to chat?",
+                          "criteria": "Empathy",
+                          "weight": 2
+                      }
+                  ]
+              },
+              "ethics": {
+                  "name": "Ethics and Teamwork",
+                  "questions": [
+                      {
+                          "id": "ET1",
+                          "text": "You helped a customer for 20 minutes, but when it's time to close, another salesperson finalizes the sale. What do you do?",
+                          "criteria": "Commission Disputes",
+                          "weight": 2
+                      },
+                      {
+                          "id": "ET2",
+                          "text": "It's end of month, you need one more sale to hit your target. A customer wants a product you know isn't ideal for them. What do you do?",
+                          "criteria": "Honesty vs Quota",
+                          "weight": 3
+                      }
+                  ]
+              },
+              "logistics": {
+                  "name": "Availability",
+                  "questions": [
+                      {
+                          "id": "L1",
+                          "text": "Are you available to work retail hours: weekends, holidays, until 10pm?",
+                          "criteria": "Schedule",
+                          "weight": 2
+                      }
+                  ]
+              }
+          }
+      }
+
+      # Flatten all questions into a list
+      all_questions = []
+      for category, data in question_bank["competencies"].items():
+          for q in data["questions"]:
+              all_questions.append({
+                  "question_id": q["id"],
+                  "text": q["text"],
+                  "category": category,
+                  "category_name": data["name"],
+                  "criteria": q["criteria"],
+                  "weight": q["weight"]
+              })
+
+      # Sort by weight (higher priority first)
+      all_questions.sort(key=lambda x: x["weight"], reverse=True)
+
+      print(f"[INFO] Loaded {len(all_questions)} competency questions")
+
+      return {
+          "question_bank": question_bank,
+          "selected_competencies": all_questions,
+          "initial_narrative": initial_narrative,
+          "accumulated_narrative": initial_narrative
+      }
+
+  - name: initialize_session
+    run: |
+      from datetime import datetime, timezone
+
+      name = state.get("candidate_name", "Candidate")
+      print(f"[INFO] Starting interview session for: {name}")
+
+      return {
+          "iteration_count": 0,
+          "followup_count": 0,
+          "session_started_at": datetime.now(timezone.utc).isoformat(),
+          "follow_up_responses": [],
+          "interview_complete": False
+      }
+
+  # ==========================================================================
+  # PHASE 2: EXTRACTION - Analyze Candidate Responses
+  # ==========================================================================
+  - name: extract_answers_from_narrative
+    uses: llm.call
+    with:
+      model: "gpt-4o"
+      temperature: 0.2
+      messages:
+        - role: system
+          content: |
+            You are a Retail Recruitment Specialist. Your task is to extract BEHAVIORAL EVIDENCE from the candidate's responses.
+
+            CRITICAL RULES:
+            1. Look for STAR evidence (Situation, Task, Action, Result).
+            2. GENERIC responses ("I'm good at sales") = LOW confidence (0.2-0.4).
+            3. Responses with SPECIFIC EXAMPLES = HIGH confidence (0.7-1.0).
+            4. If there's no information about a competency, mark as "EMPTY".
+            5. Quote the EXACT text where the candidate demonstrated the competency.
+
+            PROGRESSIVE IMPROVEMENT:
+            - If PREVIOUS_RESPONSES has good answers (confidence >= 0.7), KEEP THEM.
+            - You may IMPROVE responses with new evidence.
+            - NEVER downgrade a good response.
+
+            Return JSON:
+            {
+              "responses": [
+                {
+                  "question_id": "V1",
+                  "answer": "evidence summary" OR "EMPTY",
+                  "confidence": 0.0-1.0,
+                  "source": "exact quote from candidate",
+                  "assessment": "strong | weak | empty"
+                }
+              ]
+            }
+
+        - role: user
+          content: |
+            INTERVIEW TRANSCRIPT:
+            {{ state.accumulated_narrative }}
+
+            COMPETENCIES TO VERIFY:
+            {{ state.selected_competencies | tojson }}
+
+            {% if state.extracted_responses and state.extracted_responses | length > 0 %}
+            PREVIOUS RESPONSES (keep or improve):
+            {{ state.extracted_responses | tojson }}
+            {% endif %}
+
+            Extract evidence for EACH listed competency.
+      response_format: { "type": "json_object" }
+    output: llm_extraction_raw
+
+  - name: validate_evidence
+    run: |
+      import json
+
+      llm_output = state.get("llm_extraction_raw", {})
+
+      # Parse the LLM response
+      if isinstance(llm_output, dict) and "content" in llm_output:
+          content_str = llm_output.get("content", "{}")
+          try:
+              content = json.loads(content_str)
+          except:
+              content = {"responses": []}
+      else:
+          content = {"responses": []}
+
+      responses = content.get("responses", [])
+      validated = []
+
+      for resp in responses:
+          answer = resp.get("answer", "")
+          confidence = resp.get("confidence", 0)
+
+          # Mark low confidence answers as needing drill-down
+          if answer == "EMPTY" or confidence < 0.5:
+              resp["needs_drilldown"] = True
+              resp["assessment"] = "empty"
+          else:
+              resp["needs_drilldown"] = False
+
+          validated.append(resp)
+
+      answered = sum(1 for r in validated if r.get("assessment") != "empty")
+      print(f"[INFO] Extracted {answered}/{len(validated)} competencies with evidence")
+
+      return {
+          "extracted_responses": validated
+      }
+
+  # ==========================================================================
+  # PHASE 3: GAP ANALYSIS
+  # ==========================================================================
+  - name: identify_gaps
+    run: |
+      extracted = state.get("extracted_responses", [])
+      competencies = state.get("selected_competencies", [])
+
+      # Build a map of what we have
+      evidence_map = {r.get("question_id"): r for r in extracted}
+
+      gaps = []
+      for comp in competencies:
+          q_id = comp.get("question_id")
+          evidence = evidence_map.get(q_id, {})
+
+          # Check if we need more information
+          is_empty = evidence.get("answer") == "EMPTY" or not evidence.get("answer")
+          is_weak = evidence.get("confidence", 0) < 0.6
+
+          if is_empty or is_weak:
+              gaps.append({
+                  "question_id": q_id,
+                  "text": comp.get("text"),
+                  "category": comp.get("category"),
+                  "category_name": comp.get("category_name"),
+                  "criteria": comp.get("criteria"),
+                  "priority": comp.get("weight", 1),
+                  "current_confidence": evidence.get("confidence", 0)
+              })
+
+      # Sort by priority (weight), take top 5
+      gaps.sort(key=lambda x: x["priority"], reverse=True)
+      gaps = gaps[:5]
+
+      print(f"[INFO] Identified {len(gaps)} competency gaps to explore")
+
+      return {"gaps": gaps}
+
+  - name: check_loop_limits
+    run: |
+      iteration = state.get("iteration_count", 0)
+      followups = state.get("followup_count", 0)
+      gaps = state.get("gaps", [])
+
+      force_exit = False
+      reason = None
+
+      # Exit conditions
+      if iteration >= 5:
+          force_exit = True
+          reason = "max_iterations_reached"
+      elif followups >= 8:
+          force_exit = True
+          reason = "max_followups_reached"
+      elif len(gaps) == 0:
+          force_exit = True
+          reason = "all_competencies_assessed"
+
+      if force_exit:
+          print(f"[INFO] Ending interview: {reason}")
+
+      return {
+          "should_force_exit": force_exit,
+          "force_exit_reason": reason
+      }
+
+  # ==========================================================================
+  # PHASE 4: DYNAMIC QUESTION GENERATION
+  # ==========================================================================
+  - name: generate_drill_down
+    uses: llm.call
+    with:
+      model: "gpt-4o"
+      temperature: 0.7
+      messages:
+        - role: system
+          content: |
+            You are an experienced Store Manager conducting an interview.
+            Your goal is to TEST the candidate on a specific competency using a SITUATIONAL SCENARIO.
+
+            RULES:
+            1. Do NOT ask generic questions ("Are you resilient?").
+            2. CREATE a realistic scenario that forces the candidate to demonstrate the competency.
+            3. Be conversational and professional.
+            4. Focus ONLY on the indicated competency.
+            5. If the candidate already mentioned something relevant, drill down on that.
+
+            EXAMPLES OF GOOD QUESTIONS:
+            - "A customer throws a shirt at you and demands a refund for a 6-month-old purchase. Other customers are watching. What do you do in the first 30 seconds?"
+            - "You offered a 5% discount, but the customer still thinks it's expensive. What's your next move?"
+            - "It's 9:50pm on a Sunday, you're exhausted, and a customer walks in wanting to see 10 shoe models. How do you serve them?"
+
+            Return JSON: {"question": "your situational question here"}
+
+        - role: user
+          content: |
+            TRANSCRIPT SO FAR:
+            {{ state.accumulated_narrative }}
+
+            COMPETENCY TO TEST (TOP GAP):
+            Category: {{ state.gaps[0].category_name }}
+            Criteria: {{ state.gaps[0].criteria }}
+            Base question: {{ state.gaps[0].text }}
+            Current confidence: {{ state.gaps[0].current_confidence }}
+
+            Generate a creative situational question to test this competency.
+      response_format: { "type": "json_object" }
+    output: followup_raw
+
+  - name: format_next_question
+    run: |
+      import json
+
+      raw = state.get("followup_raw", {})
+
+      if isinstance(raw, dict) and "content" in raw:
+          try:
+              content = json.loads(raw.get("content", "{}"))
+          except:
+              content = {}
+      else:
+          content = {}
+
+      question = content.get("question", "")
+
+      # Fallback if LLM didn't generate a good question
+      if not question:
+          gap = state.get("gaps", [{}])[0]
+          question = gap.get("text", "Can you tell me more about your experience?")
+
+      return {
+          "next_question": question,
+          "next_question_id": state.get("gaps", [{}])[0].get("question_id", "FOLLOWUP"),
+          "interview_complete": False,
+          "followup_count": state.get("followup_count", 0) + 1
+      }
+
+  - name: update_narrative
+    run: |
+      current = state.get("accumulated_narrative", "")
+      last_q = state.get("next_question", "")
+      last_a = state.get("response", "")
+      followups = state.get("follow_up_responses", [])
+
+      # Add latest exchange to narrative
+      if last_a:
+          new_narrative = f"{current}\n\nInterviewer: {last_q}\nCandidate: {last_a}"
+          followups = list(followups)
+          followups.append({"question": last_q, "answer": last_a})
+      else:
+          new_narrative = current
+
+      return {
+          "accumulated_narrative": new_narrative,
+          "follow_up_responses": followups,
+          "iteration_count": state.get("iteration_count", 0) + 1
+      }
+
+  # ==========================================================================
+  # PHASE 5: PROFILING - Build Final Assessment
+  # ==========================================================================
+  - name: build_candidate_profile
+    uses: llm.call
+    with:
+      model: "gpt-4o"
+      temperature: 0.3
+      messages:
+        - role: system
+          content: |
+            Consolidate the interview into a structured Retail Candidate Profile.
+
+            Classify each area as:
+            - "STRONG": Clear evidence of high competence with specific examples.
+            - "WEAK": Evidence of problematic technique or attitude.
+            - "INCONCLUSIVE": Insufficient information to evaluate.
+
+            Provide a hiring recommendation:
+            - "HIRE": Candidate demonstrated solid competencies.
+            - "NO HIRE": Candidate showed red flags.
+            - "SECOND INTERVIEW": Needs more evaluation in specific areas.
+
+            Return JSON with keys:
+            - sales_technique: "STRONG" | "WEAK" | "INCONCLUSIVE"
+            - resilience: "STRONG" | "WEAK" | "INCONCLUSIVE"
+            - ethics: "STRONG" | "WEAK" | "INCONCLUSIVE"
+            - availability: "COMPATIBLE" | "INCOMPATIBLE" | "INCONCLUSIVE"
+            - recommendation: "HIRE" | "NO HIRE" | "SECOND INTERVIEW"
+            - justification: "explanation in 2-3 sentences"
+            - strengths: ["list of strengths"]
+            - concerns: ["list of concerns"]
+
+        - role: user
+          content: |
+            COMPLETE INTERVIEW TRANSCRIPT:
+            {{ state.accumulated_narrative }}
+
+            EXTRACTED EVIDENCE:
+            {{ state.extracted_responses | tojson }}
+
+            Analyze and generate the candidate profile.
+      response_format: { "type": "json_object" }
+    output: profile_raw
+
+  - name: parse_profile
+    run: |
+      import json
+
+      raw = state.get("profile_raw", {})
+
+      if isinstance(raw, dict) and "content" in raw:
+          try:
+              data = json.loads(raw.get("content", "{}"))
+          except:
+              data = {}
+      else:
+          data = {}
+
+      recommendation = data.get("recommendation", "INCONCLUSIVE")
+      print(f"[INFO] Final recommendation: {recommendation}")
+
+      return {
+          "profile_sales_tech": data.get("sales_technique", "INCONCLUSIVE"),
+          "profile_resilience": data.get("resilience", "INCONCLUSIVE"),
+          "profile_ethics": data.get("ethics", "INCONCLUSIVE"),
+          "profile_logistics": data.get("availability", "INCONCLUSIVE"),
+          "hiring_recommendation": recommendation,
+          "justification": data.get("justification", ""),
+          "strengths": data.get("strengths", []),
+          "concerns": data.get("concerns", []),
+          "interview_complete": True
+      }
+
+  - name: save_result
+    run: |
+      import json
+      import os
+      from datetime import datetime, timezone
+
+      candidate_id = state.get("candidate_id", "unknown")
+      candidate_name = state.get("candidate_name", "Unknown")
+
+      result = {
+          "candidate_id": candidate_id,
+          "candidate_name": candidate_name,
+          "interview_date": datetime.now(timezone.utc).isoformat(),
+          "total_questions": state.get("followup_count", 0),
+          "profile": {
+              "sales_technique": state.get("profile_sales_tech"),
+              "resilience": state.get("profile_resilience"),
+              "ethics": state.get("profile_ethics"),
+              "availability": state.get("profile_logistics")
+          },
+          "recommendation": state.get("hiring_recommendation"),
+          "justification": state.get("justification"),
+          "strengths": state.get("strengths", []),
+          "concerns": state.get("concerns", []),
+          "transcript": state.get("accumulated_narrative")
+      }
+
+      # Save to file
+      os.makedirs("/tmp/retail_interviews", exist_ok=True)
+      path = f"/tmp/retail_interviews/result_{candidate_id}.json"
+
+      with open(path, "w", encoding="utf-8") as f:
+          json.dump(result, f, indent=2, ensure_ascii=False)
+
+      print(f"[INFO] Interview result saved to: {path}")
+
+      return {
+          "result_path": path,
+          "message": f"Interview complete! Recommendation: {state.get('hiring_recommendation')}"
+      }
+
+  # ==========================================================================
+  # PHASE 6: MEMORY & RESPONSE FILTERING
+  # ==========================================================================
+  - name: save_session_memory
+    run: |
+      import json
+      import os
+      from datetime import datetime, timezone
+
+      candidate_id = state.get("candidate_id", "unknown")
+      os.makedirs("/tmp/retail_memory", exist_ok=True)
+      memory_file = f"/tmp/retail_memory/{candidate_id}_session.json"
+
+      memory = {
+          "timestamp": datetime.now(timezone.utc).isoformat(),
+          "candidate_id": candidate_id,
+          "iteration_count": state.get("iteration_count", 0),
+          "followup_count": state.get("followup_count", 0),
+          "question_bank": state.get("question_bank", {}),
+          "selected_competencies": state.get("selected_competencies", []),
+          "extracted_responses": state.get("extracted_responses", []),
+          "gaps": state.get("gaps", []),
+          "accumulated_narrative": state.get("accumulated_narrative", ""),
+          "follow_up_responses": state.get("follow_up_responses", []),
+          "interview_complete": state.get("interview_complete", False)
+      }
+
+      with open(memory_file, "w", encoding="utf-8") as f:
+          json.dump(memory, f, indent=2, ensure_ascii=False)
+
+      return {"memory_saved": True, "memory_file": memory_file}
+
+  - name: memory_exit_router
+    run: |
+      complete = state.get("interview_complete", False)
+      return {
+          "route_to_followup": not complete,
+          "route_to_completion": complete
+      }
+
+  - name: filter_followup_response
+    run: |
+      return {
+          "status": "pending",
+          "interview_complete": False,
+          "next_question": state.get("next_question", ""),
+          "iteration": state.get("iteration_count", 0),
+          "gaps_remaining": len(state.get("gaps", []))
+      }
+
+  - name: filter_completion_response
+    run: |
+      return {
+          "status": "complete",
+          "interview_complete": True,
+          "recommendation": state.get("hiring_recommendation"),
+          "justification": state.get("justification"),
+          "profile": {
+              "sales": state.get("profile_sales_tech"),
+              "resilience": state.get("profile_resilience"),
+              "ethics": state.get("profile_ethics"),
+              "availability": state.get("profile_logistics")
+          },
+          "result_path": state.get("result_path"),
+          "message": state.get("message")
+      }
+
+# ============================================================================
+# EDGES - Workflow Transitions
+# ============================================================================
+edges:
+  # Entry
+  - from: __start__
+    to: entry_router
+
+  # Resume vs Fresh Start
+  - from: entry_router
+    to: load_session_memory
+    when: "state.get('route_to_resume')"
+
+  - from: entry_router
+    to: load_question_bank
+    when: "state.get('route_to_setup')"
+
+  # Memory loaded -> continue where we left off
+  - from: load_session_memory
+    to: update_narrative
+
+  # Setup chain
+  - from: load_question_bank
+    to: initialize_session
+    when: "not state.get('error')"
+
+  # No narrative yet - ask for intro
+  - from: load_question_bank
+    to: __end__
+    when: "state.get('error')"
+
+  - from: initialize_session
+    to: extract_answers_from_narrative
+
+  # After getting more info, re-extract
+  - from: update_narrative
+    to: extract_answers_from_narrative
+
+  # Extraction chain
+  - from: extract_answers_from_narrative
+    to: validate_evidence
+
+  - from: validate_evidence
+    to: identify_gaps
+
+  - from: identify_gaps
+    to: check_loop_limits
+
+  # Continue or finish?
+  - from: check_loop_limits
+    to: generate_drill_down
+    when: "state.get('should_force_exit', False) == False"
+
+  - from: check_loop_limits
+    to: build_candidate_profile
+    when: "state.get('should_force_exit', False) == True"
+
+  # Question generation -> format -> save memory
+  - from: generate_drill_down
+    to: format_next_question
+
+  - from: format_next_question
+    to: save_session_memory
+
+  # Profile building chain
+  - from: build_candidate_profile
+    to: parse_profile
+
+  - from: parse_profile
+    to: save_result
+
+  - from: save_result
+    to: save_session_memory
+
+  # Memory saved -> route to appropriate filter
+  - from: save_session_memory
+    to: memory_exit_router
+
+  - from: memory_exit_router
+    to: filter_followup_response
+    when: "state.get('route_to_followup')"
+
+  - from: memory_exit_router
+    to: filter_completion_response
+    when: "state.get('route_to_completion')"
+
+  # Exit points
+  - from: filter_followup_response
+    to: __end__
+
+  - from: filter_completion_response
+    to: __end__
+
+# ============================================================================
+# CONFIG
+# ============================================================================
+config:
+  raise_exceptions: false
+  max_execution_time: 300000
+  checkpoint_dir: /tmp/retail_checkpoints
+
+  # Pause after each question to wait for candidate response
+  interrupt_after:
+    - filter_followup_response

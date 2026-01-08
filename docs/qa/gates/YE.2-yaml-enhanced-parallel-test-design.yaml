@@ -1,0 +1,105 @@
+# Test Design Gate for Story YE.2
+# Generated: 2026-01-07
+# Designer: Quinn (Test Architect)
+
+story:
+  id: YE.2
+  title: YAML Engine Enhanced Parallel Execution
+  slug: yaml-enhanced-parallel
+
+test_design:
+  completed: true
+  date: 2026-01-07
+
+  scenarios_total: 47
+
+  by_level:
+    unit: 28
+    integration: 15
+    e2e: 4
+
+  by_priority:
+    p0: 22
+    p1: 19
+    p2: 6
+    p3: 0
+
+  coverage_gaps: []
+
+  risk_mitigation:
+    - risk: "Complex interaction between matrix and parallel_each"
+      mitigated_by:
+        - "YE.2-E2E-004: Combined matrix + parallel_each workflow"
+        - "YE.2-UNIT-026, YE.2-UNIT-027, YE.2-UNIT-028: Clear error messages"
+        - "YE.2-INT-029, YE.2-INT-030: Conditional edge combinations"
+
+    - risk: "fail_fast with many branches could leave orphan threads"
+      mitigated_by:
+        - "YE.2-INT-008: fail_fast stops all branches on first failure"
+        - "YE.2-INT-035: Thread safety validation"
+
+    - risk: "Existing functionality breaks"
+      mitigated_by:
+        - "YE.2-INT-028: Legacy parallel edges work"
+        - "YE.2-E2E-003: Existing YAML agents run"
+        - "YE.2-INT-033: Full test suite regression"
+
+  acceptance_criteria_coverage:
+    AC1: ["YE.2-UNIT-001", "YE.2-UNIT-002", "YE.2-UNIT-003", "YE.2-UNIT-004", "YE.2-INT-001"]
+    AC2: ["YE.2-UNIT-005", "YE.2-UNIT-006", "YE.2-UNIT-007"]
+    AC3: ["YE.2-UNIT-008", "YE.2-UNIT-009", "YE.2-INT-002", "YE.2-INT-003"]
+    AC4: ["YE.2-UNIT-010", "YE.2-INT-004", "YE.2-INT-005"]
+    AC5: ["YE.2-INT-006", "YE.2-INT-007", "YE.2-E2E-001"]
+    AC6: ["YE.2-UNIT-011", "YE.2-INT-008", "YE.2-INT-009"]
+    AC7: ["YE.2-UNIT-012", "YE.2-INT-010", "YE.2-INT-011"]
+    AC8: ["YE.2-UNIT-013", "YE.2-UNIT-014", "YE.2-INT-012"]
+    AC9: ["YE.2-UNIT-015", "YE.2-INT-013", "YE.2-INT-014"]
+    AC10: ["YE.2-UNIT-016", "YE.2-INT-015", "YE.2-INT-016"]
+    AC11: ["YE.2-UNIT-017", "YE.2-INT-017"]
+    AC12: ["YE.2-INT-018", "YE.2-INT-019", "YE.2-E2E-002"]
+    AC13: ["YE.2-UNIT-018", "YE.2-INT-020"]
+    AC14: ["YE.2-UNIT-019", "YE.2-INT-021"]
+    AC15: ["YE.2-UNIT-020", "YE.2-INT-022"]
+    AC16: ["YE.2-UNIT-021", "YE.2-INT-023"]
+    AC17: ["YE.2-UNIT-022", "YE.2-INT-024"]
+    AC18: ["YE.2-UNIT-023", "YE.2-INT-025"]
+    AC19: ["YE.2-UNIT-024", "YE.2-UNIT-025"]
+    AC20: ["YE.2-INT-026", "YE.2-INT-027"]
+    AC21: ["YE.2-INT-028", "YE.2-E2E-003"]
+    AC22: ["YE.2-INT-029", "YE.2-INT-030"]
+    AC23: ["YE.2-INT-031", "YE.2-INT-032"]
+    AC24: ["YE.2-INT-033"]
+    AC25: ["YE.2-UNIT-026", "YE.2-UNIT-027", "YE.2-UNIT-028"]
+    AC26: ["YE.2-INT-034"]
+    AC27: ["Manual"]
+    AC28: ["Manual"]
+
+  test_strategy:
+    focus: "Prioritize unit tests for parsing logic, integration tests for parallel execution correctness, E2E for realistic workflows"
+    approach: "Shift-left testing with 59.6% unit coverage, 31.9% integration, 8.5% E2E"
+    estimated_execution_time: "5.75 minutes (45s unit + 3m integration + 2m E2E)"
+    ci_recommendation: "Run P0 tests on every commit, full suite on PR merge"
+
+  quality_attributes:
+    thread_safety: "YE.2-INT-035"
+    backward_compatibility: "YE.2-INT-028, YE.2-E2E-003, YE.2-INT-033"
+    error_handling: "YE.2-UNIT-026, YE.2-UNIT-027, YE.2-UNIT-028"
+    performance: "YE.2-INT-036, YE.2-INT-037"
+
+  recommendations:
+    - "Execute tests in phases: Unit (fail fast) → Integration (P0) → Regression → Integration (P1) → E2E → P2"
+    - "Use small test data (2×2 matrices, 3-5 item lists) for fast feedback"
+    - "Mock slow operations for fail_fast testing"
+    - "Implement timeouts to catch deadlocks early"
+    - "Organize tests into separate files: matrix, parallel_each, combined, regression"
+
+  documentation_requirements:
+    - "Docstrings for all new configuration parameters (AC27)"
+    - "YAML_AGENTS.md sections: Matrix Strategy, Dynamic Parallelism, Worker Pool Configuration (AC28)"
+    - "Examples for both matrix and parallel_each patterns"
+    - "Combined usage example (matrix + parallel_each)"
+
+artifacts:
+  test_design_document: "docs/qa/assessments/YE.2-test-design-20260107.md"
+
+status: READY_FOR_IMPLEMENTATION

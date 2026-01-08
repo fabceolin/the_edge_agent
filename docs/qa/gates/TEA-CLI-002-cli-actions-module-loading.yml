@@ -1,0 +1,143 @@
+# Quality Gate: TEA-CLI-002 - CLI Actions Module Loading
+schema: 1
+story: "TEA-CLI-002"
+story_title: "CLI Actions Module Loading"
+gate: "PASS"
+status_reason: "All 11 acceptance criteria met with extensive test coverage (42 new tests). Backward compatible with TEA-CLI-001. Security considerations properly documented."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-08T02:31:42Z"
+
+# No waiver needed
+waiver: { active: false }
+
+# No blocking issues identified
+top_issues: []
+
+# Risk summary - low risk with proper mitigations
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Dynamic module loading security (SEC-MEDIUM) - already mitigated with documentation warning"
+      - "Module import errors in production (OPS-LOW) - good error messages implemented"
+
+# Quality assessment details
+evidence:
+  tests_reviewed: 42
+  risks_identified: 2
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    ac_gaps: []
+
+# Non-functional requirements validation
+nfr_validation:
+  security: { status: PASS, notes: "Security warning documented for untrusted modules. Only explicit flags (no auto-discovery)." }
+  performance: { status: PASS, notes: "One-time module loading at startup, negligible overhead" }
+  reliability: { status: PASS, notes: "Comprehensive error handling for ImportError, FileNotFoundError, AttributeError" }
+  maintainability: { status: PASS, notes: "Follows existing YAML imports pattern, clear module contract" }
+  usability: { status: PASS, notes: "Clear error messages with contract examples, good documentation" }
+
+# Detailed findings
+findings:
+  strengths:
+    - "Excellent test coverage - 42 comprehensive unit tests covering all functionality"
+    - "All existing tests pass (123 core tests) - zero regressions"
+    - "Security-conscious implementation with documentation warnings"
+    - "Follows existing module loading pattern from YAMLEngine"
+    - "Supports both installed packages and local files"
+    - "Clear module contract documentation with examples"
+    - "Good error messages with helpful suggestions"
+    - "Backward compatible - flags are optional"
+
+  verified_acceptance_criteria:
+    - id: "AC-1"
+      description: "CLI Flag: --actions-module"
+      status: PASS
+      evidence: "Accepts module path, uses importlib.import_module(), calls register_actions(), proper error handling"
+
+    - id: "AC-2"
+      description: "CLI Flag: --actions-file"
+      status: PASS
+      evidence: "Accepts file path (relative/absolute), uses importlib machinery, validates contract"
+
+    - id: "AC-3"
+      description: "Module Contract Validation"
+      status: PASS
+      evidence: "Checks for register_actions() function, provides helpful error with contract example"
+
+    - id: "AC-4"
+      description: "Actions Registry Merging"
+      status: PASS
+      evidence: "CLI actions → YAML imports precedence implemented, override warnings logged"
+
+    - id: "AC-5"
+      description: "Multiple Actions Sources"
+      status: PASS
+      evidence: "Supports multiple --actions-module and --actions-file flags with correct ordering"
+
+    - id: "AC-6"
+      description: "YAMLEngine Integration"
+      status: PASS
+      evidence: "Uses existing actions_registry constructor parameter, no YAMLEngine modifications"
+
+    - id: "AC-7"
+      description: "Error Handling"
+      status: PASS
+      evidence: "Tests verify ImportError, FileNotFoundError, AttributeError with helpful messages and examples"
+
+    - id: "AC-8"
+      description: "Backward Compatibility"
+      status: PASS
+      evidence: "CLI works without flags, existing YAML files unchanged, no TEA-CLI-001 breaking changes"
+
+    - id: "AC-9"
+      description: "Testing"
+      status: PASS
+      evidence: "42 unit tests with sample_actions.py fixture, all error paths tested"
+
+    - id: "AC-10"
+      description: "Documentation"
+      status: PASS
+      evidence: "README.md updated with examples, module contract documented, security warning included"
+
+    - id: "AC-11"
+      description: "No Regression"
+      status: PASS
+      evidence: "All existing CLI tests pass, YAMLEngine/StateGraph unchanged"
+
+  security_considerations:
+    - finding: "Dynamic module loading executes arbitrary Python code"
+      mitigation: "Security warning in README, no auto-discovery, explicit flags only"
+      status: MITIGATED
+
+    - finding: "Potential for malicious actions modules"
+      mitigation: "Documentation recommends installed packages over local files for production"
+      status: DOCUMENTED
+
+# Recommendations for future improvements (non-blocking)
+recommendations:
+  future:
+    - action: "Consider adding --actions-module-safe mode with restricted exec context"
+      refs: ["src/the_edge_agent/cli.py"]
+    - action: "Add actions introspection command (tea-agent list-actions)"
+      refs: ["src/the_edge_agent/cli.py"]
+    - action: "Support actions module configuration files (.teaactions.yml)"
+      refs: ["docs/stories/future-enhancements.md"]
+
+# Final gate decision
+decision:
+  approved: true
+  approved_at: "2026-01-08T02:31:42Z"
+  notes: |
+    Story TEA-CLI-002 demonstrates high-quality implementation:
+    - All 11 acceptance criteria fully met
+    - Excellent test coverage with 42 comprehensive tests
+    - Security considerations properly addressed with documentation
+    - Zero regressions across existing test suite
+    - Clean integration following existing patterns
+    - Good error handling with helpful messages
+
+    GATE DECISION: PASS
+
+    Story is approved for merge to main branch.

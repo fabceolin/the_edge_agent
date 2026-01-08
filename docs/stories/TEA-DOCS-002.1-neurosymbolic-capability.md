@@ -1,5 +1,10 @@
 # TEA-DOCS-002.1: Neurosymbolic AI Capability Landing Page
 
+## Status
+
+Done
+
+
 ## Story Metadata
 
 | Field | Value |

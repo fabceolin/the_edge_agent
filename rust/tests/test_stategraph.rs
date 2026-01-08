@@ -57,8 +57,8 @@ fn test_add_node_duplicate() {
 
     // Adding a node with the same name should replace it (Rust behavior differs from Python)
     // In Rust we update the index map, so this won't error but will update
-    let idx1 = graph.add_node(Node::new("test_node2"));
-    let idx2 = graph.add_node(Node::new("test_node2"));
+    let _idx1 = graph.add_node(Node::new("test_node2"));
+    let _idx2 = graph.add_node(Node::new("test_node2"));
 
     // Both should have the same name in the graph
     assert!(graph.has_node("test_node2"));
@@ -400,7 +400,7 @@ fn test_conditional_routing() {
     assert_eq!(result_high["result"], "high path");
 
     // Test low path (value <= 10)
-    let executor = Executor::new(create_simple_pipeline().compile().unwrap()).unwrap();
+    let _executor = Executor::new(create_simple_pipeline().compile().unwrap()).unwrap();
     // Note: Need fresh executor for different path - or re-create
 }
 
@@ -1829,7 +1829,6 @@ edges:
 /// Uses actions with template parameters to verify thread-safe cache access.
 #[test]
 fn test_parallel_template_rendering() {
-    use std::sync::Arc;
     use the_edge_agent::engine::yaml::YamlEngine;
 
     // Use YAML that uses template parameters in nodes

@@ -81,8 +81,7 @@ nodes:
             CRITICAL: Update the File List section accurately.
 
             When done print: DEV_STORY_COMPLETED
-    output:
-      dev_output: "{{ result.content }}"
+    output: dev_output
 
   - name: load_qa_context
     description: Load QA agent persona and review-story task
@@ -144,8 +143,7 @@ nodes:
             CRITICAL: Create the gate file with proper status.
 
             When done print: QA_REVIEW_COMPLETED
-    output:
-      qa_output: "{{ result.content }}"
+    output: qa_output
 
   - name: check_qa_gate
     description: Parse QA gate status from story file using grep
@@ -253,8 +251,7 @@ nodes:
             CRITICAL: Do NOT skip any concerns. Fix them all.
 
             When done print: DEV_REVIEW_QA_COMPLETED
-    output:
-      dev_output: "{{ result.content }}"
+    output: dev_output
 
   - name: load_sm_context
     description: Load SM agent persona
@@ -305,9 +302,7 @@ nodes:
             CRITICAL: Do NOT modify code or other sections.
 
             When done print: SM_STATUS_UPDATED with the final status.
-    output:
-      sm_output: "{{ result.content }}"
-      final_status: "{{ result.content }}"
+    output: sm_output
 
   - name: summary
     description: Generate final summary of the development pipeline

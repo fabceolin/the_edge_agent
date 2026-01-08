@@ -1,0 +1,54 @@
+# Test Design Gate Block for TEA-BUILTIN-014
+# Generated: 2026-01-07
+# Designer: Quinn (Test Architect)
+
+test_design:
+  scenarios_total: 35
+  by_level:
+    unit: 24
+    integration: 9
+    e2e: 2
+  by_priority:
+    p0: 20
+    p1: 10
+    p2: 5
+  coverage_gaps: []  # All 19 ACs covered
+
+  key_risks_mitigated:
+    - RISK-001: CLI Not Installed (4 tests)
+    - RISK-002: CLI Output Format Changes (3 integration tests)
+    - RISK-003: Subprocess Timeout (1 test)
+    - RISK-004: Malformed Input Parameters (5 validation tests)
+
+  test_distribution:
+    pure_logic: 24  # Unit tests for parameter handling, validation, output structure
+    cli_interaction: 9  # Integration tests requiring real semtools CLI
+    workflow_integration: 2  # E2E tests for YAML action registration
+
+  execution_time_estimate:
+    unit_tests: "5 seconds"
+    integration_tests: "15 seconds (requires semtools CLI)"
+    e2e_tests: "10 seconds"
+    total: "30 seconds (excellent for CI/CD)"
+
+  maintenance_considerations:
+    stability: high
+    external_dependencies:
+      - semtools CLI v1.5.1+ (integration tests only)
+    change_indicators:
+      - CLI output format changes affect INT-002, INT-005, INT-006
+      - Action registration pattern changes affect E2E-001, E2E-002
+
+  quality_metrics:
+    p0_coverage_required: 100%
+    p1_coverage_required: 95%
+    p2_coverage_best_effort: true
+    flaky_test_tolerance: 0
+    ci_timeout_threshold: 60s
+
+  recommendations:
+    - Implement unit tests first (24 tests, pure logic)
+    - Mark integration tests with @pytest.mark.integration
+    - Skip integration tests when semtools not installed
+    - Document expected CLI JSON format for future maintenance
+    - Consider performance testing for large file sets in future story

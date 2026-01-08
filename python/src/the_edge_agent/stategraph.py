@@ -5,7 +5,6 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional, Union, Generator, Tuple
 import networkx as nx
 from concurrent.futures import (
-    ThreadPoolExecutor,
     Future,
     TimeoutError as FuturesTimeoutError,
 )
@@ -33,6 +32,9 @@ from the_edge_agent.parallel import (
     ParallelFlowContext,
     CallbackManager,
 )
+
+# TEA-PARALLEL-001.1: Executor abstraction for parallel strategies
+from the_edge_agent.parallel_executors import get_executor
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
 
@@ -334,10 +336,12 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         if self.log_state_values:
             self.logger.debug(f"Initial state: {state}")
 
-        # Create a ThreadPoolExecutor for parallel flows
+        # TEA-PARALLEL-001.1: Use executor abstraction for configurable parallel strategy
         # Allow runtime override via config, fallback to instance default
         max_workers = config.get("max_workers", self.max_workers)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Get strategy from parallel_config (default: "thread")
+        strategy = self.parallel_config.strategy
+        with get_executor(strategy, max_workers=max_workers) as executor:
             # Mapping from fan-in nodes to list of futures
             fanin_futures: Dict[str, List[Future]] = {}
             # Lock for thread-safe operations on fanin_futures
@@ -1949,6 +1953,290 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
 
         return self
 
+    def execute_scoped(
+        self,
+        initial_state: Dict[str, Any],
+        entry_point: str,
+        exit_point: str,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a portion of the graph from entry_point to exit_point.
+
+        This method enables scoped execution for remote parallel branch execution,
+        where branches can run independently on different hosts and stop before
+        the fan-in node (which runs on the main host).
+
+        Args:
+            initial_state: Starting state (typically loaded from --input JSON)
+            entry_point: Node to start execution at (instead of __start__)
+            exit_point: Node to stop BEFORE (not executed)
+            config: Optional execution configuration
+
+        Returns:
+            Final state after executing the scoped portion of the graph
+
+        Raises:
+            ValueError: If entry_point doesn't exist in graph
+            ValueError: If exit_point doesn't exist in graph
+            ValueError: If no path exists from entry_point to exit_point
+            ValueError: If entry_point and exit_point are the same
+            RuntimeError: If raise_exceptions=True and an error occurs
+
+        Example:
+            >>> # Execute a branch of a parallel workflow
+            >>> result = graph.execute_scoped(
+            ...     initial_state={"value": 42},
+            ...     entry_point="branch_a",
+            ...     exit_point="merge"
+            ... )
+            >>> # Executes: branch_a → step_a1 → step_a2 → (stops before merge)
+
+        Note:
+            The exit_point node is NOT executed. This is critical for remote
+            parallel execution where fan-in nodes must run on the main host.
+        """
+        # Validate entry_point exists
+        if entry_point != START and entry_point not in self.graph.nodes:
+            raise ValueError(f"Entry point '{entry_point}' not found in graph")
+
+        # Validate exit_point exists
+        if exit_point != END and exit_point not in self.graph.nodes:
+            raise ValueError(f"Exit point '{exit_point}' not found in graph")
+
+        # Validate entry and exit are different
+        if entry_point == exit_point:
+            raise ValueError(
+                f"Entry point and exit point cannot be the same: '{entry_point}'"
+            )
+
+        # Validate path exists from entry to exit
+        if not self._path_exists(entry_point, exit_point):
+            raise ValueError(
+                f"No execution path from '{entry_point}' to '{exit_point}'"
+            )
+
+        # Execute the scoped portion
+        return self._run_scoped(
+            state=initial_state.copy(),
+            start_node=entry_point,
+            stop_before=exit_point,
+            config=config or {},
+        )
+
+    def _path_exists(self, start: str, end: str) -> bool:
+        """
+        Check if there's a path from start to end using BFS.
+
+        This considers all edges including conditional edges, treating them
+        as potentially traversable for path validation purposes.
+
+        Args:
+            start: Starting node
+            end: Target node
+
+        Returns:
+            True if a path exists from start to end, False otherwise
+        """
+        if start == end:
+            return False  # Can't have same entry and exit
+
+        visited = set()
+        queue = [start]
+
+        while queue:
+            current = queue.pop(0)
+            if current == end:
+                return True
+            if current in visited:
+                continue
+            visited.add(current)
+
+            # Get successors from all edges (including conditional/parallel)
+            if current in self.graph.nodes:
+                for successor in self.graph.successors(current):
+                    if successor not in visited:
+                        queue.append(successor)
+
+        return False
+
+    def _get_nodes_between(self, start: str, end: str) -> List[str]:
+        """
+        Get all nodes reachable from start before reaching end.
+
+        Uses BFS to find all nodes that could be traversed in any execution
+        path from start to end. This is used for interrupt validation in
+        remote execution scope.
+
+        Args:
+            start: Starting node
+            end: Target node (not included in result)
+
+        Returns:
+            List of node names between start and end (excluding end)
+        """
+        visited = set()
+        result = []
+        queue = [start]
+
+        while queue:
+            current = queue.pop(0)
+
+            # Stop at end node (don't include it)
+            if current == end or current in visited:
+                continue
+
+            visited.add(current)
+            result.append(current)
+
+            # Get all successors (including conditional edges)
+            if current in self.graph.nodes:
+                for successor in self.graph.successors(current):
+                    if successor not in visited:
+                        queue.append(successor)
+
+        return result
+
+    def validate_remote_scope(
+        self,
+        entry_point: str,
+        exit_point: str,
+    ) -> List[str]:
+        """
+        Validate that remote execution scope doesn't contain interrupt points.
+
+        Interrupt points require human interaction, which can't happen on
+        a remote host that's executing a branch. This method checks for
+        interrupt_before and interrupt_after flags on nodes within the scope.
+
+        Args:
+            entry_point: Starting node of remote scope
+            exit_point: Ending node of remote scope (typically fan-in)
+
+        Returns:
+            List of error messages (empty if valid)
+
+        Example:
+            >>> graph.compile(interrupt_before=["human_review"])
+            >>> errors = graph.validate_remote_scope("branch_a", "merge")
+            >>> if errors:
+            ...     raise ValueError("\\n".join(errors))
+
+        Note:
+            Call this method before starting remote execution to ensure
+            no interrupt points will cause indefinite hangs on remote hosts.
+        """
+        errors = []
+
+        # Get all nodes in the execution path
+        nodes_in_scope = self._get_nodes_between(entry_point, exit_point)
+
+        for node_name in nodes_in_scope:
+            # Check interrupt_before
+            if node_name in self.interrupt_before:
+                errors.append(
+                    f"Node '{node_name}' has interrupt_before=True, which is not "
+                    f"supported in remote execution scope. Move interrupt points "
+                    f"before the parallel fan-out."
+                )
+
+            # Check interrupt_after
+            if node_name in self.interrupt_after:
+                errors.append(
+                    f"Node '{node_name}' has interrupt_after=True, which is not "
+                    f"supported in remote execution scope. Move interrupt points "
+                    f"after the parallel fan-in."
+                )
+
+        return errors
+
+    def _run_scoped(
+        self,
+        state: Dict[str, Any],
+        start_node: str,
+        stop_before: str,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Execute graph from start_node, stopping before stop_before.
+
+        This is a simplified execution path for scoped runs that doesn't
+        support parallel edges (which would require the full invoke machinery).
+
+        Args:
+            state: Current state dictionary
+            start_node: Node to begin execution at
+            stop_before: Node to stop before (not executed)
+            config: Execution configuration
+
+        Returns:
+            Final state after execution
+        """
+        current_node = start_node
+
+        self.logger.debug(
+            f"Scoped execution: {start_node} → (stop before {stop_before})"
+        )
+
+        while current_node != stop_before and current_node != END:
+            # Get node data
+            node_data = self.node(current_node)
+            run_func = node_data.get("run")
+
+            # Execute node's run function if present
+            if run_func:
+                self.logger.debug(f"[Scoped] Entering node: {current_node}")
+                if self.log_state_values:
+                    self.logger.debug(
+                        f"[Scoped] Node '{current_node}' input state: {state}"
+                    )
+                try:
+                    result = self._execute_node_function(
+                        run_func, state, config, current_node
+                    )
+                    state.update(result)
+                    self.logger.info(f"[Scoped] Node '{current_node}' completed")
+                    if self.log_state_values:
+                        self.logger.debug(
+                            f"[Scoped] Node '{current_node}' output state: {state}"
+                        )
+                except Exception as e:
+                    self.logger.error(f"[Scoped] Error in node '{current_node}': {e}")
+                    if self.raise_exceptions:
+                        raise RuntimeError(
+                            f"Error in node '{current_node}': {str(e)}"
+                        ) from e
+                    else:
+                        # Return state with error info for caller to handle
+                        state["_scoped_error"] = {
+                            "node": current_node,
+                            "error": str(e),
+                        }
+                        return state
+
+            # Get next node
+            next_node = self._get_next_node(current_node, state, config)
+
+            if next_node is None:
+                error_msg = f"No valid next node found from '{current_node}' in scoped execution"
+                self.logger.warning(f"[Scoped] {error_msg}")
+                if self.raise_exceptions:
+                    raise RuntimeError(error_msg)
+                else:
+                    state["_scoped_error"] = {
+                        "node": current_node,
+                        "error": error_msg,
+                    }
+                    return state
+
+            self.logger.debug(
+                f"[Scoped] Transitioning from '{current_node}' to '{next_node}'"
+            )
+            current_node = next_node
+
+        self.logger.info(f"Scoped execution complete: stopped before '{stop_before}'")
+        return state
+
     def node(self, node_name: str) -> Dict[str, Any]:
         """
         Get the attributes of a specific node.
@@ -2090,9 +2378,10 @@ class StateGraph(CheckpointMixin, VisualizationMixin):
         if self.log_state_values:
             self.logger.debug(f"Initial state: {state}")
 
-        # Create ThreadPoolExecutor for parallel flows
+        # TEA-PARALLEL-001.1: Use executor abstraction for configurable parallel strategy
         max_workers = config.get("max_workers", self.max_workers)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        strategy = self.parallel_config.strategy
+        with get_executor(strategy, max_workers=max_workers) as executor:
             # Queue for collecting events from parallel flows
             result_queue: Queue = Queue()
             # Track active branches per fan-in node

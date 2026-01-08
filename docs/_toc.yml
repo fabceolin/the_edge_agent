@@ -132,6 +132,8 @@ parts:
         title: Neural Predicate Invention for Zero-Shot Generalization
       - file: articles/cloud-production-firebase
         title: Cloud Production with Firebase
+      - file: articles/intelligent-interview-bot
+        title: Intelligent Interview Bot with Dynamic LLM Questions
 
   - caption: Contributing
     chapters:

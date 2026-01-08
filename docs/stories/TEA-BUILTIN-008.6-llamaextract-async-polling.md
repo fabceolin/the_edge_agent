@@ -1,6 +1,58 @@
 # Story TEA-BUILTIN-008.6: LlamaExtract Async Polling Configuration
 
-## Status: Ready for Development
+## Status
+
+Dev Complete
+
+## Dev Agent Notes (2026-01-08)
+
+**Implementation Summary:**
+
+Added configurable async polling parameters to `llamaextract.extract` action:
+
+### New Parameters (AC: 1-3)
+- `async_mode: bool = False` - Explicitly use async `/jobs` endpoint
+- `polling_interval: Union[int, float] = 5` - Configurable poll interval (supports floats)
+- `max_poll_attempts: int = 120` - Maximum number of poll attempts
+
+### Implementation Details:
+
+1. **Validation (AC: 1, QA clarification):**
+   - `async_mode=True` requires `use_rest=True` - raises validation error if not
+   - `polling_interval` must be positive (accepts both int and float)
+   - `max_poll_attempts` must be positive integer
+
+2. **Async Submission (AC: 6):**
+   - Added `_extract_via_async()` function for direct `/api/v1/extraction/jobs` endpoint
+   - Reuses existing `_poll_job_status()` helper for completion polling
+
+3. **Configurable Polling (AC: 7-9):**
+   - Updated `_poll_job_status()` to accept `poll_interval` and `max_attempts` parameters
+   - Added attempt counting with clear timeout error message
+   - Both `max_poll_attempts` and `timeout` work together (whichever triggers first)
+   - Response includes `attempts` count for debugging
+
+4. **Backwards Compatibility (AC: 5, 10, 11):**
+   - Default `async_mode=False` uses existing sync behavior unchanged
+   - All existing parameters from 008.5 continue to work
+   - Sync endpoint auto-poll still works when job response detected
+
+**Files Modified:**
+- `python/src/the_edge_agent/actions/llamaextract_actions.py` - Added parameters and async path
+- `python/tests/test_llamaextract_async_polling.py` - 14 new tests (all passing)
+
+**QA Clarifications Addressed:**
+- Float polling interval: YES, accepts floats (e.g., `polling_interval=2.5`)
+- Parameter coupling: `async_mode=True` + `use_rest=False` raises explicit validation error
+
+**Test Coverage:**
+- 14 tests covering all acceptance criteria
+- Unit tests for parameter validation (positive values, types)
+- Integration tests for endpoint selection and polling behavior
+- Backwards compatibility tests for 008.5 parameters
+
+
+## Status: Dev Complete
 
 **QA Gate Passed:** 2024-12-30
 **Test Design:** 24 scenarios (P0: 10, P1: 9, P2: 5) - 100% AC coverage

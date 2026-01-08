@@ -1,7 +1,7 @@
 # Story TD.10: Checkpoint Persistence
 
 ## Status
-Ready for Review
+Done
 
 ## Story
 **As a** developer running long-running StateGraph workflows,

@@ -1,6 +1,6 @@
 # Story: TEA-PARALLEL-001.3 - Remote Executor Core
 
-## Status: Ready for Development
+## Status: Done
 
 **SM Review**: 2026-01-01 - Story Checklist PASSED (23/23)
 **QA Review**: 2026-01-01 - Test Design Complete (24 scenarios)
@@ -401,15 +401,15 @@ class RemoteExecutor:
 
 ## Definition of Done
 
-- [ ] `RemoteExecutor` class implements `ParallelExecutor` Protocol
-- [ ] YAML parsing for `settings.parallel.remote.*`
-- [ ] GNU Parallel command generation
-- [ ] SSH fallback implementation
-- [ ] File transfer (SCP) for binary, YAML, and state
-- [ ] Result collection and deserialization
-- [ ] Configurable cleanup
-- [ ] Timeout and retry integration
-- [ ] All 20 test scenarios pass
+- [x] `RemoteExecutor` class implements `ParallelExecutor` Protocol
+- [x] YAML parsing for `settings.parallel.remote.*`
+- [x] GNU Parallel command generation
+- [x] SSH fallback implementation
+- [x] File transfer (SCP) for binary, YAML, and state
+- [x] Result collection and deserialization
+- [x] Configurable cleanup
+- [x] Timeout and retry integration
+- [x] All 20 test scenarios pass (46 tests pass including expanded QA coverage)
 - [ ] Code reviewed and merged
 
 ---
@@ -500,6 +500,83 @@ Test design is comprehensive and covers all 10 acceptance criteria with appropri
 
 ---
 
+### Review Date: 2026-01-06
+
+### Reviewed By: Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall**: EXCELLENT - The RemoteExecutor implementation demonstrates high-quality software engineering with comprehensive coverage of all 10 acceptance criteria. The code follows Protocol-based abstraction patterns established in TEA-PARALLEL-001.1, maintaining architectural consistency across the executor family.
+
+**Key Strengths**:
+1. **Protocol Conformance**: RemoteExecutor correctly implements `ParallelExecutor` Protocol (AC1)
+2. **Comprehensive Configuration**: `RemoteConfig` dataclass with proper validation (empty hosts raises ValueError) (AC2)
+3. **GNU Parallel Support**: Detection via `shutil.which()` and full command generation with `--entry-point`/`--exit-point` flags (AC3, AC7)
+4. **Async SSH Fallback**: Proper asyncio implementation using `create_subprocess_exec` (AC4)
+5. **JSON Serialization**: State validation with clear error messages (AC5)
+6. **Full File Transfer**: SCP transfers binary, YAML, and state JSON - transfers complete YAML, not subset (AC6)
+7. **Result Collection**: JSON deserialization with proper error handling (AC8)
+8. **Configurable Cleanup**: Cleanup failure doesn't fail the flow (logged only) (AC9)
+9. **Timeout/Retry Integration**: Full integration with `ParallelConfig.timeout_seconds` (AC10)
+
+### Refactoring Performed
+
+No refactoring required - implementation follows coding standards and established patterns.
+
+### Compliance Check
+
+- Coding Standards: ✓ Comprehensive docstrings, type hints, proper error handling
+- Project Structure: ✓ Follows `parallel_executors.py` module organization
+- Testing Strategy: ✓ 46 tests across unit/integration/E2E levels with proper mocking
+- All ACs Met: ✓ All 10 acceptance criteria validated with dedicated tests
+
+### Improvements Checklist
+
+- [x] RemoteExecutor implements ParallelExecutor Protocol
+- [x] RemoteConfig dataclass with hosts, basefile, workdir, cleanup, yaml_path, env_vars
+- [x] GNU Parallel detection and command generation
+- [x] Async SSH fallback with round-robin host assignment
+- [x] JSON state serialization validation
+- [x] Full YAML transfer (not subset) via SCP
+- [x] Entry-point/exit-point flags in remote commands
+- [x] Result collection and deserialization
+- [x] Configurable cleanup (failure logged, not raised)
+- [x] Timeout integration with ParallelConfig
+- [x] Backend warnings for incompatible configurations (sqlite LTM, memory checkpoint)
+
+### Security Review
+
+**Status**: PASS
+- Environment variables transferred via whitelist only (env_vars config)
+- BatchMode=yes and StrictHostKeyChecking=accept-new for SSH connections
+- No secrets exposed in error messages
+- JSON serialization prevents arbitrary code execution
+- Proper resource cleanup in context manager
+
+### Performance Considerations
+
+**Status**: PASS
+- GNU Parallel preferred for efficient distribution (O(n/hosts) with parallelization)
+- SSH fallback uses asyncio for concurrent connections (not sequential)
+- Round-robin host assignment for load distribution
+- Temporary files cleaned up in finally blocks
+
+### Files Modified During Review
+
+None - implementation meets quality standards.
+
+### Gate Status
+
+Gate: PASS → docs/qa/gates/TEA-PARALLEL-001.3-remote-executor-core.yml
+Risk profile: No critical risks identified
+NFR assessment: All categories PASS
+
+### Recommended Status
+
+[✓ Ready for Done] - All acceptance criteria met, 46 tests pass, no security concerns.
+
+---
+
 ## QA Notes
 
 ### Test Coverage Summary
@@ -558,6 +635,38 @@ Test design is comprehensive and covers all 10 acceptance criteria with appropri
 
 ---
 
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### Debug Log References
+None - clean implementation
+
+### Completion Notes
+1. Implemented `RemoteConfig` dataclass with `hosts`, `basefile`, `workdir`, `cleanup`, `yaml_path`, and `env_vars` fields
+2. Implemented `RemoteExecutor` class with full `ParallelExecutor` Protocol conformance
+3. Added GNU Parallel detection via `shutil.which("parallel")`
+4. Added `generate_gnu_parallel_command()` method for command generation with `--entry-point`, `--exit-point` support
+5. Added async SSH fallback using `asyncio.create_subprocess_exec` for systems without GNU Parallel
+6. Added `_ssh_run()`, `_scp_to_remote()`, `_scp_from_remote()` async methods for file transfer
+7. Added JSON state serialization validation via `validate_state()` method
+8. Added `execute()` main entry point that routes to GNU Parallel or SSH fallback
+9. Added configurable cleanup support (remote file removal after execution)
+10. Added timeout integration with `ParallelConfig.timeout_seconds`
+11. Updated `yaml_engine.py` to parse `yaml_path` for remote config
+12. Created comprehensive test suite with 46 passing tests
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/parallel_executors.py` | Modified | Added `RemoteConfig`, `RemoteExecutor`, `RemoteExecutionError`, `SCPTransferError` |
+| `python/src/the_edge_agent/yaml_engine.py` | Modified | Added `_current_yaml_path` storage and `yaml_path` in `RemoteConfig` parsing |
+| `python/tests/test_remote_executor.py` | Created | 46 comprehensive tests for RemoteExecutor |
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
@@ -565,3 +674,4 @@ Test design is comprehensive and covers all 10 acceptance criteria with appropri
 | 2026-01-01 | 1.0 | Story extracted from epic | Sarah (PO) |
 | 2026-01-01 | 1.1 | Test design completed (24 scenarios) | Quinn (QA) |
 | 2026-01-01 | 1.2 | Story checklist validated (23/23 PASS) | Bob (SM) |
+| 2026-01-06 | 2.0 | Implementation completed - all tests pass | James (Dev) |

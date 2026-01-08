@@ -174,6 +174,157 @@ class LTMBackend(ABC):
         self.close()
         return False
 
+    def transaction(self) -> "LTMTransaction":
+        """
+        Create a transaction context manager.
+
+        Transactions allow atomic multi-key operations where the underlying
+        store supports them. Operations within a transaction are either all
+        committed or all rolled back.
+
+        Returns:
+            LTMTransaction context manager
+
+        Example:
+            >>> with backend.transaction() as txn:
+            ...     txn.store("key1", {"value": 1})
+            ...     txn.store("key2", {"value": 2})
+            ...     # Both committed on exit, or rolled back on exception
+        """
+        return LTMTransaction(self)
+
+
+class LTMTransaction:
+    """
+    Transaction context manager for atomic multi-key operations.
+
+    This is a default implementation that provides transaction-like semantics
+    using batched operations. Backends with native transaction support can
+    override this behavior.
+
+    For backends without native transactions (e.g., Firestore):
+    - Operations are collected and executed atomically on commit
+    - Rollback may not be fully supported
+
+    Example:
+        >>> with backend.transaction() as txn:
+        ...     txn.store("key1", {"value": 1})
+        ...     txn.store("key2", {"value": 2})
+    """
+
+    def __init__(self, backend: LTMBackend):
+        """
+        Initialize transaction.
+
+        Args:
+            backend: The LTMBackend to wrap
+        """
+        self._backend = backend
+        self._operations: List[tuple] = []  # (operation, args, kwargs)
+        self._committed = False
+        self._rolled_back = False
+
+    def __enter__(self) -> "LTMTransaction":
+        """Enter transaction context."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit transaction - commit or rollback."""
+        if exc_type is not None:
+            # Exception occurred - rollback
+            self.rollback()
+            return False
+
+        # No exception - commit
+        self.commit()
+        return False
+
+    def store(
+        self, key: str, value: Any, metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Queue a store operation.
+
+        Args:
+            key: Key to store
+            value: Value to store
+            metadata: Optional metadata
+        """
+        self._operations.append(("store", (key, value), {"metadata": metadata}))
+
+    def delete(self, key: str) -> None:
+        """
+        Queue a delete operation.
+
+        Args:
+            key: Key to delete
+        """
+        self._operations.append(("delete", (key,), {}))
+
+    def commit(self) -> Dict[str, Any]:
+        """
+        Commit all queued operations.
+
+        Returns:
+            {"success": True, "operations": int} or error dict
+        """
+        if self._committed:
+            return {
+                "success": False,
+                "error": "Already committed",
+                "error_type": "validation_error",
+            }
+        if self._rolled_back:
+            return {
+                "success": False,
+                "error": "Already rolled back",
+                "error_type": "validation_error",
+            }
+
+        errors = []
+        for op_type, args, kwargs in self._operations:
+            if op_type == "store":
+                result = self._backend.store(*args, **kwargs)
+            elif op_type == "delete":
+                result = self._backend.delete(*args, **kwargs)
+            else:
+                continue
+
+            if not result.get("success"):
+                errors.append(result)
+
+        self._committed = True
+
+        if errors:
+            return {
+                "success": False,
+                "error": f"Transaction had {len(errors)} failed operations",
+                "error_type": "query_error",
+                "errors": errors,
+            }
+
+        return {"success": True, "operations": len(self._operations)}
+
+    def rollback(self) -> Dict[str, Any]:
+        """
+        Rollback the transaction (discard queued operations).
+
+        Returns:
+            {"success": True, "discarded": int}
+        """
+        if self._committed:
+            return {
+                "success": False,
+                "error": "Already committed",
+                "error_type": "validation_error",
+            }
+
+        discarded = len(self._operations)
+        self._operations.clear()
+        self._rolled_back = True
+
+        return {"success": True, "discarded": discarded}
+
 
 # =============================================================================
 # BACKEND REGISTRY AND FACTORY

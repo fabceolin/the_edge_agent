@@ -66,8 +66,7 @@ nodes:
             Generate comprehensive test design.
 
             When done print: BMAD_QA_COMPLETED
-    output:
-      qa_output: "{{ result.content }}"
+    output: qa_output
 
   - name: write_qa_notes
     description: Write QA notes to story file
@@ -100,8 +99,7 @@ nodes:
             Save the updated story file.
 
             When done print: QA_NOTES_WRITTEN
-    output:
-      qa_notes_output: "{{ result.content }}"
+    output: qa_notes_output
 
   - name: load_sm_context
     description: Load SM agent persona
@@ -138,8 +136,7 @@ nodes:
             Validate against Definition of Ready checklist.
 
             When done print: BMAD_SM_COMPLETED
-    output:
-      sm_output: "{{ result.content }}"
+    output: sm_output
 
   - name: update_story_status
     description: Update story status based on checklist results
@@ -170,8 +167,7 @@ nodes:
             Save the file.
 
             When done print: STATUS_UPDATED
-    output:
-      status_output: "{{ result.content }}"
+    output: status_output
 
 edges:
   - from: __start__

@@ -3,299 +3,22 @@
 //! Parses YAML workflow definitions and supports Jinja2-like template syntax
 //! via the Tera template engine for variable substitution.
 
-use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use tera::{Context, Tera};
 
-use crate::engine::graph::{ActionConfig, Edge, Node, RetryConfig, StateGraph};
+use crate::engine::graph::StateGraph;
 use crate::engine::observability::ObsConfig;
+use crate::engine::yaml_builder::GraphBuilder;
+use crate::engine::yaml_templates::TemplateProcessor;
 use crate::error::{TeaError, TeaResult};
-use crate::{END, START};
 
-/// YAML configuration for a workflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct YamlConfig {
-    /// Workflow name
-    pub name: String,
-
-    /// Optional description
-    #[serde(default)]
-    pub description: Option<String>,
-
-    /// State schema (optional)
-    #[serde(default)]
-    pub state_schema: Option<HashMap<String, String>>,
-
-    /// Initial state values (merged with CLI input, CLI takes precedence)
-    #[serde(default)]
-    pub initial_state: Option<JsonValue>,
-
-    /// Global variables
-    #[serde(default)]
-    pub variables: HashMap<String, JsonValue>,
-
-    /// External module imports
-    #[serde(default)]
-    pub imports: Vec<ImportConfig>,
-
-    /// Node definitions
-    pub nodes: Vec<NodeConfig>,
-
-    /// Edge definitions
-    #[serde(default)]
-    pub edges: Vec<EdgeConfig>,
-
-    /// Global error policy
-    #[serde(default)]
-    pub error_policy: Option<ErrorPolicyConfig>,
-
-    /// Observability configuration (TEA-OBS-001.2)
-    #[serde(default)]
-    pub observability: ObsConfig,
-
-    /// Settings configuration (rate limiters, etc.)
-    #[serde(default)]
-    pub settings: Option<SettingsConfig>,
-}
-
-/// Settings configuration for the workflow
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SettingsConfig {
-    /// Pre-configured rate limiters
-    ///
-    /// Each entry defines a named limiter with rpm or rps settings:
-    /// ```yaml
-    /// settings:
-    ///   rate_limiters:
-    ///     openai:
-    ///       rpm: 60
-    ///     anthropic:
-    ///       rps: 2
-    /// ```
-    #[serde(default)]
-    pub rate_limiters: HashMap<String, RateLimiterConfig>,
-}
-
-/// Configuration for a single rate limiter
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimiterConfig {
-    /// Requests per minute
-    #[serde(default)]
-    pub rpm: Option<f64>,
-
-    /// Requests per second (takes precedence over rpm)
-    #[serde(default)]
-    pub rps: Option<f64>,
-}
-
-/// Import configuration for external modules
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImportConfig {
-    /// Path to Lua module file
-    #[serde(default)]
-    pub path: Option<String>,
-
-    /// Built-in action set name
-    #[serde(default)]
-    pub builtin: Option<String>,
-
-    /// Namespace prefix for imported actions
-    #[serde(default)]
-    pub namespace: String,
-}
-
-/// Node configuration from YAML
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeConfig {
-    /// Node name
-    pub name: String,
-
-    /// Node type: "standard" (default) or "while_loop" (TEA-RUST-033)
-    #[serde(default, rename = "type")]
-    pub node_type: Option<String>,
-
-    /// Action to use (e.g., "llm.call")
-    #[serde(default)]
-    pub uses: Option<String>,
-
-    /// Alias for 'uses'
-    #[serde(default)]
-    pub action: Option<String>,
-
-    /// Action parameters
-    #[serde(default, rename = "with")]
-    pub with_params: Option<HashMap<String, JsonValue>>,
-
-    /// Inline code (run directly) - Lua or Prolog
-    #[serde(default)]
-    pub run: Option<String>,
-
-    /// Language for inline code: "lua" (default) or "prolog"
-    /// Can be auto-detected from code patterns if not specified
-    #[serde(default)]
-    pub language: Option<String>,
-
-    /// Retry configuration
-    #[serde(default)]
-    pub retry: Option<RetryConfig>,
-
-    /// Fallback node on failure
-    #[serde(default)]
-    pub fallback: Option<String>,
-
-    /// Node metadata
-    #[serde(default)]
-    pub metadata: HashMap<String, JsonValue>,
-
-    /// Output key for storing action result in state
-    ///
-    /// When specified, the result from `uses:` action will be stored
-    /// in the state under this key name. For example:
-    /// ```yaml
-    /// - name: call_llm
-    ///   uses: llm.call
-    ///   with:
-    ///     model: gpt-4
-    ///   output: llm_response
-    /// ```
-    /// The LLM response will be stored as `state.llm_response`.
-    #[serde(default)]
-    pub output: Option<String>,
-
-    /// TEA-RUST-033: Maximum iterations for while_loop nodes (required for while_loop)
-    #[serde(default)]
-    pub max_iterations: Option<usize>,
-
-    /// TEA-RUST-033: Condition expression for while_loop nodes (required for while_loop)
-    #[serde(default)]
-    pub condition: Option<String>,
-
-    /// TEA-RUST-033: Body nodes for while_loop (required for while_loop)
-    #[serde(default)]
-    pub body: Option<Vec<NodeConfig>>,
-
-    /// TEA-YAML-002: Navigation target after node execution
-    ///
-    /// Can be:
-    /// - A string for unconditional jump: `goto: "target_node"`
-    /// - A list of rules for conditional routing: `goto: [{if: "expr", to: "node"}, ...]`
-    ///
-    /// Precedence: goto > edges > implicit chaining (next node in list)
-    #[serde(default)]
-    pub goto: Option<Goto>,
-}
-
-/// TEA-YAML-002: Navigation target specification
-///
-/// Supports both unconditional jumps (string) and conditional routing (list of rules).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Goto {
-    /// Unconditional jump to a target node
-    Unconditional(String),
-    /// Conditional routing with multiple rules (first match wins)
-    Conditional(Vec<GotoRule>),
-}
-
-/// TEA-YAML-002: A single conditional goto rule
-///
-/// Each rule specifies a condition and target. Rules are evaluated in order,
-/// first matching rule determines the navigation target.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GotoRule {
-    /// Condition expression (Jinja2/Tera syntax)
-    ///
-    /// If omitted or null, this rule acts as a fallback (always matches).
-    /// Available variables:
-    /// - `state`: Current agent state
-    /// - `result`: Output from the current node's execution
-    #[serde(rename = "if")]
-    pub condition: Option<String>,
-
-    /// Target node name to navigate to
-    ///
-    /// Special values:
-    /// - `__end__`: Terminate the workflow
-    pub to: String,
-}
-
-/// Edge configuration from YAML
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EdgeConfig {
-    /// Source node name
-    pub from: String,
-
-    /// Target node name (for simple edges)
-    #[serde(default)]
-    pub to: Option<String>,
-
-    /// Condition expression (Lua)
-    #[serde(default, rename = "when")]
-    pub condition: Option<String>,
-
-    /// Conditional edge targets
-    #[serde(default)]
-    pub targets: Option<HashMap<String, String>>,
-
-    /// Parallel branch targets
-    #[serde(default)]
-    pub parallel: Option<Vec<String>>,
-}
-
-/// Global error policy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorPolicyConfig {
-    /// Maximum retries
-    #[serde(default = "default_max_retries")]
-    pub max_retries: u32,
-
-    /// Base backoff in milliseconds
-    #[serde(default = "default_backoff_base")]
-    pub backoff_base_ms: u64,
-
-    /// Maximum backoff in milliseconds
-    #[serde(default = "default_backoff_max")]
-    pub backoff_max_ms: u64,
-
-    /// Enable jitter
-    #[serde(default = "default_jitter")]
-    pub jitter: bool,
-
-    /// Failure behavior: checkpoint_and_exit, continue, or fallback
-    #[serde(default = "default_on_failure")]
-    pub on_failure: String,
-}
-
-fn default_max_retries() -> u32 {
-    3
-}
-fn default_backoff_base() -> u64 {
-    1000
-}
-fn default_backoff_max() -> u64 {
-    30000
-}
-fn default_jitter() -> bool {
-    true
-}
-fn default_on_failure() -> String {
-    "checkpoint_and_exit".to_string()
-}
-
-impl Default for ErrorPolicyConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: default_max_retries(),
-            backoff_base_ms: default_backoff_base(),
-            backoff_max_ms: default_backoff_max(),
-            jitter: default_jitter(),
-            on_failure: default_on_failure(),
-        }
-    }
-}
+// Re-export config structs for backward compatibility
+pub use crate::engine::yaml_config::{
+    EdgeConfig, ErrorPolicyConfig, Goto, GotoRule, ImportConfig, NodeConfig, RateLimiterConfig,
+    SettingsConfig, YamlConfig,
+};
 
 /// YAML Engine for loading and parsing workflows
 ///
@@ -303,19 +26,9 @@ impl Default for ErrorPolicyConfig {
 /// needs its own instance for thread safety. All shared state (template cache,
 /// last_checkpoint) is wrapped in `Arc<RwLock<>>` so clones share the cache.
 pub struct YamlEngine {
-    /// Tera template engine wrapped in `Arc<RwLock>` for sharing across clones
-    /// Required because add_raw_template needs &mut self
-    tera: Arc<RwLock<Tera>>,
-    /// Maps template content -> registered template name (shared across clones)
-    template_cache: Arc<RwLock<HashMap<String, String>>>,
-    /// Secrets for template substitution (e.g., API keys)
-    /// Note: Secrets should NOT be included in checkpoint serialization
-    secrets: HashMap<String, JsonValue>,
-    /// Checkpoint directory path for `{{ checkpoint.dir }}` template access
-    checkpoint_dir: Option<String>,
-    /// Path to most recent checkpoint for `{{ checkpoint.last }}` template access
-    /// Uses `Arc<RwLock>` for sharing - allows Executor to update after saves
-    last_checkpoint: Arc<RwLock<Option<String>>>,
+    /// Template processor for rendering templates and evaluating conditions
+    /// Handles caching, secrets, and checkpoint context
+    template_processor: TemplateProcessor,
     /// Observability configuration from last loaded YAML (TEA-OBS-001.2)
     observability_config: Arc<RwLock<Option<ObsConfig>>>,
 }
@@ -323,11 +36,7 @@ pub struct YamlEngine {
 impl Clone for YamlEngine {
     fn clone(&self) -> Self {
         Self {
-            tera: Arc::clone(&self.tera),
-            template_cache: Arc::clone(&self.template_cache),
-            secrets: self.secrets.clone(),
-            checkpoint_dir: self.checkpoint_dir.clone(),
-            last_checkpoint: Arc::clone(&self.last_checkpoint),
+            template_processor: self.template_processor.clone(),
             observability_config: Arc::clone(&self.observability_config),
         }
     }
@@ -337,18 +46,14 @@ impl YamlEngine {
     /// Create a new YAML engine
     pub fn new() -> Self {
         Self {
-            tera: Arc::new(RwLock::new(Tera::default())),
-            template_cache: Arc::new(RwLock::new(HashMap::new())),
-            secrets: HashMap::new(),
-            checkpoint_dir: None,
-            last_checkpoint: Arc::new(RwLock::new(None)),
+            template_processor: TemplateProcessor::new(HashMap::new()),
             observability_config: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Returns the number of cached templates (for testing/monitoring)
     pub fn cache_size(&self) -> usize {
-        self.template_cache.read().unwrap().len()
+        self.template_processor.cache_size()
     }
 
     /// Set secrets for template substitution
@@ -370,14 +75,14 @@ impl YamlEngine {
     /// ]));
     /// ```
     pub fn set_secrets(&mut self, secrets: HashMap<String, JsonValue>) {
-        self.secrets = secrets;
+        self.template_processor.set_secrets(secrets);
     }
 
     /// Get a reference to the current secrets
     ///
     /// Useful for inspecting configured secrets (without values for security).
     pub fn secrets(&self) -> &HashMap<String, JsonValue> {
-        &self.secrets
+        self.template_processor.secrets()
     }
 
     /// Set the checkpoint directory path for template access
@@ -394,12 +99,12 @@ impl YamlEngine {
     /// assert_eq!(engine.checkpoint_dir(), Some("./checkpoints"));
     /// ```
     pub fn set_checkpoint_dir(&mut self, dir: Option<String>) {
-        self.checkpoint_dir = dir;
+        self.template_processor.set_checkpoint_dir(dir);
     }
 
     /// Get the current checkpoint directory path
     pub fn checkpoint_dir(&self) -> Option<&str> {
-        self.checkpoint_dir.as_deref()
+        self.template_processor.checkpoint_dir()
     }
 
     /// Set the path to the most recent checkpoint
@@ -420,12 +125,12 @@ impl YamlEngine {
     /// assert_eq!(engine.last_checkpoint(), Some("./checkpoints/step1_1234567890.msgpack".to_string()));
     /// ```
     pub fn set_last_checkpoint(&self, path: Option<String>) {
-        *self.last_checkpoint.write().unwrap() = path;
+        self.template_processor.set_last_checkpoint(path);
     }
 
     /// Get the path to the most recent checkpoint
     pub fn last_checkpoint(&self) -> Option<String> {
-        self.last_checkpoint.read().unwrap().clone()
+        self.template_processor.last_checkpoint()
     }
 
     /// Get the observability configuration from the last loaded YAML (TEA-OBS-001.2)
@@ -480,459 +185,16 @@ impl YamlEngine {
     }
 
     /// Build a StateGraph from YamlConfig
+    ///
+    /// Delegates to `GraphBuilder` for actual construction.
     fn build_graph(&self, config: YamlConfig) -> TeaResult<StateGraph> {
-        let mut graph = StateGraph::with_name(&config.name);
+        let builder = GraphBuilder::new();
+        let (graph, obs_config) = builder.build(&config)?;
 
         // Store observability config (TEA-OBS-001.2)
-        *self.observability_config.write().unwrap() = Some(config.observability.clone());
-
-        // Set variables
-        graph.set_variables(config.variables.clone());
-
-        // Set initial state (from YAML)
-        if let Some(ref initial_state) = config.initial_state {
-            graph.set_initial_state(initial_state.clone());
-        }
-
-        // Add nodes
-        for node_config in &config.nodes {
-            let node = self.build_node(node_config)?;
-            graph.add_node(node);
-        }
-
-        // TEA-YAML-002: Process goto and implicit chaining BEFORE legacy edges
-        // This implements precedence: goto > edges > implicit chaining
-        let nodes_with_goto = self.process_goto_and_implicit_edges(&mut graph, &config)?;
-
-        // TEA-YAML-002: Add legacy edges (deprecated) with warning
-        if !config.edges.is_empty() {
-            // Emit deprecation warning at INFO level (Phase 1: Soft Deprecation)
-            // Note: Using eprintln for now as tracing may not be initialized in library context
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "TEA-YAML-002 DEPRECATION WARNING: The 'edges' section is deprecated and will be \
-                 removed in v2.0. Use 'goto' property on nodes or implicit chaining instead."
-            );
-
-            for edge_config in &config.edges {
-                // TEA-YAML-002: Skip edges for nodes that have goto (goto takes precedence)
-                if nodes_with_goto.contains(&edge_config.from) && edge_config.from != START {
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "TEA-YAML-002: Skipping legacy edge from '{}' because node has 'goto' property",
-                        edge_config.from
-                    );
-                    continue;
-                }
-                self.add_edge(&mut graph, edge_config)?;
-            }
-        }
-
-        // Infer entry/finish if not explicit
-        self.infer_entry_finish(&mut graph, &config)?;
-
-        // TEA-RUST-RL-001: Initialize rate limiters from settings
-        if let Some(settings) = &config.settings {
-            self.initialize_rate_limiters(&settings.rate_limiters);
-        }
+        *self.observability_config.write().unwrap() = Some(obs_config);
 
         Ok(graph)
-    }
-
-    /// TEA-RUST-RL-001: Initialize rate limiters from settings configuration
-    ///
-    /// Pre-configures rate limiters defined in the `settings.rate_limiters` section.
-    /// This allows setting default configurations before any nodes execute.
-    fn initialize_rate_limiters(&self, rate_limiters: &HashMap<String, RateLimiterConfig>) {
-        use crate::actions::ratelimit::{calculate_interval, global_registry};
-
-        for (name, config) in rate_limiters {
-            let interval = calculate_interval(config.rpm, config.rps);
-            global_registry().initialize(name, interval);
-        }
-    }
-
-    /// TEA-YAML-002: Process goto properties and implicit chaining for nodes
-    ///
-    /// This method:
-    /// 1. Sets entry point to first node (if no __start__ edge in edges)
-    /// 2. For each node with goto, adds appropriate edges
-    /// 3. For nodes without goto AND without legacy edges, adds implicit chaining
-    ///
-    /// Returns the set of node names that have goto definitions (for precedence handling).
-    fn process_goto_and_implicit_edges(
-        &self,
-        graph: &mut StateGraph,
-        config: &YamlConfig,
-    ) -> TeaResult<std::collections::HashSet<String>> {
-        use std::collections::HashSet;
-
-        let mut nodes_with_goto: HashSet<String> = HashSet::new();
-        let nodes = &config.nodes;
-
-        if nodes.is_empty() {
-            return Ok(nodes_with_goto);
-        }
-
-        // Build node name to index mapping for validation
-        let node_names: HashMap<String, usize> = nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.name.clone(), i))
-            .collect();
-
-        // Collect nodes with legacy edges (for implicit chaining logic)
-        let mut nodes_with_legacy_edges: HashSet<String> = HashSet::new();
-        let mut has_start_edge = false;
-        let mut nodes_with_end_edge: HashSet<String> = HashSet::new();
-
-        for edge in &config.edges {
-            if edge.from == START {
-                has_start_edge = true;
-            } else {
-                nodes_with_legacy_edges.insert(edge.from.clone());
-            }
-            if let Some(to) = &edge.to {
-                if to == END {
-                    nodes_with_end_edge.insert(edge.from.clone());
-                }
-            }
-        }
-
-        // Set entry point to first node (if no __start__ edge in legacy edges)
-        if !has_start_edge {
-            let first_node = &nodes[0].name;
-            graph.set_entry_point(first_node)?;
-        }
-
-        // Process each node
-        for (idx, node_config) in nodes.iter().enumerate() {
-            let node_name = &node_config.name;
-
-            if let Some(goto) = &node_config.goto {
-                // Node has goto - process it (highest priority)
-                nodes_with_goto.insert(node_name.clone());
-                self.process_node_goto(graph, node_name, goto, &node_names, nodes, idx)?;
-            } else if nodes_with_legacy_edges.contains(node_name) {
-                // Node has legacy edges - don't add implicit chaining
-                // Edges will be added later from config.edges
-            } else {
-                // Implicit chaining: add edge to next node or __end__
-                if idx < nodes.len() - 1 {
-                    // Not the last node: chain to next
-                    let next_node = &nodes[idx + 1].name;
-                    graph.add_edge(node_name, next_node, Edge::simple())?;
-                } else {
-                    // Last node: implicit finish (unless has legacy edge to __end__)
-                    if !nodes_with_end_edge.contains(node_name) {
-                        graph.set_finish_point(node_name)?;
-                    }
-                }
-            }
-        }
-
-        Ok(nodes_with_goto)
-    }
-
-    /// TEA-YAML-002: Process the goto property for a single node
-    fn process_node_goto(
-        &self,
-        graph: &mut StateGraph,
-        node_name: &str,
-        goto: &Goto,
-        node_names: &HashMap<String, usize>,
-        _nodes: &[NodeConfig],
-        _current_idx: usize,
-    ) -> TeaResult<()> {
-        match goto {
-            Goto::Unconditional(target) => {
-                // Validate target exists (AC-6: error at validation time)
-                if target != END && !node_names.contains_key(target) {
-                    return Err(TeaError::InvalidConfig(format!(
-                        "Node '{}' has goto to non-existent node '{}'. Available nodes: {:?}",
-                        node_name,
-                        target,
-                        node_names.keys().collect::<Vec<_>>()
-                    )));
-                }
-
-                if target == END {
-                    graph.set_finish_point(node_name)?;
-                } else {
-                    graph.add_edge(node_name, target, Edge::simple())?;
-                }
-            }
-            Goto::Conditional(rules) => {
-                let mut has_fallback = false;
-
-                for rule in rules {
-                    let target = &rule.to;
-
-                    // Validate target exists (AC-6: error at validation time)
-                    if target != END && !node_names.contains_key(target) {
-                        return Err(TeaError::InvalidConfig(format!(
-                            "Node '{}' has goto to non-existent node '{}'. Available nodes: {:?}",
-                            node_name,
-                            target,
-                            node_names.keys().collect::<Vec<_>>()
-                        )));
-                    }
-
-                    if let Some(condition) = &rule.condition {
-                        // Conditional rule: add conditional edge
-                        // The condition is evaluated at runtime by the executor
-                        if target == END {
-                            graph.add_edge(
-                                node_name,
-                                END,
-                                Edge::conditional(condition.clone(), target.clone()),
-                            )?;
-                        } else {
-                            graph.add_edge(
-                                node_name,
-                                target,
-                                Edge::conditional(condition.clone(), target.clone()),
-                            )?;
-                        }
-                    } else {
-                        // Fallback rule (no condition = always true)
-                        has_fallback = true;
-                        if target == END {
-                            graph.set_finish_point(node_name)?;
-                        } else {
-                            graph.add_edge(node_name, target, Edge::simple())?;
-                        }
-                    }
-                }
-
-                // If no fallback rule, don't add implicit chaining
-                // When using conditional goto, the user must explicitly specify all branches
-                // including a fallback with `{to: next_node}` if they want one
-                // This prevents the implicit edge from conflicting with conditional edges
-                let _ = has_fallback; // Suppress unused variable warning
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Build a Node from NodeConfig
-    fn build_node(&self, config: &NodeConfig) -> TeaResult<Node> {
-        // TEA-RUST-033: Handle while_loop nodes
-        if config.node_type.as_deref() == Some("while_loop") {
-            return self.build_while_loop_node(config);
-        }
-
-        let mut node = Node::new(&config.name);
-
-        // Set action (uses or action field)
-        if let Some(uses) = config.uses.as_ref().or(config.action.as_ref()) {
-            node.action = Some(ActionConfig {
-                uses: uses.clone(),
-                with: config.with_params.clone().unwrap_or_default(),
-            });
-        }
-
-        // Set inline code (Lua or Prolog)
-        if let Some(run) = &config.run {
-            node.lua_code = Some(run.clone());
-
-            // Determine language: explicit > auto-detect > default (lua)
-            node.language = config.language.clone().or({
-                // Auto-detect Prolog code patterns
-                #[cfg(feature = "prolog")]
-                {
-                    if crate::engine::prolog_runtime::detect_prolog_code(run) {
-                        Some("prolog".to_string())
-                    } else {
-                        None
-                    }
-                }
-                #[cfg(not(feature = "prolog"))]
-                {
-                    None
-                }
-            });
-        }
-
-        // Set retry config
-        if let Some(retry) = &config.retry {
-            node.retry = Some(retry.clone());
-        }
-
-        // Set fallback
-        if let Some(fallback) = &config.fallback {
-            node.fallback = Some(fallback.clone());
-        }
-
-        // Set metadata
-        node.metadata = config.metadata.clone();
-
-        // Set output key for storing action result
-        if let Some(output) = &config.output {
-            node.output = Some(output.clone());
-        }
-
-        Ok(node)
-    }
-
-    /// Build a while-loop node from NodeConfig (TEA-RUST-033)
-    ///
-    /// Validates:
-    /// - `max_iterations` is required and in range 1-1000 (AC-8, AC-9)
-    /// - `condition` is required (AC-2)
-    /// - `body` is required and non-empty (AC-3)
-    /// - No nested while-loops (AC-11)
-    fn build_while_loop_node(&self, config: &NodeConfig) -> TeaResult<Node> {
-        let name = &config.name;
-
-        // AC-8: max_iterations is required
-        let max_iterations = config.max_iterations.ok_or_else(|| {
-            TeaError::InvalidConfig(format!(
-                "while_loop node '{}' requires 'max_iterations'",
-                name
-            ))
-        })?;
-
-        // AC-9: max_iterations must be in range 1-1000
-        if !(1..=1000).contains(&max_iterations) {
-            return Err(TeaError::InvalidConfig(format!(
-                "while_loop node '{}': max_iterations must be between 1 and 1000, got {}",
-                name, max_iterations
-            )));
-        }
-
-        // AC-2: condition is required
-        let condition = config.condition.clone().ok_or_else(|| {
-            TeaError::InvalidConfig(format!("while_loop node '{}' requires 'condition'", name))
-        })?;
-
-        // AC-3: body is required
-        let body_configs = config.body.as_ref().ok_or_else(|| {
-            TeaError::InvalidConfig(format!(
-                "while_loop node '{}' requires 'body' with at least one node",
-                name
-            ))
-        })?;
-
-        if body_configs.is_empty() {
-            return Err(TeaError::InvalidConfig(format!(
-                "while_loop node '{}' requires 'body' with at least one node",
-                name
-            )));
-        }
-
-        // Parse body nodes and check for nested while-loops (AC-11)
-        let mut body_nodes = Vec::with_capacity(body_configs.len());
-        for body_config in body_configs {
-            // AC-11: No nested while-loops
-            if body_config.node_type.as_deref() == Some("while_loop") {
-                return Err(TeaError::InvalidConfig(format!(
-                    "Nested while-loops not supported: '{}' contains while_loop '{}'",
-                    name, body_config.name
-                )));
-            }
-            body_nodes.push(self.build_node(body_config)?);
-        }
-
-        // Create the while-loop node
-        let mut node = Node::while_loop(name, condition, max_iterations, body_nodes);
-
-        // Copy optional fields (retry, fallback, metadata)
-        if let Some(retry) = &config.retry {
-            node.retry = Some(retry.clone());
-        }
-        if let Some(fallback) = &config.fallback {
-            node.fallback = Some(fallback.clone());
-        }
-        node.metadata = config.metadata.clone();
-
-        Ok(node)
-    }
-
-    /// Add edge to graph from EdgeConfig
-    fn add_edge(&self, graph: &mut StateGraph, config: &EdgeConfig) -> TeaResult<()> {
-        let from = &config.from;
-
-        // Handle parallel edges
-        if let Some(branches) = &config.parallel {
-            for branch in branches {
-                graph.add_edge(from, branch, Edge::parallel(branches.clone()))?;
-            }
-            return Ok(());
-        }
-
-        // Handle conditional edges with targets map
-        if let Some(targets) = &config.targets {
-            let condition = config
-                .condition
-                .clone()
-                .unwrap_or_else(|| "state.result".to_string());
-
-            for (result, target) in targets {
-                let edge = Edge::conditional(&condition, result);
-                graph.add_edge(from, target, edge)?;
-            }
-            return Ok(());
-        }
-
-        // Handle simple edge (possibly with condition on __start__)
-        if let Some(to) = &config.to {
-            if let Some(condition) = &config.condition {
-                // Conditional edge to single target
-                let edge = Edge::conditional(condition, to);
-                graph.add_edge(from, to, edge)?;
-            } else {
-                // Simple edge
-                graph.add_simple_edge(from, to)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Infer entry and finish points from edge definitions
-    fn infer_entry_finish(&self, graph: &mut StateGraph, config: &YamlConfig) -> TeaResult<()> {
-        // Find edges from __start__
-        let mut entry_nodes = Vec::new();
-        let mut finish_nodes = Vec::new();
-
-        for edge in &config.edges {
-            if edge.from == START {
-                if let Some(to) = &edge.to {
-                    entry_nodes.push(to.clone());
-                }
-                if let Some(targets) = &edge.targets {
-                    entry_nodes.extend(targets.values().cloned());
-                }
-                // Also handle parallel branches from START
-                if let Some(branches) = &edge.parallel {
-                    entry_nodes.extend(branches.clone());
-                }
-            }
-
-            if let Some(to) = &edge.to {
-                if to == END {
-                    finish_nodes.push(edge.from.clone());
-                }
-            }
-        }
-
-        // Set entry point (first found)
-        if let Some(entry) = entry_nodes.first() {
-            if graph.entry_point().is_none() {
-                graph.set_entry_point(entry)?;
-            }
-        }
-
-        // Set finish point (first found)
-        if let Some(finish) = finish_nodes.first() {
-            if graph.finish_point().is_none() {
-                graph.set_finish_point(finish)?;
-            }
-        }
-
-        Ok(())
     }
 
     /// Render a template string with context
@@ -952,69 +214,7 @@ impl YamlEngine {
         state: &JsonValue,
         variables: &HashMap<String, JsonValue>,
     ) -> TeaResult<String> {
-        let mut context = Context::new();
-
-        // Add state to context
-        context.insert("state", state);
-
-        // Add variables to context
-        context.insert("variables", variables);
-
-        // Add secrets to context
-        context.insert("secrets", &self.secrets);
-
-        // Add checkpoint context (dir and last paths)
-        let last_checkpoint = self.last_checkpoint.read().unwrap();
-        let checkpoint_ctx = serde_json::json!({
-            "dir": self.checkpoint_dir.as_deref().unwrap_or(""),
-            "last": last_checkpoint.as_deref().unwrap_or("")
-        });
-        context.insert("checkpoint", &checkpoint_ctx);
-
-        let cache_key = template.to_string();
-
-        // Fast path: check cache with read lock
-        {
-            let cache = self.template_cache.read().unwrap();
-            if let Some(name) = cache.get(&cache_key) {
-                let tera = self.tera.read().unwrap();
-                return tera
-                    .render(name, &context)
-                    .map_err(|e| TeaError::Template(e.to_string()));
-            }
-        }
-
-        // Slow path: compile and cache with write locks
-        // Lock ordering: template_cache before tera to prevent deadlocks
-        let name = {
-            let mut cache = self.template_cache.write().unwrap();
-
-            // Double-check after acquiring write lock (another thread may have cached it)
-            if let Some(name) = cache.get(&cache_key) {
-                let tera = self.tera.read().unwrap();
-                return tera
-                    .render(name, &context)
-                    .map_err(|e| TeaError::Template(e.to_string()));
-            }
-
-            let name = format!("__cached_{}", cache.len());
-
-            // Add template to Tera (requires write lock on tera)
-            {
-                let mut tera = self.tera.write().unwrap();
-                tera.add_raw_template(&name, template).map_err(|e| {
-                    TeaError::Template(format!("Failed to compile template: {}", e))
-                })?;
-            }
-
-            cache.insert(cache_key, name.clone());
-            name
-        };
-
-        // Render from cached template
-        let tera = self.tera.read().unwrap();
-        tera.render(&name, &context)
-            .map_err(|e| TeaError::Template(e.to_string()))
+        self.template_processor.render(template, state, variables)
     }
 
     /// Process template substitutions in action parameters
@@ -1024,51 +224,8 @@ impl YamlEngine {
         state: &JsonValue,
         variables: &HashMap<String, JsonValue>,
     ) -> TeaResult<HashMap<String, JsonValue>> {
-        let mut result = HashMap::new();
-
-        for (key, value) in params {
-            result.insert(key.clone(), self.process_value(value, state, variables)?);
-        }
-
-        Ok(result)
-    }
-
-    /// Process template substitutions in a single value
-    fn process_value(
-        &self,
-        value: &JsonValue,
-        state: &JsonValue,
-        variables: &HashMap<String, JsonValue>,
-    ) -> TeaResult<JsonValue> {
-        match value {
-            JsonValue::String(s) => {
-                if s.contains("{{") && s.contains("}}") {
-                    let rendered = self.render_template(s, state, variables)?;
-                    // Try to parse as JSON, fallback to string
-                    match serde_json::from_str(&rendered) {
-                        Ok(v) => Ok(v),
-                        Err(_) => Ok(JsonValue::String(rendered)),
-                    }
-                } else {
-                    Ok(value.clone())
-                }
-            }
-            JsonValue::Array(arr) => {
-                let processed: Result<Vec<_>, _> = arr
-                    .iter()
-                    .map(|v| self.process_value(v, state, variables))
-                    .collect();
-                Ok(JsonValue::Array(processed?))
-            }
-            JsonValue::Object(obj) => {
-                let mut map = serde_json::Map::new();
-                for (k, v) in obj {
-                    map.insert(k.clone(), self.process_value(v, state, variables)?);
-                }
-                Ok(JsonValue::Object(map))
-            }
-            _ => Ok(value.clone()),
-        }
+        self.template_processor
+            .process_params(params, state, variables)
     }
 
     /// TEA-RUST-029: Evaluate a condition expression using Tera
@@ -1105,95 +262,7 @@ impl YamlEngine {
     /// assert!(!engine.eval_condition("!ready", &state).unwrap());
     /// ```
     pub fn eval_condition(&self, expr: &str, state: &JsonValue) -> TeaResult<bool> {
-        let expr = expr.trim();
-
-        // Empty expression is falsy
-        if expr.is_empty() {
-            return Ok(false);
-        }
-
-        // Handle simple negation: "!variable"
-        if let Some(stripped) = expr.strip_prefix('!') {
-            let var_name = stripped.trim();
-            if !var_name.starts_with('{') && is_identifier(var_name) {
-                return self.get_state_bool(state, var_name).map(|v| !v);
-            }
-        }
-
-        // Handle simple variable reference: "variable_name"
-        if is_identifier(expr) {
-            return self.get_state_bool(state, expr);
-        }
-
-        // If already a Jinja2 template, process it
-        let template_expr = if expr.contains("{{") || expr.contains("{%") {
-            expr.to_string()
-        } else {
-            // Wrap as Jinja2 expression
-            format!("{{{{ {} }}}}", expr)
-        };
-
-        // Render template and parse as boolean
-        let result = self.render_template(&template_expr, state, &HashMap::new())?;
-        Ok(parse_bool_result(&result))
-    }
-
-    /// TEA-RUST-029: Get a boolean value from state
-    ///
-    /// Looks up a key in state and returns its truthy value.
-    /// Missing keys default to false.
-    fn get_state_bool(&self, state: &JsonValue, key: &str) -> TeaResult<bool> {
-        match state.get(key) {
-            Some(value) => Ok(is_truthy(value)),
-            None => Ok(false), // Default to false for missing keys
-        }
-    }
-}
-
-/// TEA-RUST-029: Check if string is a valid identifier (for variable references)
-///
-/// An identifier starts with a letter or underscore, followed by letters, digits, or underscores.
-fn is_identifier(s: &str) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let mut chars = s.chars();
-    let first = chars.next().unwrap();
-    (first.is_alphabetic() || first == '_') && chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
-/// TEA-RUST-029: Check if a JSON value is truthy
-///
-/// Falsy values: null, false, 0, "", [], {}
-/// Everything else is truthy.
-fn is_truthy(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::Null => false,
-        JsonValue::Bool(b) => *b,
-        JsonValue::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        JsonValue::String(s) => !s.is_empty(),
-        JsonValue::Array(arr) => !arr.is_empty(),
-        JsonValue::Object(obj) => !obj.is_empty(),
-    }
-}
-
-/// TEA-RUST-029: Parse a rendered template result as boolean
-///
-/// Handles Tera output strings and converts to boolean.
-fn parse_bool_result(result: &str) -> bool {
-    let trimmed = result.trim().to_lowercase();
-    match trimmed.as_str() {
-        "true" => true,
-        "false" | "" | "0" | "[]" | "{}" | "none" | "null" => false,
-        _ => {
-            // Try to parse as number
-            if let Ok(n) = trimmed.parse::<f64>() {
-                n != 0.0
-            } else {
-                // Non-empty string is truthy
-                true
-            }
-        }
+        self.template_processor.eval_condition(expr, state)
     }
 }
 
@@ -1212,6 +281,7 @@ impl std::fmt::Debug for YamlEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::START;
     use serde_json::json;
 
     #[test]

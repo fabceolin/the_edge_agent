@@ -72,6 +72,7 @@ from .short_term import (
 # LTM base class and factory (TEA-BUILTIN-001.5, 001.6.4)
 from .base import (
     LTMBackend,
+    LTMTransaction,
     register_backend,
     get_registered_backends,
     create_ltm_backend,
@@ -88,6 +89,42 @@ from .litestream import LitestreamBackend
 
 # Blob SQLite backend (TEA-BUILTIN-001.5)
 from .blob_sqlite import BlobSQLiteBackend
+
+# Turso/libSQL backend (TEA-BUILTIN-001.5)
+try:
+    from .turso import TursoBackend, check_turso_available
+
+    TURSO_AVAILABLE = check_turso_available()
+except ImportError:
+    TursoBackend = None  # type: ignore
+    TURSO_AVAILABLE = False
+
+# Cloudflare D1 backend (TEA-BUILTIN-001.5)
+try:
+    from .d1 import D1Backend, check_d1_available
+
+    D1_AVAILABLE = check_d1_available()
+except ImportError:
+    D1Backend = None  # type: ignore
+    D1_AVAILABLE = False
+
+# Firestore LTM backend (TEA-BUILTIN-001.5)
+try:
+    from .firestore_backend import FirestoreBackend, check_firestore_available
+
+    FIRESTORE_LTM_AVAILABLE = check_firestore_available()
+except ImportError:
+    FirestoreBackend = None  # type: ignore
+    FIRESTORE_LTM_AVAILABLE = False
+
+# PostgreSQL backend (TEA-BUILTIN-001.5)
+try:
+    from .postgres import PostgresBackend, check_postgres_available
+
+    POSTGRES_AVAILABLE = check_postgres_available()
+except ImportError:
+    PostgresBackend = None  # type: ignore
+    POSTGRES_AVAILABLE = False
 
 # Graph backends (TEA-BUILTIN-001.4, 001.7, 001.8)
 from .graph import (
@@ -256,6 +293,7 @@ __all__ = [
     "InMemoryBackend",
     # Long-term memory ABC and factory (TEA-BUILTIN-001.5)
     "LTMBackend",
+    "LTMTransaction",
     "LongTermMemoryBackend",  # Backward compatibility
     "register_backend",
     "get_registered_backends",
@@ -269,6 +307,18 @@ __all__ = [
     "LitestreamBackend",
     # Blob SQLite backend (TEA-BUILTIN-001.5)
     "BlobSQLiteBackend",
+    # Turso backend (TEA-BUILTIN-001.5)
+    "TursoBackend",
+    "TURSO_AVAILABLE",
+    # Cloudflare D1 backend (TEA-BUILTIN-001.5)
+    "D1Backend",
+    "D1_AVAILABLE",
+    # Firestore LTM backend (TEA-BUILTIN-001.5)
+    "FirestoreBackend",
+    "FIRESTORE_LTM_AVAILABLE",
+    # PostgreSQL backend (TEA-BUILTIN-001.5)
+    "PostgresBackend",
+    "POSTGRES_AVAILABLE",
     # Graph backends (TEA-BUILTIN-001.4, 001.7)
     "GraphBackend",
     "CozoBackend",

@@ -296,42 +296,323 @@ class TestOpikConfiguration(unittest.TestCase):
    - Existing tracing (console, file) should work
    - LLM calls should work without Opik features
 
+## QA Notes
+
+### Test Coverage Summary
+
+**Based on:** Test Design Assessment `docs/qa/assessments/TEA-BUILTIN-005.3-test-design-20260107.md`
+
+**Total Test Scenarios:** 21 automated + 3 manual documentation reviews
+
+| Test Level | Count | Percentage |
+|------------|-------|------------|
+| Unit Tests | 17 | 81% |
+| Integration Tests | 4 | 19% |
+| E2E Tests | 0 | 0% |
+
+**Priority Distribution:**
+- **P0 (Critical)**: 6 tests - Configuration precedence and optional dependency handling
+- **P1 (High)**: 11 tests - Core functionality and error handling
+- **P2 (Medium)**: 4 tests - Edge cases and polish
+
+### Risk Areas Identified
+
+#### RISK-001: Configuration Precedence (Critical - P0)
+**Probability × Impact:** High
+
+**Description:** Wrong precedence order could cause production misconfigurations where environment variables fail to override YAML settings, or constructor parameters don't take effect.
+
+**Mitigating Tests:**
+- 005.3-UNIT-003: Verify default configuration baseline
+- 005.3-UNIT-004: YAML settings override defaults
+- 005.3-UNIT-005: Environment vars override YAML
+- 005.3-UNIT-006: Constructor params override environment vars
+- 005.3-UNIT-007: Full precedence chain (all levels active)
+
+**Recommended Test Data Validation:**
+```python
+# Constructor > Env > YAML > Defaults
+project_name:
+  Default: "the-edge-agent"
+  YAML: "yaml-project"
+  Env (OPIK_PROJECT_NAME): "env-project"
+  Constructor (opik_config={"project_name": "..."}): "constructor-project"
+Expected: "constructor-project"
+```
+
+#### RISK-002: Missing SDK Breaks Engine (Critical - P0)
+**Probability × Impact:** High
+
+**Description:** Engine initialization must not fail when optional `opik` SDK is not installed.
+
+**Mitigating Tests:**
+- 005.3-INT-004: YAMLEngine initializes without opik SDK (CRITICAL)
+- 005.3-UNIT-019: Healthcheck returns error when SDK missing
+- 005.3-UNIT-020: OpikExporter disabled gracefully when SDK missing
+
+**Known Issue:** Current test implementation uses `@patch('opik.Opik')` which attempts to import the module, causing failures when SDK not installed. **Fix required:** Use `@unittest.skipUnless(OPIK_AVAILABLE)` or `@patch.dict('sys.modules', {'opik': MagicMock()})`.
+
+#### RISK-003: Users Unable to Troubleshoot Connection Issues (High - P1)
+**Probability × Impact:** Medium-High
+
+**Description:** Poor healthcheck or unhelpful error messages increase support burden.
+
+**Mitigating Tests:**
+- 005.3-UNIT-008: Healthcheck success returns valid response structure
+- 005.3-UNIT-009: Healthcheck with invalid API key
+- 005.3-UNIT-010: Healthcheck with network error
+- 005.3-INT-002: opik.healthcheck action registered and callable
+
+**Expected Response Validation:**
+- Success: `{"success": true, "latency_ms": float, "workspace": str, "project": str}`
+- Error: `{"success": false, "error": str, "message": str}` with actionable guidance
+
+#### RISK-004: Self-Hosted Configuration Undiscoverable (Medium - P1)
+**Probability × Impact:** Medium
+
+**Description:** Enterprise users need self-hosted URL configuration to work reliably.
+
+**Mitigating Tests:**
+- 005.3-UNIT-013: OPIK_URL_OVERRIDE environment variable
+- 005.3-UNIT-014: settings.opik.url in YAML
+- 005.3-INT-003: Self-hosted URL applied to Opik client
+
+#### RISK-005: Unhelpful Error Messages (High - P1)
+**Probability × Impact:** Medium
+
+**Description:** Error messages without actionable guidance cause support escalations.
+
+**Mitigating Tests:**
+- 005.3-UNIT-015: Missing SDK error message
+- 005.3-UNIT-016: Missing API key error message
+- 005.3-UNIT-017: Invalid API key error message
+- 005.3-UNIT-018: Network connectivity error message
+
+**Required Content Validation:**
+
+| Error Condition | Must Include |
+|-----------------|--------------|
+| Missing SDK | "pip install opik" command |
+| Missing API key | Link to https://www.comet.com/opik |
+| Invalid API key | Link to account settings page |
+| Network error | URL that failed + "Check network connectivity" |
+
+### Recommended Test Scenarios
+
+#### Priority 0 Tests (Must Pass - Fail Fast)
+1. **005.3-UNIT-003**: Verify default configuration values baseline
+2. **005.3-UNIT-004**: YAML settings override defaults
+3. **005.3-UNIT-005**: Environment variables override YAML settings
+4. **005.3-UNIT-006**: Constructor parameters override environment variables
+5. **005.3-UNIT-001**: Parse complete YAML settings.opik section
+6. **005.3-INT-004**: YAMLEngine initializes without opik SDK installed
+7. **005.3-INT-002**: opik.healthcheck action registered in actions dict
+
+**Execution Order Rationale:** Configuration precedence tests establish the foundation. Engine initialization without SDK is critical for optional dependency pattern.
+
+#### Priority 1 Tests (Core Functionality)
+1. **005.3-UNIT-007**: Full precedence chain (all 4 levels active)
+2. **005.3-UNIT-008**: Healthcheck success returns valid response
+3. **005.3-UNIT-009**: Healthcheck with invalid API key
+4. **005.3-UNIT-010**: Healthcheck with network error
+5. **005.3-UNIT-011**: Project auto-creation on first trace export
+6. **005.3-UNIT-013**: Self-hosted URL via OPIK_URL_OVERRIDE
+7. **005.3-UNIT-015**: Error message for missing SDK
+8. **005.3-UNIT-016**: Error message for missing API key
+9. **005.3-UNIT-019**: Healthcheck returns error when SDK missing
+10. **005.3-UNIT-020**: OpikExporter disabled when SDK missing
+11. **005.3-INT-001**: YAML settings applied to OpikExporter
+12. **005.3-INT-003**: Self-hosted URL propagated to Opik client
+
+#### Priority 2 Tests (Edge Cases and Polish)
+1. **005.3-UNIT-002**: Parse partial YAML settings with defaults
+2. **005.3-UNIT-012**: Info log emitted on project creation
+3. **005.3-UNIT-014**: Self-hosted URL via settings.opik.url
+4. **005.3-UNIT-017**: Error message for invalid API key format
+5. **005.3-UNIT-018**: Error message for network connectivity issues
+
+#### Manual Documentation Reviews (P2)
+1. **005.3-DOC-001**: CLAUDE.md contains Opik Cloud configuration example
+2. **005.3-DOC-002**: CLAUDE.md contains self-hosted configuration example
+3. **005.3-DOC-003**: CLAUDE.md contains local development configuration example
+
+### Test Implementation Guidance
+
+#### Critical Setup Pattern
+All tests must clear environment variables to prevent cross-test contamination:
+
+```python
+import unittest
+from unittest.mock import patch
+import os
+
+class TestOpikConfiguration(unittest.TestCase):
+    def setUp(self):
+        """Clean environment before each test."""
+        self.env_patcher = patch.dict(os.environ, {}, clear=False)
+        self.env_patcher.start()
+
+        # Remove any existing OPIK_ vars
+        for key in list(os.environ.keys()):
+            if key.startswith("OPIK_"):
+                os.environ.pop(key)
+
+    def tearDown(self):
+        self.env_patcher.stop()
+```
+
+#### Mocking opik SDK (Optional Dependency)
+Two recommended approaches:
+
+```python
+# Approach 1: Skip tests when SDK not available
+try:
+    import opik
+    OPIK_AVAILABLE = True
+except ImportError:
+    OPIK_AVAILABLE = False
+
+@unittest.skipUnless(OPIK_AVAILABLE, "opik SDK not installed")
+def test_healthcheck_success(self):
+    # Test code
+
+# Approach 2: Mock sys.modules (test without SDK)
+from unittest.mock import MagicMock
+
+@patch.dict('sys.modules', {'opik': MagicMock()})
+def test_healthcheck_error_handling(self):
+    # Test code
+```
+
+**CRITICAL FIX REQUIRED:** Current implementation uses `@patch('opik.Opik')` which attempts to import the module. This causes 7 tests to fail when SDK not installed. Apply one of the approaches above.
+
+### Concerns and Blockers
+
+#### Active Concerns
+
+1. **Test Mocking Strategy (BLOCKER for SDK-optional environments)**
+   - **Issue:** 7 tests fail with `ModuleNotFoundError` when opik not installed
+   - **Root Cause:** `@patch('opik.Opik')` and `@patch('opik.configure')` attempt to import before patching
+   - **Affected Tests:**
+     - test_error_message_invalid_api_key
+     - test_error_message_missing_api_key
+     - test_error_message_network_connectivity
+     - test_healthcheck_invalid_key
+     - test_healthcheck_network_error
+     - test_healthcheck_self_hosted_error
+     - test_healthcheck_success
+   - **Fix:** Use `@unittest.skipUnless(OPIK_AVAILABLE)` or `@patch.dict('sys.modules', {'opik': MagicMock()})`
+   - **Impact:** Tests pass 17/24 in CI without opik; 24/24 with opik installed
+   - **Severity:** Medium - Does not affect production, only test execution in clean environments
+
+2. **Test Gap: Real Opik Cloud E2E (ACCEPTED)**
+   - **Gap:** No E2E test with actual Opik Cloud API
+   - **Justification:** Would require API credentials in CI; belongs in separate smoke test suite
+   - **Mitigation:** Integration tests validate all integration points; healthcheck action provides runtime validation
+   - **Status:** Accepted gap
+
+3. **Test Gap: Concurrent Healthcheck Calls (ACCEPTED)**
+   - **Gap:** No test for concurrent healthcheck invocations
+   - **Justification:** Healthcheck is stateless read-only action
+   - **Risk:** Low - no shared mutable state
+   - **Status:** Accepted gap
+
+#### Test Traceability Matrix
+
+| AC | Requirement | Test IDs | P0 | P1 | P2 | Coverage Status |
+|----|-------------|----------|----|----|-----|-----------------|
+| AC1 | YAML settings.opik section | 005.3-UNIT-001, 002, INT-001 | 1 | 2 | 0 | ✓ Complete |
+| AC2 | Config precedence | 005.3-UNIT-003, 004, 005, 006, 007 | 4 | 1 | 0 | ✓ Complete |
+| AC3 | opik.healthcheck action | 005.3-UNIT-008, 009, 010, INT-002 | 1 | 3 | 0 | ✓ Complete |
+| AC4 | Project auto-creation | 005.3-UNIT-011, 012 | 0 | 1 | 1 | ✓ Complete |
+| AC5 | Self-hosted URL config | 005.3-UNIT-013, 014, INT-003 | 0 | 2 | 1 | ✓ Complete |
+| AC6 | Clear error messages | 005.3-UNIT-015, 016, 017, 018 | 0 | 2 | 2 | ✓ Complete |
+| AC7 | Documentation examples | 005.3-DOC-001, 002, 003 (manual) | 0 | 0 | 3 | ✓ Complete |
+| AC8 | Optional dependency | 005.3-INT-004, UNIT-019, 020 | 1 | 2 | 0 | ✓ Complete |
+
+**Total Coverage:** All 8 ACs covered (6 P0 + 13 P1 + 7 P2 = 26 total scenarios including manual reviews)
+
+### Quality Metrics
+
+#### Test Design Quality Checklist
+- [x] Every AC has test coverage
+- [x] Test levels appropriate (81% unit, 19% integration)
+- [x] No duplicate coverage across levels
+- [x] Priorities align with business risk
+- [x] Test IDs follow naming convention (005.3-{LEVEL}-{SEQ})
+- [x] Scenarios are atomic and independent
+- [x] Configuration precedence tested comprehensively (RISK-001)
+- [x] Optional dependency handling tested (RISK-002)
+- [x] Error messages validated for actionable content (RISK-005)
+
+#### Test Execution Strategy
+- **Shift Left:** 81% unit tests provide fast feedback
+- **Risk-Based:** 6 P0 tests focus on critical configuration and SDK-optional patterns
+- **Efficient:** No E2E tests needed - integration tests validate boundaries
+- **Maintainable:** Isolated tests with clean environment setup/teardown
+- **Fast Feedback:** Unit tests run in milliseconds, fail fast on config issues
+
+### Recommendations
+
+1. **IMMEDIATE (P0):** Fix test mocking strategy for 7 failing tests when opik SDK not installed
+   - Apply `@unittest.skipUnless(OPIK_AVAILABLE)` decorator pattern
+   - Or use `@patch.dict('sys.modules', {'opik': MagicMock()})` for mock-based testing
+
+2. **VALIDATION (P1):** Run full precedence chain test (005.3-UNIT-007) to verify all 4 levels work together
+   - Confirms constructor > env > YAML > defaults order
+   - Critical for production configuration correctness
+
+3. **ERROR CONTENT (P1):** Validate error messages include specific actionable content
+   - Check for "pip install opik" in missing SDK error
+   - Verify links to https://www.comet.com/opik in API key errors
+   - Confirm network errors include failed URL
+
+4. **ENVIRONMENT ISOLATION (P1):** Ensure all tests use `patch.dict(os.environ)` to clear OPIK_* variables
+   - Prevents test interdependence
+   - Validates fresh configuration resolution
+
+5. **DOCUMENTATION (P2):** Manual review of CLAUDE.md examples for Cloud, self-hosted, and local dev scenarios
+   - Verify examples are copy-paste ready
+   - Check links to Opik documentation are current
+
 ## QA Results
 
-### Test Design Review
+### Test Design Review (Updated 2026-01-07)
 
 **Reviewer:** Quinn (Test Architect)
-**Date:** 2025-12-18
+**Date:** 2026-01-07 (Updated from 2025-12-18)
 **Status:** ✅ Test Design Complete
 
 #### Test Design Summary
 
 | Metric | Value |
 |--------|-------|
-| Total Test Scenarios | 17 |
-| Unit Tests | 13 (76%) |
-| Integration Tests | 4 (24%) |
+| Total Test Scenarios | 21 |
+| Unit Tests | 17 (81%) |
+| Integration Tests | 4 (19%) |
 | E2E Tests | 0 (0%) |
-| P0 (Critical) | 4 |
-| P1 (High) | 9 |
+| P0 (Critical) | 6 |
+| P1 (High) | 11 |
 | P2 (Medium) | 4 |
 
 #### Test Design Document
 
-**Location:** `docs/qa/assessments/TEA-BUILTIN-005.3-test-design-20251218.md`
+**Location:** `docs/qa/assessments/TEA-BUILTIN-005.3-test-design-20260107.md`
+
+**Previous Version:** `docs/qa/assessments/TEA-BUILTIN-005.3-test-design-20251218.md`
 
 #### Coverage Analysis
 
 | Acceptance Criteria | Test Coverage | Priority Tests |
 |---------------------|---------------|----------------|
 | AC1: YAML settings.opik | 005.3-UNIT-001, 002, INT-001 | P0, P1 |
-| AC2: Config precedence | 005.3-UNIT-003, 004, 005, 006 | P0, P1 |
-| AC3: opik.healthcheck | 005.3-UNIT-007, 008, 009, INT-002 | P0, P1 |
-| AC4: Project auto-creation | 005.3-UNIT-010, 011 | P1, P2 |
-| AC5: Self-hosted URL | 005.3-UNIT-012, 013, INT-003 | P1, P2 |
-| AC6: Clear error messages | 005.3-UNIT-014, 015, 016, 017 | P1, P2 |
-| AC7: Documentation | (Manual review) | - |
-| AC8: Optional dependency | 005.3-INT-004 | P0 |
+| AC2: Config precedence | 005.3-UNIT-003, 004, 005, 006, 007 | P0, P1 |
+| AC3: opik.healthcheck | 005.3-UNIT-008, 009, 010, INT-002 | P0, P1 |
+| AC4: Project auto-creation | 005.3-UNIT-011, 012 | P1, P2 |
+| AC5: Self-hosted URL | 005.3-UNIT-013, 014, INT-003 | P1, P2 |
+| AC6: Clear error messages | 005.3-UNIT-015, 016, 017, 018 | P1, P2 |
+| AC7: Documentation | 005.3-DOC-001, 002, 003 (Manual) | P2 |
+| AC8: Optional dependency | 005.3-INT-004, UNIT-019, 020 | P0, P1 |
 
 #### Configuration Precedence Tests
 
@@ -340,22 +621,31 @@ class TestOpikConfiguration(unittest.TestCase):
 | 005.3-UNIT-003 | Defaults (baseline) | P0 |
 | 005.3-UNIT-004 | YAML overrides defaults | P0 |
 | 005.3-UNIT-005 | Env vars override YAML | P0 |
-| 005.3-UNIT-006 | Constructor overrides env | P1 |
+| 005.3-UNIT-006 | Constructor overrides env | P0 |
+| 005.3-UNIT-007 | Full precedence chain | P1 |
 
 #### Key Risk Mitigations
 
-- **Config precedence wrong**: Tests 005.3-UNIT-003 to 006 verify full precedence chain
-- **Healthcheck unavailable**: Test 005.3-INT-002 verifies action registration
-- **Unclear error messages**: Tests 005.3-UNIT-014 to 017 verify specific error content
-- **SDK dependency breaks engine**: Test 005.3-INT-004 verifies graceful degradation
-- **YAML settings ignored**: Tests 005.3-UNIT-001, 002, INT-001 verify parsing and application
+- **Config precedence wrong (RISK-001)**: Tests 005.3-UNIT-003 to 007 verify full precedence chain
+- **Missing SDK breaks engine (RISK-002)**: Test 005.3-INT-004 verifies graceful degradation
+- **Users unable to troubleshoot (RISK-003)**: Tests 005.3-UNIT-008 to 010, INT-002 validate healthcheck
+- **Self-hosted config undiscoverable (RISK-004)**: Tests 005.3-UNIT-013, 014, INT-003 verify URL configuration
+- **Unhelpful error messages (RISK-005)**: Tests 005.3-UNIT-015 to 018 verify actionable error content
 
-#### Recommendations
+#### Test Design Highlights
 
-1. **Configuration precedence tests are critical** - these prevent misconfigurations in production
-2. Clear environment variables before each test with `unittest.mock.patch.dict(os.environ, {}, clear=True)`
-3. Test healthcheck with mocked Opik SDK - no real API calls
-4. Verify all error messages include actionable guidance (URLs, commands)
+1. **Configuration precedence is critical (4 P0 tests)** - Prevents production misconfigurations (RISK-001)
+2. **Optional dependency handling (3 tests, 2 P0)** - Engine must work without opik SDK (RISK-002)
+3. **Comprehensive error message validation (4 tests)** - All errors include actionable guidance with URLs/commands (RISK-005)
+4. **Test mocking guidance provided** - Use `@unittest.skipUnless(OPIK_AVAILABLE)` or mock `sys.modules` to avoid import errors
+5. **Clean environment setup** - Clear `OPIK_*` env vars before each test to ensure isolation
+
+#### Updated Recommendations
+
+1. **Fix test mocking for SDK-optional tests**: Update `@patch('opik.Opik')` to use `@unittest.skipUnless(OPIK_AVAILABLE)` or `@patch.dict('sys.modules', {'opik': MagicMock()})` to prevent import errors when SDK not installed
+2. **Validate precedence chain comprehensively**: Run 005.3-UNIT-007 to ensure all 4 precedence levels work correctly together
+3. **Test error message content, not just presence**: Verify messages include actionable URLs and commands (e.g., "pip install opik", links to Opik docs)
+4. **Environment isolation**: Use `patch.dict(os.environ)` and clear all `OPIK_*` vars before each test to prevent test interdependence
 
 ---
 

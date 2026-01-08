@@ -20,6 +20,18 @@ This directory contains example workflows for The Edge Agent. All YAML agents in
 | `yaml/analysis_subgraph.yaml` | Subgraph used by the subgraph mode example |
 | `yaml/dynamic_parallel_fail_fast.yaml` | Validation with fail-fast behavior |
 
+### Stream Pipeline Examples (`yaml/`)
+
+> **Note**: Stream examples require Unix-like OS (Linux/macOS). Windows not supported.
+
+| File | Description |
+|------|-------------|
+| `yaml/stream_pipeline.yaml` | Producer -> Transformer -> Consumer streaming pipeline |
+| `yaml/stream_broadcast.yaml` | Broadcast stream to multiple parallel consumers |
+| `yaml/stream_hybrid.yaml` | Hybrid state + stream workflow with checkpointing |
+
+These examples demonstrate Unix-style pipe streaming between nodes. See [Stream Channels](../docs/shared/yaml-reference/streams.md) for details.
+
 ## Python Examples
 
 | File | Description |

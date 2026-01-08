@@ -40,6 +40,7 @@ Actions are organized by domain:
 - auth_actions: Authentication verification (auth.verify, auth.get_user) (TEA-BUILTIN-015.3)
 - error_actions: Error handling actions (error.is_retryable, error.clear, error.retry) (TEA-BUILTIN-015.6)
 - a2a_actions: Inter-agent communication (send, receive, broadcast, delegate, state, discover) (TEA-AGENT-001.5)
+- semtools_actions: Semantic search using SemTools CLI (TEA-BUILTIN-014)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -154,6 +155,12 @@ from .error_actions import register_actions as register_error
 
 # TEA-AGENT-001.5: Inter-Agent Communication
 from .a2a_actions import register_actions as register_a2a
+
+# TEA-AGENT-001.9: TextGrad Learning
+from .textgrad_actions import register_actions as register_textgrad
+
+# TEA-BUILTIN-014: SemTools Semantic Search
+from .semtools_actions import register_actions as register_semtools
 
 # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
 from .catalog_actions import register_actions as register_catalog
@@ -274,6 +281,12 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-AGENT-001.5: Inter-Agent Communication
     register_a2a(registry, engine)
+
+    # TEA-AGENT-001.9: TextGrad Learning
+    register_textgrad(registry, engine)
+
+    # TEA-BUILTIN-014: SemTools Semantic Search
+    register_semtools(registry, engine)
 
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
     register_catalog(registry, engine)

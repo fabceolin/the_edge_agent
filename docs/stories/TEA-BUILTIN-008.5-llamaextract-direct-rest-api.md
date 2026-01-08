@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.5: LlamaExtract Direct REST API Integration
 
+## Status
+
+Complete
+
+
 ## Status: Done
 
 ## Story

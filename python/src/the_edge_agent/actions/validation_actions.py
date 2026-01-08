@@ -129,35 +129,72 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Capture workflow state for llm_call closure
         workflow_state = state
 
+        # TEA-YAML-004a: Get LLM defaults from engine settings (AC-1, AC-2)
+        engine_settings = getattr(engine, "_settings", {})
+        llm_settings = engine_settings.get("llm", {})
+        default_provider = llm_settings.get("provider", "ollama")
+        default_model = llm_settings.get("model", "gemma3:4b")
+
         def llm_call(state=None, messages=None, max_tokens=10, **kwargs):
-            """Wrapper to adapt llm.call signature for semantic probes."""
+            """
+            Wrapper to adapt llm.call signature for semantic probes.
+
+            TEA-YAML-004a: Fixed LLM integration with proper provider support.
+            """
+            # TEA-YAML-004a AC-6: Clear error when llm.call is unavailable
             if raw_llm_call is None:
-                return {"response": ""}
+                return {
+                    "response": "",
+                    "error": "llm.call action is not available. Ensure LLM actions are registered.",
+                    "error_type": "llm_call_error",
+                }
 
-            # Get provider/model from the WORKFLOW state (captured in closure)
-            provider = workflow_state.get("llm_provider", "ollama")
-            model_name = workflow_state.get("llm_model", "gemma3:4b")
+            # TEA-YAML-004a AC-3: State-level provider/model override engine defaults
+            provider = workflow_state.get("llm_provider", default_provider)
+            model_name = workflow_state.get("llm_model", default_model)
 
-            # Build model string for litellm (e.g., "ollama/gemma3:4b")
+            # TEA-YAML-004a AC-4, AC-5: Build model string for litellm
+            # Follows llm_actions.py pattern: "provider/model-name"
             if provider == "ollama":
                 full_model = f"ollama/{model_name}"
             elif provider == "azure":
                 full_model = f"azure/{model_name}"
-            else:
+            elif provider == "openai":
+                full_model = f"openai/{model_name}"
+            elif provider == "anthropic":
+                full_model = f"anthropic/{model_name}"
+            elif provider == "auto":
+                # Auto-detect: pass model name directly to litellm
                 full_model = model_name
+            else:
+                # Unknown provider - pass as-is (let litellm handle it)
+                full_model = (
+                    f"{provider}/{model_name}" if "/" not in model_name else model_name
+                )
 
-            # Call the action with positional args (state, model, messages)
-            result = raw_llm_call(
-                state or {},  # positional: state
-                full_model,  # positional: model
-                messages or [],  # positional: messages
-                max_tokens=max_tokens,
-            )
+            try:
+                # Call the action with positional args (state, model, messages)
+                result = raw_llm_call(
+                    state or {},  # positional: state
+                    full_model,  # positional: model
+                    messages or [],  # positional: messages
+                    max_tokens=max_tokens,
+                )
 
-            # Adapt response format for semantic probe executor
-            if isinstance(result, dict) and "content" in result:
-                return {"response": result["content"]}
-            return result
+                # Adapt response format for semantic probe executor
+                if isinstance(result, dict) and "content" in result:
+                    return {"response": result["content"]}
+                return result
+
+            except Exception as e:
+                # TEA-YAML-004a AC-7, AC-8: Error includes provider, model, and reason
+                return {
+                    "response": "",
+                    "error": f"LLM call failed with provider={provider}, model={model_name}: {str(e)}",
+                    "error_type": "llm_call_error",
+                    "provider": provider,
+                    "model": model_name,
+                }
 
         # Get Prolog runtime from engine
         prolog_runtime = getattr(engine, "_prolog_runtime", None)

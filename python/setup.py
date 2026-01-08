@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.0",
+    version="0.9.4",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -28,7 +28,7 @@ setup(
     ],
     python_requires=">=3.7",
     install_requires=[
-        "networkx==3.3",
+        "networkx>=3.3",
         # "pygraphviz==1.13",  # REMOVED: Requires gcc, not available in Firebase emulator
         "pyyaml>=6.0",
         "jinja2>=3.0",  # TEA-YAML-001: Template engine for declarative workflows
@@ -38,6 +38,7 @@ setup(
         "typer>=0.9.0",  # TEA-CLI-004: CLI subcommand support
         "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
         "pydantic>=2.0.0",  # TEA-BUILTIN-015: Required for session, error_handling, http settings
+        "pydot>=2.0.0",  # TEA-TOOLS-001: DOT/Graphviz parsing for tea from dot
     ],
     entry_points={
         "console_scripts": [
@@ -68,6 +69,12 @@ setup(
         ],
         "rag": ["openai>=1.13.3", "numpy>=2.1.0"],
         "rag-chroma": ["openai>=1.13.3", "numpy>=2.1.0", "chromadb>=0.4.0"],
+        "search": [
+            "model2vec>=0.3.0",  # TEA-BUILTIN-002.4: Local embeddings
+            "lancedb>=0.4.0",  # TEA-BUILTIN-002.5: Persistent vector store
+            "pyarrow>=14.0.0",  # Required by lancedb
+            "numpy>=2.1.0",
+        ],
         "llm": ["openai>=1.13.3"],
         "litellm": ["litellm>=1.0.0"],  # TEA-LLM-003: LiteLLM multi-provider support
         "web": ["requests>=2.32.5"],

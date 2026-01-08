@@ -32,6 +32,7 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from itertools import product
 from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -119,6 +120,50 @@ class NodeFactory:
         # Handle dynamic_parallel node type (TEA-YAML-006)
         if node_type == "dynamic_parallel":
             run_func = self._create_dynamic_parallel_function(node_config)
+            # Wrap with auto-trace if enabled
+            if (
+                run_func is not None
+                and self._engine._auto_trace
+                and self._engine._trace_context is not None
+            ):
+                run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+            # TEA-OBS-001.1: Wrap with observability if enabled
+            if (
+                run_func is not None
+                and self._engine._enable_observability
+                and self._engine._observability_context is not None
+            ):
+                run_func = self._wrap_with_observability(
+                    run_func, node_name, node_config
+                )
+            graph.add_node(node_name, run=run_func)
+            return
+
+        # YE.2: Handle strategy.matrix for static matrix combinations (AC: 1-7)
+        if "strategy" in node_config and "matrix" in node_config.get("strategy", {}):
+            run_func = self._create_matrix_strategy_function(node_config)
+            # Wrap with auto-trace if enabled
+            if (
+                run_func is not None
+                and self._engine._auto_trace
+                and self._engine._trace_context is not None
+            ):
+                run_func = self._wrap_with_auto_trace(run_func, node_name, node_config)
+            # TEA-OBS-001.1: Wrap with observability if enabled
+            if (
+                run_func is not None
+                and self._engine._enable_observability
+                and self._engine._observability_context is not None
+            ):
+                run_func = self._wrap_with_observability(
+                    run_func, node_name, node_config
+                )
+            graph.add_node(node_name, run=run_func)
+            return
+
+        # YE.2: Handle parallel_each for dynamic parallelism (AC: 8-13)
+        if "parallel_each" in node_config:
+            run_func = self._create_parallel_each_function(node_config)
             # Wrap with auto-trace if enabled
             if (
                 run_func is not None
@@ -1067,8 +1112,13 @@ class NodeFactory:
         input_mapping = node_config.get("input", {})
         fan_in_target = node_config.get("fan_in")
         parallel_config = node_config.get("parallel_config", {})
-        max_concurrency = parallel_config.get("max_concurrency")
-        fail_fast = parallel_config.get("fail_fast", False)
+        # Support both top-level and nested syntax (top-level takes precedence)
+        max_concurrency = node_config.get("max_concurrency") or parallel_config.get(
+            "max_concurrency"
+        )
+        fail_fast = node_config.get(
+            "fail_fast", parallel_config.get("fail_fast", False)
+        )
 
         # Parse-time validation (AC: 9)
         if not items_expr:
@@ -1466,3 +1516,507 @@ class NodeFactory:
             return final_state
 
         return run_branch
+
+    def _create_matrix_strategy_function(self, node_config: Dict[str, Any]) -> Callable:
+        """
+        Create a function that executes matrix strategy parallel execution.
+
+        YE.2: Matrix strategy for static parallel combinations (AC: 1-7).
+
+        Args:
+            node_config: Node configuration with:
+                - name: Node name
+                - strategy.matrix: Dict of parameter names to value lists
+                - strategy.fail_fast: Stop on first failure (default: False)
+                - strategy.max_parallel: Limit concurrent executions
+                - fan_in: Target node name for results
+                - run/uses/steps: Node execution config
+
+        Returns:
+            Callable that executes the matrix parallel execution
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        node_name = node_config["name"]
+        strategy = node_config.get("strategy", {})
+        matrix_config = strategy.get("matrix", {})
+        fail_fast = strategy.get("fail_fast", False)
+        max_parallel = strategy.get("max_parallel")
+        fan_in_target = node_config.get("fan_in")
+
+        # Validation (AC: 25)
+        if not matrix_config:
+            raise ValueError(
+                f"Matrix strategy node '{node_name}' requires 'strategy.matrix' "
+                f"with at least one parameter"
+            )
+
+        if not fan_in_target:
+            raise ValueError(
+                f"Matrix strategy node '{node_name}' requires 'fan_in' target node"
+            )
+
+        # Validate all matrix values are lists (AC: 2)
+        for key, values in matrix_config.items():
+            if not isinstance(values, list):
+                raise ValueError(
+                    f"Matrix strategy node '{node_name}': matrix.{key} must be a list, "
+                    f"got {type(values).__name__}"
+                )
+            if len(values) == 0:
+                raise ValueError(
+                    f"Matrix strategy node '{node_name}': matrix.{key} cannot be empty"
+                )
+
+        # Validate max_parallel if specified (AC: 7)
+        if max_parallel is not None:
+            if not isinstance(max_parallel, int) or max_parallel < 1:
+                raise ValueError(
+                    f"Matrix strategy node '{node_name}': strategy.max_parallel must be "
+                    f"positive integer, got {max_parallel}"
+                )
+
+        # Generate matrix combinations (AC: 3)
+        matrix_keys = list(matrix_config.keys())
+        matrix_values = [matrix_config[k] for k in matrix_keys]
+        combinations = [
+            dict(zip(matrix_keys, combo)) for combo in product(*matrix_values)
+        ]
+
+        # Create base run function for single execution
+        base_run_func = self.create_run_function(node_config)
+        if base_run_func is None:
+            raise ValueError(
+                f"Matrix strategy node '{node_name}' requires one of: run, uses, steps"
+            )
+
+        # Capture references for closure
+        engine = self._engine
+        trace_context = engine._trace_context
+        enable_tracing = engine._enable_tracing
+
+        def run_matrix_strategy(state, **kwargs):
+            """Execute all matrix combinations in parallel."""
+            import time as time_module
+
+            start_time = time_module.time()
+            item_count = len(combinations)
+
+            # Emit MatrixStart event
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "MatrixStart",
+                        "node_name": node_name,
+                        "combinations": item_count,
+                        "matrix_config": matrix_config,
+                    }
+                )
+
+            # Create parallel flow results
+            parallel_results: List[ParallelFlowResult] = []
+            completed_count = 0
+            failed_count = 0
+
+            # Create cancellation token for fail_fast (AC: 6)
+            cancellation_token = CancellationToken()
+
+            # Create semaphore for max_parallel (AC: 7)
+            semaphore = None
+            if max_parallel is not None:
+                semaphore = threading.Semaphore(max_parallel)
+
+            def execute_matrix_branch(
+                combo_index: int, matrix_combo: Dict[str, Any]
+            ) -> ParallelFlowResult:
+                """Execute a single matrix combination."""
+                branch_start = time_module.time()
+                branch_name = f"{node_name}[{combo_index}]"
+
+                # Check cancellation before starting (AC: 6)
+                if fail_fast and cancellation_token.is_cancelled():
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=False,
+                        state={},
+                        error="Cancelled due to fail_fast",
+                        timing_ms=0,
+                    )
+
+                # Acquire semaphore if max_parallel is set
+                if semaphore is not None:
+                    semaphore.acquire()
+
+                try:
+                    # Deep copy state and inject matrix context (AC: 4)
+                    branch_state = copy.deepcopy(state)
+                    branch_state["matrix"] = matrix_combo
+
+                    # Process node templates with matrix in extra_context
+                    # Execute the base function with matrix context
+                    result_state = base_run_func(branch_state, **kwargs)
+
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    # Structure result (AC: 17)
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=True,
+                        state={
+                            "matrix": matrix_combo,
+                            "result": (
+                                result_state if isinstance(result_state, dict) else {}
+                            ),
+                        },
+                        error=None,
+                        timing_ms=timing_ms,
+                    )
+
+                except Exception as e:
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    # Trigger cancellation on failure if fail_fast (AC: 6)
+                    if fail_fast:
+                        cancellation_token.cancel()
+
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=False,
+                        state={"matrix": matrix_combo},
+                        error=str(e),
+                        timing_ms=timing_ms,
+                    )
+                finally:
+                    # Release semaphore
+                    if semaphore is not None:
+                        semaphore.release()
+
+            # Execute branches in parallel using ThreadPoolExecutor (AC: 3)
+            max_workers = max_parallel if max_parallel else min(32, item_count)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(execute_matrix_branch, idx, combo): idx
+                    for idx, combo in enumerate(combinations)
+                }
+
+                for future in as_completed(futures):
+                    result = future.result()
+                    parallel_results.append(result)
+                    if result.success:
+                        completed_count += 1
+                    else:
+                        failed_count += 1
+
+            # Sort results for deterministic ordering (AC: 19)
+            parallel_results.sort(key=lambda r: int(r.branch.split("[")[1].rstrip("]")))
+
+            end_time = time_module.time()
+            total_timing_ms = int((end_time - start_time) * 1000)
+
+            # Emit MatrixEnd event
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "MatrixEnd",
+                        "node_name": node_name,
+                        "completed": completed_count,
+                        "failed": failed_count,
+                        "total_timing_ms": total_timing_ms,
+                    }
+                )
+
+            # Return parallel_results for fan-in node (AC: 5, 20)
+            return {"parallel_results": parallel_results}
+
+        return run_matrix_strategy
+
+    def _create_parallel_each_function(self, node_config: Dict[str, Any]) -> Callable:
+        """
+        Create a function that executes parallel_each dynamic parallelism.
+
+        YE.2: Dynamic parallelism based on state list (AC: 8-13).
+
+        Args:
+            node_config: Node configuration with:
+                - name: Node name
+                - parallel_each: Jinja2 expression returning iterable
+                - fan_in: Target node name for results
+                - max_workers: Optional per-node worker limit (AC: 16)
+                - run/uses/steps: Node execution config
+
+        Returns:
+            Callable that executes the parallel_each operation
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        node_name = node_config["name"]
+        parallel_each_expr = node_config.get("parallel_each")
+        fan_in_target = node_config.get("fan_in")
+        per_node_max_workers = node_config.get("max_workers")
+
+        # Validation (AC: 25)
+        if not parallel_each_expr:
+            raise ValueError(
+                f"parallel_each node '{node_name}' requires 'parallel_each' expression"
+            )
+
+        if not fan_in_target:
+            raise ValueError(
+                f"parallel_each node '{node_name}' requires 'fan_in' target node"
+            )
+
+        # Validate per_node_max_workers if specified (AC: 16)
+        if per_node_max_workers is not None:
+            if not isinstance(per_node_max_workers, int) or per_node_max_workers < 1:
+                raise ValueError(
+                    f"parallel_each node '{node_name}': max_workers must be "
+                    f"positive integer, got {per_node_max_workers}"
+                )
+
+        # Create base run function for single execution
+        base_run_func = self.create_run_function(node_config)
+        if base_run_func is None:
+            raise ValueError(
+                f"parallel_each node '{node_name}' requires one of: run, uses, steps"
+            )
+
+        # Capture references for closure
+        engine = self._engine
+        trace_context = engine._trace_context
+        enable_tracing = engine._enable_tracing
+
+        def run_parallel_each(state, **kwargs):
+            """Execute parallel_each over items from state."""
+            import time as time_module
+
+            start_time = time_module.time()
+
+            # Evaluate parallel_each expression at runtime (AC: 9)
+            try:
+                items = engine._process_template(parallel_each_expr, state)
+            except Exception as e:
+                raise ValueError(
+                    f"parallel_each node '{node_name}': failed to evaluate "
+                    f"expression '{parallel_each_expr}': {e}"
+                ) from e
+
+            # Validate items is iterable (AC: 9, 25)
+            if items is None:
+                items = []
+            elif not hasattr(items, "__iter__") or isinstance(items, (str, bytes)):
+                raise ValueError(
+                    f"parallel_each node '{node_name}': parallel_each expression must "
+                    f"return an iterable, got {type(items).__name__}"
+                )
+
+            # Convert to list for indexing
+            items_list = list(items)
+            item_count = len(items_list)
+
+            # Emit ParallelEachStart event
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "ParallelEachStart",
+                        "node_name": node_name,
+                        "item_count": item_count,
+                    }
+                )
+
+            # Handle empty list (AC: 13)
+            if item_count == 0:
+                if enable_tracing and trace_context is not None:
+                    end_time = time_module.time()
+                    trace_context.log_event(
+                        event={
+                            "event_type": "ParallelEachEnd",
+                            "node_name": node_name,
+                            "completed": 0,
+                            "failed": 0,
+                            "total_timing_ms": int((end_time - start_time) * 1000),
+                        }
+                    )
+                return {"parallel_results": []}
+
+            # Create parallel flow results
+            parallel_results: List[ParallelFlowResult] = []
+            completed_count = 0
+            failed_count = 0
+
+            def execute_item_branch(index: int, item: Any) -> ParallelFlowResult:
+                """Execute a single item branch."""
+                branch_start = time_module.time()
+                branch_name = f"{node_name}[{index}]"
+
+                try:
+                    # Deep copy state and inject item context (AC: 10, 11)
+                    branch_state = copy.deepcopy(state)
+                    branch_state["item"] = item
+                    branch_state["item_index"] = index
+
+                    # Execute the base function with item context
+                    result_state = base_run_func(branch_state, **kwargs)
+
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    # Structure result (AC: 18)
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=True,
+                        state={
+                            "item": item,
+                            "index": index,
+                            "result": (
+                                result_state if isinstance(result_state, dict) else {}
+                            ),
+                        },
+                        error=None,
+                        timing_ms=timing_ms,
+                    )
+
+                except Exception as e:
+                    branch_end = time_module.time()
+                    timing_ms = int((branch_end - branch_start) * 1000)
+
+                    return ParallelFlowResult(
+                        branch=branch_name,
+                        success=False,
+                        state={"item": item, "index": index},
+                        error=str(e),
+                        timing_ms=timing_ms,
+                    )
+
+            # Determine max workers - per-node override or graph default (AC: 14, 15, 16)
+            graph_max_workers = getattr(engine, "_graph_max_workers", None)
+            max_workers = (
+                per_node_max_workers or graph_max_workers or min(32, item_count)
+            )
+
+            # Execute branches in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(execute_item_branch, idx, item): idx
+                    for idx, item in enumerate(items_list)
+                }
+
+                for future in as_completed(futures):
+                    result = future.result()
+                    parallel_results.append(result)
+                    if result.success:
+                        completed_count += 1
+                    else:
+                        failed_count += 1
+
+            # Sort results by index for deterministic ordering (AC: 12, 19)
+            parallel_results.sort(key=lambda r: int(r.branch.split("[")[1].rstrip("]")))
+
+            end_time = time_module.time()
+            total_timing_ms = int((end_time - start_time) * 1000)
+
+            # Emit ParallelEachEnd event
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(
+                    event={
+                        "event_type": "ParallelEachEnd",
+                        "node_name": node_name,
+                        "completed": completed_count,
+                        "failed": failed_count,
+                        "total_timing_ms": total_timing_ms,
+                    }
+                )
+
+            # Return parallel_results for fan-in node (AC: 12, 20)
+            return {"parallel_results": parallel_results}
+
+        return run_parallel_each
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TEA-STREAM-001.4: Stream Configuration Dataclasses
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from dataclasses import dataclass
+
+
+@dataclass
+class NodeStreamsConfig:
+    """
+    Stream configuration for a node.
+
+    Specifies which stream channels a node reads from (stdin) and writes to
+    (stdout/stderr). Used for Unix pipe-based streaming between processes.
+
+    Attributes:
+        stdin: Channel name to read from (consumer)
+        stdout: Channel name to write to (producer)
+        stderr: Channel name for error output
+    """
+
+    stdin: Optional[str] = None
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any]) -> Optional["NodeStreamsConfig"]:
+        """
+        Create NodeStreamsConfig from YAML dict.
+
+        Args:
+            config: Node configuration dict with optional 'streams' key
+
+        Returns:
+            NodeStreamsConfig if streams block exists, None otherwise
+        """
+        streams = config.get("streams")
+        if not streams:
+            return None
+
+        return cls(
+            stdin=streams.get("stdin"),
+            stdout=streams.get("stdout"),
+            stderr=streams.get("stderr"),
+        )
+
+
+@dataclass
+class StreamSettings:
+    """
+    Global stream settings from YAML settings.parallel.streams.
+
+    Controls whether streaming is enabled and configures pipe buffer size
+    and timeout settings.
+
+    Attributes:
+        enabled: Whether streaming is enabled (default False, opt-in)
+        buffer_size: Pipe buffer size in bytes (default 64KB)
+        timeout: Stream timeout in seconds (None = no timeout)
+    """
+
+    enabled: bool = False
+    buffer_size: int = 65536
+    timeout: Optional[int] = None
+
+    @classmethod
+    def from_dict(cls, settings: Dict[str, Any]) -> "StreamSettings":
+        """
+        Create StreamSettings from YAML settings dict.
+
+        Args:
+            settings: Full settings dict from YAML
+
+        Returns:
+            StreamSettings with parsed values
+        """
+        parallel = settings.get("parallel", {})
+        stream_config = parallel.get("streams", {})
+
+        return cls(
+            enabled=stream_config.get("enabled", False),
+            buffer_size=stream_config.get("buffer_size", 65536),
+            timeout=stream_config.get("timeout"),
+        )

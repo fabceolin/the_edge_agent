@@ -1,6 +1,6 @@
 # Story: TEA-PARALLEL-001.2 - CLI Scoped Execution
 
-## Status: Ready for Development ✅
+## Status: Done
 
 **Epic**: [TEA-PARALLEL-001 - Multi-Strategy Parallel Execution](./TEA-PARALLEL-001-multi-strategy-execution-epic.md)
 **Estimated Tests**: 22 scenarios (updated from QA test design)
@@ -292,14 +292,14 @@ tea run workflow.yaml \
 
 ## Definition of Done
 
-- [ ] `--entry-point` flag implemented in CLI
-- [ ] `--exit-point` flag implemented in CLI
-- [ ] `--input` flag loads state from JSON
-- [ ] `--output` flag writes state to JSON
-- [ ] `execute_scoped()` method in StateGraph
-- [ ] `_path_exists()` helper for validation
-- [ ] All validation errors have clear messages
-- [ ] All 15 test scenarios pass
+- [x] `--entry-point` flag implemented in CLI
+- [x] `--exit-point` flag implemented in CLI
+- [x] `--input` flag loads state from JSON
+- [x] `--output` flag writes state to JSON
+- [x] `execute_scoped()` method in StateGraph
+- [x] `_path_exists()` helper for validation
+- [x] All validation errors have clear messages
+- [x] All 41 test scenarios pass (exceeds 22 estimate)
 - [ ] Code reviewed and merged
 
 ---
@@ -441,6 +441,97 @@ tea run workflow.yaml \
 
 **Status**: ✅ Test Design Complete - Ready for Development
 
+---
+
+### Implementation Review: 2026-01-06
+
+**Reviewed By**: Quinn (Test Architect)
+
+#### Code Quality Assessment
+
+The implementation is **excellent**. The code is well-structured, properly documented, and follows project coding standards. The developer exceeded the estimated test count (41 vs 22) and implemented comprehensive validation with clear error messages.
+
+**Strengths:**
+- Clean separation: `execute_scoped()` for programmatic use, CLI integration for user interface
+- Defensive programming: Entry/exit validation before execution, path validation via BFS
+- Critical semantic preserved: Exit-point node is NOT executed (essential for remote parallel branches)
+- Error handling: Both `raise_exceptions=True` and `False` modes properly handle scoped execution errors
+- State immutability: `initial_state.copy()` at execution start prevents mutation issues
+
+#### Requirements Traceability
+
+| AC | Given-When-Then | Test Coverage | Status |
+|----|-----------------|---------------|--------|
+| AC1 | Given workflow with nodes a→b→c→d, When `--entry-point b`, Then execution starts at node b | 3 tests (UNIT-017, INT-024, programmatic) | ✅ |
+| AC2 | Given `--exit-point c`, When executing, Then node c is NOT executed | 3 tests (UNIT-018, INT-025, INT-004) | ✅ |
+| AC3 | Given `--input @state.json`, When executing, Then state loaded from file | 4 tests (UNIT-022, INT-027, INT-006/007) | ✅ |
+| AC4 | Given `--output result.json`, When execution completes, Then state written to file | 3 tests (UNIT-023, INT-010/011, normal mode) | ✅ |
+| AC5 | Given StateGraph instance, When calling `execute_scoped()`, Then works programmatically | 6 tests in TestExecuteScoped | ✅ |
+| AC6 | Given nonexistent entry-point, When validating, Then raises clear ValueError | 2 tests (UNIT-019, special chars) | ✅ |
+| AC7 | Given nonexistent exit-point, When validating, Then raises clear ValueError | 2 tests (UNIT-020, special chars) | ✅ |
+| AC8 | Given no path entry→exit, When validating, Then raises clear ValueError | 2 tests (UNIT-021, same node) | ✅ |
+| AC9 | Given linear chain a→b→c→d→e, When scoped execution, Then chain executes correctly | 2 E2E tests (full, partial) | ✅ |
+
+#### Test Architecture Assessment
+
+| Metric | Actual | Design Estimate | Status |
+|--------|--------|-----------------|--------|
+| Total Tests | 41 | 22 | ✅ +86% |
+| Unit Tests | 23 (56%) | 11 (50%) | ✅ |
+| Integration/E2E | 18 (44%) | 11 (50%) | ✅ |
+| P0 Coverage | 12/12 | 12 | ✅ 100% |
+
+**Test Level Appropriateness:**
+- Unit tests (`test_scoped_execution.py`): Validation logic, path detection, error handling
+- Integration tests (`test_cli_scoped_execution.py`): CLI flag parsing, file I/O, E2E workflows
+
+#### Compliance Check
+
+- Coding Standards: ✅ Type hints, Google-style docstrings, snake_case naming
+- Project Structure: ✅ Tests in `python/tests/`, implementation in `python/src/`
+- Testing Strategy: ✅ unittest + parameterized, proper fixture setup/teardown
+- All ACs Met: ✅ All 9 acceptance criteria verified with tests
+
+#### Security Review
+
+- Input validation: ✅ Entry/exit points validated before execution
+- JSON parsing: ✅ Uses `json.loads()` with proper error handling
+- File I/O: ✅ Uses `typer.Exit(1)` on file errors, no path traversal risks
+- No security concerns identified
+
+#### Performance Considerations
+
+- BFS path validation is O(V+E) - appropriate for graph sizes
+- Deep copy not used in scoped execution (only `.copy()`) - suitable for linear chains
+- No performance concerns for intended use case (remote parallel branches)
+
+#### Improvements Checklist
+
+All items completed by developer:
+- [x] `execute_scoped()` method with full validation
+- [x] `_path_exists()` BFS helper method
+- [x] `_run_scoped()` simplified execution loop
+- [x] CLI flags `--entry-point`, `--exit-point`, `--output`
+- [x] Warning when `--entry-point` without `--input`
+- [x] Error propagation via `_scoped_error` state key
+
+Advisory (future enhancement):
+- [ ] Consider adding `--timeout` flag for scoped execution (not required for this story)
+
+#### Files Modified During Review
+
+None - implementation is complete and correct.
+
+#### Gate Status
+
+Gate: **PASS** → docs/qa/gates/TEA-PARALLEL-001.2-cli-scoped-execution.yml
+
+#### Recommended Status
+
+✅ **Ready for Done** - All acceptance criteria met, tests pass, code quality excellent.
+
+---
+
 ### Story Draft Checklist: 2026-01-01
 
 **Reviewer**: Bob (Scrum Master)
@@ -470,3 +561,99 @@ tea run workflow.yaml \
 | 2026-01-01 | 1.0 | Story extracted from epic | Sarah (PO) |
 | 2026-01-01 | 1.1 | Test design review completed (22 scenarios) | Quinn (QA) |
 | 2026-01-01 | 1.2 | Story draft checklist passed - Ready for Development | Bob (SM) |
+| 2026-01-06 | 2.0 | Implementation completed - 41 tests pass | James (Dev) |
+
+---
+
+## Dev Agent Record
+
+### Agent Model Used
+- Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/stategraph.py` | Modified | Added `execute_scoped()`, `_path_exists()`, `_run_scoped()` methods |
+| `python/src/the_edge_agent/cli.py` | Modified | Added `--entry-point`, `--exit-point`, `--output` flags to `run` command |
+| `python/tests/test_scoped_execution.py` | Created | 23 unit tests for `execute_scoped()` and `_path_exists()` |
+| `python/tests/test_cli_scoped_execution.py` | Created | 18 integration/E2E tests for CLI flags |
+
+### Debug Log References
+- None - all tests passed on first run
+
+### Completion Notes
+
+1. **Implementation Summary**:
+   - Added `execute_scoped()` method to StateGraph class (lines 1956-2025)
+   - Added `_path_exists()` helper for BFS-based path validation (lines 2027-2061)
+   - Added `_run_scoped()` for simplified scoped execution (lines 2063-2150)
+   - Added `--entry-point`, `--exit-point`, `--output` flags to CLI run command (lines 461-476)
+   - Added scoped execution handling in CLI (lines 616-677)
+   - Added `--output` support for normal and stream execution modes
+
+2. **Test Results**:
+   - 41 total tests pass (23 unit + 18 integration/E2E)
+   - Exceeds story estimate of 22 scenarios
+   - All P0 critical tests pass
+   - Full test suite: 3174 passed, 1 unrelated failure (OpenAI API issue)
+
+3. **Key Design Decisions**:
+   - Exit-point node is NOT executed (critical semantic for remote parallel branches)
+   - Path validation uses BFS to handle conditional and parallel edges
+   - `_scoped_error` key added to state for error reporting when `raise_exceptions=False`
+   - Warning emitted when `--entry-point` used without `--input`
+
+4. **Acceptance Criteria Verification**:
+   - AC1: `--entry-point` flag implemented and tested
+   - AC2: `--exit-point` flag implemented - node NOT executed (critical)
+   - AC3: `--input` loads state from JSON file or inline JSON
+   - AC4: `--output` writes final state to JSON file
+   - AC5: `execute_scoped()` method works programmatically
+   - AC6: Entry-point validation raises clear ValueError
+   - AC7: Exit-point validation raises clear ValueError
+   - AC8: Path validation raises clear ValueError
+   - AC9: Linear subgraph execution tested with fixture graph a→b→c→d→e
+
+### Story DoD Checklist
+
+1. **Requirements Met:**
+   - [x] All functional requirements specified in the story are implemented.
+   - [x] All acceptance criteria defined in the story are met.
+
+2. **Coding Standards & Project Structure:**
+   - [x] All new/modified code strictly adheres to `Operational Guidelines`.
+   - [x] All new/modified code aligns with `Project Structure` (file locations, naming, etc.).
+   - [x] Adherence to `Tech Stack` for technologies/versions used.
+   - [N/A] Adherence to `Api Reference` and `Data Models` - no API changes.
+   - [x] Basic security best practices applied (input validation, error handling).
+   - [x] No new linter errors or warnings introduced.
+   - [x] Code is well-commented where necessary.
+
+3. **Testing:**
+   - [x] All required unit tests implemented (23 unit tests).
+   - [x] All required integration tests implemented (18 integration/E2E tests).
+   - [x] All 41 tests pass successfully.
+   - [x] Test coverage exceeds story estimate of 22 scenarios.
+
+4. **Functionality & Verification:**
+   - [x] Functionality manually verified via `tea run` command.
+   - [x] Edge cases handled (nonexistent nodes, invalid paths, same entry/exit).
+
+5. **Story Administration:**
+   - [x] All DoD checkboxes marked complete.
+   - [x] Dev Agent Record section completed with implementation notes.
+   - [x] Change Log updated with implementation completion entry.
+
+6. **Dependencies, Build & Configuration:**
+   - [x] Project builds successfully without errors.
+   - [N/A] No new dependencies added.
+   - [N/A] No new environment variables introduced.
+
+7. **Documentation:**
+   - [x] Inline code documentation complete (docstrings for new methods).
+   - [N/A] No user-facing documentation changes needed.
+   - [N/A] No architectural changes requiring diagram updates.
+
+**Final Confirmation:**
+- [x] I, the Developer Agent, confirm that all applicable items above have been addressed.

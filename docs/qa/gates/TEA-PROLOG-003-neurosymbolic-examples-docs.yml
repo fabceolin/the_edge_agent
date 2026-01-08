@@ -1,0 +1,41 @@
+schema: 1
+story: "TEA-PROLOG-003"
+story_title: "Neurosymbolic Examples & Documentation"
+gate: "PASS"
+status_reason: "All 16 acceptance criteria met with comprehensive examples, documentation, and working implementations across both Python and Rust runtimes."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-07T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 1 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Rust Prolog return/2 limitation is documented but users should be aware to use Lua nodes for state updates in Rust TEA"
+
+quality_score: 95
+
+evidence:
+  tests_reviewed: 4
+  examples_created: 5
+  documentation_files: 7
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    ac_gaps: []
+
+nfr_validation:
+  documentation_quality: { status: PASS, notes: "Comprehensive with flagship LLM+Prolog family reasoning example" }
+  cross_runtime_parity: { status: PASS, notes: "All examples verified in both Python and Rust" }
+  usability: { status: PASS, notes: "Step-by-step tutorial and troubleshooting guide included" }
+  maintainability: { status: PASS, notes: "Well-structured with reusable Prolog rules library" }
+
+recommendations:
+  future:
+    - action: "Consider adding video tutorial for neurosymbolic workflow creation"
+      refs: ["docs/shared/tutorials/neurosymbolic-first-agent.md"]
+    - action: "Add performance benchmarks comparing pure LLM vs neurosymbolic approaches"
+      refs: ["examples/prolog/neurosymbolic/llm-prolog-family-reasoning.yaml"]

@@ -136,6 +136,16 @@ enum Commands {
         /// Input timeout in seconds (for automated testing)
         #[arg(long)]
         input_timeout: Option<u64>,
+
+        /// Allow cycles in the graph (for feedback loops like QA retry patterns)
+        /// Overrides YAML settings.allow_cycles
+        #[arg(long)]
+        allow_cycles: bool,
+
+        /// Maximum iterations for cyclic graphs (prevents infinite loops)
+        /// Overrides YAML settings.max_iterations
+        #[arg(long)]
+        max_iterations: Option<usize>,
     },
 
     /// Resume execution from a checkpoint
@@ -192,6 +202,46 @@ enum Commands {
         /// Output format (text, json, dot)
         #[arg(short, long, default_value = "text")]
         format: String,
+    },
+
+    /// Convert from other formats to YAML workflow
+    From {
+        #[command(subcommand)]
+        source: FromSource,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum FromSource {
+    /// Convert DOT (Graphviz) file to YAML workflow
+    Dot {
+        /// Path to DOT file
+        file: PathBuf,
+
+        /// Use per-node commands from command="" attributes
+        #[arg(long)]
+        use_node_commands: bool,
+
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Override tea executable name in commands (e.g., tea-python, tea-rust)
+        /// Replaces "tea" at start of command with the specified executable
+        #[arg(long)]
+        tea_executable: Option<String>,
+
+        /// Custom workflow name (default: from DOT graph name)
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+
+        /// Maximum concurrency for parallel execution (default: 3)
+        #[arg(short = 'm', long, default_value = "3")]
+        max_workers: usize,
+
+        /// Validate generated YAML before writing
+        #[arg(long)]
+        validate: bool,
     },
 }
 
@@ -252,6 +302,8 @@ fn main() -> Result<()> {
             display_key,
             display_format,
             input_timeout,
+            allow_cycles,
+            max_iterations,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -284,6 +336,8 @@ fn main() -> Result<()> {
                 display_key,
                 display_format,
                 input_timeout,
+                allow_cycles,
+                max_iterations,
             )
         }
 
@@ -310,6 +364,26 @@ fn main() -> Result<()> {
         Commands::Validate { file, detailed } => validate_workflow(file, detailed),
 
         Commands::Inspect { file, format } => inspect_workflow(file, format),
+
+        Commands::From { source } => match source {
+            FromSource::Dot {
+                file,
+                use_node_commands,
+                output,
+                tea_executable,
+                name,
+                max_workers,
+                validate,
+            } => from_dot(
+                file,
+                use_node_commands,
+                output,
+                tea_executable,
+                name,
+                max_workers,
+                validate,
+            ),
+        },
     }
 }
 
@@ -334,6 +408,8 @@ fn run_workflow(
     display_key: Option<String>,
     display_format: String,
     input_timeout: Option<u64>,
+    allow_cycles: bool,
+    max_iterations: Option<usize>,
 ) -> Result<()> {
     // Load workflow
     let mut engine = YamlEngine::new();
@@ -345,9 +421,17 @@ fn run_workflow(
         tracing::debug!("Loaded {} secrets", engine.secrets().len());
     }
 
-    let graph = engine
+    let mut graph = engine
         .load_from_file(&file)
         .context(format!("Failed to load workflow from {:?}", file))?;
+
+    // TEA-RUST-044: Apply CLI cycle overrides (CLI takes precedence over YAML settings)
+    if allow_cycles {
+        graph = graph.allow_cycles();
+    }
+    if let Some(max_iter) = max_iterations {
+        graph = graph.with_max_iterations(max_iter);
+    }
 
     // Compile graph with interrupts
     let mut compiled = graph.compile()?;
@@ -962,6 +1046,60 @@ fn inspect_workflow(file: PathBuf, format: String) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Convert DOT file to YAML workflow
+#[allow(clippy::too_many_arguments)]
+fn from_dot(
+    file: PathBuf,
+    use_node_commands: bool,
+    output: Option<PathBuf>,
+    tea_executable: Option<String>,
+    custom_name: Option<String>,
+    max_workers: usize,
+    validate: bool,
+) -> Result<()> {
+    if !use_node_commands {
+        anyhow::bail!(
+            "--use-node-commands is required\n\
+            Hint: tea from dot workflow.dot --use-node-commands -o workflow.yaml"
+        );
+    }
+
+    eprintln!("Error: tea from dot is not yet implemented");
+    eprintln!();
+    eprintln!("This feature will:");
+    eprintln!("  1. Parse DOT (Graphviz) files");
+    eprintln!("  2. Extract node commands and dependencies");
+    eprintln!("  3. Generate executable YAML workflows");
+    eprintln!();
+    eprintln!("Arguments you provided:");
+    eprintln!("  File: {:?}", file);
+    eprintln!("  Use node commands: {}", use_node_commands);
+    if let Some(name) = &custom_name {
+        eprintln!("  Workflow name: {}", name);
+    }
+    if let Some(tea_exe) = &tea_executable {
+        eprintln!(
+            "  Tea executable: {} (will replace 'tea' in commands)",
+            tea_exe
+        );
+    }
+    eprintln!("  Max workers: {}", max_workers);
+    eprintln!("  Validate: {}", validate);
+    if let Some(out) = &output {
+        eprintln!("  Output: {:?}", out);
+    } else {
+        eprintln!("  Output: stdout");
+    }
+    eprintln!();
+    eprintln!("Workaround: Use the Python implementation for DOT conversion");
+    eprintln!("  # Generate YAML from DOT");
+    eprintln!("  python -m the_edge_agent.tools.dot_to_yaml workflow.dot -o workflow.yaml");
+    eprintln!();
+    eprintln!("See: docs/shared/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md");
+
+    std::process::exit(1);
 }
 
 /// Parse input from string or file

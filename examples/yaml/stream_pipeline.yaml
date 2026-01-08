@@ -1,0 +1,100 @@
+# examples/yaml/stream_pipeline.yaml
+# Simple producer -> consumer streaming pipeline
+#
+# Demonstrates:
+# - Basic stream channel configuration
+# - Producer writing to stdout
+# - Consumer reading from stdin
+# - Hybrid state + stream passing
+#
+# Requirements:
+# - Linux/macOS only (Windows not supported)
+# - Uses parallel_strategy: process
+#
+# Run with:
+#   tea run examples/yaml/stream_pipeline.yaml
+
+name: stream-pipeline-demo
+description: |
+  A simple streaming pipeline that generates data, transforms it,
+  and aggregates results. Shows how streams and state work together.
+
+settings:
+  parallel:
+    strategy: process
+    streams:
+      enabled: true
+      buffer_size: 65536
+
+state_schema:
+  status: str
+  records_generated: int
+  records_processed: int
+
+nodes:
+  - name: generator
+    run: |
+      import sys
+      import json
+
+      # Generate streaming data to stdout
+      count = 0
+      for i in range(1000):
+        record = {"id": i, "value": f"item_{i}"}
+        print(json.dumps(record), file=sys.stdout, flush=True)
+        count += 1
+
+      # Return state (separate from stream)
+      return {"status": "generated", "records_generated": count}
+    streams:
+      stdout: data_stream
+
+  - name: processor
+    run: |
+      import sys
+      import json
+
+      # Process streaming data from stdin
+      count = 0
+      for line in sys.stdin:
+        record = json.loads(line.strip())
+        # Transform the record
+        record["processed"] = True
+        record["value"] = record["value"].upper()
+        print(json.dumps(record), file=sys.stdout, flush=True)
+        count += 1
+
+      return {"status": "processed", "records_processed": count}
+    streams:
+      stdin: data_stream
+      stdout: processed_stream
+
+  - name: aggregator
+    run: |
+      import sys
+      import json
+
+      # Consume final stream and aggregate
+      total = 0
+      for line in sys.stdin:
+        record = json.loads(line.strip())
+        total += 1
+
+      return {
+        "status": "complete",
+        "total_records": total,
+        "records_generated": state.get("records_generated", 0),
+        "records_processed": state.get("records_processed", 0)
+      }
+    streams:
+      stdin: processed_stream
+
+edges:
+  - from: __start__
+    to: generator
+  - from: generator
+    to: processor
+  - from: processor
+    to: aggregator
+  - from: aggregator
+    to: __end__

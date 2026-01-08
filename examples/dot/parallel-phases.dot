@@ -1,0 +1,41 @@
+// Example DOT file with parallel phases
+// This demonstrates cluster subgraphs for phase-based parallel execution
+
+digraph workflow {
+    rankdir=TB;
+    node [shape=box];
+
+    // Phase 1 - Setup tasks
+    subgraph cluster_phase1 {
+        label="Phase 1 - Setup";
+        A [label="Start"];
+        B [label="Task A"];
+        C [label="Task B"];
+        D [label="Task C"];
+        A -> B;
+        A -> C;
+        A -> D;
+    }
+
+    // Phase 2 - Processing
+    subgraph cluster_phase2 {
+        label="Phase 2 - Process";
+        E [label="Process 1"];
+        F [label="Process 2"];
+        G [label="Process 3"];
+    }
+
+    // Cross-phase edges
+    B -> E;
+    C -> F;
+    D -> G;
+
+    // Fan-in
+    E -> H;
+    F -> H;
+    G -> H;
+
+    H [label="Collect"];
+    I [label="End"];
+    H -> I;
+}

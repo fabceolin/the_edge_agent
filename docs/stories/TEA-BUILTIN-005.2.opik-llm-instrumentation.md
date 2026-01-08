@@ -425,6 +425,214 @@ All issues resolved. Implementation complete with clean code.
 
 ---
 
+## QA Notes
+
+**Generated:** 2026-01-07
+**Test Architect:** Quinn
+**Source:** Test Design Assessment (docs/qa/assessments/TEA-BUILTIN-005.2-test-design-20260107.md)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Test Scenarios** | 22 |
+| **Unit Tests** | 16 (73%) |
+| **Integration Tests** | 6 (27%) |
+| **E2E Tests** | 0 (0%) |
+| **P0 (Critical)** | 6 |
+| **P1 (High)** | 11 |
+| **P2 (Medium)** | 5 |
+
+**Test Distribution Philosophy:**
+- **Shift left strategy**: 73% unit tests for fast feedback
+- **Risk-based priorities**: 6 P0 tests focus on backward compatibility and graceful degradation
+- **Efficient coverage**: Integration tests only for E2E verification (no redundant duplication)
+
+### Risk Areas Identified
+
+#### 1. Backward Compatibility (HIGH RISK → Mitigated)
+**Risk:** Default behavior changes could break existing LLM calls
+
+**Mitigations:**
+- 005.2-UNIT-001 (P0): Validates default `opik_trace=False` unchanged
+- 005.2-UNIT-002 (P0): Validates explicit `opik_trace=False` unchanged
+- 005.2-UNIT-005 (P1): Confirms no wrapper overhead when disabled
+
+**Status:** ✅ Mitigated by 2 P0 tests
+
+#### 2. Missing Opik SDK Crashes (HIGH RISK → Mitigated)
+**Risk:** Missing `opik` SDK could crash LLM calls in production
+
+**Mitigations:**
+- 005.2-UNIT-016 (P0): Validates RuntimeWarning logged
+- 005.2-UNIT-017 (P0): Validates LLM call proceeds without tracing
+
+**Status:** ✅ Mitigated by 2 P0 graceful degradation tests
+
+#### 3. Streaming Correctness (MEDIUM RISK → Mitigated)
+**Risk:** Token aggregation broken with streaming enabled
+
+**Mitigations:**
+- 005.2-UNIT-013 (P1): Unit test for chunk aggregation
+- 005.2-INT-002 (P1): Integration test for dashboard verification
+
+**Status:** ✅ Mitigated by 2 P1 tests
+
+#### 4. Azure OpenAI Support (MEDIUM RISK → Mitigated)
+**Risk:** Azure OpenAI client not wrapped correctly
+
+**Mitigations:**
+- 005.2-UNIT-014 (P1): Azure client auto-detection
+- 005.2-UNIT-015 (P2): Azure wrapper application
+- 005.2-INT-003 (P1): Azure E2E dashboard verification
+
+**Status:** ✅ Mitigated by 3 tests
+
+#### 5. OpikExporter Conflict (MEDIUM RISK → Mitigated)
+**Risk:** Native tracing and OpikExporter create duplicate traces
+
+**Mitigations:**
+- 005.2-INT-004 (P0): Both exporters enabled simultaneously
+- 005.2-INT-005 (P1): OpikExporter only (independent operation)
+- 005.2-INT-006 (P2): Native tracing only (independent operation)
+
+**Status:** ✅ Mitigated by 3 coexistence tests (1 P0)
+
+### Recommended Test Scenarios
+
+#### Phase 1: Fast Fail (P0 Unit Tests) - Critical Gate
+**Execute First** - If these fail, stop immediately:
+
+1. **005.2-UNIT-001**: Default `opik_trace=False` behavior unchanged
+2. **005.2-UNIT-002**: Explicit `opik_trace=False` behavior unchanged
+3. **005.2-UNIT-004**: `track_openai()` called when enabled
+4. **005.2-UNIT-016**: Missing SDK logs RuntimeWarning
+5. **005.2-UNIT-017**: LLM call proceeds without SDK
+
+**Estimated Time:** 5 seconds
+**Why Critical:** Backward compatibility and graceful degradation are non-negotiable
+
+#### Phase 2: Core Functionality (P1 Unit Tests)
+**Execute Second** - Core feature validation:
+
+6. 005.2-UNIT-003: Parameter accepted
+7. 005.2-UNIT-005: Wrapper NOT called when disabled
+8. 005.2-UNIT-007: Token usage fields in result
+9. 005.2-UNIT-008: Token counts accuracy
+10. 005.2-UNIT-009: Cost calculation for known models
+11. 005.2-UNIT-010: Fuzzy model name matching
+12. 005.2-UNIT-012: Stream accepts parameter
+13. 005.2-UNIT-013: Stream aggregation
+14. 005.2-UNIT-014: Azure client detection
+
+**Estimated Time:** 9 seconds
+**Coverage:** Token capture, cost calculation, streaming, Azure support
+
+#### Phase 3: Integration Validation (P0 + P1 Integration)
+**Execute Third** - E2E verification with real Opik SDK:
+
+15. **005.2-INT-004** (P0): Both exporters enabled
+16. 005.2-INT-001: Token usage in Opik dashboard
+17. 005.2-INT-002: Streaming trace in dashboard
+18. 005.2-INT-003: Azure traced to dashboard
+19. 005.2-INT-005: OpikExporter only
+
+**Estimated Time:** 30 seconds
+**Requirements:** `pip install opik`, `OPIK_API_KEY` set
+
+#### Phase 4: Edge Cases (P2 Tests - as time permits)
+**Execute Last** - Nice-to-have edge case coverage:
+
+20. 005.2-UNIT-006: Double-wrap prevention
+21. 005.2-UNIT-011: Unknown model cost returns 0
+22. 005.2-UNIT-015: Azure client wrapper application
+23. 005.2-INT-006: Native tracing only
+
+**Estimated Time:** 10 seconds
+
+**Total Estimated Execution Time:** ~1 minute (parallel execution possible)
+
+### Concerns or Blockers
+
+#### ✅ No Blockers Identified
+
+**All 10 Acceptance Criteria Have Test Coverage:**
+- AC1-AC9: Covered by 22 automated tests
+- AC10 (Documentation): Manual review required
+
+**Manual Verification Required:**
+- [ ] Documentation review: CLAUDE.md includes native Opik LLM tracing section
+- [ ] Story dev notes show configuration examples
+- [ ] Expected dashboard output documented
+
+### Coverage Gaps
+
+**None identified.** All acceptance criteria have comprehensive test coverage.
+
+**Test Level Distribution:**
+- Unit tests validate logic isolation (wrapper behavior, cost calc, defaults)
+- Integration tests verify E2E telemetry (dashboard traces, token capture, coexistence)
+- No E2E tests needed (integration tests cover real SDK interaction)
+
+### Key Test Principles Applied
+
+1. **Shift Left**: 73% unit tests for fast, reliable feedback
+2. **Risk-Based**: 6 P0 tests target highest impact areas (backward compat, degradation)
+3. **Efficient Coverage**: Integration tests only where unit tests insufficient (dashboard verification)
+4. **Maintainability**: Unit tests use mocking for fast, deterministic execution
+5. **Fast Feedback**: P0 tests run first to fail fast on critical issues
+
+### Success Criteria
+
+**Test suite passes when:**
+1. ✅ All 6 P0 tests pass (critical gate - backward compat + degradation)
+2. ✅ All 11 P1 tests pass (core functionality - tokens, cost, streaming, Azure)
+3. ✅ At least 3 of 5 P2 tests pass (edge cases - best effort)
+4. ✅ No regression in existing `llm.call`/`llm.stream` behavior
+5. ✅ Integration tests verify traces in Opik dashboard
+
+**Ready for production when:**
+- Test suite passes
+- Code review complete
+- Documentation verified (AC10)
+- No open P0 or P1 issues
+
+### Test Execution Notes
+
+**Mocking Strategy:**
+- Unit tests mock both `openai` SDK and `opik` SDK
+- Integration tests use real `opik` SDK with test project
+- Use `@unittest.skipUnless` for optional dependency tests
+
+**Environment Setup (Integration Tests):**
+```bash
+export OPIK_API_KEY="test_key_for_integration"
+export OPIK_PROJECT_NAME="tea-test-005.2"
+export OPENAI_API_KEY="test_openai_key"
+```
+
+**Azure Tests:**
+```bash
+export AZURE_OPENAI_API_KEY="test_azure_key"
+export AZURE_OPENAI_ENDPOINT="https://test.openai.azure.com"
+```
+
+### Additional Recommendations
+
+1. **Test Maintenance:** When new OpenAI models added, update `MODEL_PRICING` and cost tests
+2. **SDK Changes:** Monitor Opik SDK updates for wrapper behavior changes
+3. **Test Dependencies:** Integration tests require `pip install opik openai`
+4. **Parallel Execution:** Unit tests can run in parallel for faster CI/CD
+
+### Reference Documents
+
+- **Test Design:** `docs/qa/assessments/TEA-BUILTIN-005.2-test-design-20260107.md`
+- **Quality Gate:** `docs/qa/gates/TEA-BUILTIN-005.2-test-design-gate.yaml` (when created)
+- **Implementation:** `src/the_edge_agent/actions/llm_actions.py`
+- **Test Suite:** `tests/test_opik_llm_tracing.py`
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |

@@ -1,5 +1,10 @@
 # TEA-DOCS-002.4: Web Automation Capability Landing Page
 
+## Status
+
+Done
+
+
 ## Story Metadata
 
 | Field | Value |

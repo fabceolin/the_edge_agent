@@ -1,0 +1,118 @@
+# examples/yaml/stream_hybrid.yaml
+# Combines traditional state passing with streaming
+#
+# Demonstrates:
+# - Nodes that use both state AND streams
+# - Checkpoint on non-streaming nodes
+# - Stream for bulk data, state for metadata
+#
+# Requirements:
+# - Linux/macOS only (Windows not supported)
+# - Uses parallel_strategy: process
+#
+# Run with:
+#   tea run examples/yaml/stream_hybrid.yaml --state '{"input_file": "input.txt"}'
+
+name: stream-hybrid-demo
+description: |
+  Processes files using streaming for content and state for metadata.
+  Shows how to combine both patterns in one workflow.
+
+settings:
+  parallel:
+    strategy: process
+    streams:
+      enabled: true
+
+state_schema:
+  input_file: str
+  file_size: int
+  checksum: str
+  status: str
+  lines: int
+  output_file: str
+
+nodes:
+  # Non-streaming node - can checkpoint
+  - name: prepare
+    interrupt_after: true  # Checkpoint here
+    run: |
+      import os
+      import hashlib
+
+      input_file = state.get("input_file", "input.txt")
+
+      # Create a sample input file if it doesn't exist
+      if not os.path.exists(input_file):
+        with open(input_file, "w") as f:
+          for i in range(100):
+            f.write(f"Line {i}: This is sample text for streaming demo\n")
+
+      file_size = os.path.getsize(input_file)
+
+      # Calculate checksum (metadata in state)
+      with open(input_file, "rb") as f:
+        checksum = hashlib.md5(f.read()).hexdigest()
+
+      return {
+        "input_file": input_file,
+        "file_size": file_size,
+        "checksum": checksum,
+        "status": "prepared"
+      }
+
+  # Streaming node - reads file, streams to processor
+  - name: file_reader
+    run: |
+      import sys
+
+      input_file = state.get("input_file")
+      with open(input_file, "r") as f:
+        for line in f:
+          print(line, end="", file=sys.stdout, flush=True)
+
+      return {"status": "streamed"}
+    streams:
+      stdout: content_stream
+
+  # Streaming node - transforms content
+  - name: transformer
+    run: |
+      import sys
+
+      line_count = 0
+      for line in sys.stdin:
+        # Transform: uppercase and add line number
+        line_count += 1
+        print(f"{line_count:06d}: {line.upper()}", end="", file=sys.stdout)
+
+      return {"status": "transformed", "lines": line_count}
+    streams:
+      stdin: content_stream
+      stdout: transformed_stream
+
+  # Streaming node - writes output
+  - name: file_writer
+    run: |
+      import sys
+
+      output_file = "output.txt"
+      with open(output_file, "w") as f:
+        for line in sys.stdin:
+          f.write(line)
+
+      return {"status": "complete", "output_file": output_file}
+    streams:
+      stdin: transformed_stream
+
+edges:
+  - from: __start__
+    to: prepare
+  - from: prepare
+    to: file_reader
+  - from: file_reader
+    to: transformer
+  - from: transformer
+    to: file_writer
+  - from: file_writer
+    to: __end__

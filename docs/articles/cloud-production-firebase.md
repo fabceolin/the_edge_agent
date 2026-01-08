@@ -10,7 +10,7 @@ fabceolin@gmail.com
 
 ## Abstract
 
-Moving AI agents from development to cloud production requires careful consideration of authentication, secrets management, stateful execution, and serverless constraints. This article presents a YAML-first architecture for deploying The Edge Agent (TEA) to Firebase Cloud Functions, demonstrating how to build a generic `/run-agent` endpoint with minimal Python code (~80 lines) while leveraging TEA's built-in features for secrets injection, cloud memory persistence, and LLM integration. Our implementation supports both interactive (human-in-the-loop) and batch agents through a unified API, with all agent logic defined declaratively in YAML configuration files.
+Moving AI agents from development to cloud production requires careful consideration of authentication, secrets management, stateful execution, and serverless constraints. This article presents a YAML-first architecture for deploying The Edge Agent (TEA) to Firebase Cloud Functions, demonstrating how to build a generic `/run-agent` endpoint with minimal Python code (~30 lines) while leveraging TEA's built-in features for secrets injection, cloud memory persistence, and LLM integration. Our implementation supports both interactive (human-in-the-loop) and batch agents through a unified API, with all agent logic defined declaratively in YAML configuration files.
 
 **Keywords:** Firebase Cloud Functions, Serverless AI, Cloud Deployment, YAML Configuration, State Management
 
@@ -28,7 +28,7 @@ Building AI agents locally is straightforward—but deploying them to production
 
 Traditional approaches embed agent logic in Python code, requiring changes to source files for every configuration update. This article presents a **YAML-first architecture** where:
 
-- **Python**: Minimal wrapper (~80 lines) that forwards requests to TEA
+- **Python**: Minimal wrapper (~30 lines) that forwards requests to TEA
 - **YAML**: All agent logic, secrets, memory backends, and LLM configuration
 
 This separation allows non-developers to modify agent behavior, simplifies deployment, and leverages TEA's built-in capabilities for production workloads.
@@ -41,24 +41,16 @@ flowchart TB
         Frontend["React/Next.js Frontend"]
     end
 
-    subgraph CloudFunction["Firebase Cloud Function"]
-        subgraph FastAPI["FastAPI (~80 lines)"]
-            TokenVerify["Token verification"]
-            RequestForward["Request forwarding to TEA"]
-        end
+    subgraph CloudFunction["Firebase Cloud Function (~30 lines)"]
+        TokenVerify["Token verification"]
+        TEAEngine["TEA YAMLEngine"]
+    end
 
-        subgraph YAMLEngine["TEA YAMLEngine"]
-            LoadYAML["Loads YAML agent definitions"]
-            ExecuteGraph["Executes state graph"]
-            HandleInterrupts["Handles interrupts for interactive agents"]
-        end
-
-        subgraph YAMLAgents["YAML Agents"]
-            Secrets["Secrets via ${ENV_VAR} syntax"]
-            LLMConfig["LLM config in settings.llm"]
-            CloudMemory["Cloud memory via settings.ltm"]
-            BuiltinActions["Built-in actions (llm.call, web.search, memory.*)"]
-        end
+    subgraph YAMLAgents["YAML Agents"]
+        Secrets["Secrets via ${ENV_VAR} syntax"]
+        LLMConfig["LLM config in settings.llm"]
+        CloudMemory["Cloud memory via settings.ltm"]
+        BuiltinActions["Built-in actions (llm.call, web.search, memory.*)"]
     end
 
     subgraph ExternalServices["External Services"]
@@ -67,9 +59,8 @@ flowchart TB
         ExternalAPIs["External APIs<br/>(OpenAI)"]
     end
 
-    Frontend -->|"HTTP + Firebase ID Token"| FastAPI
-    FastAPI --> YAMLEngine
-    YAMLEngine --> YAMLAgents
+    Frontend -->|"HTTP + Firebase ID Token"| CloudFunction
+    CloudFunction --> YAMLAgents
     YAMLAgents --> SecretManager
     YAMLAgents --> CloudStorage
     YAMLAgents --> ExternalAPIs
@@ -79,7 +70,7 @@ The architecture separates concerns cleanly:
 
 | Layer | Responsibility | Lines of Code |
 |-------|----------------|---------------|
-| **Python Wrapper** | HTTP handling, auth verification | ~80 |
+| **Python Wrapper** | HTTP handling, auth verification | ~30 |
 | **TEA Engine** | Graph execution, state management | Library |
 | **YAML Agents** | All agent logic and configuration | ~100-300 per agent |
 
@@ -110,181 +101,49 @@ The entire Python codebase is a thin wrapper that:
 4. Returns results to the client
 
 ```python
-"""
-Minimal Firebase Cloud Function wrapper for TEA agents.
-All agent logic is defined in YAML files.
-"""
-
-import os
+# main.py - Minimal Firebase Cloud Function for TEA agents (~30 lines)
 import json
-import asyncio
-import uuid
 from pathlib import Path
-
 from firebase_functions import https_fn, options
-from fastapi import FastAPI, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Any
-import httpx
-
-# Initialize Firebase Admin SDK
 import firebase_admin
 from firebase_admin import auth
 
-try:
-    firebase_admin.initialize_app()
-except ValueError:
-    pass  # Already initialized
+firebase_admin.initialize_app()
 
-# Minimal FastAPI application
-app = FastAPI(title="TEA Agents Service")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        os.environ.get("ALLOWED_ORIGIN", "https://your-app.vercel.app"),
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
-
-# Request/Response models
-class AgentRequest(BaseModel):
-    agent: str
-    session_id: Optional[str] = None
-    input: dict = {}
-
-class AgentResponse(BaseModel):
-    success: bool
-    session_id: str
-    completed: bool = False
-    output: Optional[Any] = None
-    next_question: Optional[str] = None
-    error: Optional[str] = None
-
-
-def verify_token(token: str) -> dict:
-    """Verify Firebase ID token."""
-    try:
-        decoded = auth.verify_id_token(token)
-        return {"uid": decoded.get("uid"), "email": decoded.get("email")}
-    except Exception as e:
-        raise HTTPException(401, f"Invalid token: {e}")
-
-
-@app.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "tea-agents"}
-
-
-@app.post("/run-agent", response_model=AgentResponse)
-async def run_agent(
-    request: AgentRequest,
-    x_firebase_token: str = Header(None, alias="X-Firebase-Token"),
-):
-    """
-    Execute a YAML agent.
-
-    All agent logic (LLM calls, memory, secrets) is defined in YAML.
-    This endpoint just loads and runs the agent.
-    """
-    # Verify authentication
-    if not x_firebase_token:
-        raise HTTPException(401, "X-Firebase-Token header required")
-    user = verify_token(x_firebase_token)
-
-    # Import TEA
-    from the_edge_agent import YAMLEngine
-
-    # Locate agent YAML
-    agents_dir = Path(__file__).parent / "agents"
-    yaml_path = agents_dir / f"{request.agent}.yaml"
-
-    if not yaml_path.exists():
-        raise HTTPException(404, f"Agent not found: {request.agent}")
-
-    session_id = request.session_id or str(uuid.uuid4())
-    engine = YAMLEngine()
-
-    try:
-        # Load agent - TEA handles secrets, memory, LLM via YAML settings
-        graph = engine.load_from_file(str(yaml_path))
-
-        # Execute with user input
-        final_state = None
-        for event in graph.stream({
-            **request.input,
-            "session_id": session_id,
-            "user_id": user["uid"],
-        }):
-            event_type = event.get("type", "")
-            if event_type == "final":
-                final_state = event.get("state", {})
-            elif event_type in ("interrupt", "interrupt_before", "interrupt_after"):
-                final_state = event.get("state", {})
-                break
-            elif event_type == "error":
-                raise HTTPException(500, f"Agent error: {event.get('error')}")
-
-        if not final_state:
-            raise HTTPException(500, "Agent did not complete")
-
-        return AgentResponse(
-            success=True,
-            session_id=session_id,
-            completed=final_state.get("completed", False),
-            output=final_state.get("output"),
-            next_question=final_state.get("next_question"),
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"Execution failed: {e}")
-    finally:
-        engine.close()
-
-
-# Firebase Cloud Function export
 @https_fn.on_request(
-    secrets=[
-        "OPENAI_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_DEPLOYMENT_NAME",
-        "PERPLEXITY_API_KEY",
-    ],
+    secrets=["OPENAI_API_KEY", "PERPLEXITY_API_KEY"],
     memory=options.MemoryOption.MB_512,
     timeout_sec=300,
-    min_instances=0,
-    max_instances=10,
-    region="us-east1",
 )
 def agents(req: https_fn.Request) -> https_fn.Response:
-    """Firebase Cloud Function entry point."""
-    transport = httpx.ASGITransport(app=app)
+    """Execute a YAML agent. All logic is in YAML files."""
+    from the_edge_agent import YAMLEngine
 
-    async def forward():
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
-            path = req.path
-            if req.query_string:
-                path = f"{path}?{req.query_string.decode('utf-8')}"
-            return await client.request(
-                method=req.method,
-                url=path,
-                headers={k: v for k, v in req.headers if k.lower() != "host"},
-                content=req.get_data() or None,
-            )
+    # Verify Firebase token
+    token = req.headers.get("X-Firebase-Token")
+    if not token:
+        return https_fn.Response(json.dumps({"error": "Auth required"}), 401)
+    try:
+        user = auth.verify_id_token(token)
+    except Exception:
+        return https_fn.Response(json.dumps({"error": "Invalid token"}), 401)
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    response = loop.run_until_complete(forward())
-    loop.close()
+    # Parse request and load agent
+    data = req.get_json()
+    agent_name = data.get("agent", "research_agent")
+    yaml_path = Path(__file__).parent / "agents" / f"{agent_name}.yaml"
 
-    from flask import Response
-    return Response(response.content, response.status_code, dict(response.headers))
+    engine = YAMLEngine()
+    graph = engine.load_from_file(str(yaml_path))
+
+    # Execute agent - TEA handles secrets, memory, LLM via YAML settings
+    result = None
+    for event in graph.stream({**data.get("input", {}), "user_id": user["uid"]}):
+        if event.get("type") == "final":
+            result = event.get("state", {})
+
+    engine.close()
+    return https_fn.Response(json.dumps({"output": result}), 200)
 ```
 
 **Key points:**
@@ -765,13 +624,6 @@ edges:
 firebase-functions>=0.4.0
 firebase-admin>=6.2.0
 
-# FastAPI and Pydantic
-fastapi>=0.104.0
-pydantic>=2.5.0
-
-# HTTP client for ASGI transport
-httpx>=0.25.0
-
 # The Edge Agent
 # From PyPI:
 the-edge-agent>=0.8.0
@@ -831,49 +683,27 @@ import { getAuth } from 'firebase/auth';
 
 const AGENTS_URL = process.env.NEXT_PUBLIC_AGENTS_URL;
 
-interface AgentResponse {
-  success: boolean;
-  session_id: string;
-  completed: boolean;
-  output?: any;
-  next_question?: string;
-  error?: string;
-}
-
 export async function runAgent(
   agent: string,
-  input: Record<string, any> = {},
-  sessionId?: string
-): Promise<AgentResponse> {
+  input: Record<string, any> = {}
+): Promise<any> {
   const auth = getAuth();
   const user = auth.currentUser;
-
-  if (!user) {
-    throw new Error('Authentication required');
-  }
+  if (!user) throw new Error('Authentication required');
 
   const token = await user.getIdToken();
-
-  const response = await fetch(`${AGENTS_URL}/run-agent`, {
+  const response = await fetch(AGENTS_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Firebase-Token': token,
     },
-    body: JSON.stringify({
-      agent,
-      session_id: sessionId,
-      input,
-    }),
+    body: JSON.stringify({ agent, input }),
   });
 
   const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || 'Agent execution failed');
-  }
-
-  return data;
+  if (!response.ok) throw new Error(data.error || 'Agent failed');
+  return data.output;
 }
 ```
 
@@ -885,37 +715,23 @@ import { useState, useCallback } from 'react';
 import { runAgent } from '../lib/agent-client';
 
 export function useAgent(agentName: string) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const execute = useCallback(async (input: Record<string, any> = {}) => {
     setLoading(true);
     setError(null);
-
     try {
-      const result = await runAgent(agentName, input, sessionId || undefined);
-      setSessionId(result.session_id);
-      return result;
+      return await runAgent(agentName, input);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setError(message);
+      setError(err instanceof Error ? err.message : 'Unknown error');
       throw err;
     } finally {
       setLoading(false);
     }
-  }, [agentName, sessionId]);
+  }, [agentName]);
 
-  const respond = useCallback((response: string) => {
-    return execute({ response });
-  }, [execute]);
-
-  const reset = useCallback(() => {
-    setSessionId(null);
-    setError(null);
-  }, []);
-
-  return { execute, respond, reset, loading, error, sessionId };
+  return { execute, loading, error };
 }
 ```
 
@@ -932,10 +748,8 @@ export function ResearchAssistant() {
   const [result, setResult] = useState<any>(null);
 
   const handleSearch = async () => {
-    const response = await execute({ query });
-    if (response.completed) {
-      setResult(response.output);
-    }
+    const output = await execute({ query });
+    setResult(output);
   };
 
   return (
@@ -948,19 +762,15 @@ export function ResearchAssistant() {
       <button onClick={handleSearch} disabled={loading}>
         {loading ? 'Researching...' : 'Search'}
       </button>
-
       {error && <p className="error">{error}</p>}
-
       {result && (
         <div>
           <h3>Answer</h3>
           <p>{result.answer}</p>
           <h4>Sources</h4>
           <ul>
-            {result.sources.map((s: any, i: number) => (
-              <li key={i}>
-                <a href={s.url}>{s.title}</a>
-              </li>
+            {result.sources?.map((s: any, i: number) => (
+              <li key={i}><a href={s.url}>{s.title}</a></li>
             ))}
           </ul>
         </div>
@@ -1042,7 +852,7 @@ edges:
 
 | Aspect | Traditional | YAML-First |
 |--------|-------------|------------|
-| **Python code** | 400+ lines | ~80 lines |
+| **Python code** | 400+ lines | ~30 lines |
 | **Secrets handling** | Python `os.environ` | `${VAR}` in YAML |
 | **LLM config** | Python code | `settings.llm` |
 | **Memory backend** | Python setup | `settings.ltm` |
@@ -1054,7 +864,7 @@ edges:
 
 The YAML-first approach to deploying AI agents offers significant advantages:
 
-1. **Minimal Python** - The Cloud Function wrapper is just ~80 lines
+1. **Minimal Python** - The Cloud Function wrapper is just ~30 lines
 2. **Declarative configuration** - All agent logic lives in YAML
 3. **Built-in capabilities** - TEA handles secrets, memory, LLM calls
 4. **Easy updates** - Modify agent behavior without code changes

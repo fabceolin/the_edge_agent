@@ -1,5 +1,11 @@
 # TEA Built-in Actions Epic Overview
 
+## Status
+
+Obsolete
+
+> **Note:** This epic planning document is now obsolete. Core implementation (8 of 11 original stories) is complete. The scope has since expanded beyond this overview with additional stories for Neo4j, DuckDB, LanceDB, and model2vec integrations. Refer to individual `TEA-BUILTIN-*` stories for current status.
+
 ## Executive Summary
 
 This document provides a comprehensive overview of the 11 user stories for implementing built-in actions in The Edge Agent (tea) YAML engine. These actions enable YAML agent developers to build production-grade LLM agents without writing Python code.
@@ -497,3 +503,4 @@ Each story includes a 4-step rollback procedure:
 | 2025-12-07 | 1.3 | Added TEA-BUILTIN-004.1 Remote Storage Actions (S3, GCS, Firebase, Azure) | Sarah (PO Agent) |
 | 2025-12-07 | 1.4 | Added TEA-BUILTIN-001.5 Cloud-Native LTM Backends (Turso, Firestore, PostgreSQL) | Sarah (PO Agent) |
 | 2025-12-07 | 1.5 | Refactored TEA-BUILTIN-004.1 to use fsspec (reduced complexity, risk Low, effort Medium) | Sarah (PO Agent) |
+| 2026-01-08 | 1.6 | Marked Obsolete - 8/11 core stories complete, scope expanded beyond original plan | Sarah (PO Agent) |

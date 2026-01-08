@@ -1,6 +1,55 @@
 # Story TEA-BUILTIN-008.7: LlamaExtract Workflow Primitives
 
-## Status: Ready for Development
+## Status
+
+Dev Complete
+
+## Dev Agent Notes (2026-01-08)
+
+**Implementation Summary:**
+
+Added three workflow primitives for fine-grained control over LlamaExtract extraction jobs:
+
+### New Actions (AC: 1-11)
+
+1. **`llamaextract.submit_job`** - Submit async extraction job
+   - Accepts file (path, URL, base64), schema, agent_id, mode
+   - Returns `{success: true, job_id: "...", status: "PENDING"}`
+   - Supports all modes: FAST, BALANCED, PREMIUM, MULTIMODAL
+   - Retries on transient failures (500, 429) with backoff
+
+2. **`llamaextract.poll_status`** - Check job status
+   - Accepts job_id, configurable timeout (default: 10s)
+   - Returns `{success: true, status: "...", progress: N, job_id: "..."}`
+   - Includes error field when status is ERROR
+   - Retries on server errors
+
+3. **`llamaextract.get_result`** - Retrieve extraction result
+   - Accepts job_id, configurable timeout (default: 30s)
+   - Returns `{success: true, data: {...}, job_id: "..."}`
+   - Returns structured error if job not complete
+
+### Configuration (AC: 12-13)
+- All primitives inherit API key from LLAMAEXTRACT_API_KEY or LLAMAPARSE_API_KEY
+- All primitives support max_retries parameter (default: 3)
+- Exponential backoff on transient failures
+
+### Use Cases
+- Multi-mode escalation: Try FAST first, escalate to BALANCED if quality insufficient
+- Custom polling loops: Implement exponential backoff or progress-based polling
+- Parallel job management: Submit multiple jobs and aggregate results
+- Checkpoint integration: Save/resume between polling iterations
+
+**Files Modified:**
+- `python/src/the_edge_agent/actions/llamaextract_actions.py` - Added 3 new actions
+- `python/tests/test_llamaextract_primitives.py` - 17 new tests (all passing)
+
+**Backward Compatibility:**
+- Existing llamaextract.extract action unchanged
+- New primitives are additive, no breaking changes
+
+
+## Status: Dev Complete
 
 **QA Validation:** Passed (2024-12-30)
 - All 16 acceptance criteria have dedicated test coverage

@@ -1,5 +1,10 @@
 # Story TEA-BUILTIN-008.1: Core LlamaExtract Actions
 
+## Status
+
+Complete
+
+
 ## Status: Complete ✅
 
 **Story Checklist**: PASSED (2024-12-22) - Clarity Score: 10/10

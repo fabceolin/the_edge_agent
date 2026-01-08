@@ -1,6 +1,8 @@
 # Status
 
-Ready for Review
+## Status
+
+Done
 
 # Story
 
@@ -392,6 +394,7 @@ cd python && pytest
 |------|---------|-------------|--------|
 | 2024-12-28 | 1.0 | Initial story draft | Sarah (PO Agent) |
 | 2024-12-28 | 1.1 | Story approved | Fabricio (User) |
+| 2026-01-07 | 1.2 | Status updated to Done after QA approval | Sarah (PO Agent) |
 
 ---
 

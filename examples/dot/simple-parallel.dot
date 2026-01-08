@@ -1,0 +1,27 @@
+// Simple parallel workflow without clusters
+// Demonstrates implicit parallel detection from fan-out/fan-in patterns
+
+digraph simple_workflow {
+    rankdir=TB;
+    node [shape=box];
+
+    start [label="Initialize"];
+    task1 [label="Task 1"];
+    task2 [label="Task 2"];
+    task3 [label="Task 3"];
+    collect [label="Collect Results"];
+    finish [label="Complete"];
+
+    // Fan-out from start
+    start -> task1;
+    start -> task2;
+    start -> task3;
+
+    // Fan-in to collect
+    task1 -> collect;
+    task2 -> collect;
+    task3 -> collect;
+
+    // Final edge
+    collect -> finish;
+}
