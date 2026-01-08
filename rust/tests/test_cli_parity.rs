@@ -5,6 +5,9 @@
 //! - --auto-continue flag (AC-21)
 //! - --actions-module and --actions-file stub flags (AC-29, AC-30)
 
+// Allow deprecated cargo_bin until assert_cmd provides stable alternative
+#![allow(deprecated)]
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;

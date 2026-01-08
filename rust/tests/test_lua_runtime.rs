@@ -9,7 +9,7 @@ use the_edge_agent::engine::lua_runtime::LuaRuntime;
 
 #[test]
 fn test_create_runtime() {
-    let runtime = LuaRuntime::new().unwrap();
+    let _runtime = LuaRuntime::new().unwrap();
     // Runtime should be created successfully
     assert!(true);
 }
@@ -18,7 +18,7 @@ fn test_create_runtime() {
 fn test_create_runtime_with_timeout() {
     use std::time::Duration;
 
-    let runtime = LuaRuntime::with_timeout(Duration::from_millis(100)).unwrap();
+    let _runtime = LuaRuntime::with_timeout(Duration::from_millis(100)).unwrap();
     // Runtime with custom timeout should be created
     assert!(true);
 }

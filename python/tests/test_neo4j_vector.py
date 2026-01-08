@@ -353,12 +353,14 @@ class TestNeo4jVectorActions(unittest.TestCase):
         mock_engine = MagicMock()
         mock_engine._graph_backend = None
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True so we test the backend check
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.vector_search"](state={}, embedding=[0.1] * 1536)
+            result = registry["graph.vector_search"](state={}, embedding=[0.1] * 1536)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_type"], "configuration_error")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["error_type"], "configuration_error")
 
     def test_action_vector_search_wrong_backend(self):
         """Vector search action should fail with non-Neo4j backend."""
@@ -370,13 +372,15 @@ class TestNeo4jVectorActions(unittest.TestCase):
         mock_backend.__class__.__name__ = "CozoBackend"
         mock_engine._graph_backend = mock_backend
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True so we test the backend type check
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.vector_search"](state={}, embedding=[0.1] * 1536)
+            result = registry["graph.vector_search"](state={}, embedding=[0.1] * 1536)
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_type"], "configuration_error")
-        self.assertIn("Neo4jBackend", result["error"])
+            self.assertFalse(result["success"])
+            self.assertEqual(result["error_type"], "configuration_error")
+            self.assertIn("Neo4jBackend", result["error"])
 
     def test_action_create_vector_index_validation(self):
         """Create vector index action should validate inputs."""
@@ -388,14 +392,16 @@ class TestNeo4jVectorActions(unittest.TestCase):
         mock_backend.__class__.__name__ = "Neo4jBackend"
         mock_engine._graph_backend = mock_backend
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True for the action
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.create_vector_index"](
-            state={}, index_name=""  # Empty index name
-        )
+            result = registry["graph.create_vector_index"](
+                state={}, index_name=""  # Empty index name
+            )
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_type"], "validation_error")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["error_type"], "validation_error")
 
     def test_action_drop_vector_index_validation(self):
         """Drop vector index action should validate inputs."""
@@ -407,14 +413,16 @@ class TestNeo4jVectorActions(unittest.TestCase):
         mock_backend.__class__.__name__ = "Neo4jBackend"
         mock_engine._graph_backend = mock_backend
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True for the action
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.drop_vector_index"](
-            state={}, index_name=""  # Empty index name
-        )
+            result = registry["graph.drop_vector_index"](
+                state={}, index_name=""  # Empty index name
+            )
 
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_type"], "validation_error")
+            self.assertFalse(result["success"])
+            self.assertEqual(result["error_type"], "validation_error")
 
     def test_action_check_vector_support(self):
         """Check vector support action should call backend method."""
@@ -432,13 +440,15 @@ class TestNeo4jVectorActions(unittest.TestCase):
         }
         mock_engine._graph_backend = mock_backend
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True for the action
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.check_vector_support"](state={})
+            result = registry["graph.check_vector_support"](state={})
 
-        self.assertTrue(result["success"])
-        self.assertTrue(result["supported"])
-        mock_backend.check_vector_support.assert_called_once()
+            self.assertTrue(result["success"])
+            self.assertTrue(result["supported"])
+            mock_backend.check_vector_support.assert_called_once()
 
     def test_action_list_vector_indexes(self):
         """List vector indexes action should call backend method."""
@@ -455,13 +465,15 @@ class TestNeo4jVectorActions(unittest.TestCase):
         }
         mock_engine._graph_backend = mock_backend
 
-        register_actions(registry, mock_engine)
+        # Patch NEO4J_AVAILABLE to be True for the action
+        with patch("the_edge_agent.actions.graph_actions.NEO4J_AVAILABLE", True):
+            register_actions(registry, mock_engine)
 
-        result = registry["graph.list_vector_indexes"](state={})
+            result = registry["graph.list_vector_indexes"](state={})
 
-        self.assertTrue(result["success"])
-        self.assertEqual(result["count"], 1)
-        mock_backend.list_vector_indexes.assert_called_once()
+            self.assertTrue(result["success"])
+            self.assertEqual(result["count"], 1)
+            mock_backend.list_vector_indexes.assert_called_once()
 
 
 class TestNeo4jVectorGracefulDegradation(unittest.TestCase):

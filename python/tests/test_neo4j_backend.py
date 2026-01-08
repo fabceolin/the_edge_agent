@@ -504,20 +504,28 @@ class TestNeo4jEmbeddingSupport(unittest.TestCase):
 
         self.assertEqual(Neo4jBackend.DEFAULT_EMBEDDING_DIM, 1536)
 
-    def test_retrieve_context_embedding_not_supported(self):
-        """Test retrieve_context returns helpful message for embedding search."""
+    def test_retrieve_context_embedding_version_error(self):
+        """Test retrieve_context returns helpful message when Neo4j version doesn't support vectors."""
         from the_edge_agent.memory.graph import Neo4jBackend
 
         with patch("the_edge_agent.memory.graph.NEO4J_AVAILABLE", True):
             with patch.object(Neo4jBackend, "_init_driver"):
                 backend = object.__new__(Neo4jBackend)
 
-                result = backend.retrieve_context(embedding=[0.1] * 1536)
-                self.assertTrue(result["success"])
-                self.assertEqual(result["entities"], [])
-                self.assertIn(
-                    "Vector search not natively supported", result["context_summary"]
-                )
+                # Mock vector_search to return version error (Neo4j < 5.11)
+                with patch.object(
+                    backend,
+                    "vector_search",
+                    return_value={
+                        "success": False,
+                        "error": "Vector search requires Neo4j 5.11+. Current version: 4.4.0",
+                        "error_type": "version_error",
+                    },
+                ):
+                    result = backend.retrieve_context(embedding=[0.1] * 1536)
+                    self.assertTrue(result["success"])
+                    self.assertEqual(result["entities"], [])
+                    self.assertIn("Neo4j 5.11+", result["context_summary"])
 
 
 # ============================================================================
