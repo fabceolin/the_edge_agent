@@ -1,6 +1,6 @@
 # Epic: TEA-STREAM-002 - ZeroMQ Transport for Stream Channels
 
-## Status: Draft
+## Status: Ready for Development
 
 **Created:** 2026-01-08
 **Author:** Sarah (PO)
@@ -732,3 +732,131 @@ conda install pyzmq
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Initial epic draft | Sarah (PO) |
+
+---
+
+## QA Notes
+
+**Assessment Date:** 2026-01-08
+**Assessor:** Quinn (QA)
+**Epic:** TEA-STREAM-002 - ZeroMQ Transport for Stream Channels
+
+### Test Coverage Summary
+
+| Story | Coverage Assessment | Confidence |
+|-------|---------------------|------------|
+| TEA-STREAM-002.1 (Transport Abstraction) | Good - 20 scenarios cover interface, factory, backward compatibility | High |
+| TEA-STREAM-002.2 (PUB/SUB) | Good - 18 scenarios cover all platforms and protocols | High |
+| TEA-STREAM-002.3 (PUSH/PULL) | Good - 18 scenarios cover load balancing and topologies | High |
+| TEA-STREAM-002.4 (REQ/REP) | Good - 16 scenarios cover protocol enforcement and timeouts | High |
+| TEA-STREAM-002.5 (YAML Integration) | Comprehensive - 22 scenarios cover all configuration options | High |
+| TEA-STREAM-002.6 (Integration & Docs) | Adequate - 15 scenarios, heavily manual review dependent | Medium |
+
+**Total Planned Tests:** 109 scenarios (54 unit, 39 integration, 16 E2E)
+
+### Risk Areas Identified
+
+| Risk ID | Area | Severity | Likelihood | Test Priority |
+|---------|------|----------|------------|---------------|
+| R1 | **pyzmq installation failures on CI** | High | Medium | Critical - Must verify Windows/Linux/macOS CI pipelines |
+| R5 | **Resource leaks on error paths** | High | Medium | Critical - Need explicit cleanup/context manager tests |
+| R6 | **Windows IPC path differences** | Medium | Medium | High - Windows-specific test matrix required |
+| R4 | **Message ordering assumptions** | High | Low | High - Document and test pattern-specific guarantees |
+| R7 | **High-water mark misconfigurations** | Medium | High | Medium - Add validation tests with clear error messages |
+| NEW | **ZeroMQ context lifecycle management** | High | Medium | Critical - Test context sharing, thread safety |
+| NEW | **TCP port conflicts in parallel tests** | Medium | High | High - Dynamic port allocation needed |
+| NEW | **Slow consumer blocking producers** | High | Medium | High - Backpressure scenario tests |
+
+### Recommended Test Scenarios (Priority Order)
+
+#### Critical (Must Have)
+
+1. **Transport factory returns correct type** - Verify `create_transport()` returns `UnixPipeTransport` for `unix` and `ZeroMQTransport` for `zeromq`
+2. **Backward compatibility with existing workflows** - All existing `transport: unix` workflows must pass unchanged
+3. **Resource cleanup on exceptions** - Sockets closed properly when errors occur mid-stream
+4. **Windows IPC compatibility** - Test `inproc://` or named pipes on Windows
+5. **High-water mark enforcement** - Verify queue depth limits prevent memory exhaustion
+6. **TCP connection failure handling** - Graceful degradation when remote hosts unreachable
+
+#### High Priority
+
+7. **PUB/SUB multi-subscriber delivery** - All N subscribers receive all M messages
+8. **PUSH/PULL round-robin distribution** - Each message to exactly one worker
+9. **REQ/REP protocol enforcement** - Send-receive order violations raise clear errors
+10. **YAML validation for zeromq settings** - Invalid patterns/protocols rejected with helpful messages
+11. **Environment variable expansion in addresses** - `${HOST}:${PORT}` substitution works
+12. **Mixed Unix + ZeroMQ in same workflow** - No interference between transport types
+
+#### Medium Priority
+
+13. **Topic filtering in PUB/SUB** - `subscribe_filter` option limits message delivery
+14. **Fair queuing under load imbalance** - Slow workers don't starve fast workers
+15. **Reconnect behavior after network failure** - `reconnect_interval` respected
+16. **Timeout handling in REQ/REP** - `TransportError` raised after `timeout` ms
+17. **Discovery configuration parsing** - `static`, `env`, `consul` options validated
+
+### Test Environment Requirements
+
+```yaml
+# Required CI matrix for full coverage
+platforms:
+  - ubuntu-latest    # Linux IPC + TCP
+  - macos-latest     # macOS IPC + TCP
+  - windows-latest   # Windows inproc + TCP
+
+python_versions:
+  - "3.9"   # Minimum supported
+  - "3.11"  # Latest stable
+
+dependencies:
+  - pyzmq >= 25.0   # Optional, tests should skip gracefully if missing
+
+parallel_execution:
+  - Port allocation must be dynamic to avoid conflicts
+  - ZeroMQ context should be fresh per test module
+```
+
+### Concerns and Blockers
+
+| Type | Description | Impact | Resolution |
+|------|-------------|--------|------------|
+| **Concern** | pyzmq is optional dependency - tests must handle import failures gracefully | Medium | Add `pytest.importorskip("zmq")` markers |
+| **Concern** | TCP tests require careful port management to avoid CI flakiness | Medium | Use `socket.bind(('', 0))` for dynamic ports |
+| **Concern** | Windows IPC semantics differ significantly from Unix | High | May need `inproc://` fallback, document limitations |
+| **Concern** | Story 6 has 7 manual review items (AC7-AC12) | Low | Create documentation review checklist |
+| **Blocker** | None identified | - | - |
+
+### Test Design Patterns Recommended
+
+1. **Parameterized transport tests** - Same test logic for `unix` and `zeromq` transports
+2. **Fixture-based context management** - ZeroMQ context as pytest fixture with automatic cleanup
+3. **Network simulation** - Use `pytest-timeout` and mock network delays for resilience testing
+4. **Property-based testing** - Hypothesis for message ordering guarantees
+5. **Chaos testing** - Random socket closes, partial writes for robustness
+
+### NFR Validation Notes
+
+| NFR | Validation Approach | Target |
+|-----|---------------------|--------|
+| **Performance** | Throughput benchmark (AC6 in Story 6) | 10K msg/s |
+| **Reliability** | Fault injection, recovery tests | No message loss in PUSH/PULL |
+| **Compatibility** | Cross-platform CI matrix | Windows, Linux, macOS |
+| **Security** | Address validation, no arbitrary bind | localhost-only by default for IPC |
+
+### Overall Assessment
+
+**Status:** Ready for Development with caveats
+
+**Strengths:**
+- Well-structured story decomposition with clear dependencies
+- Comprehensive acceptance criteria with testability markers
+- Good risk identification in epic (R1-R8)
+- Test count estimates are reasonable (109 scenarios)
+
+**Areas for Improvement:**
+- Add explicit test for ZeroMQ context thread safety
+- Document Windows-specific limitations upfront
+- Consider adding chaos/fault injection tests
+- Story 6 manual review items need structured checklist
+
+**Recommendation:** Proceed to implementation. Ensure CI includes Windows runner with pyzmq before Story 2 development begins. Consider splitting Windows compatibility into separate story if blockers emerge.

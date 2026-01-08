@@ -1,9 +1,4 @@
-# Status
-
 ## Status
-
-Backlog
-
 
 Done
 

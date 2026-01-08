@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | High |
 | **Estimated Effort** | 13 points |
-| **Status** | Draft |
+| **Status** | Ready for Development |
 | **Parent Epic** | TEA-RUST-001 |
 | **Depends On** | TEA-RUST-004 (Node Execution), TEA-RUST-013 (CLI), TEA-CLI-004 (CLI Parity) |
 | **Python Parity** | TEA-CLI-002, YE.6 |
@@ -612,8 +612,67 @@ impl ActionRegistry {
 | Integration | `rust/tests/test_yaml_imports.rs` | Full workflow with imports |
 | Fixtures | `rust/tests/fixtures/*.lua` | Test Lua modules |
 
+## QA Notes
+
+**Review Date:** 2026-01-08
+**Reviewer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+- **Total test scenarios:** 38
+- **Unit tests:** 20 (53%)
+- **Integration tests:** 14 (37%)
+- **E2E tests:** 4 (10%)
+- **Priority distribution:** P0: 12, P1: 16, P2: 8, P3: 2
+- **Coverage status:** All 22 acceptance criteria have test coverage
+
+### Risk Areas Identified
+
+| Risk Area | Impact | Probability | Priority |
+|-----------|--------|-------------|----------|
+| Path resolution errors | High | Medium | P0 |
+| Lua runtime errors | High | Medium | P0 |
+| Namespace collisions | Medium | Medium | P1 |
+| Circular imports | Low | Low | P2 |
+| Missing builtin sets | High | Low | P1 |
+
+### Recommended Test Scenarios
+
+**P0 Critical Tests (Must Pass):**
+1. Relative and absolute path resolution for Lua files
+2. `register_actions` contract validation
+3. Namespace prefixing for imported actions
+4. Builtin module dispatch (web, memory, llm, json)
+5. Error aggregation and reporting
+6. CLI `tea run` with imports workflow
+
+**P1 Important Tests:**
+1. Parent directory path traversal (`../`)
+2. Type validation for `register_actions`
+3. Unknown builtin error messaging
+4. Mixed Lua and builtin imports
+
+**Test Fixtures Required:**
+- `rust/tests/fixtures/*.lua` - Valid and invalid Lua modules
+- `rust/tests/fixtures/yaml/*.yaml` - Import scenario YAML files
+- Circular import test files
+
+### Concerns and Recommendations
+
+1. **Cross-platform path handling:** Ensure path resolution tests work on both Unix and Windows
+2. **Lua runtime isolation:** Each test should have fresh Lua state to prevent state leakage
+3. **Error message quality:** Assert on error message contents, not just error types
+4. **Namespace conflict behavior:** Test both warning emission and last-wins behavior
+
+### Assessment
+
+**Gate Decision:** READY FOR DEVELOPMENT
+
+Full test design documented in: `docs/qa/assessments/TEA-RUST-034-test-design-20260108.md`
+
 ## Changelog
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
 | 2025-12-21 | 1.0 | Initial story creation | Sarah (PO Agent) |
+| 2026-01-08 | 1.1 | Added QA Notes section with test design summary | Quinn (QA Agent) |

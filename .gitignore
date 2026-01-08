@@ -200,6 +200,12 @@ log2
 examples/llm-only/
 python/DEBUG_REPORT_TEA_LOAD_CODE.md
 python/debug_tea_load_code_fix.py
+bmad-validation-parallel.yaml
+bmad-validation-remaining.dot
+bmad-validation-parallel.dot
+bmad-validation-remaining.yaml
+story-validation-draft.dot
+story-validation-draft.yaml
 site/
 ready-for-review-stories.dot
 ready-for-review-stories.yaml

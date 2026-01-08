@@ -1,5 +1,7 @@
 # DOT Workflow Orchestration Guide for LLMs
 
+> **TEA Version**: 0.9.4 | **Primary CLI**: `tea-python`
+
 This document provides instructions for generating DOT (Graphviz) files that orchestrate sequential and parallel execution of stories, tasks, or any workflow items using TEA agents.
 
 ## Use Case
@@ -24,7 +26,7 @@ digraph workflow_name {
 
     subgraph cluster_phase1 {
         label="1. Phase Name";
-        task_1 [label="Task 1", command="tea run workflow.yaml --input '{\"arg\": \"path/to/input\"}'"];
+        task_1 [label="Task 1", command="tea-python run workflow.yaml --input '{\"arg\": \"path/to/input\"}'"];
     }
 
     Start -> task_1;
@@ -35,13 +37,13 @@ digraph workflow_name {
 ### Step 2: Generate YAML Agent
 
 ```bash
-tea from dot workflow.dot --use-node-commands -o workflow.yaml
+tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
 ```
 
 ### Step 3: Execute
 
 ```bash
-tea run workflow.yaml
+tea-python run workflow.yaml
 ```
 
 ---
@@ -56,7 +58,7 @@ tea run workflow.yaml
 | `Start` node | Entry point (ellipse shape) | `Start [label="Start", shape=ellipse];` |
 | `End` node | Exit point (ellipse shape) | `End [label="End", shape=ellipse];` |
 | `subgraph cluster_*` | Phase grouping | `subgraph cluster_build {}` |
-| `command` attribute | Per-node command | `command="tea run ..."` |
+| `command` attribute | Per-node command | `command="tea-python run ..."` |
 | Edges | Execution order | `task_a -> task_b;` |
 
 ### Node Attributes
@@ -71,7 +73,7 @@ node_id [
 ### Command Format for TEA Workflows
 
 ```dot
-command="tea run <workflow.yaml> --input '{\"arg\": \"<value>\"}'"
+command="tea-python run <workflow.yaml> --input '{\"arg\": \"<value>\"}'"
 ```
 
 **Escaping rules:**
@@ -96,17 +98,17 @@ digraph sequential_stories {
 
     subgraph cluster_phase1 {
         label="1. Foundation";
-        story_1 [label="STORY-001\nSetup", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-001.md\"}'"];
+        story_1 [label="STORY-001\nSetup", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-001.md\"}'"];
     }
 
     subgraph cluster_phase2 {
         label="2. Core Features";
-        story_2 [label="STORY-002\nCore Logic", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-002.md\"}'"];
+        story_2 [label="STORY-002\nCore Logic", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-002.md\"}'"];
     }
 
     subgraph cluster_phase3 {
         label="3. Integration";
-        story_3 [label="STORY-003\nIntegration", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-003.md\"}'"];
+        story_3 [label="STORY-003\nIntegration", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-003.md\"}'"];
     }
 
     Start -> story_1;
@@ -130,14 +132,14 @@ digraph parallel_phases {
 
     subgraph cluster_backend {
         label="1. Backend Stories";
-        api [label="API Layer", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/API-001.md\"}'"];
-        db [label="Database", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/DB-001.md\"}'"];
+        api [label="API Layer", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/API-001.md\"}'"];
+        db [label="Database", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/DB-001.md\"}'"];
     }
 
     subgraph cluster_frontend {
         label="2. Frontend Stories";
-        ui [label="UI Components", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/UI-001.md\"}'"];
-        state [label="State Mgmt", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STATE-001.md\"}'"];
+        ui [label="UI Components", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/UI-001.md\"}'"];
+        state [label="State Mgmt", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STATE-001.md\"}'"];
     }
 
     // Phase 1: api and db run in parallel
@@ -168,19 +170,19 @@ digraph mixed_deps {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        core [label="Core Module", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/CORE-001.md\"}'"];
+        core [label="Core Module", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/CORE-001.md\"}'"];
     }
 
     subgraph cluster_features {
         label="2. Features";
-        feature_a [label="Feature A", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-A.md\"}'"];
-        feature_b [label="Feature B", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-B.md\"}'"];
-        feature_c [label="Feature C", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-C.md\"}'"];
+        feature_a [label="Feature A", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-A.md\"}'"];
+        feature_b [label="Feature B", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-B.md\"}'"];
+        feature_c [label="Feature C", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-C.md\"}'"];
     }
 
     subgraph cluster_integration {
         label="3. Integration";
-        integration [label="Integration", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/INT-001.md\"}'"];
+        integration [label="Integration", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/INT-001.md\"}'"];
     }
 
     // Core is prerequisite for all features
@@ -206,27 +208,41 @@ digraph mixed_deps {
 Use JSON input format with `arg` key:
 
 ```dot
-command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
 ```
 
 ### Story Validation Workflow
 
 ```dot
-command="tea run examples/workflows/bmad-story-validation.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+command="tea-python run examples/workflows/bmad-story-validation.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
 ```
+
+### With Extended Timeout
+
+For long-running workflows, add `--input-timeout` (in seconds). Default is 300s (5 minutes):
+
+```dot
+command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+```
+
+**Common timeout values:**
+- `--input-timeout 600` - 10 minutes
+- `--input-timeout 1800` - 30 minutes
+- `--input-timeout 3600` - 1 hour
+- `--input-timeout 54000` - 15 hours (900 minutes) - recommended for complex workflows
 
 ### Custom Workflow with JSON Inputs
 
 For JSON inputs, use single quotes around the JSON (but avoid nested quotes when possible):
 
 ```dot
-command="echo simple_value | tea run my-workflow.yaml --input -"
+command="echo simple_value | tea-python run my-workflow.yaml --input -"
 ```
 
 Or use environment variables:
 
 ```dot
-command="STORY_ID=STORY-001 tea run my-workflow.yaml"
+command="STORY_ID=STORY-001 tea-python run my-workflow.yaml"
 ```
 
 ### Shell Commands (Non-TEA)
@@ -245,59 +261,48 @@ command="pytest tests/ -v"
 
 ```bash
 # Generate YAML from DOT with per-node commands
-tea from dot workflow.dot --use-node-commands -o workflow.yaml
+tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
 ```
 
 ### With Options
 
 ```bash
 # Custom concurrency (default: 3)
-tea from dot workflow.dot --use-node-commands -m 5 -o workflow.yaml
+tea-python from dot workflow.dot --use-node-commands -m 5 -o workflow.yaml
 
 # Custom workflow name
-tea from dot workflow.dot --use-node-commands -n "my-pipeline" -o workflow.yaml
+tea-python from dot workflow.dot --use-node-commands -n "my-pipeline" -o workflow.yaml
 
 # Validate before writing
-tea from dot workflow.dot --use-node-commands --validate -o workflow.yaml
-
-# Specify tea executable name (for multiple implementations)
-tea from dot workflow.dot --use-node-commands --tea-executable tea-python -o workflow.yaml
-tea from dot workflow.dot --use-node-commands --tea-executable tea-rust -o workflow.yaml
+tea-python from dot workflow.dot --use-node-commands --validate -o workflow.yaml
 ```
-
-### Tea Executable Override
-
-When you have multiple tea implementations (Python, Rust, or different versions), use `--tea-executable` to specify which one should be used in the generated commands:
-
-```bash
-# DOT file contains: command="tea run workflow.yaml ..."
-# With --tea-executable tea-python, generates: command="tea-python run workflow.yaml ..."
-
-tea from dot workflow.dot --use-node-commands --tea-executable tea-python -o workflow.yaml
-```
-
-**Use Cases:**
-- **Python implementation**: `--tea-executable tea-python`
-- **Rust implementation**: `--tea-executable tea-rust`
-- **Specific version**: `--tea-executable tea-v0.9.3`
-- **Custom binary**: `--tea-executable /usr/local/bin/my-tea`
-
-**How it works:**
-1. DOT file contains commands starting with `tea` (e.g., `command="tea run ..."`)
-2. The `--tea-executable` flag replaces `tea` with the specified executable name
-3. If no flag is provided, `tea` is used as-is (default behavior)
 
 ### Execute Generated Workflow
 
 ```bash
 # Run the generated workflow
-tea run workflow.yaml
+tea-python run workflow.yaml
+
+# With extended timeout (900 minutes = 54000 seconds)
+tea-python run workflow.yaml --input-timeout 54000
 
 # With streaming output
-tea run workflow.yaml --stream
+tea-python run workflow.yaml --stream
 
 # With verbose logging
-tea run workflow.yaml -vv
+tea-python run workflow.yaml -vv
+```
+
+### Alternative Tea Implementations
+
+When you have multiple tea implementations (Python, Rust, or different versions), use the appropriate executable directly:
+
+```bash
+# Python implementation v0.9.4 (default)
+tea-python run workflow.yaml
+
+# Rust implementation
+tea-rust run workflow.yaml
 ```
 
 ---
@@ -334,7 +339,7 @@ digraph <workflow_name> {
     subgraph cluster_<phase_name> {
         label="<N>. <Phase Label>";
         // For each item in phase:
-        <item_id> [label="<Display Name>", command="tea run <workflow> --input '{\"arg\": \"<path>\"}'"];
+        <item_id> [label="<Display Name>", command="tea-python run <workflow> --input-timeout 54000 --input '{\"arg\": \"<path>\"}'"];
     }
 
     // Define edges based on dependencies
@@ -349,7 +354,7 @@ digraph <workflow_name> {
 Always include the command to generate the YAML:
 
 ```bash
-tea from dot <filename>.dot --use-node-commands -o <filename>.yaml
+tea-python from dot <filename>.dot --use-node-commands -o <filename>.yaml
 ```
 
 ---
@@ -375,23 +380,23 @@ digraph epic_implementation {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        story_1_1 [label="EPIC-001.1\nCore Setup", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/EPIC-001.1-core-setup.md\"}'"];
+        story_1_1 [label="EPIC-001.1\nCore Setup", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.1-core-setup.md\"}'"];
     }
 
     subgraph cluster_core {
         label="2. Core Implementation";
-        story_1_2 [label="EPIC-001.2\nMain Feature", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/EPIC-001.2-main-feature.md\"}'"];
+        story_1_2 [label="EPIC-001.2\nMain Feature", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.2-main-feature.md\"}'"];
     }
 
     subgraph cluster_extensions {
         label="3. Extensions";
-        story_1_3 [label="EPIC-001.3\nExtension A", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/EPIC-001.3-extension-a.md\"}'"];
-        story_1_4 [label="EPIC-001.4\nExtension B", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/EPIC-001.4-extension-b.md\"}'"];
+        story_1_3 [label="EPIC-001.3\nExtension A", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.3-extension-a.md\"}'"];
+        story_1_4 [label="EPIC-001.4\nExtension B", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.4-extension-b.md\"}'"];
     }
 
     subgraph cluster_docs {
         label="4. Documentation";
-        story_1_5 [label="EPIC-001.5\nDocumentation", command="tea run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/EPIC-001.5-documentation.md\"}'"];
+        story_1_5 [label="EPIC-001.5\nDocumentation", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.5-documentation.md\"}'"];
     }
 
     Start -> story_1_1;
@@ -407,25 +412,17 @@ digraph epic_implementation {
 ### Generation Command
 
 ```bash
-# Default (uses "tea" in generated commands)
-tea from dot epic_implementation.dot --use-node-commands -o epic_implementation.yaml
-
-# Specify Python implementation
-tea from dot epic_implementation.dot --use-node-commands --tea-executable tea-python -o epic_implementation.yaml
-
-# Specify Rust implementation
-tea from dot epic_implementation.dot --use-node-commands --tea-executable tea-rust -o epic_implementation.yaml
+tea-python from dot epic_implementation.dot --use-node-commands -o epic_implementation.yaml
 ```
 
 ### Execution
 
 ```bash
-# Execute with default tea
-tea run epic_implementation.yaml
-
-# Execute with specific implementation (if generated with --tea-executable)
+# Execute workflow
 tea-python run epic_implementation.yaml
-tea-rust run epic_implementation.yaml
+
+# With extended timeout
+tea-python run epic_implementation.yaml --input-timeout 54000
 ```
 
 ---
@@ -445,11 +442,11 @@ tea-rust run epic_implementation.yaml
 ### Example: Good vs Bad
 
 ```dot
-// GOOD - simple label, JSON input format
-story_1 [label="STORY-001", command="tea run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
+// GOOD - simple label, JSON input format with timeout
+story_1 [label="STORY-001", command="tea-python run workflow.yaml --input-timeout 54000 --input '{\"arg\": \"docs/story.md\"}'"];
 
-// BAD - multi-line label
-story_1 [label="STORY-001\nDescription", command="tea run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
+// BAD - multi-line label, no timeout
+story_1 [label="STORY-001\nDescription", command="tea-python run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
 ```
 
 ---
