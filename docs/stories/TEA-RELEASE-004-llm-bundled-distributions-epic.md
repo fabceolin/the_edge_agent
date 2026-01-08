@@ -25,13 +25,19 @@ Provide self-contained TEA distributions with bundled Gemma 3n E4B GGUF model fo
   2. Rust AppImage with llama-cpp-2 crate
   3. WASM web package with wllama (model bundled in package)
 
-- **Model specification:**
-  - Model: [gemma3n:e4b](https://ollama.com/library/gemma3n) / [GGUF](https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF)
-  - Ollama size: 7.5GB (full precision)
-  - GGUF Q4_K_M: ~4.5GB (recommended quantization)
-  - Architecture: Effective 4B parameters with selective parameter activation
+- **Model specifications:**
+
+  **Primary (AppImage - Best Quality):** Gemma 3n E4B
+  - Source: [GGUF](https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF)
+  - GGUF Q4_K_M: ~4.54GB
   - Context: 32K tokens
-  - Performance: Superior to e2b across all benchmarks (78.6% vs 72.2% HellaSwag)
+  - Use case: Maximum quality, offline desktop deployment
+
+  **Lightweight (AppImage + WASM):** Phi-4-mini
+  - Source: [GGUF](https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF)
+  - GGUF Q3_K_S: ~1.90GB (fits GitHub 2GB limit - no chunking needed)
+  - Context: 128K tokens (4x Gemma)
+  - Use case: Browser/WASM deployment, smaller downloads, extended context tasks
 
 - **How it integrates:** Extends existing release workflow with new build matrix jobs
 - **Success criteria:** Users can run LLM-powered YAML agents offline without installing models separately
@@ -149,13 +155,30 @@ The WASM feasibility spike validated:
 
 ### New LLM-Bundled Artifacts (This Epic)
 
+**Gemma 3n E4B Variants (Best Quality - ~5GB)**
+
 | Artifact | Size (est.) | Description |
 |----------|-------------|-------------|
-| `tea-rust-llm-{version}-x86_64.AppImage` | ~5GB | Rust + llama-cpp-2 + gemma3n:e4b Q4_K_M |
-| `tea-rust-llm-{version}-aarch64.AppImage` | ~5GB | Rust ARM64 + llama-cpp-2 + gemma3n:e4b Q4_K_M |
-| `tea-python-llm-{version}-x86_64.AppImage` | ~5GB | Python + llama-cpp-python + gemma3n:e4b Q4_K_M |
-| `tea-python-llm-{version}-aarch64.AppImage` | ~5GB | Python ARM64 + llama-cpp-python + gemma3n:e4b Q4_K_M |
-| `tea-wasm-llm-{version}.tar.gz` + model chunks (GitHub) | ~4.5GB | WASM + wllama + gemma3n:e4b Q4_K_M bundled |
+| `tea-rust-llm-gemma-{version}-x86_64.AppImage` | ~5GB | Rust + Gemma 3n E4B Q4_K_M (best quality) |
+| `tea-rust-llm-gemma-{version}-aarch64.AppImage` | ~5GB | Rust ARM64 + Gemma 3n E4B Q4_K_M |
+| `tea-python-llm-gemma-{version}-x86_64.AppImage` | ~5GB | Python + Gemma 3n E4B Q4_K_M (best quality) |
+| `tea-python-llm-gemma-{version}-aarch64.AppImage` | ~5GB | Python ARM64 + Gemma 3n E4B Q4_K_M |
+
+**Phi-4-mini Variants (Smaller Download - ~2.5GB)**
+
+| Artifact | Size (est.) | Description |
+|----------|-------------|-------------|
+| `tea-rust-llm-phi4-{version}-x86_64.AppImage` | ~2.5GB | Rust + Phi-4-mini Q3_K_S (128K context) |
+| `tea-rust-llm-phi4-{version}-aarch64.AppImage` | ~2.5GB | Rust ARM64 + Phi-4-mini Q3_K_S |
+| `tea-python-llm-phi4-{version}-x86_64.AppImage` | ~2.5GB | Python + Phi-4-mini Q3_K_S (128K context) |
+| `tea-python-llm-phi4-{version}-aarch64.AppImage` | ~2.5GB | Python ARM64 + Phi-4-mini Q3_K_S |
+
+**WASM Browser Package (Phi-4-mini only)**
+
+| Artifact | Size (est.) | Description |
+|----------|-------------|-------------|
+| `tea-wasm-llm-{version}.tar.gz` | ~50MB | WASM + wllama package |
+| `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` | ~1.9GB | Single-file model (no chunking!) |
 
 ### Existing Artifacts (Unchanged)
 
@@ -224,6 +247,7 @@ The WASM feasibility spike validated:
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Initial epic draft | Sarah (PO Agent) |
 | 2026-01-08 | 0.2 | Split Story 3 into 3a/3b/3c for manageability | Bob (SM Agent) |
+| 2026-01-08 | 0.3 | Dual-model strategy: Gemma for AppImage (quality), Phi-4-mini for WASM/smaller (1.9GB, no chunking) | Sarah (PO Agent) |
 
 ---
 

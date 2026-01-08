@@ -29,7 +29,7 @@ Draft
 
 1. **AC-1**: GitHub Actions workflow builds WASM package on release tag
 2. **AC-2**: Workflow uploads `tea-wasm-llm-{version}.tar.gz` to GitHub Releases
-3. **AC-3**: Workflow uploads model chunks to GitHub Releases
+3. **AC-3**: Workflow uploads `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` (~1.9GB single file) to GitHub Releases
 4. **AC-4**: Workflow uploads `model-manifest.json` to GitHub Releases
 5. **AC-5**: SHA256SUMS generated for all release assets
 
@@ -121,10 +121,10 @@ Draft
           npm install typescript
           npx tsc js/index.ts --outDir pkg/ --declaration --module esnext --target esnext
 
-      - name: Download and split model
+      - name: Download model (single file, no chunking needed)
         run: |
           cd rust/tea-wasm-llm
-          ./scripts/split-model.sh
+          ./scripts/download-model.sh  # Downloads Phi-4-mini Q3_K_S (~1.9GB)
 
       - name: Create release tarball
         run: |
@@ -138,10 +138,10 @@ Draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload model chunks
+      - name: Upload model (single file - fits GitHub 2GB limit)
         run: |
           gh release upload ${{ github.ref_name }} \
-            rust/tea-wasm-llm/models/gemma-3n-E4B-it-Q4_K_M.chunk-* \
+            rust/tea-wasm-llm/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
             rust/tea-wasm-llm/models/manifest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,7 +149,7 @@ Draft
       - name: Generate SHA256SUMS
         run: |
           cd rust/tea-wasm-llm
-          sha256sum tea-wasm-llm-*.tar.gz models/*.chunk-* models/manifest.json > SHA256SUMS.wasm
+          sha256sum tea-wasm-llm-*.tar.gz models/*.gguf models/manifest.json > SHA256SUMS.wasm
           gh release upload ${{ github.ref_name }} SHA256SUMS.wasm
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -367,8 +367,10 @@ const result = await executeLlmYaml(yaml, { question: "Hello!" });
 | Asset | Size |
 |-------|------|
 | WASM + JS | ~50 MB |
-| Model (Q4_K_M) | ~4.5 GB |
-| **Total** | **~4.6 GB** |
+| Model (Phi-4-mini Q3_K_S) | ~1.9 GB |
+| **Total** | **~2.0 GB** |
+
+> **Note:** Single file model fits GitHub 2GB limit - no chunking needed!
 
 ## Troubleshooting
 
@@ -378,15 +380,15 @@ Your server is missing COOP/COEP headers. See Server Configuration above.
 
 ### Model fails to load
 
-1. Verify all chunk files are present
-2. Check `manifest.json` matches chunk files
+1. Verify model file is present (`microsoft_Phi-4-mini-instruct-Q3_K_S.gguf`)
+2. Check `manifest.json` matches model file
 3. Clear IndexedDB cache: `indexedDB.deleteDatabase('tea-llm-cache')`
 
 ### Out of memory
 
-The model requires ~5GB RAM. Try:
-- Using a smaller quantization (Q3_K_M)
+The model requires ~3GB RAM. Try:
 - Closing other browser tabs
+- Using a device with more memory
 ```
 
 ## Definition of Done
@@ -422,3 +424,4 @@ The model requires ~5GB RAM. Try:
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Split from TEA-RELEASE-004.3 | Bob (SM Agent) |
+| 2026-01-08 | 0.2 | Updated for Phi-4-mini Q3_K_S (1.9GB single file), simplified workflow | Sarah (PO Agent) |

@@ -1,4 +1,4 @@
-# Story TEA-RELEASE-004.1: Rust LLM AppImage with Bundled Gemma 3n E4B
+# Story TEA-RELEASE-004.1: Rust LLM AppImage (Gemma + Phi-4-mini Variants)
 
 ## Status
 
@@ -7,8 +7,8 @@ Draft
 ## Story
 
 **As a** developer using The Edge Agent,
-**I want** a Rust AppImage with bundled Gemma 3n E4B model,
-**So that** I can run LLM-powered workflows offline without installing llama.cpp or downloading models.
+**I want** Rust AppImages with bundled LLM models (Gemma 3n E4B and Phi-4-mini variants),
+**So that** I can choose between maximum quality (Gemma, ~5GB) or smaller downloads (Phi-4-mini, ~2.5GB) for offline LLM workflows.
 
 ## Story Context
 
@@ -23,8 +23,8 @@ Draft
 
 ### Functional Requirements
 
-1. **AC-1**: Release includes `tea-rust-llm-{version}-x86_64.AppImage` with bundled Gemma 3n E4B Q4_K_M model
-2. **AC-2**: Release includes `tea-rust-llm-{version}-aarch64.AppImage` with bundled Gemma 3n E4B Q4_K_M model
+1. **AC-1**: Release includes Gemma variants: `tea-rust-llm-gemma-{version}-{arch}.AppImage` (~5GB, best quality)
+2. **AC-2**: Release includes Phi-4-mini variants: `tea-rust-llm-phi4-{version}-{arch}.AppImage` (~2.5GB, 128K context)
 3. **AC-3**: `llm.call` action routes to local llama-cpp-2 backend when model is present
 4. **AC-4**: AppImage runs on systems without any LLM dependencies installed (fully self-contained)
 5. **AC-5**: Model path auto-detected relative to AppImage extraction directory
@@ -32,9 +32,9 @@ Draft
 ### Build Requirements
 
 6. **AC-6**: Add `llama-cpp-2` crate dependency with feature flags (`cuda`, `metal` optional)
-7. **AC-7**: GitHub Actions job `build-rust-llm-appimage-x86_64` builds on `ubuntu-latest`
-8. **AC-8**: GitHub Actions job `build-rust-llm-appimage-aarch64` builds on `ubuntu-24.04-arm`
-9. **AC-9**: Model file downloaded from HuggingFace during build
+7. **AC-7**: GitHub Actions jobs for Gemma variants (x86_64 + aarch64)
+8. **AC-8**: GitHub Actions jobs for Phi-4-mini variants (x86_64 + aarch64)
+9. **AC-9**: Model files downloaded from HuggingFace during build (Gemma Q4_K_M or Phi-4-mini Q3_K_S)
 10. **AC-10**: AppImage bundled with linuxdeploy including model file
 
 ### Quality Requirements
@@ -81,6 +81,13 @@ Draft
   - [ ] Add LLM AppImages to artifact collection
   - [ ] Update SHA256SUMS generation
   - [ ] Ensure existing Prolog AppImages still build
+
+- [ ] Task 7: Add Phi-4-mini variant build jobs (AC: 2, 8)
+  - [ ] Create `build-rust-llm-phi4-appimage-x86_64` job in release.yaml
+  - [ ] Create `build-rust-llm-phi4-appimage-aarch64` job in release.yaml
+  - [ ] Download `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` (~1.9GB) from HuggingFace
+  - [ ] Bundle model at `usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf`
+  - [ ] Update AppRun script to detect model filename dynamically
 
 ## Dev Notes
 
@@ -198,3 +205,4 @@ GitHub Releases has a **2GB per file limit**. Since the AppImage will be ~5GB:
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Initial story creation | Sarah (PO Agent) |
+| 2026-01-08 | 0.2 | Added Phi-4-mini Q3_K_S variant (~2.5GB, 128K context) alongside Gemma | Sarah (PO Agent) |

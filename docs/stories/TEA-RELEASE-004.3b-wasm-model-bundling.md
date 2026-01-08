@@ -1,4 +1,4 @@
-# Story TEA-RELEASE-004.3b: WASM Model Bundling and Caching
+# Story TEA-RELEASE-004.3b: WASM Model Loading and Caching (Phi-4-mini)
 
 ## Status
 
@@ -7,8 +7,10 @@ Draft
 ## Story
 
 **As a** developer deploying TEA WASM with offline LLM,
-**I want** the Gemma 3n E4B model bundled and cached in IndexedDB,
+**I want** the Phi-4-mini Q3_K_S model (~1.9GB) loaded and cached in IndexedDB,
 **So that** users can run LLM workflows without re-downloading the model on each visit.
+
+> **Note:** Phi-4-mini Q3_K_S (1.9GB) fits GitHub's 2GB limit as a single file - **no chunking required!** This significantly simplifies the implementation compared to the original Gemma 3n E4B (4.54GB) plan.
 
 ## Story Context
 
@@ -25,8 +27,8 @@ Draft
 
 ### Functional Requirements
 
-1. **AC-1**: Model split into chunks <2GB for GitHub Release compatibility
-2. **AC-2**: Model chunks reassemble correctly into single GGUF file
+1. **AC-1**: ~~REMOVED~~ - Phi-4-mini Q3_K_S (1.9GB) fits GitHub 2GB limit, no chunking needed
+2. **AC-2**: Model loads directly from single GGUF file (no reassembly)
 3. **AC-3**: Model loads from bundled/local assets without external CDN requests
 4. **AC-4**: IndexedDB caching stores model after first load
 5. **AC-5**: Subsequent page loads use cached model (skip download)
@@ -34,9 +36,9 @@ Draft
 
 ### Build Requirements
 
-7. **AC-7**: `model-manifest.json` describes chunk files and checksums
-8. **AC-8**: Build script downloads and splits model automatically
-9. **AC-9**: Total bundled size documented (~4.5GB)
+7. **AC-7**: `model-manifest.json` describes single file and SHA256 checksum
+8. **AC-8**: Build script downloads model (no splitting needed)
+9. **AC-9**: Total bundled size documented (~1.9GB model + ~50MB WASM = ~2GB total)
 
 ### Quality Requirements
 
@@ -46,19 +48,17 @@ Draft
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Create model chunking infrastructure (AC: 1, 7, 8)
-  - [ ] Create `scripts/split-model.sh` script
-  - [ ] Download `gemma-3n-E4B-it-Q4_K_M.gguf` from HuggingFace
-  - [ ] Split into chunks <2GB using `split` command
-  - [ ] Generate `model-manifest.json` with chunk names, sizes, SHA256 checksums
-  - [ ] Document chunk naming convention
+- [ ] Task 1: Create model download script (AC: 7, 8) [SIMPLIFIED]
+  - [ ] Create `scripts/download-model.sh` script
+  - [ ] Download `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` (~1.9GB) from HuggingFace
+  - [ ] Generate `model-manifest.json` with single file metadata and SHA256 checksum
+  - [ ] **No chunking required** - file is under 2GB GitHub limit
 
-- [ ] Task 2: Create model loader TypeScript module (AC: 2, 3, 12)
+- [ ] Task 2: Create model loader TypeScript module (AC: 2, 3, 12) [SIMPLIFIED]
   - [ ] Create `js/model-loader.ts`
-  - [ ] Implement `loadModelChunks(manifest)` function
-  - [ ] Implement chunk reassembly into single ArrayBuffer
+  - [ ] Implement `loadModel(manifest)` function (single file, no reassembly)
   - [ ] Add progress callback: `onProgress(loaded, total)`
-  - [ ] Verify checksum after reassembly
+  - [ ] Verify SHA256 checksum after download
 
 - [ ] Task 3: Implement IndexedDB caching (AC: 4, 5, 6)
   - [ ] Create `js/model-cache.ts`
@@ -82,79 +82,57 @@ Draft
 
 ## Dev Notes
 
-### Model Manifest Format
+### Model Manifest Format (Simplified - Single File)
 
 ```json
 {
-  "model": "gemma-3n-E4B-it-Q4_K_M",
+  "model": "microsoft_Phi-4-mini-instruct-Q3_K_S",
   "version": "v1",
-  "totalSize": 4540000000,
-  "chunks": [
-    {
-      "name": "gemma-3n-E4B-it-Q4_K_M.chunk-00.bin",
-      "size": 2000000000,
-      "sha256": "abc123..."
-    },
-    {
-      "name": "gemma-3n-E4B-it-Q4_K_M.chunk-01.bin",
-      "size": 2000000000,
-      "sha256": "def456..."
-    },
-    {
-      "name": "gemma-3n-E4B-it-Q4_K_M.chunk-02.bin",
-      "size": 540000000,
-      "sha256": "ghi789..."
-    }
-  ]
+  "totalSize": 1900000000,
+  "file": "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",
+  "sha256": "..."
 }
 ```
 
-### Model Splitting Script
+> **Note:** No chunking needed! Single file format is much simpler than the original multi-chunk design.
+
+### Model Download Script (Simplified - No Chunking)
 
 ```bash
 #!/bin/bash
-# scripts/split-model.sh
+# scripts/download-model.sh
 set -e
 
-MODEL_URL="https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
-MODEL_NAME="gemma-3n-E4B-it-Q4_K_M"
-CHUNK_SIZE="2000000000"  # ~2GB
+MODEL_URL="https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf"
+MODEL_NAME="microsoft_Phi-4-mini-instruct-Q3_K_S"
 OUTPUT_DIR="models"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "Downloading model..."
+echo "Downloading Phi-4-mini Q3_K_S (~1.9GB)..."
 wget -q --show-progress -O "$OUTPUT_DIR/$MODEL_NAME.gguf" "$MODEL_URL"
 
-echo "Splitting into chunks..."
-cd "$OUTPUT_DIR"
-split -b "$CHUNK_SIZE" -d "$MODEL_NAME.gguf" "$MODEL_NAME.chunk-"
-
 echo "Generating manifest..."
-cat > manifest.json << EOF
+SIZE=$(stat -c%s "$OUTPUT_DIR/$MODEL_NAME.gguf" 2>/dev/null || stat -f%z "$OUTPUT_DIR/$MODEL_NAME.gguf")
+SHA=$(sha256sum "$OUTPUT_DIR/$MODEL_NAME.gguf" | cut -d' ' -f1)
+
+cat > "$OUTPUT_DIR/manifest.json" << EOF
 {
   "model": "$MODEL_NAME",
   "version": "v1",
-  "totalSize": $(stat -f%z "$MODEL_NAME.gguf" 2>/dev/null || stat -c%s "$MODEL_NAME.gguf"),
-  "chunks": [
+  "totalSize": $SIZE,
+  "file": "$MODEL_NAME.gguf",
+  "sha256": "$SHA"
+}
 EOF
 
-for chunk in $MODEL_NAME.chunk-*; do
-  SIZE=$(stat -f%z "$chunk" 2>/dev/null || stat -c%s "$chunk")
-  SHA=$(sha256sum "$chunk" | cut -d' ' -f1)
-  echo "    {\"name\": \"$chunk\", \"size\": $SIZE, \"sha256\": \"$SHA\"}," >> manifest.json
-done
-
-# Remove trailing comma and close JSON
-sed -i '$ s/,$//' manifest.json
-echo "  ]" >> manifest.json
-echo "}" >> manifest.json
-
-echo "Done! Chunks in $OUTPUT_DIR/"
+echo "Done! Model in $OUTPUT_DIR/"
 ls -lh "$OUTPUT_DIR"
 ```
 
-### Model Loader
+> **Note:** No splitting needed - Phi-4-mini Q3_K_S (1.9GB) fits GitHub's 2GB limit!
+
+### Model Loader (Simplified - Single File)
 
 ```typescript
 // js/model-loader.ts
@@ -163,48 +141,42 @@ export interface ModelManifest {
   model: string;
   version: string;
   totalSize: number;
-  chunks: ChunkInfo[];
-}
-
-export interface ChunkInfo {
-  name: string;
-  size: number;
+  file: string;      // Single file, no chunks array
   sha256: string;
 }
 
 export type ProgressCallback = (loaded: number, total: number) => void;
 
-export async function loadModelChunks(
+export async function loadModel(
   basePath: string,
   manifest: ModelManifest,
   onProgress?: ProgressCallback
 ): Promise<Uint8Array> {
-  const totalSize = manifest.totalSize;
-  let loadedSize = 0;
-
-  // Load all chunks
-  const chunkBuffers: ArrayBuffer[] = [];
-
-  for (const chunk of manifest.chunks) {
-    const response = await fetch(`${basePath}/${chunk.name}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load chunk: ${chunk.name}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    chunkBuffers.push(buffer);
-
-    loadedSize += chunk.size;
-    onProgress?.(loadedSize, totalSize);
+  const response = await fetch(`${basePath}/${manifest.file}`);
+  if (!response.ok) {
+    throw new Error(`Failed to load model: ${manifest.file}`);
   }
 
-  // Reassemble into single buffer
-  const combined = new Uint8Array(totalSize);
-  let offset = 0;
+  // Stream the response for progress tracking
+  const reader = response.body!.getReader();
+  const chunks: Uint8Array[] = [];
+  let loadedSize = 0;
 
-  for (const buffer of chunkBuffers) {
-    combined.set(new Uint8Array(buffer), offset);
-    offset += buffer.byteLength;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    chunks.push(value);
+    loadedSize += value.length;
+    onProgress?.(loadedSize, manifest.totalSize);
+  }
+
+  // Combine chunks into single buffer
+  const combined = new Uint8Array(manifest.totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
   }
 
   return combined;
@@ -220,6 +192,8 @@ export async function verifyChecksum(
   return hashHex === expectedSha256;
 }
 ```
+
+> **Note:** Single file loading is much simpler - no chunk reassembly logic needed!
 
 ### IndexedDB Cache
 
@@ -373,9 +347,9 @@ export async function loadBundledModelSafe(
 
 ## Definition of Done
 
-- [ ] Model split script creates chunks <2GB
-- [ ] `model-manifest.json` generated with checksums
-- [ ] `loadModelChunks()` reassembles model correctly
+- [ ] Model download script fetches Phi-4-mini Q3_K_S (~1.9GB)
+- [ ] `model-manifest.json` generated with SHA256 checksum
+- [ ] `loadModel()` loads single GGUF file correctly
 - [ ] IndexedDB cache stores/retrieves model
 - [ ] Cache hit skips download (verified in DevTools)
 - [ ] Version change triggers re-download
@@ -387,9 +361,14 @@ export async function loadBundledModelSafe(
 **Primary Risk:** IndexedDB storage limits (~50MB-2GB depending on browser)
 
 **Mitigation:**
-- Document browser storage limits
+- Phi-4-mini Q3_K_S (1.9GB) fits within Chrome/Firefox IndexedDB limits
+- Safari still has 1GB hard limit - streaming fallback documented
 - Provide `clearCache()` for manual cleanup
-- Consider compression or partial caching in future
+
+**Risk Reduction from Original Plan:**
+- No chunking logic = fewer failure points
+- Single file = simpler download/cache/verify flow
+- GitHub Release compatible without external hosting
 
 **Rollback:** Caching is optional; model loads without cache
 
@@ -405,3 +384,4 @@ export async function loadBundledModelSafe(
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Split from TEA-RELEASE-004.3 | Bob (SM Agent) |
+| 2026-01-08 | 0.2 | **Major simplification:** Changed to Phi-4-mini Q3_K_S (1.9GB), removed chunking | Sarah (PO Agent) |

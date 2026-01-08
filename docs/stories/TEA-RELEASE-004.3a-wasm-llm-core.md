@@ -1,4 +1,4 @@
-# Story TEA-RELEASE-004.3a: WASM LLM Core Package
+# Story TEA-RELEASE-004.3a: WASM LLM Core Package (Phi-4-mini)
 
 ## Status
 
@@ -7,8 +7,8 @@ Draft
 ## Story
 
 **As a** developer building browser-based TEA applications,
-**I want** a WASM package with wllama LLM integration,
-**So that** I can execute LLM workflows in the browser without backend servers.
+**I want** a WASM package with wllama LLM integration using Phi-4-mini,
+**So that** I can execute LLM workflows in the browser without backend servers, using a single-file model under 2GB.
 
 ## Story Context
 
@@ -309,3 +309,4 @@ echo "Done! Package in pkg/"
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Split from TEA-RELEASE-004.3 | Bob (SM Agent) |
+| 2026-01-08 | 0.2 | Changed model from Gemma to Phi-4-mini Q3_K_S (1.9GB, single file, 128K context) | Sarah (PO Agent) |
