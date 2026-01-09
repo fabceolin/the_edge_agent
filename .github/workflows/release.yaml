@@ -970,14 +970,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Python dependencies (full + janus-swi)
+      - name: Install Python dependencies (full + janus-swi + llm-local)
         run: |
           cd python
           pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin duckdb \
+                      llama-cpp-python
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -1011,7 +1012,9 @@ jobs:
             --hidden-import=firebase_admin \
             --hidden-import=duckdb \
             --hidden-import=janus_swi \
+            --hidden-import=llama_cpp \
             --collect-all the_edge_agent \
+            --collect-all llama_cpp \
             --collect-all numpy \
             --collect-all pandas \
             --collect-all firebase_admin \
@@ -1148,14 +1151,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Python dependencies (full + janus-swi)
+      - name: Install Python dependencies (full + janus-swi + llm-local)
         run: |
           cd python
           pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin duckdb \
+                      llama-cpp-python
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -1189,7 +1193,9 @@ jobs:
             --hidden-import=firebase_admin \
             --hidden-import=duckdb \
             --hidden-import=janus_swi \
+            --hidden-import=llama_cpp \
             --collect-all the_edge_agent \
+            --collect-all llama_cpp \
             --collect-all numpy \
             --collect-all pandas \
             --collect-all firebase_admin \
