@@ -263,52 +263,29 @@ export async function initLlm(config: InitLlmConfig = {}): Promise<void> {
         verbose,
       } as BundledModelConfig);
     } else if (modelUrl) {
-      // Direct URL loading
-      log(`Fetching from: ${modelUrl}`);
+      // Use wllama's native URL loading (streams directly, no memory doubling)
+      log(`Loading from URL: ${modelUrl}`);
 
-      // First check cache
-      if (useCache) {
-        const stats = await getCacheStats();
-        if (stats.modelCount > 0) {
-          log('Cache has models, checking...');
-          // For direct URL, we'd need to implement URL-based cache lookup
-          // For now, fall through to download
-        }
-      }
+      await wllamaInstance.loadModelFromUrl(modelUrl, {
+        n_gpu_layers: nGpuLayers,
+        n_ctx: nCtx,
+        useCache,
+        progressCallback: onProgress
+          ? ({ loaded, total }: { loaded: number; total: number }) => {
+              onProgress(loaded, total);
+            }
+          : undefined,
+      });
 
-      const response = await fetch(modelUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('Response body not readable');
-      }
-
-      const contentLength = parseInt(response.headers.get('Content-Length') || '0', 10);
-      const chunks: Uint8Array[] = [];
-      let loaded = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.length;
-        onProgress?.(loaded, contentLength);
-      }
-
-      modelData = new Uint8Array(loaded);
-      let offset = 0;
-      for (const chunk of chunks) {
-        modelData.set(chunk, offset);
-        offset += chunk.length;
-      }
+      modelLoaded = true;
+      log('Model loaded successfully');
+      onReady?.();
+      return;
     } else {
       throw new Error('Either modelUrl or modelBasePath must be provided');
     }
 
-    // Load into wllama
+    // Load into wllama (only for modelBasePath case)
     log('Loading model into wllama...');
     await wllamaInstance.loadModel(modelData, {
       n_gpu_layers: nGpuLayers,
