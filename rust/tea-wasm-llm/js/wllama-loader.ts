@@ -398,6 +398,7 @@ export async function chatStream(
   }
 
   let fullContent = '';
+  let lastLength = 0;
 
   await wllamaInstance.createCompletion(fullPrompt, {
     nPredict: maxTokens,
@@ -407,9 +408,13 @@ export async function chatStream(
       top_k: topK,
     },
     stopTokens: stop,
-    onNewToken: (_token: number, piece: string) => {
-      fullContent += piece;
-      onToken(piece);
+    // wllama API: onNewToken(token: number, piece: Uint8Array, currentText: string, ...)
+    onNewToken: (_token: number, _piece: Uint8Array, currentText: string) => {
+      // Extract only the new part since last callback
+      const newPart = currentText.slice(lastLength);
+      lastLength = currentText.length;
+      fullContent = currentText;
+      onToken(newPart);
     },
   });
 
