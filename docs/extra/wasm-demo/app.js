@@ -21,8 +21,8 @@ import {
   getVersion,
 } from './pkg/index.js';
 
-// Configuration - Using Gemma 3 1B for faster loading (~1.3GB vs ~1.9GB)
-const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q8_0.gguf';
+// Configuration - Using Gemma 3 1B Q4 for browser compatibility (~700MB vs ~1.3GB Q8)
+const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q4_K_M.gguf';
 
 // DOM Elements
 const statusEl = document.getElementById('status');
