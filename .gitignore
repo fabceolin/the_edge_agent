@@ -213,3 +213,6 @@ reports/
 # Ignore generated workflows, but not .github/workflows/
 workflows/
 !.github/workflows/
+
+# WASM demo build artifacts (built by CI)
+docs/extra/wasm-demo/pkg/
