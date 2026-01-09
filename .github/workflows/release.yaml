@@ -107,12 +107,10 @@ jobs:
 
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
-          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev git wget libopenblas-dev software-properties-common && \
-             add-apt-repository -y ppa:ubuntu-toolchain-r/test && apt-get update && apt-get install -y gcc-14 g++-14 && \
-             wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | apt-key add - && \
-             wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
-             apt-get update -y && apt-get install -y vulkan-sdk && \
+          # Using Debian trixie for GCC 14 support (improved x86_64 optimizations)
+          # Vulkan from Debian native packages (LunarG SDK not available for trixie)
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:main-trixie -c \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev vulkan-tools glslang-tools git wget libopenblas-dev gcc-14 g++-14 && \
              cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
