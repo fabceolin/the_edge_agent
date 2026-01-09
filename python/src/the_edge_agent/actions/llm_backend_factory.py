@@ -385,6 +385,7 @@ def create_llm_backend(
     if backend_type == "local":
         # Try to create local backend
         try:
+            import os
             from .llm_local import (
                 LocalLlmBackend,
                 LLAMA_CPP_AVAILABLE,
@@ -412,15 +413,53 @@ def create_llm_backend(
             # Get model-specific configuration
             model_info = get_model_info(model_path)
 
-            # Create local backend with settings
-            return LocalLlmBackend(
-                model_path=model_path,
-                n_ctx=llm_settings.get("n_ctx", model_info["n_ctx"]),
-                n_threads=llm_settings.get("n_threads"),  # None = auto
-                n_gpu_layers=llm_settings.get("n_gpu_layers", 0),
-                chat_format=llm_settings.get("chat_format", model_info["chat_format"]),
-                embedding=llm_settings.get("embedding", False),
-            )
+            # Helper to create the backend
+            def _create_backend():
+                return LocalLlmBackend(
+                    model_path=model_path,
+                    n_ctx=llm_settings.get("n_ctx", model_info["n_ctx"]),
+                    n_threads=llm_settings.get("n_threads"),  # None = auto
+                    n_gpu_layers=llm_settings.get("n_gpu_layers", 0),
+                    chat_format=llm_settings.get(
+                        "chat_format", model_info["chat_format"]
+                    ),
+                    embedding=llm_settings.get("embedding", False),
+                )
+
+            # First attempt - try with current settings
+            try:
+                return _create_backend()
+            except Exception as first_error:
+                error_str = str(first_error).lower()
+                # Check if this is a Vulkan/GPU memory error
+                vulkan_errors = [
+                    "vulkan",
+                    "outofdevicememory",
+                    "device memory",
+                    "failed to create llama_context",
+                    "gpu",
+                    "vram",
+                ]
+                is_vulkan_error = any(err in error_str for err in vulkan_errors)
+
+                if is_vulkan_error:
+                    logger.warning(
+                        f"GPU/Vulkan initialization failed: {first_error}. "
+                        "Retrying with CPU-only mode..."
+                    )
+                    # Disable Vulkan by clearing ICD paths
+                    os.environ["VK_ICD_FILENAMES"] = ""
+                    os.environ["VK_DRIVER_FILES"] = ""
+                    try:
+                        backend = _create_backend()
+                        logger.info("Successfully loaded LLM in CPU-only mode.")
+                        return backend
+                    except Exception as cpu_error:
+                        logger.warning(f"CPU-only mode also failed: {cpu_error}")
+                        raise cpu_error
+                else:
+                    # Not a Vulkan error, re-raise
+                    raise first_error
 
         except ImportError as e:
             logger.warning(f"llama-cpp-python not available: {e}")
