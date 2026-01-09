@@ -18,6 +18,18 @@ Usage:
 import sys
 import os
 
+# =============================================================================
+# Early Vulkan/GPU Configuration (MUST be before any llama-cpp imports)
+# =============================================================================
+# TEA_DISABLE_VULKAN=1 - Force CPU-only mode (disable Vulkan GPU)
+# TEA_ENABLE_VULKAN=1  - Force Vulkan GPU mode (override auto-detection)
+#
+# By default, we try Vulkan first. If you get "OutOfDeviceMemory" errors,
+# set TEA_DISABLE_VULKAN=1 or run with: VK_ICD_FILENAMES="" tea-python ...
+if os.environ.get("TEA_DISABLE_VULKAN", "").lower() in ("1", "true", "yes"):
+    os.environ["VK_ICD_FILENAMES"] = ""
+    os.environ["VK_DRIVER_FILES"] = ""
+
 # TEA-KIROKU-005: Load .env files for API keys and configuration
 # This loads from current directory's .env and parent directories
 from dotenv import load_dotenv

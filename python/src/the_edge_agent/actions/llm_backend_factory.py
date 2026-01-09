@@ -419,7 +419,7 @@ def create_llm_backend(
                     model_path=model_path,
                     n_ctx=llm_settings.get("n_ctx", model_info["n_ctx"]),
                     n_threads=llm_settings.get("n_threads"),  # None = auto
-                    n_gpu_layers=llm_settings.get("n_gpu_layers", 0),
+                    n_gpu_layers=llm_settings.get("n_gpu_layers", -1),  # -1 = auto/all
                     chat_format=llm_settings.get(
                         "chat_format", model_info["chat_format"]
                     ),
@@ -443,20 +443,13 @@ def create_llm_backend(
                 is_vulkan_error = any(err in error_str for err in vulkan_errors)
 
                 if is_vulkan_error:
+                    # Log helpful message for users
                     logger.warning(
-                        f"GPU/Vulkan initialization failed: {first_error}. "
-                        "Retrying with CPU-only mode..."
+                        f"GPU/Vulkan initialization failed: {first_error}\n"
+                        "To force CPU-only mode, set: TEA_DISABLE_VULKAN=1\n"
+                        "Or run with: VK_ICD_FILENAMES='' tea-python ..."
                     )
-                    # Disable Vulkan by clearing ICD paths
-                    os.environ["VK_ICD_FILENAMES"] = ""
-                    os.environ["VK_DRIVER_FILES"] = ""
-                    try:
-                        backend = _create_backend()
-                        logger.info("Successfully loaded LLM in CPU-only mode.")
-                        return backend
-                    except Exception as cpu_error:
-                        logger.warning(f"CPU-only mode also failed: {cpu_error}")
-                        raise cpu_error
+                    raise first_error
                 else:
                     # Not a Vulkan error, re-raise
                     raise first_error

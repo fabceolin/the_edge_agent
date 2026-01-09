@@ -198,7 +198,7 @@ class LocalLlmBackend(LlmBackend):
         model_path: Path to GGUF model file.
         n_ctx: Context window size (auto-detected if not specified).
         n_threads: CPU threads to use (default: all available).
-        n_gpu_layers: GPU layers for acceleration (0 = CPU only).
+        n_gpu_layers: GPU layers for acceleration (-1 = auto/all, 0 = CPU only).
         chat_format: Chat template format (auto-detected if not specified).
         embedding: Enable embedding mode for embed() method.
 
@@ -212,7 +212,7 @@ class LocalLlmBackend(LlmBackend):
         model_path: str,
         n_ctx: int = 4096,
         n_threads: Optional[int] = None,
-        n_gpu_layers: int = 0,
+        n_gpu_layers: int = -1,  # -1 = auto-offload all layers to GPU (matches Rust behavior)
         chat_format: Optional[str] = None,
         embedding: bool = False,
     ):

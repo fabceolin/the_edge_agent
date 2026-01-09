@@ -24,7 +24,8 @@ initial_state:
 settings:
   llm:
     backend: local
-    n_gpu_layers: 0
+    # n_gpu_layers: -1 = auto (offload all to GPU if available)
+    # n_gpu_layers: 0  = CPU only
 
 nodes:
   - name: greet

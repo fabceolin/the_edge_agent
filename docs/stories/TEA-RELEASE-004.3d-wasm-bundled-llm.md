@@ -635,6 +635,7 @@ html_extra_path = ['wasm-demo']
 | 2026-01-09 | 0.1 | Initial draft - Hybrid bundled architecture | Sarah (PO Agent) |
 | 2026-01-09 | 0.2 | Added Demo App (Task 7, AC 15-18), Testing section, fixed wllama URL | Sarah (PO Agent) |
 | 2026-01-09 | 0.3 | Added Article (Task 8, AC 19-21), moved demo to docs/wasm-demo/, added article template | Sarah (PO Agent) |
+| 2026-01-09 | 0.4 | Added QA Notes with comprehensive test design (42 scenarios, risk coverage matrix, CI/CD recommendations) | Quinn (QA Agent) |
 
 ---
 
@@ -665,6 +666,76 @@ html_extra_path = ['wasm-demo']
 - **Unit/Integration:** Vitest with fake-indexeddb
 - **E2E:** Playwright with Chrome (COOP/COEP headers)
 - **Demo validation:** Manual + GitHub Actions
+
+---
+
+## QA Notes
+
+**Test Design Document:** `docs/qa/assessments/TEA-RELEASE-004.3d-test-design-20260109.md`
+
+### Test Strategy Summary
+
+| Metric | Value |
+|--------|-------|
+| Total Scenarios | 42 |
+| Unit Tests | 15 (33%) |
+| Integration Tests | 23 (38%) |
+| E2E Tests | 13 (29%) |
+| P0 (Critical) | 18 |
+| P1 (High) | 16 |
+| P2 (Medium) | 8 |
+
+### Key Testing Challenges
+
+1. **WASM-in-WASM complexity**: Testing wllama loading inside the tea-wasm-llm module requires careful mocking strategy
+2. **Browser environment**: Tests require SharedArrayBuffer detection, IndexedDB, and Service Workers
+3. **Multi-threading**: COOP/COEP headers required for multi-thread tests in Playwright
+4. **Large model downloads**: Use mock/stub strategies for 1.9GB model in unit/integration tests; real model only in final E2E
+5. **Demo app validation**: GitHub Pages-specific testing with Service Worker for header injection
+
+### Risk Coverage Matrix
+
+| Risk | Test IDs |
+|------|----------|
+| WASM-in-WASM loading issues | 004.3d-INT-001, 004.3d-INT-003, 004.3d-INT-014 |
+| Package size budget | 004.3d-INT-016, 004.3d-INT-017 |
+| Multi-threading detection | 004.3d-E2E-010, 004.3d-INT-022 |
+| Backward compatibility | 004.3d-INT-018, 004.3d-INT-019, 004.3d-INT-020 |
+| GitHub Pages COOP/COEP | 004.3d-E2E-010, 004.3d-INT-022 |
+| Model caching regression | 004.3d-INT-011, 004.3d-INT-012, 004.3d-E2E-001 |
+
+### Test Environment Requirements
+
+| Level | Framework | Environment | Notes |
+|-------|-----------|-------------|-------|
+| Unit | Vitest | Node.js + WASM | Mock wllama responses |
+| Integration | Vitest | jsdom + fake-indexeddb | Small test model or mock |
+| E2E | Playwright | Chrome with COOP/COEP | Real Phi-4-mini model |
+| Docs | Sphinx | myst-parser | Link checker |
+
+### CI/CD Recommendations
+
+1. **Unit/Integration**: Run on every PR (fast, no model download)
+2. **E2E with mock model**: Run on every PR (moderate speed)
+3. **E2E with real model**: Run only on release branches or manual trigger (due to 1.9GB download)
+4. **Demo E2E**: Run on docs deploy workflow, not every PR
+5. **Safari limitations**: Document but don't block (no multi-threading support)
+
+### Mock Strategy for Large Models
+
+- Create a small test GGUF (~50MB) for unit/integration tests
+- Use real Phi-4-mini only for final E2E validation on release branches
+- Consider hosting test model on GitHub Releases for faster CI downloads
+
+### Execution Order (Fail-Fast)
+
+1. P0 Unit tests (bundle verification, API contracts)
+2. P0 Integration tests (wllama loading, model caching, backward compat)
+3. P0 E2E tests (browser validation, zero dependencies, demo)
+4. P1 tests in order
+5. P2+ as time permits
+
+---
 
 ## References
 
