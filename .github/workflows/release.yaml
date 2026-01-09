@@ -114,6 +114,7 @@ jobs:
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
                          firebase-admin duckdb && \
+             CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python && \
              pip install -e . --no-deps && \
              pyinstaller --onefile --name tea-python-linux-x86_64-full \
                --hidden-import=the_edge_agent \
@@ -140,12 +141,14 @@ jobs:
                --hidden-import=kuzu \
                --hidden-import=firebase_admin \
                --hidden-import=duckdb \
+               --hidden-import=llama_cpp \
                --collect-all the_edge_agent \
                --collect-all numpy \
                --collect-all pandas \
                --collect-all firebase_admin \
                --collect-all pydantic \
                --collect-all pydot \
+               --collect-all llama_cpp \
                --exclude-module tkinter \
                --exclude-module matplotlib \
                --strip \
@@ -267,6 +270,7 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
+          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -298,12 +302,14 @@ jobs:
             --hidden-import=kuzu \
             --hidden-import=firebase_admin \
             --hidden-import=duckdb \
+            --hidden-import=llama_cpp \
             --collect-all the_edge_agent \
             --collect-all numpy \
             --collect-all pandas \
             --collect-all firebase_admin \
             --collect-all pydantic \
             --collect-all pydot \
+            --collect-all llama_cpp \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -977,8 +983,8 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb \
-                      llama-cpp-python
+                      firebase-admin duckdb
+          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -1158,8 +1164,8 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb \
-                      llama-cpp-python
+                      firebase-admin duckdb
+          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller

@@ -1,0 +1,48 @@
+# Hello World Local LLM Example
+#
+# Simple example that uses the bundled Phi-4-mini model to answer "Hello World"
+#
+# Usage (with LLM-enabled AppImage):
+#   tea-python run examples/llm/hello-world.yaml
+#
+# Requirements:
+#   - tea-python LLM AppImage with llama-cpp-python bundled
+#   - Or: pip install the_edge_agent[llm-local] llama-cpp-python
+#   - Model at $TEA_MODEL_PATH or bundled in AppImage
+#
+# Note: The current release (v0.9.11) does not include llama-cpp-python.
+# A new build with llama-cpp-python is needed for local LLM to work.
+
+name: hello-world-llm
+description: Simple hello world using local Phi-4-mini LLM
+
+state_schema:
+  prompt: str
+  answer: str
+
+initial_state:
+  prompt: "Say hello world in a creative way!"
+
+settings:
+  llm:
+    backend: local
+    n_gpu_layers: 0
+
+nodes:
+  - name: greet
+    uses: llm.local.chat
+    with:
+      messages:
+        - role: system
+          content: "You are a friendly assistant. Keep your response brief and fun."
+        - role: user
+          content: "{{ state.prompt }}"
+      max_tokens: 50
+      temperature: 0.8
+    output: answer
+
+edges:
+  - from: __start__
+    to: greet
+  - from: greet
+    to: __end__

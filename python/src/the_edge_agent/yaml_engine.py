@@ -909,12 +909,19 @@ class YAMLEngine:
                 raw_value = llm_config["model"]
                 self.llm_settings["model"] = self._process_template(raw_value, {})
             # Copy other settings (provider, temperature, etc.)
+            # TEA-RELEASE-004.5: Include local LLM settings (backend, n_gpu_layers, etc.)
             for key in [
                 "provider",
                 "temperature",
                 "api_base",
                 "timeout",
                 "max_retries",
+                "backend",  # local or api
+                "n_gpu_layers",  # GPU layers for local models
+                "n_ctx",  # Context window for local models
+                "n_threads",  # CPU threads for local models
+                "model_path",  # Path to local model file
+                "chat_format",  # Chat template format
             ]:
                 if key in llm_config:
                     raw_value = llm_config[key]

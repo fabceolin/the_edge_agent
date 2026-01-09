@@ -331,12 +331,27 @@ class LocalLlmBackend(LlmBackend):
             ... ], max_tokens=200)
             >>> print(result.content)
         """
+        # Filter kwargs to only include parameters accepted by create_chat_completion
+        # This prevents errors from extra params passed by the YAML engine
+        valid_params = {
+            "top_p",
+            "top_k",
+            "repeat_penalty",
+            "presence_penalty",
+            "frequency_penalty",
+            "seed",
+            "stream",
+            "logprobs",
+            "top_logprobs",
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+
         output = self._llm.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
             stop=stop,
-            **kwargs,
+            **filtered_kwargs,
         )
 
         return LlmCallResult(

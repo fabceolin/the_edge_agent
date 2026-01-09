@@ -1,0 +1,21 @@
+# Simple test to verify node execution
+name: test-simple
+description: Test if nodes execute
+
+state_schema:
+  input: str
+  output: str
+
+initial_state:
+  input: "hello"
+
+nodes:
+  - name: echo
+    run: |
+      return {"output": state.get("input", "unknown") + " world!"}
+
+edges:
+  - from: __start__
+    to: echo
+  - from: echo
+    to: __end__
