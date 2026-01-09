@@ -121,7 +121,7 @@ jobs:
              git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python && \
              cd /tmp/llama-cpp-python && \
              git submodule update --init --recursive && \
-             cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../.. && \
+             cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../.. && \
              CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
              cd /src/python && \
              pip install -e . --no-deps && \
@@ -302,8 +302,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Update llama.cpp to latest master for newest Vulkan fixes
-          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          # Pin llama.cpp to stable release (b7684) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 
@@ -1054,8 +1054,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Update llama.cpp to latest master for newest Vulkan fixes
-          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          # Pin llama.cpp to stable release (b7684) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 
@@ -1262,8 +1262,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Update llama.cpp to latest master for newest Vulkan fixes
-          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          # Pin llama.cpp to stable release (b7684) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 
