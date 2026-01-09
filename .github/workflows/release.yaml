@@ -38,7 +38,7 @@ jobs:
   # Python Standalone Binaries - Linux (Docker-based)
   # ============================================================
   build-python-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Python linux-x86_64
 
     steps:
@@ -99,7 +99,7 @@ jobs:
   # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
   # ============================================================
   build-python-linux-full:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Python linux-x86_64-full
 
     steps:
@@ -670,7 +670,7 @@ jobs:
   # Uses glibc dynamic linking for libswipl.so compatibility
   # ============================================================
   build-python-linux-prolog-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     name: Python linux-x86_64-prolog
 
     steps:
@@ -1472,7 +1472,7 @@ jobs:
   # These require SWI-Prolog installed on the system
   # ============================================================
   build-rust-prolog-linux-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     name: Rust linux-x86_64-prolog
 
     steps:
@@ -1754,7 +1754,7 @@ jobs:
   # Uses linuxdeploy for automatic dependency bundling
   # ============================================================
   build-appimage-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build-rust-prolog-linux-x86_64]
     name: Rust AppImage x86_64 with Prolog
 
@@ -2238,7 +2238,7 @@ jobs:
 
   # Phi-4-mini LLM AppImage for x86_64 (~2.5GB, compact)
   build-rust-llm-phi4-appimage-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build-rust-llm-linux-x86_64]
     name: Rust LLM AppImage x86_64 (Phi-4)
 
@@ -2512,7 +2512,7 @@ jobs:
   # Bundles ALL optional dependencies + janus-swi + libswipl.so + SWI-Prolog runtime
   # ============================================================
   build-python-appimage-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build-python-linux-full-prolog-x86_64]
     name: Python AppImage x86_64 with Prolog
 
@@ -2524,7 +2524,8 @@ jobs:
           sudo apt-get update
           # libfuse2: Required for running AppImages
           # libossp-uuid16: Required by SWI-Prolog uuid.so module
-          sudo apt-get install -y file libfuse2 libossp-uuid16
+          # libpython3.12t64: Provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 libpython3.12t64
 
       - name: Download Python Full Prolog binary
         uses: actions/download-artifact@v4
@@ -2612,6 +2613,17 @@ jobs:
           echo "Bundled SWI-Prolog contents:"
           ls -la tea-python.AppDir/usr/lib/swipl/
           ls -la tea-python.AppDir/usr/lib/libswipl*
+
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
 
       - name: Run linuxdeploy
         run: |
@@ -2703,7 +2715,8 @@ jobs:
           sudo apt-get update
           # libfuse2: Required for running AppImages
           # libossp-uuid16: Required by SWI-Prolog uuid.so module
-          sudo apt-get install -y file libfuse2 libossp-uuid16
+          # libpython3.12t64: Provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 libpython3.12t64
 
       - name: Download Python Full Prolog binary
         uses: actions/download-artifact@v4
@@ -2792,6 +2805,17 @@ jobs:
           ls -la tea-python.AppDir/usr/lib/swipl/
           ls -la tea-python.AppDir/usr/lib/libswipl*
 
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
+
       - name: Run linuxdeploy
         run: |
           # linuxdeploy bundles shared libraries automatically
@@ -2870,7 +2894,7 @@ jobs:
   # Self-contained with bundled Phi-4-mini Q3_K_S GGUF model (~1.9GB)
   # ============================================================
   build-python-llm-phi4-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [build-python-linux-full-prolog-x86_64]
     name: Python LLM AppImage x86_64 (Phi-4-mini)
 
@@ -2880,7 +2904,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+          # libpython3.12t64 provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget libpython3.12t64
 
       - name: Download Python Full Prolog binary
         uses: actions/download-artifact@v4
@@ -2960,6 +2985,17 @@ jobs:
             [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
           fi
           cd ../../..
+
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python-llm.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
 
       - name: Run linuxdeploy
         run: |
@@ -3042,7 +3078,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+          # libpython3.12t64 provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget libpython3.12t64
 
       - name: Download Python Full Prolog binary
         uses: actions/download-artifact@v4
@@ -3123,6 +3160,17 @@ jobs:
           fi
           cd ../../..
 
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python-llm.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
+
       - name: Run linuxdeploy
         run: |
           export LD_LIBRARY_PATH="$(pwd)/tea-python-llm.AppDir/usr/lib:${LD_LIBRARY_PATH}"
@@ -3197,7 +3245,7 @@ jobs:
   # Python Wheel (existing)
   # ============================================================
   build-wheel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Python Wheel
 
     steps:
@@ -3226,7 +3274,7 @@ jobs:
   # Builds WASM package with model for browser LLM inference
   # ============================================================
   build-wasm-llm:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: WASM LLM Package
 
     steps:
@@ -3382,7 +3430,7 @@ jobs:
       - build-wheel
       # WASM LLM package
       - build-wasm-llm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Create Release
 
     steps:
