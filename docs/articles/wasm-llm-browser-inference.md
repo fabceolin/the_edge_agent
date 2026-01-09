@@ -35,8 +35,6 @@ WebAssembly (WASM) offers an alternative: compile the model runtime to WASM and 
 
 TEA WASM LLM builds on this foundation with a "batteries-included" philosophy: bundle the wllama engine (llama.cpp for WASM) internally, eliminating the need for users to install or configure external dependencies.
 
-[**Try the Live Demo**](https://fabceolin.github.io/the_edge_agent/wasm-demo/)
-
 ## 2. Architecture
 
 ### 2.1 Batteries-Included Design
