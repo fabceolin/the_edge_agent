@@ -210,4 +210,6 @@ site/
 ready-for-review-stories.dot
 ready-for-review-stories.yaml
 reports/
+# Ignore generated workflows, but not .github/workflows/
 workflows/
+!.github/workflows/

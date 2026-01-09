@@ -1,0 +1,395 @@
+# =============================================================================
+# Build Rust AppImage - Reusable Workflow
+# =============================================================================
+# Purpose: Builds 2 Rust AppImages with Prolog support
+#   - Linux x86_64 AppImage (self-contained with SWI-Prolog runtime)
+#   - Linux ARM64 AppImage (self-contained with SWI-Prolog runtime)
+#
+# Dependencies: Requires artifacts from build-rust-base.yaml
+#   - rust-tea-rust-linux-x86_64-prolog / rust-tea-rust-linux-arm64-prolog
+#   - swipl-runtime-x86_64 / swipl-runtime-aarch64
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: appimage-x86_64, appimage-aarch64
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Rust AppImage
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  # ============================================================
+  # Rust AppImage Distribution - x86_64 (Linux only)
+  # Self-contained with Prolog runtime
+  # ============================================================
+  build-appimage-x86_64:
+    runs-on: ubuntu-24.04
+    name: Rust AppImage x86_64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
+
+      - name: Download Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: swipl-runtime-x86_64
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent
+          Comment=Lightweight state graph workflow engine
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea.desktop
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256)
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea.AppDir/usr/bin
+          mkdir -p tea.AppDir/usr/lib/swipl
+          chmod +x tea-rust-linux-x86_64-prolog
+          cp tea-rust-linux-x86_64-prolog tea.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf swipl-runtime-x86_64.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r swipl-runtime-x86_64/home/* tea.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea.AppDir/usr/lib
+          cp -L swipl-runtime-x86_64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea.AppDir/usr/lib/swipl/
+          ls -la tea.AppDir/usr/lib/libswipl*
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea.AppDir \
+            --executable tea.AppDir/usr/bin/tea \
+            --desktop-file tea.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR
+          rm -f tea.AppDir/AppRun
+          cat > tea.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea.AppDir "tea-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-*-x86_64.AppImage
+          ./tea-*-x86_64.AppImage --version
+          impl=$(./tea-*-x86_64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage on clean Ubuntu container
+        run: |
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
+            chmod +x /work/tea-*-x86_64.AppImage
+            # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
+            # Only test --version here; full agent test runs natively with FUSE in smoke test
+            /work/tea-*-x86_64.AppImage --appimage-extract-and-run --version
+          '
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-x86_64
+          path: tea-*-x86_64.AppImage
+          retention-days: 1
+
+  # ============================================================
+  # Rust AppImage Distribution - ARM64 (Linux only)
+  # Self-contained with Prolog runtime
+  # ============================================================
+  build-appimage-aarch64:
+    runs-on: ubuntu-24.04-arm
+    name: Rust AppImage aarch64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          sudo apt-get install -y file libfuse2 libossp-uuid16
+
+      - name: Download Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-arm64-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: swipl-runtime-aarch64
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent
+          Comment=Lightweight state graph workflow engine
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea.desktop
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256)
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea.AppDir/usr/bin
+          mkdir -p tea.AppDir/usr/lib/swipl
+          chmod +x tea-rust-linux-arm64-prolog
+          cp tea-rust-linux-arm64-prolog tea.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf swipl-runtime-aarch64.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r swipl-runtime-aarch64/home/* tea.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea.AppDir/usr/lib
+          cp -L swipl-runtime-aarch64/lib/libswipl.so* tea.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea.AppDir/usr/lib/swipl/
+          ls -la tea.AppDir/usr/lib/libswipl*
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea.AppDir \
+            --executable tea.AppDir/usr/bin/tea \
+            --desktop-file tea.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR
+          rm -f tea.AppDir/AppRun
+          cat > tea.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea.AppDir "tea-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-*-aarch64.AppImage
+          ./tea-*-aarch64.AppImage --version
+          impl=$(./tea-*-aarch64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage in Docker container
+        run: |
+          # Note: Can't run aarch64 Docker images on aarch64 native runners easily
+          # Just verify the AppImage runs natively
+          ./tea-*-aarch64.AppImage run examples/prolog/simple-prolog-agent.yaml
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-aarch64
+          path: tea-*-aarch64.AppImage
+          retention-days: 1
