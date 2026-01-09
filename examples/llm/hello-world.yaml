@@ -2,16 +2,14 @@
 #
 # Simple example that uses the bundled Phi-4-mini model to answer "Hello World"
 #
-# Usage (with LLM-enabled AppImage):
+# Usage (works with both Python and Rust LLM AppImages):
 #   tea-python run examples/llm/hello-world.yaml
+#   tea-rust run examples/llm/hello-world.yaml
 #
 # Requirements:
-#   - tea-python LLM AppImage with llama-cpp-python bundled
+#   - tea-python or tea-rust LLM AppImage with model bundled
 #   - Or: pip install the_edge_agent[llm-local] llama-cpp-python
 #   - Model at $TEA_MODEL_PATH or bundled in AppImage
-#
-# Note: The current release (v0.9.11) does not include llama-cpp-python.
-# A new build with llama-cpp-python is needed for local LLM to work.
 
 name: hello-world-llm
 description: Simple hello world using local Phi-4-mini LLM
@@ -30,7 +28,7 @@ settings:
 
 nodes:
   - name: greet
-    uses: llm.local.chat
+    uses: llm.chat
     with:
       messages:
         - role: system
