@@ -108,14 +108,22 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc git wget libopenblas-dev && \
+             wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | apt-key add - && \
+             wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
+             apt-get update -y && apt-get install -y vulkan-sdk && \
              cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
                          firebase-admin duckdb && \
-             CMAKE_ARGS='-DGGML_VULKAN=on -DGGML_OPENMP=on' FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall && \
+             git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python && \
+             cd /tmp/llama-cpp-python && \
+             git submodule update --init --recursive && \
+             cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../.. && \
+             CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
+             cd /src/python && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
              pyinstaller --onefile --name tea-python-linux-x86_64-full \
@@ -273,7 +281,8 @@ jobs:
 
       - name: Install Python dependencies (full)
         env:
-          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          # CMake args matching llama.cpp official Vulkan builds
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -282,7 +291,17 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          # Build llama-cpp-python from source with latest llama.cpp
+          # Includes Vulkan memory allocation improvements
+          git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
+          cd /tmp/llama-cpp-python
+          git submodule update --init --recursive
+          # Update llama.cpp to latest master for newest Vulkan fixes
+          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          pip install . --no-cache-dir -v
+          cd $GITHUB_WORKSPACE/python
+
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -990,9 +1009,22 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install LunarG Vulkan SDK and OpenBLAS
+        run: |
+          # Install LunarG Vulkan SDK (same as llama.cpp official builds)
+          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+          sudo apt-get update -y
+          sudo apt-get install -y vulkan-sdk libopenblas-dev
+
       - name: Install Python dependencies (full + janus-swi + llm-local)
         env:
-          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          # CMake args matching llama.cpp official builds
+          # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
+          # OpenBLAS: Optimized CPU matrix operations
+          # CPU_ALL_VARIANTS: Runtime detection of AVX/AVX2/AVX512
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1001,7 +1033,17 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          # Build llama-cpp-python from source with latest llama.cpp
+          # Includes Vulkan memory allocation improvements
+          git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
+          cd /tmp/llama-cpp-python
+          git submodule update --init --recursive
+          # Update llama.cpp to latest master for newest Vulkan fixes
+          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          pip install . --no-cache-dir -v
+          cd $GITHUB_WORKSPACE/python
+
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -1138,17 +1180,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog 9.1+ (build from source), OpenMP, and Vulkan
+      - name: Install SWI-Prolog 9.1+ (build from source), OpenMP, Vulkan, and OpenBLAS
         run: |
           # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
           # Build SWI-Prolog 9.3.x from source
 
-          # Install build dependencies, OpenMP, and Vulkan libraries
+          # Install build dependencies, OpenMP, Vulkan, and OpenBLAS libraries
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
             libreadline-dev libedit-dev pkg-config libgomp1 \
-            libvulkan-dev glslang-tools glslc
+            libvulkan-dev glslang-tools glslc libopenblas-dev
 
           # Clone and build SWI-Prolog 9.3.x
           git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
@@ -1179,7 +1221,11 @@ jobs:
 
       - name: Install Python dependencies (full + janus-swi + llm-local)
         env:
-          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          # CMake args matching llama.cpp official builds
+          # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
+          # OpenBLAS: Optimized CPU matrix operations
+          # CPU_ALL_VARIANTS: Runtime detection of NEON/SVE
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1188,7 +1234,17 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          # Build llama-cpp-python from source with latest llama.cpp
+          # Includes Vulkan memory allocation improvements
+          git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
+          cd /tmp/llama-cpp-python
+          git submodule update --init --recursive
+          # Update llama.cpp to latest master for newest Vulkan fixes
+          cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../..
+          pip install . --no-cache-dir -v
+          cd $GITHUB_WORKSPACE/python
+
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller

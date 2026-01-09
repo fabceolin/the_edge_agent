@@ -166,14 +166,29 @@ class ApiLlmBackend(LlmBackend):
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in internal_params}
 
         # Make API call
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stop=stop,
-            **filtered_kwargs,
-        )
+        # Try max_completion_tokens first (newer OpenAI models like o1), fallback to max_tokens
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_completion_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop,
+                **filtered_kwargs,
+            )
+        except Exception as e:
+            if "max_completion_tokens" in str(e) or "max_tokens" in str(e):
+                # Model doesn't support max_completion_tokens, use max_tokens
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stop=stop,
+                    **filtered_kwargs,
+                )
+            else:
+                raise
 
         usage = (
             response.usage.model_dump() if hasattr(response.usage, "model_dump") else {}
@@ -329,16 +344,30 @@ class ApiLlmBackend(LlmBackend):
         }
         filtered_kwargs = {k: v for k, v in kwargs.items() if k not in internal_params}
 
-        # Stream
-        stream = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stop=stop,
-            stream=True,
-            **filtered_kwargs,
-        )
+        # Stream - try max_completion_tokens first (newer OpenAI models), fallback to max_tokens
+        try:
+            stream = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_completion_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop,
+                stream=True,
+                **filtered_kwargs,
+            )
+        except Exception as e:
+            if "max_completion_tokens" in str(e) or "max_tokens" in str(e):
+                stream = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stop=stop,
+                    stream=True,
+                    **filtered_kwargs,
+                )
+            else:
+                raise
 
         full_content = []
         for chunk in stream:
