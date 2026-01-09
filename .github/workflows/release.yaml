@@ -2221,10 +2221,13 @@ jobs:
       - name: Download Gemma model from HuggingFace
         run: |
           mkdir -p models
-          echo "Downloading Gemma 3n E4B model (~4.5GB)..."
-          wget -q --show-progress \
-            "https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" \
-            -O models/gemma-3n-E4B-it-Q4_K_M.gguf
+          # Download Gemma 3n E4B Instruct Q4_K_M (~4.2GB)
+          wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+            "https://huggingface.co/bartowski/google_gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" || {
+            echo "Primary download failed, trying mirror..."
+            wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+              "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
+          }
           ls -lh models/
 
       - name: Create .desktop file
