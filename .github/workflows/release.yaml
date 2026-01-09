@@ -108,7 +108,7 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp-dev libvulkan-dev glslang-tools && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools && \
              cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
@@ -263,7 +263,7 @@ jobs:
       - name: Install OpenMP and Vulkan dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgomp-dev libvulkan-dev glslang-tools
+          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -977,7 +977,7 @@ jobs:
           # Official PPA required for 9.1+
           sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config libgomp-dev libvulkan-dev glslang-tools
+          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev glslang-tools
 
           # Verify version (must be 9.1+)
           swipl --version
@@ -1146,7 +1146,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
-            libreadline-dev libedit-dev pkg-config libgomp-dev \
+            libreadline-dev libedit-dev pkg-config libgomp1 \
             libvulkan-dev glslang-tools
 
           # Clone and build SWI-Prolog 9.3.x
@@ -2107,16 +2107,18 @@ jobs:
 
   # Build Rust binary with llm-local feature for x86_64
   build-rust-llm-linux-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     name: Rust linux-x86_64-llm
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install build dependencies (OpenMP + Vulkan)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config
+          # OpenMP comes with GCC (build-essential), no separate libgomp-dev needed
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libvulkan-dev glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -2135,7 +2137,7 @@ jobs:
       - name: Build release binary with LLM feature
         run: |
           cd rust
-          cargo build --release --features llm-local --bin tea
+          cargo build --release --features llm-local-vulkan --bin tea
 
       - name: Copy binary
         run: |
@@ -2176,10 +2178,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install build dependencies (OpenMP + Vulkan)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config
+          # OpenMP comes with GCC (build-essential), no separate libgomp-dev needed
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libvulkan-dev glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -2198,7 +2202,7 @@ jobs:
       - name: Build release binary with LLM feature
         run: |
           cd rust
-          cargo build --release --features llm-local --bin tea
+          cargo build --release --features llm-local-vulkan --bin tea
 
       - name: Copy binary
         run: |
@@ -2243,7 +2247,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file libfuse2
+          sudo apt-get install -y file libfuse2 libgomp1
 
       - name: Download LLM binary
         uses: actions/download-artifact@v4
@@ -2296,6 +2300,15 @@ jobs:
           chmod +x tea-rust-linux-x86_64-llm
           cp tea-rust-linux-x86_64-llm tea-llm.AppDir/usr/bin/tea
           cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-llm.AppDir/usr/share/models/
+
+          # Bundle libgomp for OpenMP portability
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          if [ -n "$LIBGOMP_PATH" ]; then
+            cp "$LIBGOMP_PATH" tea-llm.AppDir/usr/lib/
+            echo "Bundled libgomp from: $LIBGOMP_PATH"
+          else
+            echo "Warning: libgomp.so.1 not found"
+          fi
 
       - name: Run linuxdeploy
         run: |
@@ -2369,7 +2382,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file libfuse2
+          sudo apt-get install -y file libfuse2 libgomp1
 
       - name: Download LLM binary
         uses: actions/download-artifact@v4
@@ -2422,6 +2435,15 @@ jobs:
           chmod +x tea-rust-linux-arm64-llm
           cp tea-rust-linux-arm64-llm tea-llm.AppDir/usr/bin/tea
           cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-llm.AppDir/usr/share/models/
+
+          # Bundle libgomp for OpenMP portability
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          if [ -n "$LIBGOMP_PATH" ]; then
+            cp "$LIBGOMP_PATH" tea-llm.AppDir/usr/lib/
+            echo "Bundled libgomp from: $LIBGOMP_PATH"
+          else
+            echo "Warning: libgomp.so.1 not found"
+          fi
 
       - name: Run linuxdeploy
         run: |

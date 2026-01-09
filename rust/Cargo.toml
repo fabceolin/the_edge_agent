@@ -103,6 +103,7 @@ graph = ["dep:cozo"]
 llm-local = ["llm", "dep:llama-cpp-2", "dep:dirs"]  # Local LLM via llama.cpp (TEA-RELEASE-004.4)
 llm-local-cuda = ["llm-local", "llama-cpp-2/cuda"]  # Local LLM with CUDA GPU support
 llm-local-metal = ["llm-local", "llama-cpp-2/metal"]  # Local LLM with Metal GPU support (macOS)
+llm-local-vulkan = ["llm-local", "llama-cpp-2/vulkan"]  # Local LLM with Vulkan GPU support
 all = ["memory", "trace", "data", "web", "rag", "llm", "code", "agent", "reflection", "reasoning", "planning", "a2a", "prolog", "ltm-duckdb", "graph"]
 
 [dependencies.duckdb]
