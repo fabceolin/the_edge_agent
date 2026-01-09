@@ -108,7 +108,8 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev git wget libopenblas-dev && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev git wget libopenblas-dev software-properties-common && \
+             add-apt-repository -y ppa:ubuntu-toolchain-r/test && apt-get update && apt-get install -y gcc-14 g++-14 && \
              wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | apt-key add - && \
              wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
              apt-get update -y && apt-get install -y vulkan-sdk && \
@@ -122,7 +123,7 @@ jobs:
              cd /tmp/llama-cpp-python && \
              git submodule update --init --recursive && \
              cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../.. && \
-             CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
+             CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
              cd /src/python && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
@@ -272,11 +273,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OpenMP and Vulkan dependencies
+      - name: Install OpenMP, Vulkan and GCC 14 (SME support)
         run: |
           sudo apt-get update
+          # GCC 14 required for ARM SME (Scalable Matrix Extension) support
           # On Ubuntu 24.04, glslc is available in universe repo
-          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc
+          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc gcc-14 g++-14
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -285,8 +287,10 @@ jobs:
 
       - name: Install Python dependencies (full)
         env:
-          # CMake args matching llama.cpp official Vulkan builds
-          # BACKEND_DL required for CPU_ALL_VARIANTS (runtime CPU feature detection)
+          # Use GCC 14 for ARM SME support (required by CPU_ALL_VARIANTS)
+          CC: gcc-14
+          CXX: g++-14
+          # CMake args with CPU_ALL_VARIANTS for runtime CPU feature detection
           CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684"
           FORCE_CMAKE: "1"
         run: |
@@ -1021,7 +1025,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install LunarG Vulkan SDK and OpenBLAS
+      - name: Install LunarG Vulkan SDK, OpenBLAS and GCC 14
         run: |
           # Remove any conflicting packages from Ubuntu (defensive)
           sudo apt-get remove -y glslang-tools glslc || true
@@ -1031,10 +1035,14 @@ jobs:
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
             https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update -y
-          sudo apt-get install -y vulkan-sdk libopenblas-dev
+          # GCC 14 for improved x86_64 optimizations (AVX10.1, better register allocation)
+          sudo apt-get install -y vulkan-sdk libopenblas-dev gcc-14 g++-14
 
       - name: Install Python dependencies (full + janus-swi + llm-local)
         env:
+          # Use GCC 14 for improved x86_64 optimizations
+          CC: gcc-14
+          CXX: g++-14
           # CMake args matching llama.cpp official builds
           # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
           # OpenBLAS: Optimized CPU matrix operations
@@ -1206,13 +1214,14 @@ jobs:
           # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
           # Build SWI-Prolog 9.3.x from source
 
-          # Install build dependencies, OpenMP, Vulkan, and OpenBLAS libraries
+          # Install build dependencies, OpenMP, Vulkan, OpenBLAS and GCC 14 (SME support)
           # Note: ARM64 uses Ubuntu's Vulkan packages (LunarG SDK not available for ARM64)
+          # GCC 14 required for ARM SME (Scalable Matrix Extension) support
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
             libreadline-dev libedit-dev pkg-config libgomp1 \
-            libvulkan-dev glslang-tools glslc libopenblas-dev
+            libvulkan-dev glslang-tools glslc libopenblas-dev gcc-14 g++-14
 
           # Clone and build SWI-Prolog 9.3.x
           git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
@@ -1243,10 +1252,11 @@ jobs:
 
       - name: Install Python dependencies (full + janus-swi + llm-local)
         env:
-          # CMake args matching llama.cpp official builds
-          # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
-          # OpenBLAS: Optimized CPU matrix operations
-          # CPU_ALL_VARIANTS + BACKEND_DL: Runtime detection of NEON/SVE
+          # Use GCC 14 for ARM SME support (required by CPU_ALL_VARIANTS)
+          CC: gcc-14
+          CXX: g++-14
+          # CMake args with CPU_ALL_VARIANTS for runtime CPU feature detection
+          # Vulkan: GPU acceleration, OpenBLAS: Optimized CPU matrix operations
           CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684"
           FORCE_CMAKE: "1"
         run: |
