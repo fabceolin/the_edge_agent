@@ -4104,7 +4104,7 @@ dependencies = [
 
 [[package]]
 name = "the_edge_agent"
-version = "0.9.24"
+version = "0.9.26"
 dependencies = [
  "anyhow",
  "assert_cmd",

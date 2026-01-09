@@ -110,7 +110,7 @@ jobs:
           # Using Debian trixie for GCC 14 support (improved x86_64 optimizations)
           # Vulkan from Debian native packages (LunarG SDK not available for trixie)
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:main-trixie -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev vulkan-tools glslang-tools git wget libopenblas-dev gcc-14 g++-14 && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev vulkan-tools glslang-tools glslc git wget libopenblas-dev gcc-14 g++-14 && \
              cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
