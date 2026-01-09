@@ -2066,7 +2066,7 @@ jobs:
   # ============================================================
   # Rust LLM AppImage Distribution (TEA-RELEASE-004.1)
   # Self-contained AppImages with bundled GGUF models
-  # Variants: Gemma (~5GB, best quality) and Phi-4-mini (~2.5GB, compact)
+  # Variant: Phi-4-mini (~2.5GB, compact)
   # ============================================================
 
   # Build Rust binary with llm-local feature for x86_64
@@ -2195,135 +2195,6 @@ jobs:
           path: tea-rust-linux-arm64-llm
           retention-days: 1
 
-  # Gemma LLM AppImage for x86_64 (~5GB, best quality)
-  build-rust-llm-gemma-appimage-x86_64:
-    runs-on: ubuntu-22.04
-    needs: [build-rust-llm-linux-x86_64]
-    name: Rust LLM AppImage x86_64 (Gemma)
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y file libfuse2
-
-      - name: Download LLM binary
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-tea-rust-linux-x86_64-llm
-          path: .
-
-      - name: Download linuxdeploy
-        run: |
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-
-      - name: Download Gemma model from HuggingFace
-        run: |
-          mkdir -p models
-          # Download Gemma 3n E4B Instruct Q4_K_M (~4.2GB)
-          wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-            "https://huggingface.co/bartowski/google_gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" || {
-            echo "Primary download failed, trying mirror..."
-            wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-              "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
-          }
-          ls -lh models/
-
-      - name: Create .desktop file
-        run: |
-          cat > tea-llm.desktop << 'EOF'
-          [Desktop Entry]
-          Name=The Edge Agent (LLM)
-          Comment=Lightweight state graph workflow engine with local LLM
-          Exec=tea
-          Icon=tea
-          Type=Application
-          Categories=Development;
-          Terminal=true
-          EOF
-          sed -i 's/^[[:space:]]*//' tea-llm.desktop
-
-      - name: Create placeholder icon
-        run: |
-          cat > tea.svg << 'EOF'
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-            <rect width="256" height="256" fill="#2d3748"/>
-            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
-          </svg>
-          EOF
-
-      - name: Create AppDir structure
-        run: |
-          mkdir -p tea-llm.AppDir/usr/bin
-          mkdir -p tea-llm.AppDir/usr/lib
-          mkdir -p tea-llm.AppDir/usr/share/models
-          chmod +x tea-rust-linux-x86_64-llm
-          cp tea-rust-linux-x86_64-llm tea-llm.AppDir/usr/bin/tea
-          cp models/gemma-3n-E4B-it-Q4_K_M.gguf tea-llm.AppDir/usr/share/models/
-
-      - name: Run linuxdeploy
-        run: |
-          ./linuxdeploy-x86_64.AppImage \
-            --appdir tea-llm.AppDir \
-            --executable tea-llm.AppDir/usr/bin/tea \
-            --desktop-file tea-llm.desktop \
-            --icon-file tea.svg \
-            --output appimage
-
-      - name: Create custom AppRun
-        run: |
-          rm -f tea-llm.AppDir/AppRun
-          cat > tea-llm.AppDir/AppRun << 'EOF'
-          #!/bin/bash
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-          # Auto-detect model in bundled models directory
-          if [ -z "$TEA_MODEL_PATH" ]; then
-            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
-            if [ -n "$MODEL_FILE" ]; then
-              export TEA_MODEL_PATH="$MODEL_FILE"
-            fi
-          fi
-          exec "${HERE}/usr/bin/tea" "$@"
-          EOF
-          chmod +x tea-llm.AppDir/AppRun
-
-      - name: Rebuild AppImage with custom AppRun
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION="dev"
-          fi
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-llm.AppDir "tea-rust-llm-gemma-${VERSION}-x86_64.AppImage"
-
-      - name: Smoke test AppImage
-        run: |
-          chmod +x tea-rust-llm-gemma-*-x86_64.AppImage
-          ./tea-rust-llm-gemma-*-x86_64.AppImage --version
-          impl=$(./tea-rust-llm-gemma-*-x86_64.AppImage --impl)
-          if [ "$impl" != "rust" ]; then
-            echo "Error: Expected 'rust', got '$impl'"
-            exit 1
-          fi
-
-      - name: Check AppImage size
-        run: |
-          size=$(stat -c%s tea-rust-llm-gemma-*-x86_64.AppImage)
-          size_mb=$((size / 1024 / 1024))
-          echo "AppImage size: ${size_mb}MB"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: llm-appimage-gemma-x86_64
-          path: tea-rust-llm-gemma-*-x86_64.AppImage
-          retention-days: 1
-
   # Phi-4-mini LLM AppImage for x86_64 (~2.5GB, compact)
   build-rust-llm-phi4-appimage-x86_64:
     runs-on: ubuntu-22.04
@@ -2362,7 +2233,7 @@ jobs:
         run: |
           cat > tea-llm.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent (LLM Phi-4)
+          Name=TEA LLM Rust Phi4
           Comment=Lightweight state graph workflow engine with local LLM
           Exec=tea
           Icon=tea
@@ -2488,7 +2359,7 @@ jobs:
         run: |
           cat > tea-llm.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent (LLM Phi-4)
+          Name=TEA LLM Rust Phi4
           Comment=Lightweight state graph workflow engine with local LLM
           Exec=tea
           Icon=tea
@@ -2617,7 +2488,7 @@ jobs:
         run: |
           cat > tea-python.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent (Python)
+          Name=TEA Python
           Comment=Lightweight state graph workflow engine - Python implementation
           Exec=tea
           Icon=tea-python
@@ -2796,7 +2667,7 @@ jobs:
         run: |
           cat > tea-python.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent (Python)
+          Name=TEA Python
           Comment=Lightweight state graph workflow engine - Python implementation
           Exec=tea
           Icon=tea-python
@@ -2985,7 +2856,7 @@ jobs:
         run: |
           cat > tea-python-llm.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent LLM (Python/Phi-4)
+          Name=TEA LLM Python Phi4
           Comment=Lightweight state graph workflow engine with bundled Phi-4 LLM
           Exec=tea
           Icon=tea-python-llm
@@ -3147,7 +3018,7 @@ jobs:
         run: |
           cat > tea-python-llm.desktop << 'EOF'
           [Desktop Entry]
-          Name=The Edge Agent LLM (Python/Phi-4)
+          Name=TEA LLM Python Phi4
           Comment=Lightweight state graph workflow engine with bundled Phi-4 LLM
           Exec=tea
           Icon=tea-python-llm
@@ -3443,7 +3314,6 @@ jobs:
       - build-appimage-x86_64
       - build-appimage-aarch64
       # Rust LLM AppImages (self-contained with bundled GGUF models)
-      - build-rust-llm-gemma-appimage-x86_64
       - build-rust-llm-phi4-appimage-x86_64
       - build-rust-llm-phi4-appimage-aarch64
       # Python LLM AppImages (self-contained with bundled GGUF models) - TEA-RELEASE-004.2
