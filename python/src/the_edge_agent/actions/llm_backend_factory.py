@@ -446,7 +446,9 @@ def create_llm_backend(
             def _create_backend():
                 return LocalLlmBackend(
                     model_path=model_path,
-                    n_ctx=llm_settings.get("n_ctx", model_info["n_ctx"]),
+                    n_ctx=llm_settings.get(
+                        "n_ctx"
+                    ),  # None = auto-detect in LocalLlmBackend
                     n_threads=llm_settings.get("n_threads"),  # None = auto
                     n_gpu_layers=llm_settings.get("n_gpu_layers", -1),  # -1 = auto/all
                     chat_format=llm_settings.get(

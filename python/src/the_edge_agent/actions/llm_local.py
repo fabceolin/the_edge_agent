@@ -224,7 +224,7 @@ class LocalLlmBackend(LlmBackend):
     def __init__(
         self,
         model_path: str,
-        n_ctx: int = 4096,
+        n_ctx: Optional[int] = None,  # None = auto-detect from model
         n_threads: Optional[int] = None,
         n_gpu_layers: int = -1,  # -1 = auto-offload all layers to GPU (matches Rust behavior)
         chat_format: Optional[str] = None,
@@ -244,7 +244,7 @@ class LocalLlmBackend(LlmBackend):
         model_info = get_model_info(model_path)
 
         # Use auto-detected settings unless explicitly overridden
-        if n_ctx == 4096 and model_info["n_ctx"] != 4096:
+        if n_ctx is None:
             n_ctx = model_info["n_ctx"]
             logger.info(
                 f"Auto-detected {model_info['family']} model, "

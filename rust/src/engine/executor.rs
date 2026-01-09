@@ -872,8 +872,23 @@ impl Executor {
 
         if let Some(ref action_config) = node.action {
             // Process template parameters
-            let processed_params =
+            let mut processed_params =
                 yaml_engine.process_params(&action_config.with, state, graph.variables())?;
+
+            // For LLM actions, merge global settings.llm config with node params
+            // Node params take precedence over global settings
+            if action_config.uses.starts_with("llm.") {
+                if let Some(llm_config) = graph.llm_config() {
+                    if let Some(obj) = llm_config.as_object() {
+                        for (key, value) in obj {
+                            // Only add if not already present in node params
+                            if !processed_params.contains_key(key) {
+                                processed_params.insert(key.clone(), value.clone());
+                            }
+                        }
+                    }
+                }
+            }
 
             // Get action handler
             let handler = actions

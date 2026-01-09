@@ -427,12 +427,12 @@ class TestSupportedModelsConfig:
         assert SUPPORTED_MODELS["gemma"]["chat_format"] == "gemma"
 
     def test_default_models_order(self):
-        """DEFAULT_MODELS lists Phi-4-mini first (smaller, preferred for bundling)."""
+        """DEFAULT_MODELS lists Gemma-3-1b first (smallest, preferred for bundling)."""
         from the_edge_agent.actions.llm_local import DEFAULT_MODELS
 
         assert len(DEFAULT_MODELS) >= 2
-        # Phi-4-mini should be first (smaller, easier to bundle)
-        assert "Phi-4-mini" in DEFAULT_MODELS[0] or "phi" in DEFAULT_MODELS[0].lower()
+        # Gemma-3-1b should be first (smallest at ~1GB, easier to bundle)
+        assert "gemma-3-1b" in DEFAULT_MODELS[0] or "gemma" in DEFAULT_MODELS[0].lower()
 
 
 # =============================================================================
