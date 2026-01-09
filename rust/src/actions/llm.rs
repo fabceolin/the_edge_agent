@@ -1037,8 +1037,8 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
             }
         }
         "api" => false,
-        "auto" | _ => {
-            // Try local first if available, otherwise fall back to API
+        _ => {
+            // "auto" or any other value: try local first if available, otherwise fall back to API
             #[cfg(feature = "llm-local")]
             {
                 use super::llm_backend::{is_local_llm_available, is_local_llm_compiled};
