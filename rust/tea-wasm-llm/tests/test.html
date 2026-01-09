@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM LLM Test Harness</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #569cd6; }
+        h2 { color: #4ec9b0; margin-top: 30px; }
+        .test-result {
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        .pass { background: #1e3a1e; border-left: 4px solid #4ec9b0; }
+        .fail { background: #3a1e1e; border-left: 4px solid #f14c4c; }
+        .pending { background: #3a3a1e; border-left: 4px solid #dcdcaa; }
+        .info { background: #1e2d3a; border-left: 4px solid #569cd6; }
+        pre {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover { background: #1177bb; }
+        button:disabled { background: #4a4a4a; cursor: not-allowed; }
+        #output {
+            margin-top: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+            padding: 15px;
+            background: #2d2d2d;
+            border-radius: 5px;
+        }
+        .stat { text-align: center; }
+        .stat-value { font-size: 24px; font-weight: bold; }
+        .stat-label { font-size: 12px; color: #808080; }
+    </style>
+</head>
+<body>
+    <h1>🧪 TEA WASM LLM Test Harness</h1>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value" id="total">0</div>
+            <div class="stat-label">Total</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="passed" style="color: #4ec9b0;">0</div>
+            <div class="stat-label">Passed</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="failed" style="color: #f14c4c;">0</div>
+            <div class="stat-label">Failed</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="duration">-</div>
+            <div class="stat-label">Duration</div>
+        </div>
+    </div>
+
+    <div>
+        <button id="runAll" onclick="runAllTests()">▶️ Run All Tests</button>
+        <button id="runWithModel" onclick="runWithModel()" disabled>🧠 Run with Tiny Model</button>
+        <button onclick="clearOutput()">🗑️ Clear</button>
+    </div>
+
+    <div id="output"></div>
+
+    <h2>Test Configuration</h2>
+    <pre id="config">Loading...</pre>
+
+    <script type="module">
+        import init, {
+            execute_yaml,
+            set_llm_handler,
+            clear_llm_handler,
+            has_llm_handler,
+            llm_call_async,
+            has_shared_array_buffer,
+            version,
+        } from '../pkg/tea_wasm_llm.js';
+
+        // Make functions available globally for buttons
+        window.init = init;
+        window.execute_yaml = execute_yaml;
+        window.set_llm_handler = set_llm_handler;
+        window.clear_llm_handler = clear_llm_handler;
+        window.has_llm_handler = has_llm_handler;
+        window.llm_call_async = llm_call_async;
+        window.has_shared_array_buffer = has_shared_array_buffer;
+        window.version = version;
+
+        // Test state
+        let testResults = { total: 0, passed: 0, failed: 0 };
+        let startTime = 0;
+
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function updateStats() {
+            document.getElementById('total').textContent = testResults.total;
+            document.getElementById('passed').textContent = testResults.passed;
+            document.getElementById('failed').textContent = testResults.failed;
+            if (startTime > 0) {
+                const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+                document.getElementById('duration').textContent = duration + 's';
+            }
+        }
+
+        async function runTest(name, testFn) {
+            testResults.total++;
+            log(`Running: ${name}...`, 'pending');
+
+            try {
+                await testFn();
+                testResults.passed++;
+                log(`✅ PASS: ${name}`, 'pass');
+            } catch (error) {
+                testResults.failed++;
+                log(`❌ FAIL: ${name} - ${error.message}`, 'fail');
+                console.error(error);
+            }
+
+            updateStats();
+        }
+
+        function assert(condition, message) {
+            if (!condition) {
+                throw new Error(message || 'Assertion failed');
+            }
+        }
+
+        function assertEqual(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(message || `Expected ${expected}, got ${actual}`);
+            }
+        }
+
+        // Test functions
+        async function testWasmInit() {
+            await init();
+            assert(typeof version === 'function', 'version function should exist');
+        }
+
+        async function testVersion() {
+            const v = version();
+            assert(typeof v === 'string', 'version should be a string');
+            assert(v.length > 0, 'version should not be empty');
+            log(`  Version: ${v}`, 'info');
+        }
+
+        async function testSharedArrayBufferDetection() {
+            const hasShared = has_shared_array_buffer();
+            assert(typeof hasShared === 'boolean', 'should return boolean');
+            log(`  SharedArrayBuffer: ${hasShared}`, 'info');
+        }
+
+        async function testHandlerNotRegistered() {
+            clear_llm_handler();
+            assert(!has_llm_handler(), 'handler should not be registered initially');
+        }
+
+        async function testSetHandler() {
+            const mockHandler = async (params) => {
+                return JSON.stringify({ content: 'mock response', model: 'test' });
+            };
+            set_llm_handler(mockHandler);
+            assert(has_llm_handler(), 'handler should be registered');
+        }
+
+        async function testClearHandler() {
+            set_llm_handler(async () => '{}');
+            clear_llm_handler();
+            assert(!has_llm_handler(), 'handler should be cleared');
+        }
+
+        async function testLlmCallNoHandler() {
+            clear_llm_handler();
+            try {
+                await llm_call_async('{"prompt": "test"}', '{}');
+                throw new Error('Should have thrown');
+            } catch (e) {
+                assert(e.toString().includes('handler'), 'should mention handler');
+            }
+        }
+
+        async function testLlmCallInvalidParams() {
+            set_llm_handler(async () => JSON.stringify({ content: 'test' }));
+            try {
+                await llm_call_async('not json', '{}');
+                throw new Error('Should have thrown');
+            } catch (e) {
+                assert(e.toString().includes('Invalid'), 'should mention invalid');
+            }
+        }
+
+        async function testLlmCallWithMockHandler() {
+            const mockHandler = async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                return JSON.stringify({
+                    content: `Response to: ${params.prompt}`,
+                    model: 'mock'
+                });
+            };
+            set_llm_handler(mockHandler);
+
+            const result = await llm_call_async(
+                JSON.stringify({ prompt: 'Hello', max_tokens: 10 }),
+                JSON.stringify({ input: 'test' })
+            );
+
+            const parsed = JSON.parse(result);
+            assert(parsed.llm_response, 'should have llm_response');
+            assert(parsed.llm_response.content.includes('Hello'), 'should include prompt');
+        }
+
+        async function testExecuteYamlSimple() {
+            // Mock handler that returns the prompt back
+            set_llm_handler(async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                return JSON.stringify({
+                    content: `Generated: ${params.prompt}`,
+                    model: 'mock'
+                });
+            });
+
+            const yaml = `
+name: test-workflow
+nodes:
+  - name: gen
+    action: llm.call
+    with:
+      prompt: "Hello world"
+      max_tokens: 10
+edges:
+  - from: __start__
+    to: gen
+  - from: gen
+    to: __end__
+`;
+
+            const result = await execute_yaml(yaml, '{}');
+            const parsed = JSON.parse(result);
+
+            assert(parsed.llm_response, 'should have llm_response');
+            assert(parsed.llm_response.content.includes('Hello'), 'should contain prompt text');
+        }
+
+        async function testExecuteYamlWithState() {
+            set_llm_handler(async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                return JSON.stringify({
+                    content: `Got prompt: ${params.prompt}`,
+                    model: 'mock'
+                });
+            });
+
+            const yaml = `
+name: test-with-state
+variables:
+  system_prompt: "You are helpful"
+nodes:
+  - name: gen
+    action: llm.call
+    with:
+      prompt: "Say hello to {{ state.name }}"
+      max_tokens: 20
+edges:
+  - from: __start__
+    to: gen
+  - from: gen
+    to: __end__
+`;
+
+            const result = await execute_yaml(yaml, JSON.stringify({ name: 'Alice' }));
+            const parsed = JSON.parse(result);
+
+            assert(parsed.llm_response, 'should have llm_response');
+            assert(parsed.llm_response.content.includes('Alice'), 'should contain state value');
+        }
+
+        async function testExecuteYamlInvalidYaml() {
+            try {
+                await execute_yaml('not: valid: yaml: syntax', '{}');
+                throw new Error('Should have thrown');
+            } catch (e) {
+                assert(true, 'should throw on invalid YAML');
+            }
+        }
+
+        async function testReturnAction() {
+            const yaml = `
+name: test-return
+nodes:
+  - name: greet
+    action: return
+    with:
+      value:
+        message: "Hello!"
+edges:
+  - from: __start__
+    to: greet
+  - from: greet
+    to: __end__
+`;
+
+            const result = await execute_yaml(yaml, '{}');
+            const parsed = JSON.parse(result);
+
+            assert(parsed.message === 'Hello!', 'should have message');
+        }
+
+        // Run all tests
+        window.runAllTests = async function() {
+            testResults = { total: 0, passed: 0, failed: 0 };
+            document.getElementById('output').innerHTML = '';
+            startTime = Date.now();
+
+            log('🚀 Starting TEA WASM LLM Tests...', 'info');
+            log('', 'info');
+
+            await runTest('WASM Initialization', testWasmInit);
+            await runTest('Version Check', testVersion);
+            await runTest('SharedArrayBuffer Detection', testSharedArrayBufferDetection);
+            await runTest('Handler Not Registered Initially', testHandlerNotRegistered);
+            await runTest('Set LLM Handler', testSetHandler);
+            await runTest('Clear LLM Handler', testClearHandler);
+            await runTest('LLM Call Without Handler Errors', testLlmCallNoHandler);
+            await runTest('LLM Call Invalid Params Errors', testLlmCallInvalidParams);
+            await runTest('LLM Call With Mock Handler', testLlmCallWithMockHandler);
+            await runTest('Execute YAML Simple Workflow', testExecuteYamlSimple);
+            await runTest('Execute YAML With State', testExecuteYamlWithState);
+            await runTest('Execute YAML Invalid YAML Errors', testExecuteYamlInvalidYaml);
+            await runTest('Return Action Works', testReturnAction);
+
+            log('', 'info');
+            log(`✨ Tests complete: ${testResults.passed}/${testResults.total} passed`,
+                testResults.failed === 0 ? 'pass' : 'fail');
+
+            updateStats();
+        };
+
+        window.clearOutput = function() {
+            document.getElementById('output').innerHTML = '';
+            testResults = { total: 0, passed: 0, failed: 0 };
+            startTime = 0;
+            updateStats();
+            document.getElementById('duration').textContent = '-';
+        };
+
+        // Initialize and show config
+        (async () => {
+            try {
+                await init();
+                document.getElementById('config').textContent = JSON.stringify({
+                    version: version(),
+                    sharedArrayBuffer: has_shared_array_buffer(),
+                    userAgent: navigator.userAgent.slice(0, 100) + '...',
+                    crossOriginIsolated: window.crossOriginIsolated,
+                }, null, 2);
+
+                log('✅ WASM module loaded successfully', 'pass');
+                log('Press "Run All Tests" to begin testing', 'info');
+            } catch (error) {
+                document.getElementById('config').textContent = `Error: ${error.message}`;
+                log(`❌ Failed to load WASM: ${error.message}`, 'fail');
+            }
+        })();
+    </script>
+</body>
+</html>

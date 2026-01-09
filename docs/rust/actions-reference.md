@@ -155,6 +155,134 @@ Tool calling with Ollama requires models that support function calling:
 
 Note: Ollama does not require an API key.
 
+#### Local LLM Provider (TEA-RELEASE-004)
+
+Run LLM inference locally using bundled GGUF models via llama-cpp-2. No API keys or network required.
+
+**Build with local LLM support:**
+
+```bash
+cd rust
+cargo build --release --features llm-local
+```
+
+**Or use an LLM-bundled AppImage** (recommended):
+
+```bash
+./tea-rust-llm-gemma-0.9.5-x86_64.AppImage run workflow.yaml
+```
+
+##### llm.chat (Local Backend)
+
+Generate text using a local llama.cpp model.
+
+**Parameters:**
+
+```yaml
+- name: generate
+  uses: llm.chat
+  with:
+    backend: local                    # "local", "api", or "auto"
+    prompt: "{{ state.question }}"    # Text prompt
+    system: "You are helpful."        # Optional system prompt
+    max_tokens: 200                   # Max tokens to generate
+    temperature: 0.7                  # Sampling temperature
+    model_path: /path/to/model.gguf   # Optional: override model
+```
+
+**Returns:**
+
+```json
+{
+  "content": "Generated response text",
+  "backend": "local",
+  "model": "gemma-3n-E4B"
+}
+```
+
+**Settings:**
+
+Configure in workflow `settings.llm`:
+
+```yaml
+settings:
+  llm:
+    backend: auto           # "local", "api", or "auto"
+    model_path: auto        # Path to GGUF model
+    n_ctx: 2048             # Context window size
+    n_gpu_layers: 0         # GPU layers (0=CPU, -1=all GPU)
+```
+
+##### llm.embed (Local Backend)
+
+Generate text embeddings using a local model.
+
+**Parameters:**
+
+```yaml
+- name: embed
+  uses: llm.embed
+  with:
+    backend: local
+    text: "{{ state.document }}"
+```
+
+**Returns:**
+
+```json
+{
+  "embedding": [0.123, -0.456, ...],
+  "dimensions": 768,
+  "model": "nomic-embed-text"
+}
+```
+
+**Note:** Not all models support embeddings. Use dedicated embedding models for best results.
+
+##### llm.stream (Local Backend)
+
+Stream LLM responses with aggregated output.
+
+**Parameters:**
+
+```yaml
+- name: stream_response
+  uses: llm.stream
+  with:
+    backend: local
+    prompt: "{{ state.question }}"
+    max_tokens: 500
+```
+
+**Returns:**
+
+```json
+{
+  "content": "Full aggregated response",
+  "backend": "local",
+  "streamed": true,
+  "chunk_count": 15
+}
+```
+
+##### Model Path Resolution
+
+Models are discovered in this order:
+
+1. `TEA_MODEL_PATH` environment variable
+2. `params.model_path` in action
+3. `settings.llm.model_path` in YAML
+4. `$APPDIR/usr/share/models/` (AppImage bundle)
+5. `~/.cache/tea/models/` (default cache)
+
+##### Backend Selection
+
+| Backend | Behavior |
+|---------|----------|
+| `auto` | Prefer local if model available, fallback to API |
+| `local` | Force local model, error if not found |
+| `api` | Force API call (requires OPENAI_API_KEY) |
+
 ### HTTP Actions (`actions/http.rs`)
 
 | Action | Description |
@@ -338,8 +466,9 @@ with:
 
 | Feature | Python | Rust |
 |---------|--------|------|
-| Action modules | 20+ | 6 |
-| LLM actions | Full (call, stream, tools, retry) | Full (call, stream, tools) |
+| Action modules | 20+ | 7 |
+| LLM actions | Full (call, stream, tools, chat, embed) | Full (call, stream, tools, chat, embed) |
+| Local LLM (llama.cpp) | Yes (llama-cpp-python) | Yes (llama-cpp-2) |
 | HTTP actions | Full | Full |
 | File actions | Local + remote (S3, GCS, Azure) | Local only |
 | Data actions | Full (JSON, CSV, validate) | Full |
@@ -359,11 +488,13 @@ See [Development Guide](development-guide.md#adding-a-new-action) for instructio
 
 ```
 rust/src/actions/
-├── mod.rs        # Action registry
-├── llm.rs        # LLM actions (~1800 lines, includes stream/tools)
-├── http.rs       # HTTP actions (~200 lines)
-├── file.rs       # File actions (~250 lines)
-├── data.rs       # Data actions (~1000 lines)
-├── memory.rs     # Memory actions (~700 lines)
-└── ratelimit.rs  # Rate limiting actions (~500 lines)
+├── mod.rs           # Action registry
+├── llm.rs           # LLM API actions (~1800 lines, includes stream/tools)
+├── llm_backend.rs   # LLM backend abstraction (local/api/auto)
+├── llm_local.rs     # Local llama.cpp backend
+├── http.rs          # HTTP actions (~200 lines)
+├── file.rs          # File actions (~250 lines)
+├── data.rs          # Data actions (~1000 lines)
+├── memory.rs        # Memory actions (~700 lines)
+└── ratelimit.rs     # Rate limiting actions (~500 lines)
 ```

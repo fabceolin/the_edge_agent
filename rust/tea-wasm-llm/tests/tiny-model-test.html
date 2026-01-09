@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM LLM - Tiny Model Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eaeaea;
+        }
+        h1 { color: #00d9ff; }
+        .info {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #00d9ff;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 10px 5px 10px 0;
+        }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button:disabled {
+            background: #4a4a4a;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #output {
+            background: #0f0f23;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Fira Code', 'Consolas', monospace;
+            font-size: 13px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .log-info { color: #b4b4b4; }
+        .log-success { color: #00ff88; font-weight: bold; }
+        .log-error { color: #ff6b6b; font-weight: bold; }
+        .log-warn { color: #ffd93d; }
+        .log-progress { color: #6b88ff; }
+        .log-response { color: #ff9ff3; }
+        .result-box {
+            background: #1e3a5f;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+        .result-box.success { border: 2px solid #00ff88; }
+        .result-box.failure { border: 2px solid #ff6b6b; }
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status {
+            font-size: 14px;
+            margin-left: 10px;
+            display: inline-block;
+        }
+        code {
+            background: #2d2d44;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Fira Code', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧠 TEA WASM LLM - Tiny Model Test</h1>
+
+    <div class="info">
+        <strong>This test:</strong>
+        <ol>
+            <li>Loads the TEA WASM LLM module</li>
+            <li>Downloads a tiny LLM model (~500KB) using wllama</li>
+            <li>Registers the wllama handler with TEA</li>
+            <li>Executes a YAML workflow with <code>llm.call</code> action</li>
+            <li>Validates the generated text response</li>
+        </ol>
+        <p>
+            <strong>Model:</strong> <code>tinyllamas/stories260K.gguf</code> (~500KB)<br>
+            <strong>Expected time:</strong> 10-30 seconds (mostly download)
+        </p>
+    </div>
+
+    <div>
+        <button id="runBtn" onclick="startTest()">🚀 Run Test</button>
+        <div class="spinner" id="spinner"></div>
+        <span class="status" id="status"></span>
+    </div>
+
+    <h2>📋 Output</h2>
+    <div id="output"></div>
+
+    <div id="resultBox" class="result-box"></div>
+
+    <script type="module" src="tiny-model-test.js"></script>
+    <script>
+        async function startTest() {
+            const btn = document.getElementById('runBtn');
+            const spinner = document.getElementById('spinner');
+            const status = document.getElementById('status');
+            const output = document.getElementById('output');
+            const resultBox = document.getElementById('resultBox');
+
+            // Reset UI
+            btn.disabled = true;
+            spinner.style.display = 'inline-block';
+            status.textContent = 'Running...';
+            output.innerHTML = '';
+            resultBox.style.display = 'none';
+
+            try {
+                const result = await window.runTest();
+
+                resultBox.style.display = 'block';
+                if (result.success) {
+                    resultBox.className = 'result-box success';
+                    resultBox.innerHTML = `
+                        <h3>✅ Test Passed!</h3>
+                        <p><strong>Duration:</strong> ${result.duration}s</p>
+                        <p><strong>Generated Text:</strong></p>
+                        <code>${result.result.llm_response?.content || 'N/A'}</code>
+                    `;
+                    status.textContent = '✅ Passed';
+                } else {
+                    resultBox.className = 'result-box failure';
+                    resultBox.innerHTML = `
+                        <h3>❌ Test Failed</h3>
+                        <p><strong>Duration:</strong> ${result.duration}s</p>
+                        <p><strong>Error:</strong> ${result.error}</p>
+                    `;
+                    status.textContent = '❌ Failed';
+                }
+            } catch (error) {
+                resultBox.style.display = 'block';
+                resultBox.className = 'result-box failure';
+                resultBox.innerHTML = `
+                    <h3>❌ Unexpected Error</h3>
+                    <p>${error.message}</p>
+                `;
+                status.textContent = '❌ Error';
+            }
+
+            btn.disabled = false;
+            spinner.style.display = 'none';
+        }
+    </script>
+</body>
+</html>

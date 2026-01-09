@@ -12,6 +12,33 @@ When you need to:
 - Orchestrate parallel tasks within sequential phases
 - Generate executable YAML agents from visual diagrams
 
+## File Location
+
+**Standard location for DOT files:** `examples/dot/`
+
+All DOT workflow files should be saved in the `examples/dot/` directory. This keeps workflow orchestration files organized and separate from documentation and source code.
+
+```
+examples/
+├── dot/                          # DOT workflow files (save here)
+│   ├── linear.dot
+│   ├── parallel-phases.dot
+│   ├── tea-release-004-validation.dot
+│   └── ...
+├── workflows/                    # YAML workflow agents
+│   ├── bmad-story-development.yaml
+│   ├── bmad-story-validation.yaml
+│   └── ...
+└── yaml/                         # YAML examples
+```
+
+**Naming convention:**
+- Use lowercase with hyphens: `epic-name-workflow.dot`
+- Include purpose in name: `tea-release-004-validation.dot`, `feature-x-development.dot`
+- Generated YAML goes alongside: `examples/dot/my-workflow.yaml`
+
+---
+
 ## Quick Start
 
 ### Step 1: Generate DOT File
@@ -349,12 +376,21 @@ digraph <workflow_name> {
 }
 ```
 
-### 4. Output Generation Command
+### 4. Save DOT File
+
+Save the DOT file to the standard location:
+
+```bash
+# Standard location
+examples/dot/<workflow-name>.dot
+```
+
+### 5. Output Generation Command
 
 Always include the command to generate the YAML:
 
 ```bash
-tea-python from dot <filename>.dot --use-node-commands -o <filename>.yaml
+tea-python from dot examples/dot/<filename>.dot --use-node-commands -o examples/dot/<filename>.yaml
 ```
 
 ---
@@ -412,17 +448,18 @@ digraph epic_implementation {
 ### Generation Command
 
 ```bash
-tea-python from dot epic_implementation.dot --use-node-commands -o epic_implementation.yaml
+# Save DOT to standard location, then generate YAML
+tea-python from dot examples/dot/epic-implementation.dot --use-node-commands -o examples/dot/epic-implementation.yaml
 ```
 
 ### Execution
 
 ```bash
 # Execute workflow
-tea-python run epic_implementation.yaml
+tea-python run examples/dot/epic-implementation.yaml
 
 # With extended timeout
-tea-python run epic_implementation.yaml --input-timeout 54000
+tea-python run examples/dot/epic-implementation.yaml --input-timeout 54000
 ```
 
 ---

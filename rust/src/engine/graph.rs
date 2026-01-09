@@ -397,6 +397,9 @@ pub struct StateGraph {
 
     /// Maximum iterations for cyclic graphs (prevents infinite loops)
     max_iterations: usize,
+
+    /// LLM configuration from settings.llm (for passing to LLM actions)
+    llm_config: Option<serde_json::Value>,
 }
 
 impl StateGraph {
@@ -413,6 +416,7 @@ impl StateGraph {
             name: String::from("unnamed"),
             allow_cycles: false,
             max_iterations: 1000, // Default safety limit
+            llm_config: None,
         };
 
         // Add special START and END nodes
@@ -443,6 +447,17 @@ impl StateGraph {
     /// Get max iterations
     pub fn get_max_iterations(&self) -> usize {
         self.max_iterations
+    }
+
+    /// Set LLM configuration from settings.llm
+    pub fn with_llm_config(mut self, config: serde_json::Value) -> Self {
+        self.llm_config = Some(config);
+        self
+    }
+
+    /// Get LLM configuration
+    pub fn llm_config(&self) -> Option<&serde_json::Value> {
+        self.llm_config.as_ref()
     }
 
     /// Create a new StateGraph with a name
@@ -828,6 +843,11 @@ impl CompiledGraph {
     /// Check if cycles are allowed
     pub fn allows_cycles(&self) -> bool {
         self.graph.cycles_allowed()
+    }
+
+    /// Get LLM configuration from settings.llm
+    pub fn llm_config(&self) -> Option<&serde_json::Value> {
+        self.graph.llm_config()
     }
 }
 

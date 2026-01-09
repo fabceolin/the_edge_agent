@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM LLM E2E Test Page</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #569cd6; }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.loading { background: #3a3a1e; border-left: 4px solid #dcdcaa; }
+        .status.success { background: #1e3a1e; border-left: 4px solid #4ec9b0; }
+        .status.error { background: #3a1e1e; border-left: 4px solid #f14c4c; }
+        #output {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: 'Consolas', 'Monaco', monospace;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .progress-bar {
+            height: 20px;
+            background: #3a3a3a;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #569cd6, #4ec9b0);
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <h1>TEA WASM LLM E2E Test Page</h1>
+
+    <div id="wasm-status" class="status loading">Loading WASM module...</div>
+    <div id="model-status" class="status loading">Model not loaded</div>
+    <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+    </div>
+
+    <h2>Output</h2>
+    <div id="output">Waiting for initialization...</div>
+
+    <script type="module">
+        // Expose state to window for Playwright tests
+        window.teaLlmLoaded = false;
+        window.teaLlmInitialized = false;
+        window.teaLlmError = null;
+        window.lastResult = null;
+
+        const wasmStatus = document.getElementById('wasm-status');
+        const modelStatus = document.getElementById('model-status');
+        const progressFill = document.getElementById('progress-fill');
+        const output = document.getElementById('output');
+
+        function log(message) {
+            const timestamp = new Date().toISOString().split('T')[1].slice(0, 12);
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+
+        // Import the WASM module
+        import init, {
+            execute_yaml,
+            set_llm_handler,
+            has_llm_handler,
+            has_shared_array_buffer,
+            version
+        } from '../../pkg/tea_wasm_llm.js';
+
+        async function initWasm() {
+            try {
+                log('Initializing WASM module...');
+                await init();
+                window.teaLlmLoaded = true;
+
+                wasmStatus.className = 'status success';
+                wasmStatus.textContent = `WASM loaded! Version: ${version()}, SharedArrayBuffer: ${has_shared_array_buffer()}`;
+                log(`WASM module loaded successfully`);
+                log(`Version: ${version()}`);
+                log(`SharedArrayBuffer: ${has_shared_array_buffer()}`);
+
+                return true;
+            } catch (error) {
+                window.teaLlmError = error.message;
+                wasmStatus.className = 'status error';
+                wasmStatus.textContent = `WASM load failed: ${error.message}`;
+                log(`ERROR: ${error.message}`);
+                return false;
+            }
+        }
+
+        // Initialize TEA LLM with a mock handler (for testing without model)
+        window.initTeaLlm = async function() {
+            if (!window.teaLlmLoaded) {
+                throw new Error('WASM not loaded');
+            }
+
+            // Set up a mock LLM handler for testing
+            const mockHandler = async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                log(`Mock LLM called with prompt: "${params.prompt?.slice(0, 50)}..."`);
+
+                // Simulate LLM response
+                return JSON.stringify({
+                    content: `Mock response to: ${params.prompt?.slice(0, 30)}`,
+                    model: 'mock-model',
+                    usage: {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15
+                    }
+                });
+            };
+
+            set_llm_handler(mockHandler);
+            window.teaLlmInitialized = true;
+
+            modelStatus.className = 'status success';
+            modelStatus.textContent = 'LLM handler initialized (mock mode)';
+            log('LLM handler registered');
+
+            return 'initialized';
+        };
+
+        // Execute YAML workflow
+        window.executeLlmYaml = async function(yaml, initialState = {}) {
+            if (!window.teaLlmInitialized) {
+                throw new Error('TEA LLM not initialized');
+            }
+
+            log(`Executing YAML workflow...`);
+            const result = await execute_yaml(yaml, JSON.stringify(initialState));
+            const parsed = JSON.parse(result);
+            window.lastResult = parsed;
+            log(`Result: ${JSON.stringify(parsed, null, 2)}`);
+            return parsed;
+        };
+
+        // Clear IndexedDB cache (for testing)
+        window.clearCache = async function() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.deleteDatabase('tea-llm-cache');
+                request.onsuccess = () => {
+                    log('Cache cleared');
+                    resolve(true);
+                };
+                request.onerror = () => {
+                    log('Failed to clear cache');
+                    reject(request.error);
+                };
+            });
+        };
+
+        // Check if cache exists
+        window.checkCache = async function() {
+            return new Promise((resolve) => {
+                const request = indexedDB.open('tea-llm-cache');
+                request.onsuccess = () => {
+                    const db = request.result;
+                    try {
+                        const tx = db.transaction('models', 'readonly');
+                        const store = tx.objectStore('models');
+                        const countReq = store.count();
+                        countReq.onsuccess = () => {
+                            const count = countReq.result;
+                            db.close();
+                            resolve(count > 0);
+                        };
+                        countReq.onerror = () => {
+                            db.close();
+                            resolve(false);
+                        };
+                    } catch (e) {
+                        db.close();
+                        resolve(false);
+                    }
+                };
+                request.onerror = () => resolve(false);
+            });
+        };
+
+        // Initialize on page load
+        initWasm().then(success => {
+            if (success) {
+                log('Ready for testing');
+            }
+        });
+    </script>
+</body>
+</html>

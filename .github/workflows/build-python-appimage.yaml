@@ -1,0 +1,425 @@
+# =============================================================================
+# Build Python AppImage - Reusable Workflow
+# =============================================================================
+# Purpose: Builds 2 Python AppImages with Prolog support
+#   - Linux x86_64 AppImage (self-contained with SWI-Prolog runtime)
+#   - Linux ARM64 AppImage (self-contained with SWI-Prolog runtime)
+#
+# Dependencies: Requires artifacts from build-python-prolog.yaml
+#   - python-linux-x86_64-full-prolog / python-linux-arm64-full-prolog
+#   - python-swipl-runtime-x86_64-full / python-swipl-runtime-aarch64-full
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: python-appimage-x86_64, python-appimage-aarch64
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Python AppImage
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  # ============================================================
+  # Python AppImage Distribution - x86_64 (Linux only)
+  # Self-contained with Prolog runtime
+  # ============================================================
+  build-python-appimage-x86_64:
+    runs-on: ubuntu-24.04
+    name: Python AppImage x86_64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          # libpython3.12t64: Provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 libpython3.12t64
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python.desktop << 'EOF'
+          [Desktop Entry]
+          Name=TEA Python
+          Comment=Lightweight state graph workflow engine - Python implementation
+          Exec=tea
+          Icon=tea-python
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea-python.desktop
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256) with Python colors
+          cat > tea-python.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#306998"/>
+            <text x="128" y="160" font-family="monospace" font-size="100" fill="#FFD43B" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python.AppDir/usr/bin
+          mkdir -p tea-python.AppDir/usr/lib/swipl
+          chmod +x tea-python-linux-x86_64-full-prolog
+          cp tea-python-linux-x86_64-full-prolog tea-python.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf python-swipl-runtime-x86_64-full.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r python-swipl-runtime-x86_64-full/home/* tea-python.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea-python.AppDir/usr/lib
+          cp -L python-swipl-runtime-x86_64-full/lib/libswipl.so* tea-python.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea-python.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea-python.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea-python.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea-python.AppDir/usr/lib/swipl/
+          ls -la tea-python.AppDir/usr/lib/libswipl*
+
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea-python.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-python.AppDir \
+            --executable tea-python.AppDir/usr/bin/tea \
+            --desktop-file tea-python.desktop \
+            --icon-file tea-python.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR and Python env
+          rm -f tea-python.AppDir/AppRun
+          cat > tea-python.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          # Python-specific settings
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-python.AppDir "tea-python-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-*-x86_64.AppImage
+          ./tea-python-*-x86_64.AppImage --version
+          impl=$(./tea-python-*-x86_64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage on clean Ubuntu container
+        run: |
+          docker run --rm -v $(pwd):/work ubuntu:24.04 bash -c '
+            chmod +x /work/tea-python-*-x86_64.AppImage
+            # Use --appimage-extract-and-run to avoid FUSE requirement in Docker
+            /work/tea-python-*-x86_64.AppImage --appimage-extract-and-run --version
+            # Functional test: Run Prolog example (same as aarch64)
+            /work/tea-python-*-x86_64.AppImage --appimage-extract-and-run run /work/examples/prolog/simple-prolog-agent.yaml --input "{\"value\": 21}"
+          '
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-appimage-x86_64
+          path: tea-python-*-x86_64.AppImage
+          retention-days: 1
+
+  # ============================================================
+  # Python AppImage Distribution - ARM64 (Linux only)
+  # Self-contained with Prolog runtime
+  # ============================================================
+  build-python-appimage-aarch64:
+    runs-on: ubuntu-24.04-arm
+    name: Python AppImage aarch64 with Prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # libfuse2: Required for running AppImages
+          # libossp-uuid16: Required by SWI-Prolog uuid.so module
+          # libpython3.12t64: Provides libpython3.12.so.1.0 needed by janus.so (t64 = time64 ABI on Ubuntu 24.04)
+          sudo apt-get install -y file libfuse2 libossp-uuid16 libpython3.12t64
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python.desktop << 'EOF'
+          [Desktop Entry]
+          Name=TEA Python
+          Comment=Lightweight state graph workflow engine - Python implementation
+          Exec=tea
+          Icon=tea-python
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea-python.desktop
+
+      - name: Create placeholder icon
+        run: |
+          # Create a simple placeholder SVG icon (256x256) with Python colors
+          cat > tea-python.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#306998"/>
+            <text x="128" y="160" font-family="monospace" font-size="100" fill="#FFD43B" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python.AppDir/usr/bin
+          mkdir -p tea-python.AppDir/usr/lib/swipl
+          chmod +x tea-python-linux-arm64-full-prolog
+          cp tea-python-linux-arm64-full-prolog tea-python.AppDir/usr/bin/tea
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          # Extract the SWI-Prolog runtime bundled from the build job
+          # This ensures we use the EXACT same version that the binary was compiled against
+          tar -xzf python-swipl-runtime-aarch64-full.tar.gz
+
+          echo "Bundling SWI-Prolog runtime from build job artifact"
+
+          # Copy home directory contents
+          cp -r python-swipl-runtime-aarch64-full/home/* tea-python.AppDir/usr/lib/swipl/
+
+          # Copy libswipl.so to usr/lib
+          mkdir -p tea-python.AppDir/usr/lib
+          cp -L python-swipl-runtime-aarch64-full/lib/libswipl.so* tea-python.AppDir/usr/lib/
+
+          # Ensure proper symlink chain exists (libswipl.so.9 -> libswipl.so.9.x.x)
+          cd tea-python.AppDir/usr/lib
+          # Find the full versioned library (e.g., libswipl.so.9.2.9)
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            # Extract major version (e.g., 9 from libswipl.so.9.2.9)
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            # Create symlinks if they don't exist
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+          # Verify boot.prc exists (critical for VM initialization)
+          if [ ! -f "tea-python.AppDir/usr/lib/swipl/boot.prc" ]; then
+            echo "ERROR: boot.prc not found after copy"
+            ls -la tea-python.AppDir/usr/lib/swipl/
+            exit 1
+          fi
+
+          echo "Bundled SWI-Prolog contents:"
+          ls -la tea-python.AppDir/usr/lib/swipl/
+          ls -la tea-python.AppDir/usr/lib/libswipl*
+
+      - name: Bundle libpython for janus.so
+        run: |
+          # janus.so (SWI-Prolog/Python bridge) requires libpython
+          LIBPYTHON=$(find /usr/lib -name "libpython3*.so.1.0" 2>/dev/null | head -1)
+          if [ -n "$LIBPYTHON" ]; then
+            cp -L "$LIBPYTHON" tea-python.AppDir/usr/lib/
+            echo "Bundled libpython from: $LIBPYTHON"
+          else
+            echo "Warning: libpython not found"
+          fi
+
+      - name: Run linuxdeploy
+        run: |
+          # linuxdeploy bundles shared libraries automatically
+          # Set LD_LIBRARY_PATH so linuxdeploy can find libswipl.so in our AppDir
+          export LD_LIBRARY_PATH="$(pwd)/tea-python.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-python.AppDir \
+            --executable tea-python.AppDir/usr/bin/tea \
+            --desktop-file tea-python.desktop \
+            --icon-file tea-python.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          # Replace default AppRun with custom one that sets SWI_HOME_DIR and Python env
+          rm -f tea-python.AppDir/AppRun
+          cat > tea-python.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          # Python-specific settings
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          # Get version from tag or use 'dev'
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Download appimagetool for final packaging
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+
+          # Create final AppImage with proper naming
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-python.AppDir "tea-python-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-*-aarch64.AppImage
+          ./tea-python-*-aarch64.AppImage --version
+          impl=$(./tea-python-*-aarch64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Test AppImage - run Prolog example
+        run: |
+          # Verify the AppImage runs natively with Prolog support
+          ./tea-python-*-aarch64.AppImage run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-appimage-aarch64
+          path: tea-python-*-aarch64.AppImage
+          retention-days: 1

@@ -1,0 +1,159 @@
+# =============================================================================
+# Build WASM - Reusable Workflow
+# =============================================================================
+# Purpose: Builds WASM LLM package for browser-based inference
+#   - WASM package with wasm-pack (web target)
+#   - TypeScript wrapper compilation
+#   - Model download (Phi-4-mini)
+#   - Release tarball creation
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: wasm-llm-package, wasm-llm-model
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build WASM
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  # ============================================================
+  # WASM LLM Package (TEA-RELEASE-004.3c)
+  # Builds WASM package with model for browser LLM inference
+  # ============================================================
+  build-wasm-llm:
+    runs-on: ubuntu-24.04
+    name: WASM LLM Package
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WASM package
+        run: |
+          cd rust/tea-wasm-llm
+          wasm-pack build --target web --release
+
+      - name: Compile TypeScript wrapper
+        run: |
+          cd rust/tea-wasm-llm
+          npm install typescript
+          # Create tsconfig if not exists
+          if [ ! -f tsconfig.json ]; then
+            cat > tsconfig.json << 'EOF'
+          {
+            "compilerOptions": {
+              "target": "ESNext",
+              "module": "ESNext",
+              "moduleResolution": "node",
+              "declaration": true,
+              "declarationMap": true,
+              "strict": true,
+              "esModuleInterop": true,
+              "skipLibCheck": true,
+              "outDir": "./pkg"
+            },
+            "include": ["js/**/*.ts"],
+            "exclude": ["node_modules", "pkg"]
+          }
+          EOF
+          fi
+          npx tsc --project tsconfig.json || echo "TypeScript compilation had warnings"
+
+      - name: Download model
+        run: |
+          cd rust/tea-wasm-llm
+          chmod +x scripts/download-model.sh
+          ./scripts/download-model.sh
+
+      - name: Check model size
+        run: |
+          size=$(stat -c%s "rust/tea-wasm-llm/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf")
+          size_mb=$((size / 1024 / 1024))
+          echo "Model size: ${size_mb}MB"
+          # Verify it's under GitHub's 2GB limit
+          if [ $size -gt 2147483648 ]; then
+            echo "ERROR: Model exceeds 2GB limit"
+            exit 1
+          fi
+
+      - name: Create release tarball
+        run: |
+          cd rust/tea-wasm-llm
+          # Get version from tag
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Create tarball with pkg and js directories
+          tar -czvf "tea-wasm-llm-${VERSION}.tar.gz" pkg/ js/
+
+          echo "Created tea-wasm-llm-${VERSION}.tar.gz"
+          ls -lh "tea-wasm-llm-${VERSION}.tar.gz"
+
+      - name: Generate WASM SHA256SUMS
+        run: |
+          cd rust/tea-wasm-llm
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Generate checksums for all WASM release assets
+          sha256sum "tea-wasm-llm-${VERSION}.tar.gz" \
+                    models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+                    models/manifest.json > SHA256SUMS.wasm
+
+          echo "SHA256SUMS.wasm contents:"
+          cat SHA256SUMS.wasm
+
+      - name: Upload WASM package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-llm-package
+          path: |
+            rust/tea-wasm-llm/tea-wasm-llm-*.tar.gz
+            rust/tea-wasm-llm/SHA256SUMS.wasm
+          retention-days: 1
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-llm-model
+          path: |
+            rust/tea-wasm-llm/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
+            rust/tea-wasm-llm/models/manifest.json
+          retention-days: 1

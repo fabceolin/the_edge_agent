@@ -103,6 +103,60 @@ pub struct SettingsConfig {
     /// Default: 1000
     #[serde(default)]
     pub max_iterations: Option<usize>,
+
+    /// LLM backend configuration (TEA-RELEASE-004.4)
+    ///
+    /// Configure local vs API-based LLM backends:
+    /// ```yaml
+    /// settings:
+    ///   llm:
+    ///     backend: local           # 'local', 'api', or 'auto'
+    ///     model_path: ~/.cache/tea/models/phi-4-mini.gguf
+    ///     n_ctx: 128000
+    ///     n_threads: 8
+    /// ```
+    #[serde(default)]
+    pub llm: Option<LlmConfig>,
+}
+
+/// LLM backend configuration (TEA-RELEASE-004.4)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LlmConfig {
+    /// Backend type: "local", "api", or "auto" (default)
+    ///
+    /// - `local`: Use local llama.cpp backend (requires llm-local feature)
+    /// - `api`: Use HTTP API backend (OpenAI-compatible)
+    /// - `auto`: Try local first, fallback to API
+    #[serde(default)]
+    pub backend: Option<String>,
+
+    /// Path to GGUF model file (for local backend)
+    #[serde(default)]
+    pub model_path: Option<String>,
+
+    /// Context window size override (auto-detected from model if not specified)
+    #[serde(default)]
+    pub n_ctx: Option<u32>,
+
+    /// Number of CPU threads (default: all cores)
+    #[serde(default)]
+    pub n_threads: Option<u32>,
+
+    /// Number of GPU layers to offload (0 = CPU only)
+    #[serde(default)]
+    pub n_gpu_layers: Option<u32>,
+
+    /// API base URL (for API backend, default: OpenAI)
+    #[serde(default)]
+    pub api_url: Option<String>,
+
+    /// API key (for API backend, or use OPENAI_API_KEY env var)
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Default model name for API backend
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Configuration for a single rate limiter.
@@ -450,5 +504,52 @@ mod tests {
         assert!(config.allow_cycles);
         assert_eq!(config.max_iterations, Some(500));
         assert!(config.rate_limiters.contains_key("openai"));
+    }
+
+    #[test]
+    fn test_llm_config_local() {
+        let yaml = r#"
+            llm:
+              backend: local
+              model_path: ~/.cache/tea/models/phi-4-mini.gguf
+              n_ctx: 128000
+              n_threads: 8
+              n_gpu_layers: 0
+        "#;
+
+        let config: SettingsConfig = serde_yaml::from_str(yaml).unwrap();
+        let llm = config.llm.unwrap();
+        assert_eq!(llm.backend, Some("local".to_string()));
+        assert_eq!(
+            llm.model_path,
+            Some("~/.cache/tea/models/phi-4-mini.gguf".to_string())
+        );
+        assert_eq!(llm.n_ctx, Some(128000));
+        assert_eq!(llm.n_threads, Some(8));
+        assert_eq!(llm.n_gpu_layers, Some(0));
+    }
+
+    #[test]
+    fn test_llm_config_api() {
+        let yaml = r#"
+            llm:
+              backend: api
+              api_url: "https://api.openai.com/v1"
+              model: gpt-4
+        "#;
+
+        let config: SettingsConfig = serde_yaml::from_str(yaml).unwrap();
+        let llm = config.llm.unwrap();
+        assert_eq!(llm.backend, Some("api".to_string()));
+        assert_eq!(llm.api_url, Some("https://api.openai.com/v1".to_string()));
+        assert_eq!(llm.model, Some("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_llm_config_default() {
+        let config = LlmConfig::default();
+        assert!(config.backend.is_none());
+        assert!(config.model_path.is_none());
+        assert!(config.n_ctx.is_none());
     }
 }

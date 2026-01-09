@@ -804,6 +804,7 @@ class NodeFactory:
             # Only inject if not explicitly set in params
             if action_name in (
                 "llm.call",
+                "llm.chat",
                 "llm.stream",
                 "llm.tools",
                 "actions.llm_call",

@@ -1,0 +1,730 @@
+# =============================================================================
+# Build Python Prolog - Reusable Workflow
+# =============================================================================
+# Purpose: Builds 4 Python standalone binaries with Prolog support (janus-swi)
+#   - Linux x86_64 Prolog (core deps + janus-swi)
+#   - Linux ARM64 Prolog (core deps + janus-swi)
+#   - Linux x86_64 Full Prolog (all deps + janus-swi + llama-cpp)
+#   - Linux ARM64 Full Prolog (all deps + janus-swi + llama-cpp)
+#
+# Note: Prolog builds require SWI-Prolog 9.1+ on the system and produce
+#       runtime bundles for AppImage packaging.
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: python-linux-x86_64-prolog, python-swipl-runtime-x86_64, etc.
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Python Prolog
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================================
+  # Python Standalone Binaries - Linux x86_64 Prolog (Native runner)
+  # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # Uses glibc dynamic linking for libswipl.so compatibility
+  # ============================================================
+  build-python-linux-prolog-x86_64:
+    runs-on: ubuntu-24.04
+    name: Python linux-x86_64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog 9.1+
+        run: |
+          # Official PPA required for 9.1+
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          sudo apt-get install -y swi-prolog-nox pkg-config
+
+          # Verify version (must be 9.1+)
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-x86_64-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=janus_swi \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --collect-all the_edge_agent \
+            --collect-all janus_swi \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-x86_64-prolog
+          ./python/dist/tea-python-linux-x86_64-prolog --version
+          impl=$(./python/dist/tea-python-linux-x86_64-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-x86_64-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-x86_64/lib
+          mkdir -p python-swipl-runtime-x86_64/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-x86_64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-x86_64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-x86_64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-x86_64.tar.gz python-swipl-runtime-x86_64
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-x86_64/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64-prolog
+          path: python/dist/tea-python-linux-x86_64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64
+          path: python-swipl-runtime-x86_64.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 Prolog (Native runner)
+  # Core deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-prolog-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog 9.1+ (build from source)
+        run: |
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
+
+          # Install build dependencies
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-arm64-prolog \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=janus_swi \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --collect-all the_edge_agent \
+            --collect-all janus_swi \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64-prolog
+          ./python/dist/tea-python-linux-arm64-prolog --version
+          impl=$(./python/dist/tea-python-linux-arm64-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-arm64-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-aarch64/lib
+          mkdir -p python-swipl-runtime-aarch64/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-arm64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-aarch64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-aarch64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-aarch64.tar.gz python-swipl-runtime-aarch64
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-aarch64/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64-prolog
+          path: python/dist/tea-python-linux-arm64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64
+          path: python-swipl-runtime-aarch64.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux x86_64 Full Prolog (Native runner)
+  # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-full-prolog-x86_64:
+    runs-on: ubuntu-24.04
+    name: Python linux-x86_64-full-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog 9.1+, OpenMP, and Vulkan
+        run: |
+          # Official PPA required for 9.1+
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          # Note: libvulkan-dev only (glslc/glslang-tools provided by LunarG SDK later)
+          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev
+
+          # Verify version (must be 9.1+)
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install LunarG Vulkan SDK, OpenBLAS and GCC 14
+        run: |
+          # Remove any conflicting packages from Ubuntu (defensive)
+          sudo apt-get remove -y glslang-tools glslc || true
+
+          # Install LunarG Vulkan SDK (same as llama.cpp official builds)
+          wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
+          sudo apt-get update -y
+          # GCC 14 for improved x86_64 optimizations (AVX10.1, better register allocation)
+          sudo apt-get install -y vulkan-sdk libopenblas-dev gcc-14 g++-14
+
+      - name: Install Python dependencies (full + janus-swi + llm-local)
+        env:
+          # Use GCC 14 for improved x86_64 optimizations
+          CC: gcc-14
+          CXX: g++-14
+          # CMake args for Vulkan and OpenBLAS support
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF"
+          FORCE_CMAKE: "1"
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu \
+                      firebase-admin duckdb
+
+          # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full + prolog)
+        run: |
+          cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          pyinstaller --onefile --name tea-python-linux-x86_64-full-prolog \
+            --add-binary "${LIBGOMP_PATH}:." \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=firebase_admin \
+            --hidden-import=duckdb \
+            --hidden-import=janus_swi \
+            --hidden-import=llama_cpp \
+            --collect-all the_edge_agent \
+            --collect-all llama_cpp \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all firebase_admin \
+            --collect-all janus_swi \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-x86_64-full-prolog
+          ./python/dist/tea-python-linux-x86_64-full-prolog --version
+          impl=$(./python/dist/tea-python-linux-x86_64-full-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-x86_64-full-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64-full-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-x86_64-full/lib
+          mkdir -p python-swipl-runtime-x86_64-full/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-x86_64-full/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-x86_64-full/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-x86_64-full-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-x86_64-full/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-x86_64-full/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-x86_64-full.tar.gz python-swipl-runtime-x86_64-full
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-x86_64-full/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: python/dist/tea-python-linux-x86_64-full-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: python-swipl-runtime-x86_64-full.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 Full Prolog (Native runner)
+  # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
+  # ============================================================
+  build-python-linux-full-prolog-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64-full-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog 9.1+ (build from source), OpenMP, Vulkan, and OpenBLAS
+        run: |
+          # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
+          # Build SWI-Prolog 9.3.x from source
+
+          # Install build dependencies, OpenMP, Vulkan, OpenBLAS and GCC 14 (SME support)
+          # Note: ARM64 uses Ubuntu's Vulkan packages (LunarG SDK not available for ARM64)
+          # GCC 14 required for ARM SME (Scalable Matrix Extension) support
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
+            zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
+            libreadline-dev libedit-dev pkg-config libgomp1 \
+            libvulkan-dev glslang-tools glslc libopenblas-dev gcc-14 g++-14
+
+          # Clone and build SWI-Prolog 9.3.x
+          git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
+          cd /tmp/swipl-devel
+          git submodule update --init
+
+          mkdir build && cd build
+          cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DSWIPL_PACKAGES_JAVA=OFF \
+            -DSWIPL_PACKAGES_X=OFF \
+            ..
+          ninja
+          sudo ninja install
+
+          # Update library path
+          echo "/usr/local/lib/swipl/lib/aarch64-linux" | sudo tee /etc/ld.so.conf.d/swipl.conf
+          sudo ldconfig
+
+          # Verify version
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies (full + janus-swi + llm-local)
+        env:
+          # Use GCC 14 for ARM SME support
+          CC: gcc-14
+          CXX: g++-14
+          # CMake args for Vulkan and OpenBLAS support
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF"
+          FORCE_CMAKE: "1"
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu \
+                      firebase-admin duckdb
+
+          # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          pip install janus-swi
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full + prolog)
+        run: |
+          cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          pyinstaller --onefile --name tea-python-linux-arm64-full-prolog \
+            --add-binary "${LIBGOMP_PATH}:." \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=firebase_admin \
+            --hidden-import=duckdb \
+            --hidden-import=janus_swi \
+            --hidden-import=llama_cpp \
+            --collect-all the_edge_agent \
+            --collect-all llama_cpp \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all firebase_admin \
+            --collect-all janus_swi \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64-full-prolog
+          ./python/dist/tea-python-linux-arm64-full-prolog --version
+          impl=$(./python/dist/tea-python-linux-arm64-full-prolog --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: |
+          ./python/dist/tea-python-linux-arm64-full-prolog run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64-full-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from swipl itself
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p python-swipl-runtime-aarch64-full/lib
+          mkdir -p python-swipl-runtime-aarch64-full/home
+
+          # Copy libswipl.so from the correct location
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* python-swipl-runtime-aarch64-full/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* python-swipl-runtime-aarch64-full/home/
+
+          # Collect library dependencies
+          echo "Collecting library dependencies..."
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so"
+
+          : > /tmp/all_deps.txt
+          ldd python/dist/tea-python-linux-arm64-full-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "python-swipl-runtime-aarch64-full/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" python-swipl-runtime-aarch64-full/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf python-swipl-runtime-aarch64-full.tar.gz python-swipl-runtime-aarch64-full
+
+          echo "Bundle contents:"
+          ls -la python-swipl-runtime-aarch64-full/lib/ | head -20
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: python/dist/tea-python-linux-arm64-full-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: python-swipl-runtime-aarch64-full.tar.gz
+          retention-days: 1

@@ -19,6 +19,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pydot
 import yaml
 
+# Default timeout for subprocess execution in generated YAML workflows (in seconds)
+DEFAULT_SUBPROCESS_TIMEOUT = 900  # 15 minutes
+
 
 class LiteralBlockDumper(yaml.SafeDumper):
     """Custom YAML Dumper that uses literal block style (|) for multi-line strings."""
@@ -569,6 +572,7 @@ def generate_yaml(
     tmux_session: Optional[str] = None,
     use_node_commands: bool = False,  # TEA-TOOLS-002: Per-node command mode
     tea_executable: Optional[str] = None,  # Override tea executable name
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
 ) -> str:
     """
     Generate TEA YAML from an analyzed graph.
@@ -582,6 +586,7 @@ def generate_yaml(
         tmux_session: Tmux session name (required if use_tmux is True)
         use_node_commands: TEA-TOOLS-002 - Use per-node command attribute from DOT
         tea_executable: Override "tea" in commands with this executable (e.g., "tea-python", "tea-rust")
+        subprocess_timeout: Timeout for subprocess execution in seconds (default: 900)
 
     Returns:
         YAML string for TEA workflow
@@ -635,6 +640,7 @@ def generate_yaml(
             tmux_session,
             i,
             use_node_commands=use_node_commands,
+            subprocess_timeout=subprocess_timeout,
         )
         nodes.append(parallel_node)
 
@@ -677,6 +683,7 @@ def generate_yaml(
                 use_tmux,
                 tmux_session,
                 node_command=node_command,
+                subprocess_timeout=subprocess_timeout,
             )
             nodes.append(exec_node)
 
@@ -792,12 +799,16 @@ def _generate_parallel_node(
     tmux_session: Optional[str],
     phase_index: int,
     use_node_commands: bool = False,  # TEA-TOOLS-002
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
 ) -> Dict[str, Any]:
     """
     Generate a dynamic_parallel node for a phase.
 
     TEA-TOOLS-002: When use_node_commands is True, generates dispatch code
     that looks up per-item commands from the _phase{n}_commands dict.
+
+    Args:
+        subprocess_timeout: Timeout for subprocess execution in seconds
     """
     if use_node_commands:
         # TEA-TOOLS-002: Generate dispatch execution code
@@ -807,14 +818,16 @@ def _generate_parallel_node(
             )
         else:
             run_code = _generate_dispatch_subprocess_execution_code(
-                phase_index, command_template
+                phase_index, command_template, timeout=subprocess_timeout
             )
     else:
         # Original uniform command template mode
         if use_tmux:
             run_code = _generate_tmux_execution_code(command_template, tmux_session)
         else:
-            run_code = _generate_subprocess_execution_code(command_template)
+            run_code = _generate_subprocess_execution_code(
+                command_template, timeout=subprocess_timeout
+            )
 
     return {
         "name": f"{phase_name}_parallel",
@@ -848,8 +861,15 @@ return state""",
     }
 
 
-def _generate_subprocess_execution_code(command_template: str) -> str:
-    """Generate subprocess-based execution code."""
+def _generate_subprocess_execution_code(
+    command_template: str, timeout: int = DEFAULT_SUBPROCESS_TIMEOUT
+) -> str:
+    """Generate subprocess-based execution code.
+
+    Args:
+        command_template: Command template with {{ item }} placeholder
+        timeout: Subprocess timeout in seconds (default: DEFAULT_SUBPROCESS_TIMEOUT)
+    """
     return f'''import subprocess
 
 item = state.get("item", "")
@@ -862,7 +882,7 @@ try:
         capture_output=True,
         text=True,
         executable='/bin/bash',
-        timeout=300
+        timeout={timeout}
     )
     return {{
         "item": item,
@@ -875,7 +895,7 @@ except subprocess.TimeoutExpired:
     return {{
         "item": item,
         "success": False,
-        "error": "Command timed out after 300 seconds"
+        "error": "Command timed out after {timeout} seconds"
     }}
 except Exception as e:
     return {{
@@ -939,13 +959,20 @@ except Exception as e:
 
 
 def _generate_dispatch_subprocess_execution_code(
-    phase_index: int, fallback_template: str
+    phase_index: int,
+    fallback_template: str,
+    timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
 ) -> str:
     """
     Generate subprocess-based dispatch execution code.
 
     TEA-TOOLS-002: Looks up command from _phase{n}_commands dict.
     All nodes must have commands (validated at generation time).
+
+    Args:
+        phase_index: Index of the phase (0-based)
+        fallback_template: Fallback command template (unused, kept for API compat)
+        timeout: Subprocess timeout in seconds (default: DEFAULT_SUBPROCESS_TIMEOUT)
     """
     return f"""import subprocess
 
@@ -967,7 +994,7 @@ try:
         capture_output=True,
         text=True,
         executable='/bin/bash',
-        timeout=300
+        timeout={timeout}
     )
     return {{
         "item": item,
@@ -982,7 +1009,7 @@ except subprocess.TimeoutExpired:
         "item": item,
         "command": cmd,
         "success": False,
-        "error": "Command timed out after 300 seconds"
+        "error": "Command timed out after {timeout} seconds"
     }}
 except Exception as e:
     return {{
@@ -1066,11 +1093,15 @@ def _generate_simple_exec_node(
     use_tmux: bool,
     tmux_session: Optional[str],
     node_command: Optional[str] = None,  # TEA-TOOLS-002: Per-node command
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
 ) -> Dict[str, Any]:
     """
     Generate a simple execution node for non-parallel workflows.
 
     TEA-TOOLS-002: If node_command is provided, uses that instead of template.
+
+    Args:
+        subprocess_timeout: Timeout for subprocess execution in seconds
     """
     # TEA-TOOLS-002: Use node-specific command if available
     effective_command = node_command if node_command else command_template
@@ -1078,7 +1109,9 @@ def _generate_simple_exec_node(
     if use_tmux:
         run_code = _generate_tmux_execution_code(effective_command, tmux_session)
     else:
-        run_code = _generate_subprocess_execution_code(effective_command)
+        run_code = _generate_subprocess_execution_code(
+            effective_command, timeout=subprocess_timeout
+        )
 
     return {
         "name": _sanitize_name(node_id),
@@ -1103,6 +1136,7 @@ def dot_to_yaml(
     use_node_commands: bool = False,  # TEA-TOOLS-002: Per-node command mode
     allow_cycles: bool = False,  # Allow cycles for feedback loops
     tea_executable: Optional[str] = None,  # Override tea executable name in commands
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
 ) -> str:
     """
     Convert a DOT file to TEA YAML workflow.
@@ -1121,6 +1155,7 @@ def dot_to_yaml(
         use_node_commands: TEA-TOOLS-002 - Use per-node command attribute from DOT
         allow_cycles: Allow cycles in the graph (for feedback loops)
         tea_executable: Override "tea" in commands with this executable name (e.g., "tea-python", "tea-rust")
+        subprocess_timeout: Timeout for subprocess execution in seconds (default: 900)
 
     Returns:
         Generated YAML string
@@ -1170,6 +1205,7 @@ def dot_to_yaml(
         tmux_session=tmux_session,
         use_node_commands=use_node_commands,
         tea_executable=tea_executable,
+        subprocess_timeout=subprocess_timeout,
     )
 
     # Optionally validate

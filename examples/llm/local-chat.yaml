@@ -1,0 +1,74 @@
+# Local LLM Chat Example (TEA-RELEASE-004.1/004.5)
+#
+# This example demonstrates using a local GGUF model via llama.cpp.
+# Works with Rust (llama-cpp-2) and Python (llama-cpp-python) implementations.
+# Compatible with both Phi-4-mini and Gemma models bundled in LLM AppImages.
+#
+# Usage:
+#   # With explicit model path
+#   tea run local-chat.yaml --input '{"question": "What is 2+2?"}'
+#
+#   # With Rust AppImage (model auto-detected from $APPDIR/usr/share/models/)
+#   ./tea-rust-llm-gemma-*.AppImage run local-chat.yaml --input '{"question": "What is 2+2?"}'
+#
+#   # With Python AppImage
+#   ./tea-python-llm-gemma-*.AppImage run local-chat.yaml --input '{"question": "What is 2+2?"}'
+#
+#   # With TEA_MODEL_PATH environment variable
+#   TEA_MODEL_PATH=./models/phi4-mini.gguf tea run local-chat.yaml
+#
+# Requirements for local development:
+#   - Rust: cargo build --features llm-local
+#   - Python: pip install the_edge_agent[llm-local]
+#   - A GGUF model file (Phi-4-mini or Gemma recommended)
+#
+# Model Path Resolution:
+#   1. TEA_MODEL_PATH environment variable
+#   2. params.model_path in action
+#   3. settings.llm.model_path in YAML
+#   4. $APPDIR/usr/share/models/ (AppImage bundle)
+#   5. ~/.cache/tea/models/ (default cache location)
+
+name: local-chat-example
+description: Chat with a local LLM model using llama.cpp backend
+
+state_schema:
+  question: str
+  answer: str
+  backend: str
+  model: str
+
+initial_state:
+  question: "What is 2+2? Please respond with just the number."
+
+settings:
+  llm:
+    # Backend selection: "local" for llama.cpp, "api" for remote, "auto" for auto-detect
+    backend: auto
+    # GPU layers (0 = CPU only, -1 = all layers on GPU)
+    n_gpu_layers: 0
+
+nodes:
+  - name: chat
+    action: llm.chat
+    params:
+      # Backend: "local", "api", or "auto" (default: auto)
+      # Auto will prefer local if model is available, otherwise fall back to API
+      backend: "{{ state.backend | default('auto') }}"
+      # Prompt to send to the model
+      prompt: "{{ state.question }}"
+      # System prompt for context
+      system: "You are a helpful AI assistant. Provide clear, concise answers."
+      # Generation parameters
+      max_tokens: 100
+      temperature: 0.7
+    outputs:
+      answer: "{{ action_result.content }}"
+      backend: "{{ action_result.backend }}"
+      model: "{{ action_result.model }}"
+
+edges:
+  - from: __start__
+    to: chat
+  - from: chat
+    to: __end__

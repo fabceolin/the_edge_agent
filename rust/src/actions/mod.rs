@@ -11,6 +11,10 @@ pub mod file;
 pub mod http;
 #[cfg(feature = "llm")]
 pub mod llm;
+#[cfg(feature = "llm")]
+pub mod llm_backend;
+#[cfg(feature = "llm-local")]
+pub mod llm_local;
 pub mod memory;
 #[cfg(feature = "planning")]
 pub mod planning;

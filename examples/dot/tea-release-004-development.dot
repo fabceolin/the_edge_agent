@@ -1,0 +1,69 @@
+digraph tea_release_004_development {
+    rankdir=TB;
+    node [shape=box];
+
+    Start [label="Start", shape=ellipse];
+    End [label="End", shape=ellipse];
+
+    // Phase 1: Foundation (parallel)
+    subgraph cluster_phase1 {
+        label="Phase 1: Foundation (parallel)";
+        color=blue;
+
+        story_4_4 [label="TEA-RELEASE-004.4\nRust LLM Actions", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.4-rust-llm-actions.md\"}'"];
+
+        story_4_5 [label="TEA-RELEASE-004.5\nPython LLM Actions", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.5-python-llm-actions.md\"}'"];
+
+        story_4_3a [label="TEA-RELEASE-004.3a\nWASM LLM Core", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3a-wasm-llm-core.md\"}'"];
+    }
+
+    // Phase 2: AppImages + Model Bundling (parallel, after dependencies)
+    subgraph cluster_phase2 {
+        label="Phase 2: Integration (parallel)";
+        color=green;
+
+        story_4_1 [label="TEA-RELEASE-004.1\nRust LLM AppImage", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.1-rust-llm-appimage.md\"}'"];
+
+        story_4_2 [label="TEA-RELEASE-004.2\nPython LLM AppImage", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.2-python-llm-appimage.md\"}'"];
+
+        story_4_3b [label="TEA-RELEASE-004.3b\nWASM Model Bundling", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3b-wasm-model-bundling.md\"}'"];
+    }
+
+    // Phase 3: WASM Release
+    subgraph cluster_phase3 {
+        label="Phase 3: WASM Release";
+        color=orange;
+
+        story_4_3c [label="TEA-RELEASE-004.3c\nWASM Release Testing", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3c-wasm-release-testing.md\"}'"];
+    }
+
+    // Phase 4: Documentation
+    subgraph cluster_phase4 {
+        label="Phase 4: Documentation";
+        color=purple;
+
+        story_4_6 [label="TEA-RELEASE-004.6\nDocumentation", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.6-documentation.md\"}'"];
+    }
+
+    // Start -> Phase 1 (fan-out)
+    Start -> story_4_4;
+    Start -> story_4_5;
+    Start -> story_4_3a;
+
+    // Phase 1 -> Phase 2 (dependencies)
+    story_4_4 -> story_4_1;    // Rust actions -> Rust AppImage
+    story_4_5 -> story_4_2;    // Python actions -> Python AppImage
+    story_4_3a -> story_4_3b;  // WASM core -> Model bundling
+
+    // Phase 2 -> Phase 3 (WASM release needs both 3a and 3b)
+    story_4_3a -> story_4_3c;
+    story_4_3b -> story_4_3c;
+
+    // Phase 2/3 -> Phase 4 (Documentation after all implementation)
+    story_4_1 -> story_4_6;
+    story_4_2 -> story_4_6;
+    story_4_3c -> story_4_6;
+
+    // Phase 4 -> End
+    story_4_6 -> End;
+}

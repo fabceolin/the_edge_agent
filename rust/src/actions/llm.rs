@@ -1,4 +1,6 @@
-//! LLM actions (llm.call, llm.stream, llm.tools)
+//! LLM actions (llm.call, llm.stream, llm.tools, llm.chat)
+//!
+//! TEA-RELEASE-004.4: Added local LLM support via llm.chat action.
 
 use crate::engine::executor::ActionRegistry;
 use crate::error::{TeaError, TeaResult};
@@ -12,6 +14,7 @@ pub fn register(registry: &ActionRegistry) {
     registry.register("llm.complete", llm_call); // Alias
     registry.register("llm.stream", llm_stream);
     registry.register("llm.tools", llm_tools);
+    registry.register("llm.chat", llm_chat); // TEA-RELEASE-004.4: Local LLM support
 }
 
 /// OpenAI-compatible message format
@@ -913,6 +916,277 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
             "warning".to_string(),
             json!(format!("Max tool rounds ({}) exceeded", max_tool_rounds)),
         );
+    }
+
+    Ok(result)
+}
+
+// =============================================================================
+// Local LLM Chat Action (TEA-RELEASE-004.4)
+// =============================================================================
+
+/// Internal chat message for llm.chat action
+#[derive(Debug, Clone)]
+struct ChatMsg {
+    role: String,
+    content: String,
+}
+
+/// Chat completion with auto-backend selection (local or API)
+///
+/// TEA-RELEASE-004.4: New action supporting both local llama.cpp and API backends.
+///
+/// Parameters:
+/// - `messages`: Array of {role, content} messages (OpenAI format)
+/// - `prompt`: Alternative to messages - single user message
+/// - `system`: System prompt (used with prompt param)
+/// - `backend`: "local", "api", or "auto" (default: auto)
+/// - `model`: Model name for API backend
+/// - `model_path`: Path to GGUF model for local backend
+/// - `max_tokens`: Maximum tokens to generate (default: 100)
+/// - `temperature`: Sampling temperature (default: 0.7)
+/// - `provider`: API provider (openai, ollama) - for API backend only
+///
+/// Returns state with:
+/// - `content`: Generated text
+/// - `response`: Same as content (backward compat)
+/// - `model`: Model name used
+/// - `backend`: Backend type used ("local" or "api")
+/// - `tokens_used`: Token count (if available)
+/// - `finish_reason`: Reason for stopping
+pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
+    // Parse backend preference
+    let backend_str = params
+        .get("backend")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
+
+    // Build messages from params
+    let messages: Vec<ChatMsg> =
+        if let Some(msgs) = params.get("messages").and_then(|v| v.as_array()) {
+            msgs.iter()
+                .filter_map(|m| {
+                    let role = m.get("role")?.as_str()?.to_string();
+                    let content = m.get("content")?.as_str()?.to_string();
+                    Some(ChatMsg { role, content })
+                })
+                .collect()
+        } else if let Some(prompt) = params.get("prompt").and_then(|v| v.as_str()) {
+            let system = params.get("system").and_then(|v| v.as_str());
+            let mut msgs = vec![];
+            if let Some(sys) = system {
+                msgs.push(ChatMsg {
+                    role: "system".to_string(),
+                    content: sys.to_string(),
+                });
+            }
+            msgs.push(ChatMsg {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            });
+            msgs
+        } else {
+            return Err(TeaError::InvalidInput {
+                action: "llm.chat".to_string(),
+                message: "Missing required parameter: prompt or messages".to_string(),
+            });
+        };
+
+    #[allow(unused_variables)]
+    let max_tokens = params
+        .get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100) as usize;
+
+    #[allow(unused_variables)]
+    let temperature = params
+        .get("temperature")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.7) as f32;
+
+    // Determine which backend to use
+    let use_local = match backend_str {
+        "local" => {
+            #[cfg(feature = "llm-local")]
+            {
+                use super::llm_backend::{is_local_llm_available, is_local_llm_compiled};
+                let settings = build_llm_settings(params);
+                if !is_local_llm_compiled() {
+                    return Err(TeaError::InvalidInput {
+                        action: "llm.chat".to_string(),
+                        message:
+                            "Local LLM backend not available. Rebuild with --features llm-local"
+                                .to_string(),
+                    });
+                }
+                if !is_local_llm_available(&settings) {
+                    return Err(TeaError::InvalidInput {
+                        action: "llm.chat".to_string(),
+                        message: "Local LLM: No model found. Set TEA_MODEL_PATH or settings.llm.model_path".to_string(),
+                    });
+                }
+                true
+            }
+            #[cfg(not(feature = "llm-local"))]
+            {
+                return Err(TeaError::InvalidInput {
+                    action: "llm.chat".to_string(),
+                    message: "Local LLM backend not available. Rebuild with --features llm-local"
+                        .to_string(),
+                });
+            }
+        }
+        "api" => false,
+        _ => {
+            // "auto" or any other value: try local first if available, otherwise fall back to API
+            #[cfg(feature = "llm-local")]
+            {
+                use super::llm_backend::{is_local_llm_available, is_local_llm_compiled};
+                let settings = build_llm_settings(params);
+                is_local_llm_compiled() && is_local_llm_available(&settings)
+            }
+            #[cfg(not(feature = "llm-local"))]
+            {
+                false
+            }
+        }
+    };
+
+    if use_local {
+        #[cfg(feature = "llm-local")]
+        {
+            let settings = build_llm_settings(params);
+            return execute_local_chat(state, &settings, messages, max_tokens, temperature);
+        }
+
+        #[cfg(not(feature = "llm-local"))]
+        {
+            return Err(TeaError::InvalidInput {
+                action: "llm.chat".to_string(),
+                message: "Local LLM feature not compiled. Rebuild with --features llm-local"
+                    .to_string(),
+            });
+        }
+    }
+
+    // Fall back to API backend
+    execute_api_chat(state, params, messages)
+}
+
+/// Build LlmSettings from params (only available with llm-local feature)
+#[cfg(feature = "llm-local")]
+fn build_llm_settings(params: &HashMap<String, JsonValue>) -> super::llm_backend::LlmSettings {
+    super::llm_backend::LlmSettings {
+        backend: super::llm_backend::BackendType::Auto,
+        model_path: params
+            .get("model_path")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        n_ctx: params
+            .get("n_ctx")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        n_threads: params
+            .get("n_threads")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        n_gpu_layers: params
+            .get("n_gpu_layers")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32),
+        api_url: params
+            .get("api_url")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        api_key: params
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        model: params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
+}
+
+/// Execute chat via local llama.cpp backend
+#[cfg(feature = "llm-local")]
+fn execute_local_chat(
+    state: &JsonValue,
+    settings: &super::llm_backend::LlmSettings,
+    messages: Vec<ChatMsg>,
+    max_tokens: usize,
+    temperature: f32,
+) -> TeaResult<JsonValue> {
+    use super::llm_backend::{ChatMessage, LlmBackend};
+    use super::llm_local::LocalLlmBackend;
+
+    // Convert to backend ChatMessage type
+    let backend_messages: Vec<ChatMessage> = messages
+        .into_iter()
+        .map(|m| ChatMessage {
+            role: m.role,
+            content: m.content,
+        })
+        .collect();
+
+    let backend = LocalLlmBackend::from_settings(settings).map_err(|e| TeaError::Execution {
+        node: "llm.chat".to_string(),
+        message: format!("Failed to load local model: {}", e),
+    })?;
+
+    let result = backend
+        .chat(backend_messages, max_tokens, temperature)
+        .map_err(|e| TeaError::Execution {
+            node: "llm.chat".to_string(),
+            message: format!("Local LLM inference failed: {}", e),
+        })?;
+
+    let mut output = state.clone();
+    if let Some(obj) = output.as_object_mut() {
+        obj.insert("content".to_string(), json!(result.content));
+        obj.insert("response".to_string(), json!(result.content));
+        obj.insert("model".to_string(), json!(result.model));
+        obj.insert("backend".to_string(), json!("local"));
+        if let Some(tokens) = result.tokens_used {
+            obj.insert("tokens_used".to_string(), json!(tokens));
+        }
+        if let Some(reason) = result.finish_reason {
+            obj.insert("finish_reason".to_string(), json!(reason));
+        }
+    }
+
+    Ok(output)
+}
+
+/// Execute chat via API backend (OpenAI-compatible)
+fn execute_api_chat(
+    state: &JsonValue,
+    params: &HashMap<String, JsonValue>,
+    messages: Vec<ChatMsg>,
+) -> TeaResult<JsonValue> {
+    // Convert ChatMsg to Message for API call
+    let api_messages: Vec<Message> = messages
+        .into_iter()
+        .map(|m| Message {
+            role: m.role,
+            content: m.content,
+        })
+        .collect();
+
+    // Build params for llm_call with messages
+    let mut api_params = params.clone();
+    api_params.insert(
+        "messages".to_string(),
+        serde_json::to_value(&api_messages).unwrap_or(json!([])),
+    );
+
+    // Call existing llm_call implementation
+    let mut result = llm_call(state, &api_params)?;
+
+    // Add backend identifier
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("backend".to_string(), json!("api"));
     }
 
     Ok(result)
@@ -2005,6 +2279,229 @@ data: [DONE]
             }
             Err(e) => {
                 eprintln!("Ollama not available: {}", e);
+            }
+        }
+    }
+
+    // =============================================================================
+    // llm.chat Tests (TEA-RELEASE-004.4)
+    // =============================================================================
+
+    #[test]
+    fn test_llm_chat_missing_prompt() {
+        let state = json!({});
+        let params = HashMap::new();
+
+        let result = llm_chat(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("prompt") || err.contains("messages"));
+    }
+
+    #[test]
+    fn test_llm_chat_with_messages_format() {
+        // Test that messages array is properly parsed
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            (
+                "messages".to_string(),
+                json!([
+                    {"role": "system", "content": "You are helpful"},
+                    {"role": "user", "content": "Hello"}
+                ]),
+            ),
+            ("backend".to_string(), json!("api")),
+            // This will fail without API key, but we're testing parsing
+        ]
+        .into_iter()
+        .collect();
+
+        // Will fail due to no API key, but should not fail on parsing
+        let result = llm_chat(&state, &params);
+        // The error should be HTTP-related, not parsing-related
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(!err.contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_llm_chat_with_prompt_format() {
+        // Test that simple prompt is converted to messages
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("prompt".to_string(), json!("Hello")),
+            ("system".to_string(), json!("You are helpful")),
+            ("backend".to_string(), json!("api")),
+        ]
+        .into_iter()
+        .collect();
+
+        // Will fail due to no API key, but should not fail on parsing
+        let result = llm_chat(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(!err.contains("Missing required parameter"));
+    }
+
+    #[test]
+    fn test_llm_chat_backend_type_parsing() {
+        // Test valid backend types
+        let state = json!({});
+
+        // "api" backend
+        let params: HashMap<String, JsonValue> = [
+            ("prompt".to_string(), json!("Hello")),
+            ("backend".to_string(), json!("api")),
+        ]
+        .into_iter()
+        .collect();
+        let result = llm_chat(&state, &params);
+        // Should fail due to API, not backend parsing
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(!err.contains("Unknown backend"));
+
+        // "auto" backend
+        let params: HashMap<String, JsonValue> = [
+            ("prompt".to_string(), json!("Hello")),
+            ("backend".to_string(), json!("auto")),
+        ]
+        .into_iter()
+        .collect();
+        let result = llm_chat(&state, &params);
+        // Should fail due to API (auto falls back), not backend parsing
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(!err.contains("Unknown backend"));
+    }
+
+    #[test]
+    fn test_llm_chat_local_backend_without_feature() {
+        // Without llm-local feature, "local" backend should return clear error
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("prompt".to_string(), json!("Hello")),
+            ("backend".to_string(), json!("local")),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_chat(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        // Should mention feature flag or local LLM
+        assert!(
+            err.contains("Local LLM") || err.contains("llm-local") || err.contains("feature"),
+            "Error should mention local LLM feature: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_chat_msg_struct() {
+        let msg = ChatMsg {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+        };
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content, "Hello");
+    }
+
+    /// Integration test for llm.chat with API backend via Ollama
+    /// Run: `ollama pull phi4-mini && cargo test test_llm_chat_api_ollama -- --ignored`
+    #[test]
+    #[ignore]
+    fn test_llm_chat_api_ollama() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("provider".to_string(), json!("ollama")),
+            ("model".to_string(), json!("phi4-mini")),
+            ("prompt".to_string(), json!("Say 'Hello' and nothing else.")),
+            ("backend".to_string(), json!("api")),
+            ("temperature".to_string(), json!(0.0)),
+            ("max_tokens".to_string(), json!(10)),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_chat(&state, &params);
+
+        match result {
+            Ok(state) => {
+                assert!(state.get("content").is_some());
+                assert!(state.get("backend").is_some());
+                assert_eq!(state["backend"], json!("api"));
+                println!("llm.chat (API) result: {}", state["content"]);
+            }
+            Err(e) => {
+                eprintln!("Ollama not available: {}", e);
+            }
+        }
+    }
+
+    /// Integration test for llm.chat with local backend
+    /// Run: `TEA_MODEL_PATH=stories260K.gguf cargo test --features llm-local test_llm_chat_local -- --ignored`
+    #[test]
+    #[ignore]
+    #[cfg(feature = "llm-local")]
+    fn test_llm_chat_local() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("prompt".to_string(), json!("Once upon a time")),
+            ("backend".to_string(), json!("local")),
+            ("max_tokens".to_string(), json!(20)),
+            ("temperature".to_string(), json!(0.8)),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_chat(&state, &params);
+
+        match result {
+            Ok(state) => {
+                assert!(state.get("content").is_some());
+                assert!(state.get("backend").is_some());
+                assert_eq!(state["backend"], json!("local"));
+                assert!(state.get("tokens_used").is_some());
+                println!("llm.chat (local) result: {}", state["content"]);
+            }
+            Err(e) => {
+                eprintln!("Local model not available: {}", e);
+            }
+        }
+    }
+
+    /// Integration test for llm.chat with auto backend selection
+    /// Run: `ollama pull phi4-mini && cargo test test_llm_chat_auto -- --ignored`
+    #[test]
+    #[ignore]
+    fn test_llm_chat_auto() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("provider".to_string(), json!("ollama")),
+            ("model".to_string(), json!("phi4-mini")),
+            ("prompt".to_string(), json!("Say 'Hello' and nothing else.")),
+            ("backend".to_string(), json!("auto")),
+            ("temperature".to_string(), json!(0.0)),
+            ("max_tokens".to_string(), json!(10)),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_chat(&state, &params);
+
+        match result {
+            Ok(state) => {
+                assert!(state.get("content").is_some());
+                assert!(state.get("backend").is_some());
+                // With auto, should use local if available, otherwise API
+                println!(
+                    "llm.chat (auto) result: {} (backend: {})",
+                    state["content"], state["backend"]
+                );
+            }
+            Err(e) => {
+                eprintln!("No backend available: {}", e);
             }
         }
     }

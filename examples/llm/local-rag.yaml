@@ -1,0 +1,100 @@
+# Local RAG Workflow Example (TEA-RELEASE-004.6)
+#
+# This example demonstrates Retrieval-Augmented Generation (RAG) using local
+# embeddings and LLM generation. The workflow:
+#   1. Embeds the query using local model
+#   2. Retrieves relevant context from memory
+#   3. Generates answer using context + query
+#
+# Usage:
+#   # First, store some documents (in a separate workflow or programmatically)
+#   # Then query with RAG:
+#   tea run local-rag.yaml --input '{"query": "What is TEA?"}'
+#
+#   # With LLM AppImage
+#   ./tea-rust-llm-gemma-*.AppImage run local-rag.yaml --input '{"query": "How does TEA work?"}'
+#
+# Note: This example requires context to be pre-populated in memory.store.
+# For a complete RAG pipeline, see examples/rag/ directory.
+#
+# Requirements:
+#   - Rust: cargo build --features llm-local
+#   - Python: pip install the_edge_agent[llm-local]
+#   - A GGUF model (Phi-4-mini or Gemma recommended)
+
+name: local-rag-example
+description: Retrieval-Augmented Generation with local LLM
+
+state_schema:
+  query: str
+  context: str
+  answer: str
+  sources: list
+
+initial_state:
+  query: "What is The Edge Agent?"
+  # Pre-populated context for demo (in production, use memory.retrieve)
+  context: |
+    The Edge Agent (TEA) is a lightweight state graph library for edge computing.
+    TEA supports both Python and Rust implementations.
+    TEA enables offline LLM inference with bundled GGUF models.
+    TEA uses YAML-based declarative agent configuration.
+
+settings:
+  llm:
+    backend: auto
+    n_gpu_layers: 0
+
+nodes:
+  # Step 1: Generate query embedding (optional for semantic search)
+  - name: embed_query
+    action: llm.embed
+    params:
+      backend: "{{ settings.llm.backend }}"
+      text: "{{ state.query }}"
+    outputs:
+      query_embedding: "{{ action_result.embedding }}"
+
+  # Step 2: Retrieve context from memory (simplified for demo)
+  # In production, use memory.retrieve with embedding similarity
+  - name: retrieve_context
+    run: |
+      # For demo purposes, context is pre-populated in initial_state
+      # In production:
+      #   - Use memory.retrieve with query_embedding
+      #   - Or vector.query for vector database search
+      return {
+          "retrieved_context": state.get("context", "No context available."),
+          "sources": ["docs/overview.md", "README.md"]
+      }
+
+  # Step 3: Generate answer with RAG context
+  - name: generate_answer
+    action: llm.chat
+    params:
+      backend: "{{ settings.llm.backend }}"
+      system: |
+        You are a helpful assistant. Use the following context to answer the question.
+        If the answer is not in the context, say "I don't have enough information."
+        Be concise and accurate.
+      prompt: |
+        Context:
+        {{ state.retrieved_context }}
+
+        Question: {{ state.query }}
+
+        Answer:
+      max_tokens: 300
+      temperature: 0.3
+    outputs:
+      answer: "{{ action_result.content }}"
+
+edges:
+  - from: __start__
+    to: embed_query
+  - from: embed_query
+    to: retrieve_context
+  - from: retrieve_context
+    to: generate_answer
+  - from: generate_answer
+    to: __end__

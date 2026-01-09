@@ -2,7 +2,11 @@
 
 ## Status
 
-Draft
+Ready for Review
+
+**Validation Date:** 2026-01-08
+**Validated By:** Bob (Scrum Master Agent)
+**Checklist:** All 5 categories passed - Goal & Context Clarity, Technical Implementation Guidance, Reference Effectiveness, Self-Containment Assessment, Testing Guidance
 
 ## Story
 
@@ -48,37 +52,37 @@ Draft
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Create model download script (AC: 7, 8) [SIMPLIFIED]
-  - [ ] Create `scripts/download-model.sh` script
-  - [ ] Download `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` (~1.9GB) from HuggingFace
-  - [ ] Generate `model-manifest.json` with single file metadata and SHA256 checksum
-  - [ ] **No chunking required** - file is under 2GB GitHub limit
+- [x] Task 1: Create model download script (AC: 7, 8) [SIMPLIFIED]
+  - [x] Create `scripts/download-model.sh` script
+  - [x] Download `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` (~1.9GB) from HuggingFace
+  - [x] Generate `model-manifest.json` with single file metadata and SHA256 checksum
+  - [x] **No chunking required** - file is under 2GB GitHub limit
 
-- [ ] Task 2: Create model loader TypeScript module (AC: 2, 3, 12) [SIMPLIFIED]
-  - [ ] Create `js/model-loader.ts`
-  - [ ] Implement `loadModel(manifest)` function (single file, no reassembly)
-  - [ ] Add progress callback: `onProgress(loaded, total)`
-  - [ ] Verify SHA256 checksum after download
+- [x] Task 2: Create model loader TypeScript module (AC: 2, 3, 12) [SIMPLIFIED]
+  - [x] Create `js/model-loader.ts`
+  - [x] Implement `loadModel(manifest)` function (single file, no reassembly)
+  - [x] Add progress callback: `onProgress(loaded, total)`
+  - [x] Verify SHA256 checksum after download
 
-- [ ] Task 3: Implement IndexedDB caching (AC: 4, 5, 6)
-  - [ ] Create `js/model-cache.ts`
-  - [ ] Implement `openModelCache()` - create/open IndexedDB
-  - [ ] Implement `getCachedModel(version)` - retrieve if exists
-  - [ ] Implement `cacheModel(version, data)` - store model
-  - [ ] Implement `clearCache()` - manual cache clear
-  - [ ] Add version check for cache invalidation
+- [x] Task 3: Implement IndexedDB caching (AC: 4, 5, 6)
+  - [x] Create `js/model-cache.ts`
+  - [x] Implement `openModelCache()` - create/open IndexedDB
+  - [x] Implement `getCachedModel(version)` - retrieve if exists
+  - [x] Implement `cacheModel(version, data)` - store model
+  - [x] Implement `clearCache()` - manual cache clear
+  - [x] Add version check for cache invalidation
 
-- [ ] Task 4: Integrate caching with model loader (AC: 5, 11)
-  - [ ] Update `loadBundledModel()` to check cache first
-  - [ ] If cache hit: return cached model
-  - [ ] If cache miss: load chunks, reassemble, cache, return
-  - [ ] Handle corrupted cache: clear and re-download
+- [x] Task 4: Integrate caching with model loader (AC: 5, 11)
+  - [x] Update `loadBundledModel()` to check cache first
+  - [x] If cache hit: return cached model
+  - [x] If cache miss: load chunks, reassemble, cache, return
+  - [x] Handle corrupted cache: clear and re-download
 
-- [ ] Task 5: Add tests for caching behavior (AC: 10, 11)
-  - [ ] Test cache miss scenario (first load)
-  - [ ] Test cache hit scenario (second load)
-  - [ ] Test cache invalidation (version change)
-  - [ ] Test corrupted cache recovery
+- [x] Task 5: Add tests for caching behavior (AC: 10, 11)
+  - [x] Test cache miss scenario (first load)
+  - [x] Test cache hit scenario (second load)
+  - [x] Test cache invalidation (version change)
+  - [x] Test corrupted cache recovery
 
 ## Dev Notes
 
@@ -379,9 +383,153 @@ export async function loadBundledModelSafe(
 - [x] UI changes: None
 - [x] Performance impact: Faster subsequent loads
 
+## QA Notes
+
+**Assessment Date:** 2026-01-08
+**Assessed By:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| **Total test scenarios** | 24 |
+| **Unit tests** | 10 (42%) |
+| **Integration tests** | 9 (37%) |
+| **E2E tests** | 5 (21%) |
+| **Priority distribution** | P0: 8, P1: 10, P2: 6 |
+| **AC coverage** | 100% (all 12 acceptance criteria covered) |
+
+### Risk Areas Identified
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| **Safari IndexedDB 1GB limit** | Medium | High | Safari cannot cache 1.9GB model; tests verify graceful fallback to streaming |
+| **Corrupted cache causes permanent failure** | Low | Critical | `loadBundledModelSafe()` auto-clears and re-downloads on corruption |
+| **Version mismatch leads to stale model** | Medium | High | Version-keyed cache with explicit invalidation on manifest version change |
+| **Network timeout during large file download** | Medium | Medium | Progress callbacks enable UI feedback; retry logic recommended |
+| **Checksum mismatch undetected** | Low | Critical | SHA256 verification after download; test coverage for checksum logic |
+
+### Recommended Test Scenarios
+
+**Phase 1 - Critical Path (P0):**
+1. Core loading function returns correct Uint8Array
+2. Real GGUF file loads from local HTTP server
+3. No external CDN requests (security/offline validation)
+4. IndexedDB successfully stores model after first load
+5. Cache hit skips network download on subsequent loads
+6. Version change triggers cache invalidation and re-download
+7. Cache performance: hit is >10x faster than miss
+8. Corrupted cache triggers automatic recovery
+
+**Phase 2 - Core Functionality (P1):**
+- Buffer size matches manifest.totalSize
+- URL construction with basePath
+- Data integrity verification in storage
+- Cache retrieval for matching version
+- Manifest schema validation
+- Build script execution verification
+- Progress callback fires during download
+
+**Phase 3 - Edge Cases (P2):**
+- CachedModel structure validation
+- Version comparison edge cases (v1 vs v1.0)
+- SHA256 format validation
+- Size bounds verification (1.8GB - 2.0GB range)
+- Log output distinguishes cache hit/miss
+
+### Concerns and Blockers
+
+| Type | Description | Recommendation |
+|------|-------------|----------------|
+| **BLOCKER** | Safari 1GB IndexedDB limit prevents caching 1.9GB model | Document Safari limitation; implement streaming fallback without cache |
+| **CONCERN** | Large file E2E tests slow in CI | Use ~10MB mock model for CI; run full 1.9GB tests in nightly builds |
+| **CONCERN** | IndexedDB quota varies by browser | Add quota detection and user-friendly error messaging |
+
+### Test Environment Requirements
+
+- **Unit tests:** Jest/Vitest with fake-indexeddb polyfill
+- **Integration tests:** Real IndexedDB in browser/polyfill; small (~1MB) mock GGUF
+- **E2E tests:** Playwright with Chrome/Firefox; local HTTP server for model assets
+
+### Gate Readiness
+
+```yaml
+test_design_complete: true
+scenarios_total: 24
+p0_critical: 8
+coverage_gaps: []
+blocking_risks:
+  - Safari 1GB limit requires documented workaround before release
+```
+
+**Reference:** Full test design at `docs/qa/assessments/TEA-RELEASE-004.3b-test-design-20260108.md`
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-08 | 0.1 | Split from TEA-RELEASE-004.3 | Bob (SM Agent) |
 | 2026-01-08 | 0.2 | **Major simplification:** Changed to Phi-4-mini Q3_K_S (1.9GB), removed chunking | Sarah (PO Agent) |
+| 2026-01-08 | 0.3 | Added QA Notes section with test design summary and risk assessment | Quinn (QA Agent) |
+| 2026-01-08 | 1.0 | Implementation complete - all 5 tasks done, 31 tests passing | James (Dev Agent) |
+
+---
+
+## Dev Agent Record
+
+### Agent Model Used
+
+claude-opus-4-5-20251101
+
+### Debug Log References
+
+N/A - No blocking issues encountered during implementation.
+
+### Completion Notes
+
+1. **Task 1 (Model Download Script):** Created `scripts/download-model.sh` with HuggingFace download, SHA256 checksum generation, and manifest.json creation. No chunking needed for 1.9GB model.
+
+2. **Task 2 (Model Loader):** Created `js/model-loader.ts` with:
+   - `loadModel()` - Streaming download with progress callback
+   - `verifyChecksum()` / `calculateChecksum()` - SHA256 verification
+   - `fetchManifest()` - Manifest loading and validation
+   - `formatBytes()` - Human-readable size formatting
+
+3. **Task 3 (IndexedDB Caching):** Created `js/model-cache.ts` with:
+   - `openDB()` - IndexedDB database management
+   - `getCachedModel()` / `getCachedModelEntry()` - Cache retrieval
+   - `cacheModel()` - Cache storage with metadata
+   - `clearCache()` / `deleteCachedModel()` - Cache management
+   - `isCached()` / `getCacheStats()` / `listCachedModels()` - Cache introspection
+   - `checkStorageCapacity()` - Safari 1GB limit detection
+
+4. **Task 4 (Integration):** Updated `js/index.ts` with:
+   - `loadBundledModel()` - Main loading function with cache-first strategy
+   - `loadBundledModelSafe()` - Corrupted cache recovery wrapper
+   - Re-exports of all model loading/caching functions
+
+5. **Task 5 (Tests):** Created comprehensive test suite:
+   - `tests/model-cache.test.ts` - 31 unit tests with fake-indexeddb
+   - `tests/model-cache-test.html` - Browser test harness for manual testing
+   - All tests passing: 31/31
+
+### File List
+
+**New Files:**
+- `rust/tea-wasm-llm/scripts/download-model.sh` - Model download script
+- `rust/tea-wasm-llm/js/model-loader.ts` - Model loading module
+- `rust/tea-wasm-llm/js/model-cache.ts` - IndexedDB caching module
+- `rust/tea-wasm-llm/js/tsconfig.json` - TypeScript configuration
+- `rust/tea-wasm-llm/tests/model-cache.test.ts` - Vitest unit tests (31 tests)
+- `rust/tea-wasm-llm/tests/model-cache-test.html` - Browser test harness
+- `rust/tea-wasm-llm/vitest.config.ts` - Vitest configuration
+- `rust/tea-wasm-llm/package.json` - NPM package configuration
+- `rust/tea-wasm-llm/.gitignore` - Git ignore rules for models
+- `rust/tea-wasm-llm/models/.gitkeep` - Placeholder for model files
+- `rust/tea-wasm-llm/models/model-manifest.example.json` - Example manifest
+
+**Modified Files:**
+- `rust/tea-wasm-llm/js/index.ts` - Added model loading integration with caching
+- `docs/stories/TEA-RELEASE-004.3b-wasm-model-bundling.md` - Story completion updates

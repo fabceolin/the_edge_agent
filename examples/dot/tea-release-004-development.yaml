@@ -1,0 +1,307 @@
+# TEA Workflow generated from DOT diagram
+# Source: tea-release-004-development
+# Command template: 
+# Command mode: per-node
+# Max concurrency: 3
+# Execution mode: subprocess
+#
+# Usage: tea run tea-release-004-development.yaml
+
+name: tea-release-004-development
+description: Generated from DOT diagram
+nodes:
+- name: setup
+  run: |-
+    # Initialize phase items for parallel execution
+    state["phase1_items"] = ['TEA-RELEASE-004.4\\nRust LLM Actions', 'TEA-RELEASE-004.5\\nPython LLM Actions', 'TEA-RELEASE-004.3a\\nWASM LLM Core']
+    state["phase2_items"] = ['TEA-RELEASE-004.1\\nRust LLM AppImage', 'TEA-RELEASE-004.2\\nPython LLM AppImage', 'TEA-RELEASE-004.3b\\nWASM Model Bundling']
+    state["phase3_items"] = ['TEA-RELEASE-004.3c\\nWASM Release Testing']
+    state["phase4_items"] = ['TEA-RELEASE-004.6\\nDocumentation']
+
+    # TEA-TOOLS-002: Per-node command mappings
+    state["_phase1_commands"] = {
+        'TEA-RELEASE-004.4\\nRust LLM Actions': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.4-rust-llm-actions.md"}\'',
+        'TEA-RELEASE-004.5\\nPython LLM Actions': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.5-python-llm-actions.md"}\'',
+        'TEA-RELEASE-004.3a\\nWASM LLM Core': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3a-wasm-llm-core.md"}\''
+    }
+    state["_phase2_commands"] = {
+        'TEA-RELEASE-004.1\\nRust LLM AppImage': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.1-rust-llm-appimage.md"}\'',
+        'TEA-RELEASE-004.2\\nPython LLM AppImage': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.2-python-llm-appimage.md"}\'',
+        'TEA-RELEASE-004.3b\\nWASM Model Bundling': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3b-wasm-model-bundling.md"}\''
+    }
+    state["_phase3_commands"] = {
+        'TEA-RELEASE-004.3c\\nWASM Release Testing': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3c-wasm-release-testing.md"}\''
+    }
+    state["_phase4_commands"] = {
+        'TEA-RELEASE-004.6\\nDocumentation': 'tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.6-documentation.md"}\''
+    }
+    return state
+- name: phase1_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase1_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase1_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+
+      item = state.get("item", "")
+      commands = state.get("_phase1_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      try:
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=300
+          )
+          return {
+              "item": item,
+              "command": cmd,
+              "success": result.returncode == 0,
+              "stdout": result.stdout,
+              "stderr": result.stderr,
+              "returncode": result.returncode
+          }
+      except subprocess.TimeoutExpired:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": "Command timed out after 300 seconds"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase1_results
+- name: phase1_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase1 parallel execution
+    results = state.get("phase1_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase1_complete"] = True
+    state["phase1_success_count"] = success_count
+    state["phase1_total"] = len(results)
+    return state
+- name: phase2_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase2_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase2_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+
+      item = state.get("item", "")
+      commands = state.get("_phase2_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      try:
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=300
+          )
+          return {
+              "item": item,
+              "command": cmd,
+              "success": result.returncode == 0,
+              "stdout": result.stdout,
+              "stderr": result.stderr,
+              "returncode": result.returncode
+          }
+      except subprocess.TimeoutExpired:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": "Command timed out after 300 seconds"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase2_results
+- name: phase2_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase2 parallel execution
+    results = state.get("phase2_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase2_complete"] = True
+    state["phase2_success_count"] = success_count
+    state["phase2_total"] = len(results)
+    return state
+- name: phase3_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase3_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase3_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+
+      item = state.get("item", "")
+      commands = state.get("_phase3_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      try:
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=300
+          )
+          return {
+              "item": item,
+              "command": cmd,
+              "success": result.returncode == 0,
+              "stdout": result.stdout,
+              "stderr": result.stderr,
+              "returncode": result.returncode
+          }
+      except subprocess.TimeoutExpired:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": "Command timed out after 300 seconds"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase3_results
+- name: phase3_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase3 parallel execution
+    results = state.get("phase3_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase3_complete"] = True
+    state["phase3_success_count"] = success_count
+    state["phase3_total"] = len(results)
+    return state
+- name: phase4_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase4_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase4_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+
+      item = state.get("item", "")
+      commands = state.get("_phase4_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      try:
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=300
+          )
+          return {
+              "item": item,
+              "command": cmd,
+              "success": result.returncode == 0,
+              "stdout": result.stdout,
+              "stderr": result.stderr,
+              "returncode": result.returncode
+          }
+      except subprocess.TimeoutExpired:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": "Command timed out after 300 seconds"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase4_results
+- name: phase4_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase4 parallel execution
+    results = state.get("phase4_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase4_complete"] = True
+    state["phase4_success_count"] = success_count
+    state["phase4_total"] = len(results)
+    return state
+edges:
+- from: __start__
+  to: setup
+- from: setup
+  to: phase1_parallel
+- from: phase1_collect
+  to: phase2_parallel
+- from: phase2_collect
+  to: phase3_parallel
+- from: phase3_collect
+  to: phase4_parallel
+- from: phase4_collect
+  to: __end__

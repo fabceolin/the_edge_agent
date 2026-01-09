@@ -1,6 +1,6 @@
 [package]
 name = "the_edge_agent"
-version = "0.9.4"
+version = "0.9.31"
 edition = "2021"
 authors = ["The Edge Agent Contributors"]
 description = "Lightweight state graph workflow engine for edge computing"
@@ -100,6 +100,10 @@ a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001
 prolog = ["dep:swipl"]
 ltm-duckdb = ["dep:duckdb"]
 graph = ["dep:cozo"]
+llm-local = ["llm", "dep:llama-cpp-2", "dep:dirs"]  # Local LLM via llama.cpp (TEA-RELEASE-004.4)
+llm-local-cuda = ["llm-local", "llama-cpp-2/cuda"]  # Local LLM with CUDA GPU support
+llm-local-metal = ["llm-local", "llama-cpp-2/metal"]  # Local LLM with Metal GPU support (macOS)
+llm-local-vulkan = ["llm-local", "llama-cpp-2/vulkan"]  # Local LLM with Vulkan GPU support
 all = ["memory", "trace", "data", "web", "rag", "llm", "code", "agent", "reflection", "reasoning", "planning", "a2a", "prolog", "ltm-duckdb", "graph"]
 
 [dependencies.duckdb]
@@ -113,6 +117,16 @@ optional = true
 # Prolog support (SWI-Prolog bindings)
 [dependencies.swipl]
 version = "0.3"
+optional = true
+
+# Local LLM via llama.cpp (TEA-RELEASE-004.4)
+[dependencies.llama-cpp-2]
+version = "0.1"
+optional = true
+
+# Home directory resolution for model path
+[dependencies.dirs]
+version = "5.0"
 optional = true
 
 [[bench]]

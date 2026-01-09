@@ -1,0 +1,480 @@
+# =============================================================================
+# Build Rust Base - Reusable Workflow
+# =============================================================================
+# Purpose: Builds Rust standalone binaries using matrix strategy
+#   - Linux x86_64 (musl static)
+#   - Linux ARM64 (musl static)
+#   - Windows x86_64 (MSVC)
+#   - macOS ARM64 (native)
+#   - macOS x86_64 (cross-compile)
+#   - Linux x86_64 Prolog (glibc dynamic with SWI-Prolog)
+#   - Linux ARM64 Prolog (glibc dynamic with SWI-Prolog)
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: rust-tea-rust-linux-x86_64, rust-tea-rust-linux-arm64, etc.
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Rust Base
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  # ============================================================
+  # Rust Binaries - Matrix Build
+  # ============================================================
+  build-rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: tea-rust-linux-x86_64
+            ext: ''
+            use_cross: false
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: tea-rust-linux-arm64
+            ext: ''
+            use_cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: tea-rust-windows-x86_64
+            ext: '.exe'
+            use_cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: tea-rust-darwin-arm64
+            ext: ''
+            use_cross: false
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: tea-rust-darwin-x86_64
+            ext: ''
+            use_cross: false
+
+    runs-on: ${{ matrix.os }}
+    name: Rust ${{ matrix.artifact }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install musl tools (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install musl tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools gcc-aarch64-linux-gnu
+
+      - name: Build release binary
+        run: |
+          cd rust
+          cargo build --release --target ${{ matrix.target }} --bin tea
+
+      - name: Copy binary
+        run: |
+          cp rust/target/${{ matrix.target }}/release/tea${{ matrix.ext }} ${{ matrix.artifact }}${{ matrix.ext }}
+        shell: bash
+
+      - name: Set executable permission
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x ${{ matrix.artifact }}${{ matrix.ext }}
+        shell: bash
+
+      - name: Smoke test - version
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          ./${{ matrix.artifact }}${{ matrix.ext }} --version
+        shell: bash
+
+      - name: Smoke test - version (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --version
+        shell: bash
+
+      - name: Smoke test - impl
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          impl=$(./${{ matrix.artifact }}${{ matrix.ext }} --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Smoke test - impl (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          impl=$(arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Verify version matches tag
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: |
+          version=$(./${{ matrix.artifact }}${{ matrix.ext }} --version | awk '{print $2}')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Warning: Binary version ($version) does not match tag ($tag)"
+          fi
+        shell: bash
+
+      - name: Verify version matches tag (x86_64 on ARM64 macOS)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          version=$(arch -x86_64 ./${{ matrix.artifact }}${{ matrix.ext }} --version | awk '{print $2}')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Warning: Binary version ($version) does not match tag ($tag)"
+          fi
+        shell: bash
+
+      - name: Check binary size
+        run: |
+          size=$(stat -f%z "${{ matrix.artifact }}${{ matrix.ext }}" 2>/dev/null || stat -c%s "${{ matrix.artifact }}${{ matrix.ext }}")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+          if [ $size_mb -gt 20 ]; then
+            echo "Warning: Binary exceeds 20MB target (${size_mb}MB)"
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}${{ matrix.ext }}
+          retention-days: 1
+
+  # ============================================================
+  # Rust Prolog Binaries (glibc dynamic linking)
+  # These require SWI-Prolog installed on the system
+  # ============================================================
+  build-rust-prolog-linux-x86_64:
+    runs-on: ubuntu-24.04
+    name: Rust linux-x86_64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog
+        run: |
+          # Use official SWI-Prolog PPA for consistent versioning across build and AppImage jobs
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          sudo apt-get install -y swi-prolog-nox pkg-config
+
+          # Show version for debugging
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+          # Fix pkg-config path if needed
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+          if [ ! -f "$SWIPL_LIBDIR/libswipl.so" ]; then
+            sudo mkdir -p "$SWIPL_LIBDIR"
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/libswipl.so "$SWIPL_LIBDIR/libswipl.so"
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-x86_64-prolog-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-prolog-cargo-
+
+      - name: Build release binary with Prolog feature
+        run: |
+          cd rust
+          cargo build --release --features prolog --bin tea
+
+      - name: Copy binary
+        run: |
+          cp rust/target/release/tea tea-rust-linux-x86_64-prolog
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-x86_64-prolog
+
+      - name: Smoke test - version
+        run: ./tea-rust-linux-x86_64-prolog --version
+
+      - name: Smoke test - impl
+        run: |
+          impl=$(./tea-rust-linux-x86_64-prolog --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: ./tea-rust-linux-x86_64-prolog run examples/prolog/simple-prolog-agent.yaml
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "tea-rust-linux-x86_64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from the version we built against
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(dirname $(ldd tea-rust-linux-x86_64-prolog | grep libswipl | awk '{print $3}'))
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p swipl-runtime-x86_64/lib
+          mkdir -p swipl-runtime-x86_64/home
+
+          # Copy libswipl.so
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* swipl-runtime-x86_64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* swipl-runtime-x86_64/home/
+
+          # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
+          echo "Collecting all library dependencies..."
+
+          # System libraries to exclude (linuxdeploy blacklists these)
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
+
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-x86_64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-x86_64/home/lib/x86_64-linux/*.so; do
+            if [ -f "$so" ]; then
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+            fi
+          done
+
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-x86_64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-x86_64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf swipl-runtime-x86_64.tar.gz swipl-runtime-x86_64
+
+          echo "Bundle contents:"
+          ls -la swipl-runtime-x86_64/lib/
+          echo "---"
+          ls -la swipl-runtime-x86_64/home/ | head -10
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-prolog
+          path: tea-rust-linux-x86_64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: swipl-runtime-x86_64
+          path: swipl-runtime-x86_64.tar.gz
+          retention-days: 1
+
+  build-rust-prolog-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Rust linux-arm64-prolog
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install SWI-Prolog
+        run: |
+          # Use official SWI-Prolog PPA for consistent versioning across build and AppImage jobs
+          sudo apt-add-repository -y ppa:swi-prolog/stable
+          sudo apt-get update
+          sudo apt-get install -y swi-prolog-nox pkg-config
+
+          # Show version for debugging
+          swipl --version
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          echo "SWI-Prolog home: $SWIPL_HOME"
+
+          # Fix pkg-config path if needed
+          SWIPL_LIBDIR=$(swipl --dump-runtime-variables | grep PLLIBDIR= | cut -d= -f2 | tr -d '";')
+          if [ ! -f "$SWIPL_LIBDIR/libswipl.so" ]; then
+            sudo mkdir -p "$SWIPL_LIBDIR"
+            sudo ln -sf /usr/lib/aarch64-linux-gnu/libswipl.so "$SWIPL_LIBDIR/libswipl.so"
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-aarch64-prolog-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-aarch64-prolog-cargo-
+
+      - name: Build release binary with Prolog feature
+        run: |
+          cd rust
+          cargo build --release --features prolog --bin tea
+
+      - name: Copy binary
+        run: |
+          cp rust/target/release/tea tea-rust-linux-arm64-prolog
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-arm64-prolog
+
+      - name: Smoke test - version
+        run: ./tea-rust-linux-arm64-prolog --version
+
+      - name: Smoke test - impl
+        run: |
+          impl=$(./tea-rust-linux-arm64-prolog --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - run Prolog example
+        run: ./tea-rust-linux-arm64-prolog run examples/prolog/simple-prolog-agent.yaml
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "tea-rust-linux-arm64-prolog")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Bundle SWI-Prolog runtime for AppImage
+        run: |
+          # Get the exact SWI-Prolog paths from the version we built against
+          SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
+          SWIPL_LIBDIR=$(dirname $(ldd tea-rust-linux-arm64-prolog | grep libswipl | awk '{print $3}'))
+
+          echo "SWI-Prolog home: $SWIPL_HOME"
+          echo "SWI-Prolog lib: $SWIPL_LIBDIR"
+
+          # Create bundle directory
+          mkdir -p swipl-runtime-aarch64/lib
+          mkdir -p swipl-runtime-aarch64/home
+
+          # Copy libswipl.so
+          cp -L "$SWIPL_LIBDIR"/libswipl.so* swipl-runtime-aarch64/lib/
+
+          # Copy the SWI-Prolog home directory
+          cp -r "$SWIPL_HOME"/* swipl-runtime-aarch64/home/
+
+          # Collect ALL library dependencies from tea binary and SWI-Prolog extensions
+          echo "Collecting all library dependencies..."
+
+          # System libraries to exclude (linuxdeploy blacklists these)
+          BLACKLIST="linux-vdso|ld-linux|libc.so|libm.so|libdl.so|libpthread.so|librt.so|libgcc_s|libstdc++|libz.so|libgmp.so"
+
+          # Collect deps from tea binary and all SWI-Prolog .so extensions into a file
+          : > /tmp/all_deps.txt
+          ldd tea-rust-linux-arm64-prolog 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+          for so in swipl-runtime-aarch64/home/lib/aarch64-linux/*.so; do
+            if [ -f "$so" ]; then
+              ldd "$so" 2>/dev/null | grep "=>" | awk '{print $3}' | grep -v "not found" >> /tmp/all_deps.txt || true
+            fi
+          done
+
+          # Remove duplicates, filter blacklist, and copy libraries
+          sort -u /tmp/all_deps.txt | grep -v -E "$BLACKLIST" | while read lib; do
+            if [ -n "$lib" ] && [ -f "$lib" ]; then
+              BASENAME=$(basename "$lib")
+              if [ ! -f "swipl-runtime-aarch64/lib/$BASENAME" ]; then
+                echo "Bundling: $lib"
+                cp -L "$lib" swipl-runtime-aarch64/lib/ || true
+              fi
+            fi
+          done
+
+          # Create tarball
+          tar -czf swipl-runtime-aarch64.tar.gz swipl-runtime-aarch64
+
+          echo "Bundle contents:"
+          ls -la swipl-runtime-aarch64/lib/
+          echo "---"
+          ls -la swipl-runtime-aarch64/home/ | head -10
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tea-rust-linux-arm64-prolog
+          path: tea-rust-linux-arm64-prolog
+          retention-days: 1
+
+      - name: Upload SWI-Prolog runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: swipl-runtime-aarch64
+          path: swipl-runtime-aarch64.tar.gz
+          retention-days: 1

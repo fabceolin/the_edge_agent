@@ -75,6 +75,22 @@ For Prolog support, use the [AppImage](docs/installation.md#appimage-installatio
 
 See [Installation Guide](docs/installation.md) for all platforms and options.
 
+## Offline LLM Support
+
+Run LLM workflows without internet using bundled GGUF models:
+
+```bash
+# Download LLM-bundled AppImage (~5GB with Gemma, ~2GB with Phi-4)
+curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-gemma-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+chmod +x tea-llm.AppImage
+
+# Run offline chat
+./tea-llm.AppImage run examples/llm/local-chat.yaml \
+  --input '{"question": "What is the meaning of life?"}'
+```
+
+See [LLM-Bundled Distributions](docs/installation.md#llm-bundled-distributions) for all model variants and configurations.
+
 ## vs Alternatives
 
 | Feature | TEA | LangGraph | AutoGen |

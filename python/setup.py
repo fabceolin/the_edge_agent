@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.4",
+    version="0.9.31",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -136,6 +136,10 @@ setup(
             "llama-index>=0.10.0",
             "llama-index-core>=0.10.0",
             # textgrad excluded by default (P2)
+        ],
+        # TEA-RELEASE-004.5: Local LLM support via llama-cpp-python
+        "llm-local": [
+            "llama-cpp-python>=0.2.0",
         ],
         "all": [
             "openai>=1.13.3",

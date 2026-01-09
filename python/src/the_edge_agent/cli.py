@@ -18,6 +18,18 @@ Usage:
 import sys
 import os
 
+# =============================================================================
+# Early Vulkan/GPU Configuration (MUST be before any llama-cpp imports)
+# =============================================================================
+# TEA_DISABLE_VULKAN=1 - Force CPU-only mode (disable Vulkan GPU)
+# TEA_ENABLE_VULKAN=1  - Force Vulkan GPU mode (override auto-detection)
+#
+# By default, we try Vulkan first. If you get "OutOfDeviceMemory" errors,
+# set TEA_DISABLE_VULKAN=1 or run with: VK_ICD_FILENAMES="" tea-python ...
+if os.environ.get("TEA_DISABLE_VULKAN", "").lower() in ("1", "true", "yes"):
+    os.environ["VK_ICD_FILENAMES"] = ""
+    os.environ["VK_DRIVER_FILES"] = ""
+
 # TEA-KIROKU-005: Load .env files for API keys and configuration
 # This loads from current directory's .env and parent directories
 from dotenv import load_dotenv
@@ -1206,6 +1218,12 @@ def from_dot(
         help="Override tea executable name in commands (e.g., tea-python, tea-rust). "
         "Replaces 'tea' at start of command with the specified executable name.",
     ),
+    timeout: int = typer.Option(
+        900,
+        "--timeout",
+        "-t",
+        help="Subprocess timeout in seconds (default: 900 = 15 minutes)",
+    ),
 ):
     """
     Convert DOT/Graphviz diagram to TEA YAML workflow.
@@ -1275,6 +1293,7 @@ def from_dot(
             use_node_commands=use_node_commands,
             allow_cycles=allow_cycles,
             tea_executable=tea_executable,
+            subprocess_timeout=timeout,
         )
 
         if output:

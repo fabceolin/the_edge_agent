@@ -66,7 +66,98 @@ For **neurosymbolic AI** with Prolog inference, additional binary variants are a
 
 *Requires SWI-Prolog installed on the system (`apt install swi-prolog-nox`)
 
+### LLM-Bundled Distributions
+
+For **offline LLM inference** without network connectivity, LLM-bundled distributions include a pre-bundled GGUF model:
+
+| Binary | Model | Size (est.) | Description |
+|--------|-------|-------------|-------------|
+| `tea-rust-llm-gemma-{version}-x86_64.AppImage` | Gemma 3n E4B | ~5GB | Rust + Gemma model (best quality) |
+| `tea-rust-llm-gemma-{version}-aarch64.AppImage` | Gemma 3n E4B | ~5GB | Rust ARM64 + Gemma model |
+| `tea-rust-llm-phi4-{version}-x86_64.AppImage` | Phi-4-mini Q3_K_S | ~2GB | Rust + Phi-4-mini (compact) |
+| `tea-rust-llm-phi4-{version}-aarch64.AppImage` | Phi-4-mini Q3_K_S | ~2GB | Rust ARM64 + Phi-4-mini |
+| `tea-python-llm-gemma-{version}-x86_64.AppImage` | Gemma 3n E4B | ~5GB | Python + Gemma model |
+| `tea-python-llm-gemma-{version}-aarch64.AppImage` | Gemma 3n E4B | ~5GB | Python ARM64 + Gemma model |
+| `tea-python-llm-phi4-{version}-x86_64.AppImage` | Phi-4-mini Q3_K_S | ~2GB | Python + Phi-4-mini |
+| `tea-python-llm-phi4-{version}-aarch64.AppImage` | Phi-4-mini Q3_K_S | ~2GB | Python ARM64 + Phi-4-mini |
+
+**Model Comparison:**
+
+| Model | Context | Quality | Size | Best For |
+|-------|---------|---------|------|----------|
+| Gemma 3n E4B | 128K tokens | Higher | ~4.5GB | Complex reasoning, longer conversations |
+| Phi-4-mini Q3_K_S | 32K tokens | Good | ~1.9GB | Quick responses, constrained storage |
+
+#### Download and Run LLM AppImage
+
+```bash
+# Download Gemma variant (recommended for quality)
+curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-gemma-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+chmod +x tea-llm.AppImage
+
+# Or download Phi-4-mini variant (smaller size)
+curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-phi4-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+chmod +x tea-llm.AppImage
+
+# Run offline chat workflow
+./tea-llm.AppImage run examples/llm/local-chat.yaml --input '{"question": "What is 2+2?"}'
+```
+
+#### Model Path Configuration
+
+The LLM backend searches for models in this order:
+
+| Priority | Source | Example |
+|----------|--------|---------|
+| 1 | `TEA_MODEL_PATH` environment variable | `TEA_MODEL_PATH=./models/custom.gguf` |
+| 2 | `params.model_path` in action | `model_path: /path/to/model.gguf` |
+| 3 | `settings.llm.model_path` in YAML | See example below |
+| 4 | `$APPDIR/usr/share/models/` | AppImage bundled model (auto) |
+| 5 | `~/.cache/tea/models/` | Default cache location |
+
+**Using Environment Variable:**
+
+```bash
+# Set custom model path
+export TEA_MODEL_PATH=/path/to/my-model.gguf
+./tea-llm.AppImage run examples/llm/local-chat.yaml
+```
+
+**Using YAML Settings:**
+
+```yaml
+settings:
+  llm:
+    backend: local
+    model_path: ~/.cache/tea/models/gemma-3n-E4B-it-Q4_K_M.gguf
+    n_gpu_layers: 0  # 0 = CPU only, -1 = all layers on GPU
+```
+
+**Auto-Detection in AppImage:**
+
+When using LLM-bundled AppImages, the model path is automatically detected from the bundled location (`$APPDIR/usr/share/models/`). No configuration needed.
+
 ### Which Binary Should I Use?
+
+#### Distribution Selection Flowchart
+
+```mermaid
+flowchart TD
+    A[Need LLM capabilities?] -->|No| B[Standard AppImage<br/>tea-version-arch.AppImage]
+    A -->|Yes| C{Need offline/bundled model?}
+    C -->|No| D[Standard + API LLM<br/>Configure with OPENAI_API_KEY]
+    C -->|Yes| E{Prefer quality or size?}
+    E -->|Quality| F[tea-rust-llm-gemma-version-arch.AppImage<br/>~5GB, 128K context]
+    E -->|Smaller| G[tea-rust-llm-phi4-version-arch.AppImage<br/>~2GB, 32K context]
+
+    B --> H[~50MB download]
+    D --> H
+    F --> I[~5GB download]
+    G --> J[~2GB download]
+
+    style F fill:#90EE90
+    style G fill:#87CEEB
+```
 
 **Python Implementation:**
 
@@ -153,6 +244,72 @@ AppImages work on any Linux distribution (Ubuntu, Fedora, Arch, Alpine, etc.) wi
   # Use --appimage-extract-and-run flag as workaround
   ./tea-python.AppImage --appimage-extract-and-run --version
   ```
+
+## WASM LLM Package (Browser)
+
+For running TEA YAML workflows with LLM inference **directly in the browser**, use the WASM LLM package. This enables completely offline AI inference without any server backend.
+
+### WASM Release Assets
+
+| Asset | Size | Description |
+|-------|------|-------------|
+| `tea-wasm-llm-{version}.tar.gz` | ~50 MB | WASM package + TypeScript wrapper |
+| `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` | ~1.9 GB | Bundled LLM model |
+| `manifest.json` | <1 KB | Model metadata |
+| `SHA256SUMS.wasm` | <1 KB | Checksums for WASM assets |
+
+### Installation
+
+```bash
+# Download from GitHub Releases
+VERSION="0.9.5"
+wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-wasm-llm-${VERSION}.tar.gz
+wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
+wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/manifest.json
+
+# Extract and organize
+tar -xzf tea-wasm-llm-${VERSION}.tar.gz
+mkdir -p models
+mv microsoft_Phi-4-mini-instruct-Q3_K_S.gguf manifest.json models/
+```
+
+### Server Requirements
+
+**CRITICAL:** Your web server MUST set these headers for SharedArrayBuffer support:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+See [rust/tea-wasm-llm/README.md](../rust/tea-wasm-llm/README.md) for Nginx, Apache, and Caddy configuration examples.
+
+### Basic Usage
+
+```html
+<script type="module">
+import { initTeaLlm, executeLlmYaml, loadBundledModel } from './pkg/index.js';
+
+// Load model (cached in IndexedDB after first download)
+const modelData = await loadBundledModel({
+    modelBasePath: './models',
+    useCache: true,
+    onProgress: (loaded, total) => console.log(`${(loaded/total*100).toFixed(1)}%`)
+});
+
+// Initialize with your LLM backend (e.g., wllama)
+await initTeaLlm({}, async (paramsJson) => {
+    const params = JSON.parse(paramsJson);
+    // Call your LLM backend here
+    return JSON.stringify({ content: '...' });
+});
+
+// Execute YAML workflow
+const result = await executeLlmYaml(yamlString, { input: 'hello' });
+</script>
+```
+
+For complete documentation, see [rust/tea-wasm-llm/README.md](../rust/tea-wasm-llm/README.md).
 
 ## Python Installation
 

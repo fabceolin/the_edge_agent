@@ -1,0 +1,699 @@
+# =============================================================================
+# Build Python Base - Reusable Workflow
+# =============================================================================
+# Purpose: Builds 8 Python standalone binaries using PyInstaller
+#   - Linux x86_64 (core deps only)
+#   - Linux x86_64 Full (all optional dependencies)
+#   - Linux ARM64 (core deps only)
+#   - Linux ARM64 Full (all optional dependencies)
+#   - Windows x86_64 (core deps only)
+#   - Windows x86_64 Full (all optional dependencies)
+#   - macOS ARM64 (core deps only)
+#   - macOS ARM64 Full (all optional dependencies)
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: python-linux-x86_64, python-linux-x86_64-full, etc.
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Python Base
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================================
+  # Python Standalone Binaries - Linux (Docker-based)
+  # ============================================================
+  build-python-linux:
+    runs-on: ubuntu-24.04
+    name: Python linux-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Build with PyInstaller Docker
+        run: |
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
+            "cd /src/python && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot && \
+             pip install -e . --no-deps && \
+             pyinstaller --onefile --name tea-python-linux-x86_64 \
+               --hidden-import=the_edge_agent \
+               --hidden-import=the_edge_agent.yaml_engine \
+               --hidden-import=the_edge_agent.stategraph \
+               --hidden-import=yaml \
+               --hidden-import=json \
+               --hidden-import=jinja2 \
+               --hidden-import=typer \
+               --hidden-import=dotenv \
+               --hidden-import=pydantic \
+               --hidden-import=pydot \
+               --collect-all the_edge_agent \
+               --collect-all pydantic \
+               --collect-all pydot \
+               --exclude-module tkinter \
+               --exclude-module matplotlib \
+               --exclude-module numpy \
+               --exclude-module pandas \
+               --strip \
+               src/the_edge_agent/cli.py"
+
+      - name: Smoke test
+        run: |
+          sudo chmod +x python/dist/tea-python-linux-x86_64
+          ./python/dist/tea-python-linux-x86_64 --version
+          impl=$(./python/dist/tea-python-linux-x86_64 --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64
+          path: python/dist/tea-python-linux-x86_64
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux x86_64 Full (Docker-based)
+  # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
+  # ============================================================
+  build-python-linux-full:
+    runs-on: ubuntu-24.04
+    name: Python linux-x86_64-full
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Build with PyInstaller Docker (full dependencies)
+        run: |
+          # Using Debian trixie for GCC 14 support (improved x86_64 optimizations)
+          # Vulkan from Debian native packages (LunarG SDK not available for trixie)
+          docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:main-trixie -c \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev vulkan-tools glslang-tools glslc git wget libopenblas-dev gcc-14 g++-14 && \
+             cd /src/python && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+                         openai 'numpy<2' chromadb requests RestrictedPython \
+                         'pycozo[embedded]' pandas \
+                         s3fs gcsfs adlfs lupa kuzu \
+                         firebase-admin duckdb && \
+             CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF' FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall && \
+             pip install -e . --no-deps && \
+             LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
+             pyinstaller --onefile --name tea-python-linux-x86_64-full \
+               --add-binary \"\${LIBGOMP_PATH}:.\" \
+               --hidden-import=the_edge_agent \
+               --hidden-import=the_edge_agent.yaml_engine \
+               --hidden-import=the_edge_agent.stategraph \
+               --hidden-import=yaml \
+               --hidden-import=json \
+               --hidden-import=jinja2 \
+               --hidden-import=typer \
+               --hidden-import=dotenv \
+               --hidden-import=pydantic \
+               --hidden-import=pydot \
+               --hidden-import=openai \
+               --hidden-import=numpy \
+               --hidden-import=chromadb \
+               --hidden-import=requests \
+               --hidden-import=RestrictedPython \
+               --hidden-import=pycozo \
+               --hidden-import=pandas \
+               --hidden-import=s3fs \
+               --hidden-import=gcsfs \
+               --hidden-import=adlfs \
+               --hidden-import=lupa \
+               --hidden-import=kuzu \
+               --hidden-import=firebase_admin \
+               --hidden-import=duckdb \
+               --hidden-import=llama_cpp \
+               --collect-all the_edge_agent \
+               --collect-all numpy \
+               --collect-all pandas \
+               --collect-all firebase_admin \
+               --collect-all pydantic \
+               --collect-all pydot \
+               --collect-all llama_cpp \
+               --exclude-module tkinter \
+               --exclude-module matplotlib \
+               --strip \
+               src/the_edge_agent/cli.py"
+
+      - name: Smoke test
+        run: |
+          sudo chmod +x python/dist/tea-python-linux-x86_64-full
+          ./python/dist/tea-python-linux-x86_64-full --version
+          impl=$(./python/dist/tea-python-linux-x86_64-full --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-x86_64-full")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-x86_64-full
+          path: python/dist/tea-python-linux-x86_64-full
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 (Native runner)
+  # ============================================================
+  build-python-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-linux-arm64 \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --collect-all the_edge_agent \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64
+          ./python/dist/tea-python-linux-arm64 --version
+          impl=$(./python/dist/tea-python-linux-arm64 --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64
+          path: python/dist/tea-python-linux-arm64
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Linux ARM64 Full (Native runner)
+  # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
+  # ============================================================
+  build-python-linux-arm64-full:
+    runs-on: ubuntu-24.04-arm
+    name: Python linux-arm64-full
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install OpenMP, Vulkan and GCC 14 (SME support)
+        run: |
+          sudo apt-get update
+          # GCC 14 required for ARM SME (Scalable Matrix Extension) support
+          # On Ubuntu 24.04, glslc is available in universe repo
+          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc gcc-14 g++-14
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies (full)
+        env:
+          # Use GCC 14 for ARM SME support
+          CC: gcc-14
+          CXX: g++-14
+          # CMake args for Vulkan support
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF"
+          FORCE_CMAKE: "1"
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu \
+                      firebase-admin duckdb
+
+          # Install llama-cpp-python from PyPI with Vulkan support
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full)
+        run: |
+          cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          pyinstaller --onefile --name tea-python-linux-arm64-full \
+            --add-binary "${LIBGOMP_PATH}:." \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=firebase_admin \
+            --hidden-import=duckdb \
+            --hidden-import=llama_cpp \
+            --collect-all the_edge_agent \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all firebase_admin \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --collect-all llama_cpp \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-linux-arm64-full
+          ./python/dist/tea-python-linux-arm64-full --version
+          impl=$(./python/dist/tea-python-linux-arm64-full --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "python/dist/tea-python-linux-arm64-full")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-linux-arm64-full
+          path: python/dist/tea-python-linux-arm64-full
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Windows (Native runner)
+  # ============================================================
+  build-python-windows:
+    runs-on: windows-latest
+    name: Python windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-windows-x86_64 `
+            --hidden-import=the_edge_agent `
+            --hidden-import=the_edge_agent.yaml_engine `
+            --hidden-import=the_edge_agent.stategraph `
+            --hidden-import=yaml `
+            --hidden-import=json `
+            --hidden-import=jinja2 `
+            --hidden-import=typer `
+            --hidden-import=dotenv `
+            --hidden-import=pydantic `
+            --hidden-import=pydot `
+            --collect-all the_edge_agent `
+            --collect-all pydantic `
+            --collect-all pydot `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            --exclude-module numpy `
+            --exclude-module pandas `
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          ./python/dist/tea-python-windows-x86_64.exe --version
+          $impl = ./python/dist/tea-python-windows-x86_64.exe --impl
+          if ($impl -ne "python") {
+            Write-Error "Error: Expected 'python', got '$impl'"
+            exit 1
+          }
+
+      - name: Check binary size
+        run: |
+          $size = (Get-Item "python/dist/tea-python-windows-x86_64.exe").Length
+          $size_mb = [math]::Floor($size / 1024 / 1024)
+          Write-Host "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-windows-x86_64
+          path: python/dist/tea-python-windows-x86_64.exe
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - Windows Full (Native runner)
+  # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
+  # ============================================================
+  build-python-windows-full:
+    runs-on: windows-latest
+    name: Python windows-x86_64-full
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies (full)
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot `
+                      openai "numpy<2" chromadb requests RestrictedPython `
+                      "pycozo[embedded]" pandas `
+                      s3fs gcsfs adlfs lupa kuzu `
+                      firebase-admin duckdb
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full)
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-windows-x86_64-full `
+            --hidden-import=the_edge_agent `
+            --hidden-import=the_edge_agent.yaml_engine `
+            --hidden-import=the_edge_agent.stategraph `
+            --hidden-import=yaml `
+            --hidden-import=json `
+            --hidden-import=jinja2 `
+            --hidden-import=typer `
+            --hidden-import=dotenv `
+            --hidden-import=pydantic `
+            --hidden-import=pydot `
+            --hidden-import=openai `
+            --hidden-import=numpy `
+            --hidden-import=chromadb `
+            --hidden-import=requests `
+            --hidden-import=RestrictedPython `
+            --hidden-import=pycozo `
+            --hidden-import=pandas `
+            --hidden-import=s3fs `
+            --hidden-import=gcsfs `
+            --hidden-import=adlfs `
+            --hidden-import=lupa `
+            --hidden-import=kuzu `
+            --hidden-import=firebase_admin `
+            --hidden-import=duckdb `
+            --collect-all the_edge_agent `
+            --collect-all numpy `
+            --collect-all pandas `
+            --collect-all firebase_admin `
+            --collect-all pydantic `
+            --collect-all pydot `
+            --exclude-module tkinter `
+            --exclude-module matplotlib `
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          ./python/dist/tea-python-windows-x86_64-full.exe --version
+          $impl = ./python/dist/tea-python-windows-x86_64-full.exe --impl
+          if ($impl -ne "python") {
+            Write-Error "Error: Expected 'python', got '$impl'"
+            exit 1
+          }
+
+      - name: Check binary size
+        run: |
+          $size = (Get-Item "python/dist/tea-python-windows-x86_64-full.exe").Length
+          $size_mb = [math]::Floor($size / 1024 / 1024)
+          Write-Host "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-windows-x86_64-full
+          path: python/dist/tea-python-windows-x86_64-full.exe
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - macOS (Native runners)
+  # ============================================================
+  build-python-macos:
+    runs-on: macos-latest
+    name: Python darwin-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-darwin-arm64 \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --collect-all the_edge_agent \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --exclude-module numpy \
+            --exclude-module pandas \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-darwin-arm64
+          ./python/dist/tea-python-darwin-arm64 --version
+          impl=$(./python/dist/tea-python-darwin-arm64 --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -f%z "python/dist/tea-python-darwin-arm64")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-darwin-arm64
+          path: python/dist/tea-python-darwin-arm64
+          retention-days: 1
+
+  # ============================================================
+  # Python Standalone Binaries - macOS Full (Native runners)
+  # Includes all optional dependencies: LLM, RAG, web, code, graph, storage
+  # ============================================================
+  build-python-macos-full:
+    runs-on: macos-latest
+    name: Python darwin-arm64-full
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies (full)
+        run: |
+          cd python
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+                      openai 'numpy<2' chromadb requests RestrictedPython \
+                      'pycozo[embedded]' pandas \
+                      s3fs gcsfs adlfs lupa kuzu \
+                      firebase-admin duckdb
+          pip install -e . --no-deps
+          pip install pyinstaller
+
+      - name: Build standalone binary (full)
+        run: |
+          cd python
+          pyinstaller --onefile --name tea-python-darwin-arm64-full \
+            --hidden-import=the_edge_agent \
+            --hidden-import=the_edge_agent.yaml_engine \
+            --hidden-import=the_edge_agent.stategraph \
+            --hidden-import=yaml \
+            --hidden-import=json \
+            --hidden-import=jinja2 \
+            --hidden-import=typer \
+            --hidden-import=dotenv \
+            --hidden-import=pydantic \
+            --hidden-import=pydot \
+            --hidden-import=openai \
+            --hidden-import=numpy \
+            --hidden-import=chromadb \
+            --hidden-import=requests \
+            --hidden-import=RestrictedPython \
+            --hidden-import=pycozo \
+            --hidden-import=pandas \
+            --hidden-import=s3fs \
+            --hidden-import=gcsfs \
+            --hidden-import=adlfs \
+            --hidden-import=lupa \
+            --hidden-import=kuzu \
+            --hidden-import=firebase_admin \
+            --hidden-import=duckdb \
+            --collect-all the_edge_agent \
+            --collect-all numpy \
+            --collect-all pandas \
+            --collect-all firebase_admin \
+            --collect-all pydantic \
+            --collect-all pydot \
+            --exclude-module tkinter \
+            --exclude-module matplotlib \
+            --strip \
+            src/the_edge_agent/cli.py
+
+      - name: Smoke test
+        run: |
+          chmod +x python/dist/tea-python-darwin-arm64-full
+          ./python/dist/tea-python-darwin-arm64-full --version
+          impl=$(./python/dist/tea-python-darwin-arm64-full --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -f%z "python/dist/tea-python-darwin-arm64-full")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-darwin-arm64-full
+          path: python/dist/tea-python-darwin-arm64-full
+          retention-days: 1

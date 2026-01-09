@@ -1,0 +1,67 @@
+# =============================================================================
+# Build Wheel - Reusable Workflow
+# =============================================================================
+# Purpose: Builds Python wheel distribution package
+#   - Standard Python wheel using `python -m build`
+#   - Compatible with pip installation
+#
+# Inputs:
+#   - ref: Git ref to build (default: github.ref)
+#
+# Outputs:
+#   - Artifacts: python-wheel
+#
+# Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# =============================================================================
+
+name: Build Wheel
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (leave empty for current branch)'
+        type: string
+        required: false
+        default: ''
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ============================================================
+  # Python Wheel
+  # ============================================================
+  build-wheel:
+    runs-on: ubuntu-24.04
+    name: Python Wheel
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build wheel
+        run: |
+          cd python
+          pip install build
+          python -m build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel
+          path: python/dist/*.whl
+          retention-days: 1

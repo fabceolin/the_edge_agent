@@ -125,6 +125,11 @@ impl GraphBuilder {
             if let Some(max_iter) = settings.max_iterations {
                 graph = graph.with_max_iterations(max_iter);
             }
+
+            // Store LLM config for passing to LLM actions
+            if let Some(llm_config) = &settings.llm {
+                graph = graph.with_llm_config(serde_json::to_value(llm_config).unwrap_or_default());
+            }
         }
 
         Ok((graph, config.observability.clone()))

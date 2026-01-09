@@ -134,6 +134,8 @@ parts:
         title: Cloud Production with Firebase
       - file: articles/intelligent-interview-bot
         title: Intelligent Interview Bot with Dynamic LLM Questions
+      - file: articles/wasm-llm-browser-inference
+        title: Browser-Based LLM Inference with TEA WASM
 
   - caption: Contributing
     chapters:
