@@ -149,6 +149,22 @@ class ApiLlmBackend(LlmBackend):
                 client = OpenAI(timeout=self._timeout)
             model = self._model
 
+        # Filter out internal parameters that OpenAI doesn't accept
+        internal_params = {
+            "state",
+            "config",
+            "node",
+            "graph",
+            "parallel_results",
+            "max_retries",
+            "base_delay",
+            "max_delay",
+            "opik_trace",
+            "provider",
+            "api_base",
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in internal_params}
+
         # Make API call
         response = client.chat.completions.create(
             model=model,
@@ -156,7 +172,7 @@ class ApiLlmBackend(LlmBackend):
             max_tokens=max_tokens,
             temperature=temperature,
             stop=stop,
-            **kwargs,
+            **filtered_kwargs,
         )
 
         usage = (
@@ -297,6 +313,22 @@ class ApiLlmBackend(LlmBackend):
                 client = OpenAI(timeout=self._timeout)
             model = self._model
 
+        # Filter out internal parameters that OpenAI doesn't accept
+        internal_params = {
+            "state",
+            "config",
+            "node",
+            "graph",
+            "parallel_results",
+            "max_retries",
+            "base_delay",
+            "max_delay",
+            "opik_trace",
+            "provider",
+            "api_base",
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in internal_params}
+
         # Stream
         stream = client.chat.completions.create(
             model=model,
@@ -305,7 +337,7 @@ class ApiLlmBackend(LlmBackend):
             temperature=temperature,
             stop=stop,
             stream=True,
-            **kwargs,
+            **filtered_kwargs,
         )
 
         full_content = []
