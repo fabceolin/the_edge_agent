@@ -1760,6 +1760,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea.desktop
 
       - name: Create placeholder icon
         run: |
@@ -1934,6 +1935,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2242,6 +2244,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2367,6 +2370,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2492,6 +2496,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2620,6 +2625,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2798,6 +2804,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python.desktop
 
       - name: Create placeholder icon
         run: |
@@ -2985,6 +2992,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -3146,6 +3154,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -3311,6 +3320,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -3321,6 +3331,7 @@ jobs:
             <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFFFFF" text-anchor="middle">py</text>
           </svg>
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.svg
 
       - name: Create AppDir structure
         run: |
@@ -3471,6 +3482,7 @@ jobs:
           Categories=Development;
           Terminal=true
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.desktop
 
       - name: Create placeholder icon
         run: |
@@ -3481,6 +3493,7 @@ jobs:
             <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFFFFF" text-anchor="middle">py</text>
           </svg>
           EOF
+          sed -i 's/^[[:space:]]*//' tea-python-llm.svg
 
       - name: Create AppDir structure
         run: |
