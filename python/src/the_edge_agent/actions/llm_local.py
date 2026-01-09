@@ -50,6 +50,11 @@ except ImportError:
 
 # Supported models configuration (aligned with TEA-RELEASE-004 epic)
 SUPPORTED_MODELS = {
+    "gemma-3-1b": {
+        "file": "gemma-3-1b-it-Q8_0.gguf",
+        "n_ctx": 8192,  # 8K context - Gemma 3 1B's limit
+        "chat_format": "gemma",
+    },
     "phi4-mini": {
         "file": "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",
         "n_ctx": 128000,  # 128K context - Phi-4-mini's strength
@@ -64,8 +69,9 @@ SUPPORTED_MODELS = {
 
 # Default model filenames in order of preference
 DEFAULT_MODELS = [
-    "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",  # Phi-4-mini (smaller, 128K ctx)
-    "gemma-3n-E4B-it-Q4_K_M.gguf",  # Gemma (larger, higher quality)
+    "gemma-3-1b-it-Q8_0.gguf",  # Gemma 3 1B (ultra-lightweight, 8K ctx)
+    "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",  # Phi-4-mini (compact, 128K ctx)
+    "gemma-3n-E4B-it-Q4_K_M.gguf",  # Gemma 3n (larger, higher quality)
 ]
 
 
@@ -98,7 +104,15 @@ def get_model_info(model_path: str) -> Dict[str, Any]:
             "chat_format": "chatml",
             "family": "phi",
         }
+    elif "gemma-3-1b" in filename or "gemma_3_1b" in filename:
+        # Gemma 3 1B has smaller 8K context
+        return {
+            "n_ctx": 8192,  # Gemma 3 1B's 8K context
+            "chat_format": "gemma",
+            "family": "gemma",
+        }
     elif "gemma" in filename:
+        # Larger Gemma models (3n, 4B, etc.) have 32K context
         return {
             "n_ctx": 32768,  # Gemma's 32K context
             "chat_format": "gemma",

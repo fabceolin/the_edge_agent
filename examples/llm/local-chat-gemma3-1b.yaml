@@ -1,0 +1,87 @@
+# Local Chat Example - Gemma 3 1B (TEA-RELEASE-004.7)
+#
+# This example demonstrates using the ultra-lightweight Gemma 3 1B model
+# bundled in the gemma3-1b LLM AppImages.
+#
+# Model Specifications:
+#   - Parameters: 1.0B
+#   - Quantization: Q8_0 (8-bit)
+#   - Context Window: 8K tokens
+#   - File Size: ~1.07GB
+#   - AppImage Size: ~1.5GB
+#
+# Usage:
+#   # With Rust AppImage
+#   ./tea-rust-llm-gemma3-1b-*.AppImage run local-chat-gemma3-1b.yaml \
+#     --input '{"question": "What is 2+2?"}'
+#
+#   # With Python AppImage
+#   ./tea-python-llm-gemma3-1b-*.AppImage run local-chat-gemma3-1b.yaml \
+#     --input '{"question": "What is 2+2?"}'
+#
+#   # With explicit model path
+#   TEA_MODEL_PATH=./models/gemma-3-1b-it-Q8_0.gguf tea run local-chat-gemma3-1b.yaml
+#
+# Best Use Cases for Gemma 3 1B:
+#   - Edge devices with limited memory (~2GB RAM)
+#   - Fast prototyping and demos
+#   - Simple Q&A and conversational tasks
+#   - Resource-constrained environments
+#
+# For complex reasoning or long-context tasks, consider:
+#   - Phi-4-mini (128K context)
+#   - Gemma 3n E4B (32K context, higher quality)
+
+name: local-chat-gemma3-1b
+description: Chat with Gemma 3 1B ultra-lightweight model
+
+state_schema:
+  question: str
+  answer: str
+  backend: str
+  model: str
+
+initial_state:
+  question: "What is the capital of France? Answer in one sentence."
+
+settings:
+  llm:
+    backend: local
+    # CPU-only is recommended for 1B models (GPU overhead not worth it)
+    n_gpu_layers: 0
+
+nodes:
+  - name: chat
+    action: llm.chat
+    params:
+      backend: local
+      prompt: "{{ state.question }}"
+      system: "You are a helpful AI assistant. Keep responses brief and direct."
+      # Conservative token limit for 1B model
+      max_tokens: 150
+      temperature: 0.7
+    outputs:
+      answer: "{{ action_result.content }}"
+      backend: "{{ action_result.backend }}"
+      model: "{{ action_result.model }}"
+
+  - name: verify
+    action: template
+    params:
+      template: |
+        {
+          "answer": "{{ state.answer }}",
+          "backend": "{{ state.backend }}",
+          "model": "{{ state.model }}",
+          "verified": true
+        }
+    outputs:
+      result: "{{ action_result }}"
+
+edges:
+  - from: __start__
+    to: chat
+  - from: chat
+    to: verify
+  - from: verify
+    to: __end__

@@ -102,8 +102,9 @@ pub struct ModelConfig {
 
 /// Default models in order of preference for bundled distributions
 pub const DEFAULT_MODELS: &[&str] = &[
-    "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf", // Phi-4-mini (smaller, 128K ctx)
-    "gemma-3n-E4B-it-Q4_K_M.gguf",               // Gemma (larger, higher quality)
+    "gemma-3-1b-it-Q8_0.gguf", // Gemma 3 1B (ultra-lightweight, 8K ctx)
+    "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf", // Phi-4-mini (compact, 128K ctx)
+    "gemma-3n-E4B-it-Q4_K_M.gguf", // Gemma 3n (larger, higher quality)
 ];
 
 /// LLM Backend trait - implemented by LocalLlmBackend and ApiLlmBackend
@@ -157,7 +158,15 @@ pub fn get_model_config(model_path: &std::path::Path) -> ModelConfig {
             chat_format: Some("chatml"),
             family: "phi",
         }
+    } else if filename.contains("gemma-3-1b") || filename.contains("gemma_3_1b") {
+        // Gemma 3 1B has smaller 8K context
+        ModelConfig {
+            n_ctx: 8_192, // Gemma 3 1B's 8K context
+            chat_format: Some("gemma"),
+            family: "gemma",
+        }
     } else if filename.contains("gemma") {
+        // Larger Gemma models (3n, 4B, etc.) have 32K context
         ModelConfig {
             n_ctx: 32_768, // Gemma's 32K context
             chat_format: Some("gemma"),
@@ -395,6 +404,16 @@ mod tests {
         let config = get_model_config(path);
         assert_eq!(config.family, "gemma");
         assert_eq!(config.n_ctx, 32_768);
+        assert_eq!(config.chat_format, Some("gemma"));
+    }
+
+    #[test]
+    fn test_model_config_gemma_3_1b() {
+        // Test Gemma 3 1B model detection (smaller 8K context)
+        let path = std::path::Path::new("gemma-3-1b-it-Q8_0.gguf");
+        let config = get_model_config(path);
+        assert_eq!(config.family, "gemma");
+        assert_eq!(config.n_ctx, 8_192);
         assert_eq!(config.chat_format, Some("gemma"));
     }
 

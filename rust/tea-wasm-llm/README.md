@@ -263,15 +263,51 @@ console.log('Cache stats:', stats);
 await clearModelCache();
 ```
 
+## Supported Models
+
+| Model | Size | Use Case | Model URL |
+|-------|------|----------|-----------|
+| **Gemma 3 1B Q8_0** | ~1.07 GB | Edge devices, demos, Safari | [unsloth/gemma-3-1b-it-GGUF](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF) |
+| Phi-4-mini Q3_K_S | ~1.9 GB | General purpose, extended context | [bartowski/Phi-4-mini-instruct-GGUF](https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF) |
+
+### Gemma 3 1B (Recommended for Edge)
+
+Ultra-lightweight 1B parameter model ideal for:
+- Resource-constrained edge devices
+- Safari IndexedDB compatibility (fits 1GB limit)
+- Fast prototyping and demos
+- Low-memory environments (~2GB RAM)
+
+```typescript
+await initLlm({
+  modelUrl: 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q8_0.gguf',
+  onProgress: (loaded, total) => console.log(`${Math.round(loaded/total*100)}%`),
+});
+```
+
+### Phi-4-mini (Higher Quality)
+
+Larger 4B parameter model for:
+- Better quality responses
+- Extended 128K context window
+- Complex reasoning tasks
+
+```typescript
+await initLlm({
+  modelUrl: 'https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf',
+  onProgress: (loaded, total) => console.log(`${Math.round(loaded/total*100)}%`),
+});
+```
+
 ## Package Size
 
 | Asset | Size | Description |
 |-------|------|-------------|
 | WASM + JS | ~50 MB | Core WASM package and TypeScript wrapper |
-| Model (Phi-4-mini Q3_K_S) | ~1.9 GB | Microsoft Phi-4-mini-instruct quantized |
-| **Total** | **~2.0 GB** | Complete package |
+| Model (Gemma 3 1B Q8_0) | ~1.07 GB | Google Gemma 3 1B Instruct (ultra-lightweight) |
+| Model (Phi-4-mini Q3_K_S) | ~1.9 GB | Microsoft Phi-4-mini-instruct (full-size) |
 
-> **Note:** The model file (~1.9GB) fits within GitHub's 2GB release asset limit without chunking.
+> **Note:** Both model files fit within GitHub's 2GB release asset limit without chunking.
 
 ## Memory Requirements
 
