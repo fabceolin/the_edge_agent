@@ -108,7 +108,7 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc git wget libopenblas-dev && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev git wget libopenblas-dev && \
              wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | apt-key add - && \
              wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list && \
              apt-get update -y && apt-get install -y vulkan-sdk && \
@@ -997,7 +997,8 @@ jobs:
           # Official PPA required for 9.1+
           sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev glslang-tools glslc
+          # Note: libvulkan-dev only (glslc/glslang-tools provided by LunarG SDK later)
+          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev
 
           # Verify version (must be 9.1+)
           swipl --version
@@ -1011,6 +1012,9 @@ jobs:
 
       - name: Install LunarG Vulkan SDK and OpenBLAS
         run: |
+          # Remove any conflicting packages from Ubuntu (defensive)
+          sudo apt-get remove -y glslang-tools glslc || true
+
           # Install LunarG Vulkan SDK (same as llama.cpp official builds)
           wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list \
@@ -1186,6 +1190,7 @@ jobs:
           # Build SWI-Prolog 9.3.x from source
 
           # Install build dependencies, OpenMP, Vulkan, and OpenBLAS libraries
+          # Note: ARM64 uses Ubuntu's Vulkan packages (LunarG SDK not available for ARM64)
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
