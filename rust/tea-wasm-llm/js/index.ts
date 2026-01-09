@@ -74,9 +74,12 @@ import {
   calculateChecksum,
   fetchManifest,
   formatBytes,
+  loadBundledModel,
+  loadBundledModelSafe,
   type ModelManifest,
   type ProgressCallback,
   type LoadModelOptions,
+  type BundledModelConfig,
 } from './model-loader';
 
 import {
@@ -114,31 +117,7 @@ export interface TeaLlmConfig {
   verbose?: boolean;
 }
 
-/**
- * Configuration for loading bundled model
- */
-export interface BundledModelConfig {
-  /** Base path where model files are located (default: './models') */
-  modelBasePath?: string;
-
-  /** Manifest filename (default: 'model-manifest.json') */
-  manifestFileName?: string;
-
-  /** Use IndexedDB cache (default: true) */
-  useCache?: boolean;
-
-  /** Progress callback during download */
-  onProgress?: ProgressCallback;
-
-  /** Skip checksum verification (not recommended) */
-  skipChecksum?: boolean;
-
-  /** Request timeout in milliseconds */
-  timeout?: number;
-
-  /** Verbose logging */
-  verbose?: boolean;
-}
+// BundledModelConfig is imported from model-loader
 
 /**
  * LLM request parameters (OpenAI-compatible)
@@ -221,6 +200,9 @@ let initialized = false;
 /**
  * Initialize TEA LLM with a wllama handler
  *
+ * @deprecated Use initLlm() instead for the batteries-included API.
+ * This function is maintained for backward compatibility with the callback pattern.
+ *
  * @param config - Configuration options
  * @param llmHandler - Function to handle LLM calls (typically wraps wllama)
  *
@@ -261,6 +243,9 @@ export async function initTeaLlm(
 
 /**
  * Execute a YAML workflow with LLM actions
+ *
+ * @deprecated Use chat() or chatStream() instead for the batteries-included API.
+ * This function is maintained for backward compatibility with the callback pattern.
  *
  * @param yaml - YAML workflow definition
  * @param initialState - Initial state object
@@ -365,128 +350,7 @@ export function getVersion(): string {
 // ============================================================================
 // Model Loading with Caching
 // ============================================================================
-
-/**
- * Load a bundled model with IndexedDB caching
- *
- * This function:
- * 1. Loads the manifest file from the specified path
- * 2. Checks if the model is cached (by version)
- * 3. If cached: returns the cached model immediately
- * 4. If not cached: downloads the model, caches it, returns it
- *
- * @param config - Loading configuration options
- * @returns Promise resolving to the model data as Uint8Array
- *
- * @example
- * ```typescript
- * const modelData = await loadBundledModel({
- *   modelBasePath: './models',
- *   onProgress: (loaded, total) => {
- *     const percent = Math.round(loaded / total * 100);
- *     console.log(`Loading: ${percent}%`);
- *   }
- * });
- * ```
- */
-export async function loadBundledModel(
-  config: BundledModelConfig = {}
-): Promise<Uint8Array> {
-  const {
-    modelBasePath = './models',
-    manifestFileName = 'model-manifest.json',
-    useCache = true,
-    onProgress,
-    skipChecksum = false,
-    timeout = 0,
-    verbose = false,
-  } = config;
-
-  const log = (msg: string) => {
-    if (verbose) console.log(`[TEA-LLM] ${msg}`);
-  };
-
-  // Load manifest
-  log(`Loading manifest from ${modelBasePath}/${manifestFileName}`);
-  const manifest = await fetchManifest(modelBasePath, manifestFileName);
-  log(`Manifest loaded: ${manifest.model} v${manifest.version} (${formatBytes(manifest.totalSize)})`);
-
-  // Check cache first
-  if (useCache) {
-    const cacheAvailable = await isModelCacheAvailable();
-    if (!cacheAvailable) {
-      log('IndexedDB not available, skipping cache');
-    } else {
-      log(`Checking cache for version: ${manifest.version}`);
-      const cached = await getCachedModel(manifest.version);
-
-      if (cached) {
-        log('Model loaded from cache (cache hit)');
-        return cached;
-      }
-
-      log('Cache miss, will download model');
-    }
-  }
-
-  // Load from network
-  log(`Downloading model: ${manifest.file}`);
-  const modelData = await loadModel(modelBasePath, manifest, {
-    onProgress,
-    skipChecksum,
-    timeout,
-  });
-  log(`Download complete: ${formatBytes(modelData.byteLength)}`);
-
-  // Cache for next time
-  if (useCache) {
-    const cacheAvailable = await isModelCacheAvailable();
-    if (cacheAvailable) {
-      // Check storage capacity first
-      const { canCache, reason } = await checkStorageCapacity(modelData.byteLength);
-
-      if (canCache) {
-        log('Caching model for future use');
-        try {
-          await cacheModel(manifest.version, modelData, manifest.model);
-          log('Model cached successfully');
-        } catch (e) {
-          log(`Cache write failed (non-fatal): ${e}`);
-        }
-      } else {
-        log(`Skipping cache: ${reason}`);
-      }
-    }
-  }
-
-  return modelData;
-}
-
-/**
- * Load a bundled model with automatic corrupted cache recovery
- *
- * If loading fails for any reason (including corrupted cache),
- * this function clears the cache and retries the download.
- *
- * @param config - Loading configuration options
- * @returns Promise resolving to the model data as Uint8Array
- */
-export async function loadBundledModelSafe(
-  config: BundledModelConfig = {}
-): Promise<Uint8Array> {
-  const verbose = config.verbose ?? false;
-  const log = (msg: string) => {
-    if (verbose) console.log(`[TEA-LLM] ${msg}`);
-  };
-
-  try {
-    return await loadBundledModel(config);
-  } catch (e) {
-    log(`Model load failed, clearing cache and retrying: ${e}`);
-    await clearCache();
-    return await loadBundledModel({ ...config, useCache: false });
-  }
-}
+// loadBundledModel and loadBundledModelSafe are imported from model-loader.ts
 
 /**
  * Check if a model is cached
@@ -594,14 +458,4 @@ export {
   type WllamaAssetPaths,
 } from './wllama-loader';
 
-/**
- * @deprecated Use initLlm() instead for the batteries-included API.
- * This function is maintained for backward compatibility with the callback pattern.
- */
-export { initTeaLlm };
-
-/**
- * @deprecated Use chat() or chatStream() instead for the batteries-included API.
- * This function is maintained for backward compatibility with the callback pattern.
- */
-export { executeLlmYaml };
+// Note: initTeaLlm and executeLlmYaml are already exported above with @deprecated notices

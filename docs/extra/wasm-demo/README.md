@@ -8,7 +8,7 @@ Visit: https://fabceolin.github.io/the_edge_agent/wasm-demo/
 
 ## Features
 
-- **Chat Interface**: Interactive chat with Phi-4-mini running locally in your browser
+- **Chat Interface**: Interactive chat with Gemma 3 1B running locally in your browser
 - **YAML Workflow**: Execute TEA YAML workflows with LLM actions
 - **Model Caching**: IndexedDB-based caching for faster subsequent loads
 - **Multi-threading**: Automatic detection and use of multi-threaded WASM when available
@@ -52,13 +52,16 @@ HTTPServer(('', 8080), Handler).serve_forever()
 "
 ```
 
-### Copy WASM Package
+### Build Demo Package
 
-Before running the demo, copy the built WASM package:
+Before running the demo, build the bundled package:
 
 ```bash
-cp -r rust/tea-wasm-llm/pkg docs/wasm-demo/
+cd rust/tea-wasm-llm
+node scripts/bundle-for-demo.cjs
 ```
+
+This creates `docs/wasm-demo/pkg/` with all required files.
 
 ## How It Works
 
@@ -76,7 +79,7 @@ This enables `SharedArrayBuffer`, which is required for multi-threaded WASM exec
 ### Model Loading
 
 On first visit:
-1. The ~1.9GB Phi-4-mini model is downloaded from Hugging Face
+1. The ~1.3GB Gemma 3 1B model is downloaded from Hugging Face
 2. Progress is shown in the UI
 3. Model is cached in IndexedDB for future visits
 
@@ -120,7 +123,7 @@ The COOP/COEP service worker may not be active. Try:
 
 Check:
 1. Network connectivity to Hugging Face
-2. Sufficient storage space (~2GB needed)
+2. Sufficient storage space (~1.5GB needed)
 3. Browser DevTools console for errors
 
 ### Slow performance

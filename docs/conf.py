@@ -95,7 +95,9 @@ html_baseurl = "https://fabceolin.github.io/the_edge_agent/"
 html_static_path = ["_static"]
 
 # Extra content to copy to _build/html (demo apps, etc.)
-html_extra_path = ["wasm-demo"]
+# Contents of 'extra/' are copied to the root of _build/html/
+# So 'extra/wasm-demo/' becomes '_build/html/wasm-demo/'
+html_extra_path = ["extra"]
 
 # Custom CSS (create if you want to customize further)
 html_css_files = [

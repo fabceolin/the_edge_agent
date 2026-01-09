@@ -8,8 +8,7 @@
  * - YAML workflow execution
  */
 
-// Import from the bundled package
-// Note: In production, these will be loaded from the pkg/ directory
+// Import from the bundled package in pkg/ directory
 import {
   initLlm,
   chat,
@@ -20,10 +19,10 @@ import {
   hasCoopCoep,
   isLlmReady,
   getVersion,
-} from '../pkg/index.js';
+} from './pkg/index.js';
 
-// Configuration
-const MODEL_URL = 'https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf';
+// Configuration - Using Gemma 3 1B for faster loading (~1.3GB vs ~1.9GB)
+const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q8_0.gguf';
 
 // DOM Elements
 const statusEl = document.getElementById('status');

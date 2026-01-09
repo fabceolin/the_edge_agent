@@ -43,19 +43,15 @@ TEA WASM LLM builds on this foundation with a "batteries-included" philosophy: b
 
 The traditional approach to browser-based LLMs requires multiple moving parts:
 
-```
-Traditional Approach:
-┌─────────────────────────────────────────────────────────┐
-│                    Browser/Host Page                    │
-│                                                         │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐ │
-│  │   wllama    │◄───│  JS Bridge  │◄───│  Your App   │ │
-│  │  (npm pkg)  │    │  (callback) │    │             │ │
-│  │  EXTERNAL   │    │             │    │             │ │
-│  └─────────────┘    └─────────────┘    └─────────────┘ │
-│        ▲                                                │
-│        │ User must install @wllama/wllama via npm   │
-└─────────────────────────────────────────────────────────┘
+```{mermaid}
+flowchart LR
+    subgraph Browser["Browser/Host Page"]
+        direction LR
+        APP["Your App"] -->|"callback"| BRIDGE["JS Bridge"]
+        BRIDGE -->|"API calls"| WLLAMA["wllama\n(npm pkg)\nEXTERNAL"]
+    end
+
+    NPM["npm install\n@wllama/wllama"] -.->|"User must install"| WLLAMA
 ```
 
 TEA WASM LLM simplifies this to a single import:
@@ -74,7 +70,7 @@ flowchart TB
         IDB[(IndexedDB)]
     end
 
-    MODEL["Phi-4-mini.gguf (~1.9GB)"]
+    MODEL["Gemma-3-1b.gguf (~1.3GB)"]
 
     APP -->|"import"| Package
     WASM --> WLLAMA
@@ -126,7 +122,7 @@ import { initLlm, chat, chatStream, embed } from './pkg/index.js';
 
 // Initialize with model URL
 await initLlm({
-  modelUrl: 'https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf',
+  modelUrl: 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q8_0.gguf',
   onProgress: (loaded, total) => {
     console.log(`Loading: ${Math.round(loaded / total * 100)}%`);
   },
@@ -208,7 +204,7 @@ A live demo is available at: [TEA WASM LLM Demo](../wasm-demo/index.html)
 
 ### 5.1 Features
 
-- **Chat Interface**: Interactive conversation with Phi-4-mini
+- **Chat Interface**: Interactive conversation with Gemma 3 1B
 - **Model Loading Progress**: Real-time download progress indicator
 - **Cache Status**: Shows cached model size and status
 - **YAML Workflow**: Execute TEA YAML workflows with LLM actions
@@ -266,7 +262,7 @@ docs/wasm-demo/
 
 ### 8.1 Initial Load
 
-- First visit: Download ~1.9GB model (cached after)
+- First visit: Download ~1.3GB model (cached after)
 - Subsequent visits: Load from IndexedDB (~5-10 seconds)
 - WASM compilation: ~2-3 seconds
 

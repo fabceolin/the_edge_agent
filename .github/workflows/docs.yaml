@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'rust/tea-wasm-llm/**'
       - '.github/workflows/docs.yaml'
   workflow_dispatch:
 
@@ -28,6 +29,26 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Build WASM package for demo
+        run: |
+          cd rust/tea-wasm-llm
+          npm install
+          wasm-pack build --target web --release
+          node scripts/bundle-for-demo.cjs
 
       - name: Install dependencies
         run: |
