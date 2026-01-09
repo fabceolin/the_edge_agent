@@ -2956,12 +2956,12 @@ jobs:
       - name: Download Gemma model from Hugging Face
         run: |
           mkdir -p models
-          # Download Gemma 3n E4B Instruct Q4_K_M (~5GB)
+          # Download Gemma 3n E4B Instruct Q4_K_M (~4.2GB)
           wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-            "https://huggingface.co/QuantFactory/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it.Q4_K_M.gguf" || {
+            "https://huggingface.co/bartowski/google_gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" || {
             echo "Primary download failed, trying mirror..."
             wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-              "https://huggingface.co/bartowski/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
+              "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
           }
           ls -lh models/
 
@@ -3117,11 +3117,12 @@ jobs:
       - name: Download Gemma model from Hugging Face
         run: |
           mkdir -p models
+          # Download Gemma 3n E4B Instruct Q4_K_M (~4.2GB)
           wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-            "https://huggingface.co/QuantFactory/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it.Q4_K_M.gguf" || {
+            "https://huggingface.co/bartowski/google_gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" || {
             echo "Primary download failed, trying mirror..."
             wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
-              "https://huggingface.co/bartowski/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
+              "https://huggingface.co/unsloth/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
           }
           ls -lh models/
 
@@ -3281,11 +3282,12 @@ jobs:
       - name: Download Phi-4-mini Q3_K_S model from Hugging Face
         run: |
           mkdir -p models
+          # Download Phi-4-mini Q3_K_S (~1.9GB)
           wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
-            "https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf" || {
+            "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf" || {
             echo "Primary download failed, trying mirror..."
             wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
-              "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
+              "https://huggingface.co/second-state/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
           }
           ls -lh models/
 
@@ -3440,11 +3442,12 @@ jobs:
       - name: Download Phi-4-mini Q3_K_S model from Hugging Face
         run: |
           mkdir -p models
+          # Download Phi-4-mini Q3_K_S (~1.9GB)
           wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
-            "https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf" || {
+            "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf" || {
             echo "Primary download failed, trying mirror..."
             wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
-              "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
+              "https://huggingface.co/second-state/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
           }
           ls -lh models/
 
