@@ -171,6 +171,9 @@ from .session_actions import register_actions as register_session
 from .context_actions import register_actions as register_context
 from .data_tabular_actions import register_actions as register_data_tabular
 
+# TEA-RELEASE-004.5: Local LLM Actions (llama-cpp-python)
+from .llm_local_actions import register_actions as register_llm_local
+
 
 def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     """
@@ -296,6 +299,9 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     register_session(registry, engine)
     register_context(registry, engine)
     register_data_tabular(registry, engine)
+
+    # TEA-RELEASE-004.5: Local LLM Actions (llama-cpp-python)
+    register_llm_local(registry, engine)
 
     return registry
 

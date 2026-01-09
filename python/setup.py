@@ -137,6 +137,10 @@ setup(
             "llama-index-core>=0.10.0",
             # textgrad excluded by default (P2)
         ],
+        # TEA-RELEASE-004.5: Local LLM support via llama-cpp-python
+        "llm-local": [
+            "llama-cpp-python>=0.2.0",
+        ],
         "all": [
             "openai>=1.13.3",
             "litellm>=1.0.0",  # TEA-LLM-003: LiteLLM multi-provider support

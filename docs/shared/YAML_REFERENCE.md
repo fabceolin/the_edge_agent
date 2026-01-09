@@ -657,6 +657,85 @@ nodes:
 
 See [Cloud Production Actions](./yaml-reference/actions/cloud-production.md) for `auth.verify` and `auth.get_user` actions.
 
+#### `settings.llm` - LLM Configuration (TEA-RELEASE-004)
+
+Configure LLM defaults for the workflow, including backend selection and model settings:
+
+```yaml
+settings:
+  llm:
+    # Backend selection: "local", "api", or "auto" (default)
+    backend: auto
+
+    # Local model configuration
+    model_path: ~/.cache/tea/models/gemma-3n-E4B-it-Q4_K_M.gguf
+    n_ctx: 2048              # Context window size (default: 2048)
+    n_gpu_layers: 0          # GPU layers: 0=CPU only, -1=all GPU
+
+    # API backend defaults
+    api_key: "${OPENAI_API_KEY}"  # API key (env var expansion supported)
+    api_base: https://api.openai.com/v1  # Base URL
+
+    # Shell providers (for shell CLI backend)
+    shell_providers:
+      claude:
+        command: claude
+        args: ["--model", "claude-3-opus"]
+        timeout: 600
+```
+
+**Backend Selection:**
+
+| Backend | Description |
+|---------|-------------|
+| `auto` | Prefer local if model available, fallback to API |
+| `local` | Force local llama.cpp model, error if not found |
+| `api` | Force API call (requires API key) |
+
+**Model Path Resolution Order:**
+
+1. `TEA_MODEL_PATH` environment variable
+2. `params.model_path` in action
+3. `settings.llm.model_path` in YAML
+4. `$APPDIR/usr/share/models/` (AppImage bundle)
+5. `~/.cache/tea/models/` (default cache)
+
+**Example with Local Model:**
+
+```yaml
+name: offline-chat
+settings:
+  llm:
+    backend: local
+    model_path: ~/models/phi-4-mini.gguf
+    n_gpu_layers: -1  # Use all GPU layers
+
+nodes:
+  - name: chat
+    action: llm.chat
+    params:
+      prompt: "{{ state.question }}"
+      max_tokens: 200
+```
+
+**Example with Auto Backend:**
+
+```yaml
+name: portable-agent
+settings:
+  llm:
+    backend: auto  # Works offline with AppImage, online with API
+
+nodes:
+  - name: respond
+    action: llm.chat
+    params:
+      prompt: "{{ state.input }}"
+      system: "You are a helpful assistant."
+```
+
+See [Python Actions Reference](../python/actions-reference.md#local-llm-provider-tea-release-004) and [Rust Actions Reference](../rust/actions-reference.md#local-llm-provider-tea-release-004) for complete action documentation.
+
 ---
 
 ## Node Specification

@@ -1,0 +1,25 @@
+# Model files (too large for git)
+models/*.gguf
+models/manifest.json
+models/model-manifest.json
+
+# Build outputs
+dist/
+pkg/
+
+# Node.js
+node_modules/
+
+# Target directory
+target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Lock files (optional - may want to commit these)
+# package-lock.json
+# yarn.lock

@@ -1,0 +1,59 @@
+# Local LLM Embedding Example (TEA-RELEASE-004.6)
+#
+# This example demonstrates generating text embeddings using a local GGUF model.
+# Works with Rust (llama-cpp-2) and Python (llama-cpp-python) implementations.
+#
+# Usage:
+#   # Generate embedding for text
+#   tea run local-embed.yaml --input '{"text": "Machine learning is transforming industries."}'
+#
+#   # With LLM AppImage (model auto-detected)
+#   ./tea-rust-llm-gemma-*.AppImage run local-embed.yaml --input '{"text": "Hello world"}'
+#
+#   # With explicit model path
+#   TEA_MODEL_PATH=./models/nomic-embed-text.gguf tea run local-embed.yaml
+#
+# Note: Not all models support embeddings. Embedding models like nomic-embed-text
+# or all-MiniLM work best. General chat models (Gemma, Phi-4) may not support
+# the embed action - use llm.chat for those.
+#
+# Requirements:
+#   - Rust: cargo build --features llm-local
+#   - Python: pip install the_edge_agent[llm-local]
+#   - An embedding-capable GGUF model
+
+name: local-embed-example
+description: Generate text embeddings using local model
+
+state_schema:
+  text: str
+  embedding: list
+  model: str
+  dimensions: int
+
+initial_state:
+  text: "The Edge Agent enables offline AI workflows."
+
+settings:
+  llm:
+    backend: local
+    # n_gpu_layers: 0  # CPU only
+
+nodes:
+  - name: generate_embedding
+    action: llm.embed
+    params:
+      # Backend auto-detects local model availability
+      backend: "{{ state.backend | default('auto') }}"
+      # Text to embed
+      text: "{{ state.text }}"
+    outputs:
+      embedding: "{{ action_result.embedding }}"
+      model: "{{ action_result.model }}"
+      dimensions: "{{ action_result.dimensions }}"
+
+edges:
+  - from: __start__
+    to: generate_embedding
+  - from: generate_embedding
+    to: __end__

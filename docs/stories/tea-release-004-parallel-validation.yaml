@@ -1,0 +1,101 @@
+# TEA Workflow generated from DOT diagram
+# Source: tea-release-004-validation
+# Command template: 
+# Command mode: per-node
+# Max concurrency: 3
+# Execution mode: subprocess
+#
+# Usage: tea run tea-release-004-validation.yaml
+
+name: tea-release-004-validation
+description: Generated from DOT diagram
+nodes:
+- name: setup
+  run: |-
+    # Initialize phase items for parallel execution
+    state["phase1_items"] = ['TEA-RELEASE-004-epic', 'TEA-RELEASE-004.1', 'TEA-RELEASE-004.2', 'TEA-RELEASE-004.3a', 'TEA-RELEASE-004.3b', 'TEA-RELEASE-004.3c', 'TEA-RELEASE-004.4', 'TEA-RELEASE-004.5', 'TEA-RELEASE-004.6']
+
+    # TEA-TOOLS-002: Per-node command mappings
+    state["_phase1_commands"] = {
+        'TEA-RELEASE-004-epic': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004-llm-bundled-distributions-epic.md"}\'',
+        'TEA-RELEASE-004.1': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.1-rust-llm-appimage.md"}\'',
+        'TEA-RELEASE-004.2': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.2-python-llm-appimage.md"}\'',
+        'TEA-RELEASE-004.3a': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3a-wasm-llm-core.md"}\'',
+        'TEA-RELEASE-004.3b': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3b-wasm-model-bundling.md"}\'',
+        'TEA-RELEASE-004.3c': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.3c-wasm-release-testing.md"}\'',
+        'TEA-RELEASE-004.4': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.4-rust-llm-actions.md"}\'',
+        'TEA-RELEASE-004.5': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.5-python-llm-actions.md"}\'',
+        'TEA-RELEASE-004.6': 'tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input \'{"arg": "docs/stories/TEA-RELEASE-004.6-documentation.md"}\''
+    }
+    return state
+- name: validation_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase1_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: validation_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+
+      item = state.get("item", "")
+      commands = state.get("_phase1_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      try:
+          result = subprocess.run(
+              cmd,
+              shell=True,
+              capture_output=True,
+              text=True,
+              executable='/bin/bash',
+              timeout=300
+          )
+          return {
+              "item": item,
+              "command": cmd,
+              "success": result.returncode == 0,
+              "stdout": result.stdout,
+              "stderr": result.stderr,
+              "returncode": result.returncode
+          }
+      except subprocess.TimeoutExpired:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": "Command timed out after 300 seconds"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: validation_results
+- name: validation_collect
+  fan_in: true
+  run: |-
+    # Collect results from validation parallel execution
+    results = state.get("validation_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["validation_complete"] = True
+    state["validation_success_count"] = success_count
+    state["validation_total"] = len(results)
+    return state
+edges:
+- from: __start__
+  to: setup
+- from: setup
+  to: validation_parallel
+- from: validation_collect
+  to: __end__

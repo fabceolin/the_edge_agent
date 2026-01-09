@@ -1,0 +1,18 @@
+# Simple test workflow for E2E tests
+name: simple-test
+state_schema:
+  input: str
+  llm_response: any
+
+nodes:
+  - name: gen
+    action: llm.call
+    with:
+      prompt: "Say hello"
+      max_tokens: 10
+
+edges:
+  - from: __start__
+    to: gen
+  - from: gen
+    to: __end__

@@ -1,0 +1,10 @@
+{
+  "model": "microsoft_Phi-4-mini-instruct-Q3_K_S",
+  "version": "v1",
+  "totalSize": 1900000000,
+  "file": "microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",
+  "sha256": "PLACEHOLDER_SHA256_HASH_WILL_BE_GENERATED_BY_DOWNLOAD_SCRIPT",
+  "description": "Microsoft Phi-4-mini-instruct quantized to Q3_K_S (~1.9GB)",
+  "source": "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf",
+  "downloadedAt": "2026-01-08T00:00:00Z"
+}

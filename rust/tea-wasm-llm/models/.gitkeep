@@ -1,0 +1,2 @@
+# Model files are downloaded separately via scripts/download-model.sh
+# This directory is excluded from git (see .gitignore)

@@ -1,0 +1,51 @@
+digraph tea_release_004_validation {
+    rankdir=TB;
+    node [shape=box];
+
+    Start [label="Start", shape=ellipse];
+    End [label="End", shape=ellipse];
+
+    subgraph cluster_validation {
+        label="Parallel Story Validation";
+
+        epic [label="TEA-RELEASE-004-epic", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004-llm-bundled-distributions-epic.md\"}'"];
+
+        story_4_1 [label="TEA-RELEASE-004.1", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.1-rust-llm-appimage.md\"}'"];
+
+        story_4_2 [label="TEA-RELEASE-004.2", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.2-python-llm-appimage.md\"}'"];
+
+        story_4_3a [label="TEA-RELEASE-004.3a", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3a-wasm-llm-core.md\"}'"];
+
+        story_4_3b [label="TEA-RELEASE-004.3b", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3b-wasm-model-bundling.md\"}'"];
+
+        story_4_3c [label="TEA-RELEASE-004.3c", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.3c-wasm-release-testing.md\"}'"];
+
+        story_4_4 [label="TEA-RELEASE-004.4", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.4-rust-llm-actions.md\"}'"];
+
+        story_4_5 [label="TEA-RELEASE-004.5", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.5-python-llm-actions.md\"}'"];
+
+        story_4_6 [label="TEA-RELEASE-004.6", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-RELEASE-004.6-documentation.md\"}'"];
+    }
+
+    // All stories run in parallel - fan-out from Start
+    Start -> epic;
+    Start -> story_4_1;
+    Start -> story_4_2;
+    Start -> story_4_3a;
+    Start -> story_4_3b;
+    Start -> story_4_3c;
+    Start -> story_4_4;
+    Start -> story_4_5;
+    Start -> story_4_6;
+
+    // Fan-in to End
+    epic -> End;
+    story_4_1 -> End;
+    story_4_2 -> End;
+    story_4_3a -> End;
+    story_4_3b -> End;
+    story_4_3c -> End;
+    story_4_4 -> End;
+    story_4_5 -> End;
+    story_4_6 -> End;
+}

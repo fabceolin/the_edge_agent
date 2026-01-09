@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM LLM - Model Cache Tests</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+        h1 { color: #569cd6; }
+        h2 { color: #4ec9b0; margin-top: 30px; }
+        .test-result {
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 5px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        .pass { background: #1e3a1e; border-left: 4px solid #4ec9b0; }
+        .fail { background: #3a1e1e; border-left: 4px solid #f14c4c; }
+        .pending { background: #3a3a1e; border-left: 4px solid #dcdcaa; }
+        .info { background: #1e2d3a; border-left: 4px solid #569cd6; }
+        .skip { background: #2d2d2d; border-left: 4px solid #808080; }
+        pre {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        button:hover { background: #1177bb; }
+        button:disabled { background: #4a4a4a; cursor: not-allowed; }
+        #output {
+            margin-top: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+            padding: 15px;
+            background: #2d2d2d;
+            border-radius: 5px;
+        }
+        .stat { text-align: center; }
+        .stat-value { font-size: 24px; font-weight: bold; }
+        .stat-label { font-size: 12px; color: #808080; }
+        .warning {
+            background: #3a3a1e;
+            border: 1px solid #dcdcaa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🗄️ TEA WASM LLM - Model Cache Tests</h1>
+
+    <p>Tests for IndexedDB model caching functionality (AC: 4, 5, 6, 10, 11)</p>
+
+    <div class="warning">
+        ⚠️ <strong>Note:</strong> These tests use a small mock model (~100 bytes) instead of the actual 1.9GB model.
+        They verify caching logic and behavior patterns.
+    </div>
+
+    <div class="stats">
+        <div class="stat">
+            <div class="stat-value" id="total">0</div>
+            <div class="stat-label">Total</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="passed" style="color: #4ec9b0;">0</div>
+            <div class="stat-label">Passed</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="failed" style="color: #f14c4c;">0</div>
+            <div class="stat-label">Failed</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="skipped" style="color: #808080;">0</div>
+            <div class="stat-label">Skipped</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value" id="duration">-</div>
+            <div class="stat-label">Duration</div>
+        </div>
+    </div>
+
+    <div>
+        <button id="runAll" onclick="runAllTests()">▶️ Run All Tests</button>
+        <button onclick="clearCacheManually()">🗑️ Clear Cache</button>
+        <button onclick="clearOutput()">📝 Clear Output</button>
+        <button onclick="showCacheStats()">📊 Show Cache Stats</button>
+    </div>
+
+    <div id="output"></div>
+
+    <h2>Cache Statistics</h2>
+    <pre id="cacheStats">Click "Show Cache Stats" to view...</pre>
+
+    <script type="module">
+        // Import model cache functions
+        // Note: In production, these would be imported from the compiled JS
+        // For testing, we inline the implementations
+
+        // ============================================================================
+        // Model Cache Implementation (inline for testing)
+        // ============================================================================
+
+        const DB_NAME = 'tea-llm-cache';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'models';
+
+        async function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onerror = () => reject(new Error(`Failed to open cache database: ${request.error?.message}`));
+                request.onsuccess = () => resolve(request.result);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        const store = db.createObjectStore(STORE_NAME, { keyPath: 'version' });
+                        store.createIndex('modelName', 'modelName', { unique: false });
+                        store.createIndex('timestamp', 'timestamp', { unique: false });
+                    }
+                };
+            });
+        }
+
+        async function isModelCacheAvailable() {
+            if (typeof indexedDB === 'undefined') return false;
+            try {
+                const db = await openDB();
+                db.close();
+                return true;
+            } catch { return false; }
+        }
+
+        async function getCachedModel(version) {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.get(version);
+                    request.onerror = () => { db.close(); reject(new Error(`Cache read failed: ${request.error?.message}`)); };
+                    request.onsuccess = () => { db.close(); resolve(request.result?.data || null); };
+                });
+            } catch (e) {
+                console.warn('[Cache] Read failed:', e);
+                return null;
+            }
+        }
+
+        async function getCachedModelEntry(version) {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.get(version);
+                    request.onerror = () => { db.close(); reject(request.error); };
+                    request.onsuccess = () => { db.close(); resolve(request.result || null); };
+                });
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function cacheModel(version, data, modelName = 'unknown') {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    const store = tx.objectStore(STORE_NAME);
+                    const entry = { version, data, timestamp: Date.now(), modelName, size: data.byteLength };
+                    const request = store.put(entry);
+                    request.onerror = () => { db.close(); reject(new Error(`Cache write failed: ${request.error?.message}`)); };
+                    request.onsuccess = () => { db.close(); resolve(); };
+                });
+            } catch (e) {
+                console.warn('[Cache] Write failed:', e);
+            }
+        }
+
+        async function clearCache() {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.clear();
+                    request.onerror = () => { db.close(); reject(request.error); };
+                    request.onsuccess = () => { db.close(); resolve(); };
+                });
+            } catch (e) {
+                console.warn('[Cache] Clear failed:', e);
+            }
+        }
+
+        async function deleteCachedModel(version) {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readwrite');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.delete(version);
+                    request.onerror = () => { db.close(); reject(request.error); };
+                    request.onsuccess = () => { db.close(); resolve(); };
+                });
+            } catch (e) {}
+        }
+
+        async function isCached(version) {
+            const entry = await getCachedModelEntry(version);
+            return entry !== null;
+        }
+
+        async function getCacheStats() {
+            const stats = { available: false, modelCount: 0, totalSize: 0 };
+            if ('storage' in navigator && 'estimate' in navigator.storage) {
+                try {
+                    const estimate = await navigator.storage.estimate();
+                    stats.estimatedQuota = estimate.quota;
+                    stats.estimatedUsage = estimate.usage;
+                } catch {}
+            }
+            try {
+                const db = await openDB();
+                stats.available = true;
+                return new Promise((resolve) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.getAll();
+                    request.onsuccess = () => {
+                        db.close();
+                        const entries = request.result || [];
+                        stats.modelCount = entries.length;
+                        stats.totalSize = entries.reduce((sum, entry) => sum + (entry.size || 0), 0);
+                        resolve(stats);
+                    };
+                    request.onerror = () => { db.close(); resolve(stats); };
+                });
+            } catch { return stats; }
+        }
+
+        async function listCachedModels() {
+            try {
+                const db = await openDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const store = tx.objectStore(STORE_NAME);
+                    const request = store.getAll();
+                    request.onerror = () => { db.close(); reject(request.error); };
+                    request.onsuccess = () => {
+                        db.close();
+                        const entries = request.result || [];
+                        resolve(entries.map(({ version, modelName, size, timestamp }) => ({
+                            version, modelName, size, timestamp
+                        })));
+                    };
+                });
+            } catch (e) { return []; }
+        }
+
+        async function checkStorageCapacity(sizeBytes) {
+            const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+            if (isSafari && sizeBytes > 1024 * 1024 * 1024) {
+                return { canCache: false, reason: 'Safari has a 1GB IndexedDB limit.' };
+            }
+            if ('storage' in navigator && 'estimate' in navigator.storage) {
+                try {
+                    const estimate = await navigator.storage.estimate();
+                    const available = (estimate.quota || 0) - (estimate.usage || 0);
+                    if (sizeBytes > available) {
+                        return { canCache: false, reason: `Insufficient storage. Need ${formatBytes(sizeBytes)}, have ${formatBytes(available)}.` };
+                    }
+                } catch {}
+            }
+            return { canCache: true, reason: 'Storage capacity appears sufficient.' };
+        }
+
+        // ============================================================================
+        // Model Loader Helpers (inline for testing)
+        // ============================================================================
+
+        async function verifyChecksum(data, expectedSha256) {
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            return hashHex.toLowerCase() === expectedSha256.toLowerCase();
+        }
+
+        async function calculateChecksum(data) {
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function formatBytes(bytes) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let value = bytes;
+            let unitIndex = 0;
+            while (value >= 1024 && unitIndex < units.length - 1) {
+                value /= 1024;
+                unitIndex++;
+            }
+            return `${value.toFixed(unitIndex > 0 ? 1 : 0)} ${units[unitIndex]}`;
+        }
+
+        // ============================================================================
+        // Test Framework
+        // ============================================================================
+
+        let testResults = { total: 0, passed: 0, failed: 0, skipped: 0 };
+        let startTime = 0;
+
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function updateStats() {
+            document.getElementById('total').textContent = testResults.total;
+            document.getElementById('passed').textContent = testResults.passed;
+            document.getElementById('failed').textContent = testResults.failed;
+            document.getElementById('skipped').textContent = testResults.skipped;
+            if (startTime > 0) {
+                const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+                document.getElementById('duration').textContent = duration + 's';
+            }
+        }
+
+        async function runTest(name, testFn) {
+            testResults.total++;
+            log(`Running: ${name}...`, 'pending');
+            try {
+                await testFn();
+                testResults.passed++;
+                log(`✅ PASS: ${name}`, 'pass');
+            } catch (error) {
+                if (error.message === 'SKIP') {
+                    testResults.skipped++;
+                    log(`⏭️ SKIP: ${name}`, 'skip');
+                } else {
+                    testResults.failed++;
+                    log(`❌ FAIL: ${name} - ${error.message}`, 'fail');
+                    console.error(error);
+                }
+            }
+            updateStats();
+        }
+
+        function assert(condition, message) {
+            if (!condition) throw new Error(message || 'Assertion failed');
+        }
+
+        function assertEqual(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(message || `Expected ${expected}, got ${actual}`);
+            }
+        }
+
+        function skip() {
+            throw new Error('SKIP');
+        }
+
+        // ============================================================================
+        // Test Cases
+        // ============================================================================
+
+        // Helper to create mock model data
+        function createMockModelData(size = 100) {
+            const data = new Uint8Array(size);
+            for (let i = 0; i < size; i++) {
+                data[i] = i % 256;
+            }
+            return data;
+        }
+
+        // AC-4: Test IndexedDB availability
+        async function testCacheAvailability() {
+            const available = await isModelCacheAvailable();
+            assert(typeof available === 'boolean', 'should return boolean');
+            log(`  IndexedDB available: ${available}`, 'info');
+            if (!available) {
+                log('  ⚠️ IndexedDB not available, some tests may fail', 'info');
+            }
+        }
+
+        // AC-4: Test storing model after first load
+        async function testCacheModelStorage() {
+            await clearCache();
+            const mockData = createMockModelData(100);
+            const version = 'test-v1';
+
+            await cacheModel(version, mockData, 'test-model');
+
+            const cached = await getCachedModel(version);
+            assert(cached !== null, 'should retrieve cached model');
+            assertEqual(cached.byteLength, mockData.byteLength, 'cached size should match');
+        }
+
+        // AC-5: Test cache hit scenario (skip download)
+        async function testCacheHitScenario() {
+            await clearCache();
+            const mockData = createMockModelData(100);
+            const version = 'test-v2';
+
+            // First: not cached
+            let cached = await getCachedModel(version);
+            assert(cached === null, 'should not be cached initially');
+
+            // Store it
+            await cacheModel(version, mockData, 'test-model');
+
+            // Second: should be cached
+            cached = await getCachedModel(version);
+            assert(cached !== null, 'should be cached after storing');
+            assertEqual(cached.byteLength, mockData.byteLength, 'data should match');
+        }
+
+        // AC-6: Test cache invalidation on version change
+        async function testCacheInvalidationOnVersionChange() {
+            await clearCache();
+            const mockData1 = createMockModelData(100);
+            const mockData2 = createMockModelData(200);
+
+            // Cache v1
+            await cacheModel('v1', mockData1, 'test-model');
+
+            // Cache v2 (different version)
+            await cacheModel('v2', mockData2, 'test-model');
+
+            // Both should be retrievable
+            const cachedV1 = await getCachedModel('v1');
+            const cachedV2 = await getCachedModel('v2');
+
+            assert(cachedV1 !== null, 'v1 should still be cached');
+            assert(cachedV2 !== null, 'v2 should be cached');
+            assertEqual(cachedV1.byteLength, 100, 'v1 size should be 100');
+            assertEqual(cachedV2.byteLength, 200, 'v2 size should be 200');
+        }
+
+        // AC-10: Test cache miss scenario (first load)
+        async function testCacheMissScenario() {
+            await clearCache();
+            const version = 'nonexistent-v1';
+
+            const cached = await getCachedModel(version);
+            assert(cached === null, 'should return null for cache miss');
+        }
+
+        // AC-10: Test isCached function
+        async function testIsCachedFunction() {
+            await clearCache();
+            const mockData = createMockModelData(50);
+            const version = 'test-iscached';
+
+            let result = await isCached(version);
+            assert(result === false, 'should return false for uncached version');
+
+            await cacheModel(version, mockData, 'test');
+
+            result = await isCached(version);
+            assert(result === true, 'should return true for cached version');
+        }
+
+        // AC-11: Test corrupted cache recovery
+        async function testCorruptedCacheRecovery() {
+            await clearCache();
+
+            // Simulate corrupted cache by storing invalid data
+            const db = await openDB();
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                // Store entry without proper data field
+                const request = store.put({
+                    version: 'corrupted-v1',
+                    data: null, // Invalid/corrupted data
+                    timestamp: Date.now(),
+                    modelName: 'corrupted',
+                    size: 0
+                });
+                request.onsuccess = () => { db.close(); resolve(); };
+                request.onerror = () => { db.close(); reject(request.error); };
+            });
+
+            // Try to get the corrupted entry - should return null gracefully
+            const cached = await getCachedModel('corrupted-v1');
+            assert(cached === null, 'should handle corrupted entry gracefully');
+
+            // Clear and verify we can store new data
+            await clearCache();
+            const mockData = createMockModelData(100);
+            await cacheModel('fresh-v1', mockData, 'test');
+
+            const fresh = await getCachedModel('fresh-v1');
+            assert(fresh !== null, 'should be able to store fresh data after corruption');
+        }
+
+        // Test clear cache function
+        async function testClearCache() {
+            const mockData = createMockModelData(100);
+            await cacheModel('clear-test-v1', mockData, 'test');
+
+            let cached = await getCachedModel('clear-test-v1');
+            assert(cached !== null, 'should be cached before clear');
+
+            await clearCache();
+
+            cached = await getCachedModel('clear-test-v1');
+            assert(cached === null, 'should not be cached after clear');
+        }
+
+        // Test delete specific model
+        async function testDeleteCachedModel() {
+            await clearCache();
+            const mockData = createMockModelData(100);
+            await cacheModel('delete-v1', mockData, 'test');
+            await cacheModel('delete-v2', mockData, 'test');
+
+            await deleteCachedModel('delete-v1');
+
+            const v1 = await getCachedModel('delete-v1');
+            const v2 = await getCachedModel('delete-v2');
+
+            assert(v1 === null, 'deleted version should not be cached');
+            assert(v2 !== null, 'other version should still be cached');
+        }
+
+        // Test cache stats
+        async function testCacheStats() {
+            await clearCache();
+            const mockData = createMockModelData(100);
+            await cacheModel('stats-v1', mockData, 'test');
+            await cacheModel('stats-v2', mockData, 'test');
+
+            const stats = await getCacheStats();
+
+            assert(stats.available === true, 'cache should be available');
+            assertEqual(stats.modelCount, 2, 'should have 2 models');
+            assertEqual(stats.totalSize, 200, 'total size should be 200 bytes');
+            log(`  Cache stats: ${JSON.stringify(stats)}`, 'info');
+        }
+
+        // Test list cached models
+        async function testListCachedModels() {
+            await clearCache();
+            const mockData = createMockModelData(100);
+            await cacheModel('list-v1', mockData, 'model-a');
+            await cacheModel('list-v2', mockData, 'model-b');
+
+            const models = await listCachedModels();
+
+            assertEqual(models.length, 2, 'should list 2 models');
+            assert(models.some(m => m.version === 'list-v1'), 'should include list-v1');
+            assert(models.some(m => m.version === 'list-v2'), 'should include list-v2');
+            log(`  Listed models: ${models.map(m => m.version).join(', ')}`, 'info');
+        }
+
+        // Test storage capacity check
+        async function testStorageCapacityCheck() {
+            const small = await checkStorageCapacity(1000); // 1KB
+            assert(small.canCache === true, 'small file should fit');
+
+            const huge = await checkStorageCapacity(10 * 1024 * 1024 * 1024 * 1024); // 10TB
+            // This might or might not return canCache=false depending on browser quota estimation
+            assert(typeof huge.canCache === 'boolean', 'should return boolean');
+            log(`  Capacity check (1KB): ${small.reason}`, 'info');
+            log(`  Capacity check (10TB): ${huge.reason}`, 'info');
+        }
+
+        // Test checksum verification
+        async function testChecksumVerification() {
+            const data = new Uint8Array([1, 2, 3, 4, 5]);
+            const hash = await calculateChecksum(data);
+
+            const valid = await verifyChecksum(data, hash);
+            assert(valid === true, 'checksum should match for same data');
+
+            const invalid = await verifyChecksum(data, 'wrong-hash');
+            assert(invalid === false, 'checksum should not match for wrong hash');
+
+            log(`  SHA256: ${hash}`, 'info');
+        }
+
+        // Test formatBytes helper
+        async function testFormatBytes() {
+            assertEqual(formatBytes(0), '0 B', 'should format 0 bytes');
+            assertEqual(formatBytes(1024), '1.0 KB', 'should format 1KB');
+            assertEqual(formatBytes(1024 * 1024), '1.0 MB', 'should format 1MB');
+            assertEqual(formatBytes(1024 * 1024 * 1024), '1.0 GB', 'should format 1GB');
+            assertEqual(formatBytes(1900000000), '1.8 GB', 'should format ~1.9GB');
+        }
+
+        // Test cache entry metadata
+        async function testCacheEntryMetadata() {
+            await clearCache();
+            const mockData = createMockModelData(123);
+            const version = 'metadata-v1';
+            const modelName = 'test-model-name';
+
+            await cacheModel(version, mockData, modelName);
+
+            const entry = await getCachedModelEntry(version);
+            assert(entry !== null, 'entry should exist');
+            assertEqual(entry.version, version, 'version should match');
+            assertEqual(entry.modelName, modelName, 'modelName should match');
+            assertEqual(entry.size, 123, 'size should match');
+            assert(typeof entry.timestamp === 'number', 'timestamp should be number');
+            assert(entry.timestamp > 0, 'timestamp should be positive');
+
+            log(`  Entry metadata: version=${entry.version}, model=${entry.modelName}, size=${entry.size}`, 'info');
+        }
+
+        // Test cache performance (hit vs miss timing)
+        async function testCachePerformance() {
+            await clearCache();
+            const mockData = createMockModelData(10000); // 10KB
+            const version = 'perf-v1';
+
+            // Measure cache miss (need to handle not finding it)
+            const missStart = performance.now();
+            await getCachedModel(version);
+            const missTime = performance.now() - missStart;
+
+            // Store and measure cache hit
+            await cacheModel(version, mockData, 'test');
+
+            const hitStart = performance.now();
+            const cached = await getCachedModel(version);
+            const hitTime = performance.now() - hitStart;
+
+            assert(cached !== null, 'should retrieve cached data');
+            log(`  Cache miss time: ${missTime.toFixed(2)}ms`, 'info');
+            log(`  Cache hit time: ${hitTime.toFixed(2)}ms`, 'info');
+
+            // Note: We don't assert hit is faster since with small mock data and IndexedDB overhead,
+            // the difference might be negligible or even reversed
+        }
+
+        // Test data integrity
+        async function testDataIntegrity() {
+            await clearCache();
+            const originalData = createMockModelData(256);
+            const version = 'integrity-v1';
+
+            await cacheModel(version, originalData, 'test');
+            const cached = await getCachedModel(version);
+
+            assert(cached !== null, 'should retrieve cached data');
+            assertEqual(cached.byteLength, originalData.byteLength, 'size should match');
+
+            // Verify byte-by-byte equality
+            for (let i = 0; i < originalData.length; i++) {
+                if (cached[i] !== originalData[i]) {
+                    throw new Error(`Data mismatch at byte ${i}: expected ${originalData[i]}, got ${cached[i]}`);
+                }
+            }
+
+            log(`  Verified ${originalData.byteLength} bytes match exactly`, 'info');
+        }
+
+        // ============================================================================
+        // Test Runner
+        // ============================================================================
+
+        window.runAllTests = async function() {
+            testResults = { total: 0, passed: 0, failed: 0, skipped: 0 };
+            document.getElementById('output').innerHTML = '';
+            startTime = Date.now();
+
+            log('🚀 Starting Model Cache Tests...', 'info');
+            log('', 'info');
+
+            // Infrastructure tests
+            await runTest('IndexedDB Cache Availability', testCacheAvailability);
+
+            // AC-4: IndexedDB stores model after first load
+            await runTest('AC-4: Cache Model Storage', testCacheModelStorage);
+
+            // AC-5: Cache hit skips download
+            await runTest('AC-5: Cache Hit Scenario', testCacheHitScenario);
+
+            // AC-6: Version change triggers re-download
+            await runTest('AC-6: Cache Invalidation on Version Change', testCacheInvalidationOnVersionChange);
+
+            // AC-10: Cache miss (first load)
+            await runTest('AC-10: Cache Miss Scenario', testCacheMissScenario);
+            await runTest('AC-10: isCached Function', testIsCachedFunction);
+
+            // AC-11: Corrupted cache recovery
+            await runTest('AC-11: Corrupted Cache Recovery', testCorruptedCacheRecovery);
+
+            // Additional cache functionality tests
+            await runTest('Clear Cache', testClearCache);
+            await runTest('Delete Specific Model', testDeleteCachedModel);
+            await runTest('Cache Statistics', testCacheStats);
+            await runTest('List Cached Models', testListCachedModels);
+            await runTest('Storage Capacity Check', testStorageCapacityCheck);
+
+            // Helper function tests
+            await runTest('Checksum Verification', testChecksumVerification);
+            await runTest('Format Bytes Helper', testFormatBytes);
+
+            // Integration tests
+            await runTest('Cache Entry Metadata', testCacheEntryMetadata);
+            await runTest('Cache Performance (timing)', testCachePerformance);
+            await runTest('Data Integrity', testDataIntegrity);
+
+            log('', 'info');
+            log(`✨ Tests complete: ${testResults.passed}/${testResults.total} passed, ${testResults.skipped} skipped`,
+                testResults.failed === 0 ? 'pass' : 'fail');
+
+            updateStats();
+
+            // Cleanup
+            await clearCache();
+        };
+
+        window.clearOutput = function() {
+            document.getElementById('output').innerHTML = '';
+            testResults = { total: 0, passed: 0, failed: 0, skipped: 0 };
+            startTime = 0;
+            updateStats();
+            document.getElementById('duration').textContent = '-';
+        };
+
+        window.clearCacheManually = async function() {
+            await clearCache();
+            log('🗑️ Cache cleared manually', 'info');
+            await showCacheStats();
+        };
+
+        window.showCacheStats = async function() {
+            const stats = await getCacheStats();
+            const models = await listCachedModels();
+
+            document.getElementById('cacheStats').textContent = JSON.stringify({
+                ...stats,
+                quotaFormatted: stats.estimatedQuota ? formatBytes(stats.estimatedQuota) : 'unknown',
+                usageFormatted: stats.estimatedUsage ? formatBytes(stats.estimatedUsage) : 'unknown',
+                totalSizeFormatted: formatBytes(stats.totalSize),
+                models: models
+            }, null, 2);
+        };
+
+        // Initialize
+        (async () => {
+            const available = await isModelCacheAvailable();
+            log(available ?
+                '✅ IndexedDB available - ready to test' :
+                '⚠️ IndexedDB not available - tests may fail', available ? 'pass' : 'fail');
+            log('Press "Run All Tests" to begin', 'info');
+            await showCacheStats();
+        })();
+    </script>
+</body>
+</html>

@@ -574,9 +574,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         - Configure in settings.llm.shell_providers or use built-in defaults
         - No API key required for local CLI tools
 
+        For Local LLM (TEA-RELEASE-004.5):
+        - Uses llama-cpp-python for local GGUF model inference
+        - Use provider: "local" with model pointing to a .gguf file
+        - Model path resolution: model param > TEA_MODEL_PATH env > APPDIR > ~/.cache/tea/models
+        - Supports Phi-4-mini (128K context) and Gemma (32K context) auto-detection
+        - Requires: pip install the_edge_agent[llm-local]
+
         Args:
             state: Current state dictionary
-            model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
+            model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus", or path to .gguf file for local)
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature (default: 0.7)
             max_retries: Maximum retry attempts (default: 0, no retry)
@@ -585,11 +592,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry (model, tokens, latency). Requires opik SDK installed.
                        Default: False (opt-in feature).
-            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", "litellm", or "shell"
+            provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", "litellm", "shell", or "local"
             api_base: Custom API base URL (overrides defaults)
             timeout: Request timeout in seconds (default: 300 for slow local models like Ollama)
             shell_provider: Shell provider name when provider="shell" (e.g., "claude", "gemini", "qwen")
-            **kwargs: Additional parameters passed to OpenAI/LiteLLM
+            **kwargs: Additional parameters passed to OpenAI/LiteLLM (for local: n_ctx, n_threads, n_gpu_layers, max_tokens, stop)
 
         Returns:
             When max_retries=0:
@@ -602,6 +609,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 Result dict also includes "cost_usd": float (from LiteLLM cost tracking)
             When provider=shell:
                 {"content": str, "usage": {}, "provider": "shell", "shell_provider": str}
+            When provider=local:
+                {"content": str, "usage": {"total_tokens": int}, "provider": "local", "model": str, "finish_reason": str}
             Or {"error": str, "success": False, "attempts": int} on failure
 
         Retry behavior:
@@ -645,6 +654,83 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 timeout=timeout,
                 **kwargs,
             )
+
+        # Local provider - uses llama-cpp-python backend (TEA-RELEASE-004.5)
+        if resolved_provider == "local":
+            try:
+                from .llm_local import (
+                    LocalLlmBackend,
+                    resolve_model_path,
+                    LLAMA_CPP_AVAILABLE,
+                )
+
+                if not LLAMA_CPP_AVAILABLE:
+                    return {
+                        "error": "llama-cpp-python not installed. "
+                        "Install with: pip install the_edge_agent[llm-local]",
+                        "success": False,
+                    }
+
+                # Get settings from engine if available
+                settings = {}
+                if engine and hasattr(engine, "settings"):
+                    settings = engine.settings or {}
+
+                # Resolve model path - check explicit model param, then settings, then env vars
+                model_path = None
+                if model and (model.endswith(".gguf") or os.path.exists(model)):
+                    model_path = model
+                else:
+                    model_path = resolve_model_path(settings)
+
+                if not model_path:
+                    return {
+                        "error": "No local model found. Set TEA_MODEL_PATH, configure settings.llm.model_path, "
+                        "or pass a .gguf file path as the model parameter.",
+                        "success": False,
+                    }
+
+                # Create local backend and make the call
+                backend = LocalLlmBackend(
+                    model_path=model_path,
+                    n_ctx=kwargs.get("n_ctx", 4096),
+                    n_threads=kwargs.get("n_threads"),
+                    n_gpu_layers=kwargs.get("n_gpu_layers", 0),
+                )
+
+                result = backend.chat(
+                    messages=messages,
+                    max_tokens=kwargs.get("max_tokens", 100),
+                    temperature=temperature,
+                    stop=kwargs.get("stop"),
+                )
+
+                backend.close()
+
+                return {
+                    "content": result.content,
+                    "usage": (
+                        {
+                            "total_tokens": result.tokens_used,
+                        }
+                        if result.tokens_used
+                        else {}
+                    ),
+                    "provider": "local",
+                    "model": result.model,
+                    "finish_reason": result.finish_reason,
+                }
+
+            except FileNotFoundError as e:
+                return {
+                    "error": str(e),
+                    "success": False,
+                }
+            except Exception as e:
+                return {
+                    "error": f"Local LLM error: {str(e)}",
+                    "success": False,
+                }
 
         # LiteLLM provider - uses separate code path (TEA-LLM-003)
         if resolved_provider == "litellm":

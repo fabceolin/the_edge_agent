@@ -2062,6 +2062,513 @@ jobs:
           retention-days: 1
 
   # ============================================================
+  # Rust LLM AppImage Distribution (TEA-RELEASE-004.1)
+  # Self-contained AppImages with bundled GGUF models
+  # Variants: Gemma (~5GB, best quality) and Phi-4-mini (~2.5GB, compact)
+  # ============================================================
+
+  # Build Rust binary with llm-local feature for x86_64
+  build-rust-llm-linux-x86_64:
+    runs-on: ubuntu-22.04
+    name: Rust linux-x86_64-llm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-x86_64-llm-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-x86_64-llm-cargo-
+
+      - name: Build release binary with LLM feature
+        run: |
+          cd rust
+          cargo build --release --features llm-local --bin tea
+
+      - name: Copy binary
+        run: |
+          cp rust/target/release/tea tea-rust-linux-x86_64-llm
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-x86_64-llm
+
+      - name: Smoke test - version
+        run: ./tea-rust-linux-x86_64-llm --version
+
+      - name: Smoke test - impl
+        run: |
+          impl=$(./tea-rust-linux-x86_64-llm --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "tea-rust-linux-x86_64-llm")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-llm
+          path: tea-rust-linux-x86_64-llm
+          retention-days: 1
+
+  # Build Rust binary with llm-local feature for ARM64
+  build-rust-llm-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    name: Rust linux-arm64-llm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-arm64-llm-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-arm64-llm-cargo-
+
+      - name: Build release binary with LLM feature
+        run: |
+          cd rust
+          cargo build --release --features llm-local --bin tea
+
+      - name: Copy binary
+        run: |
+          cp rust/target/release/tea tea-rust-linux-arm64-llm
+
+      - name: Set executable permission
+        run: chmod +x tea-rust-linux-arm64-llm
+
+      - name: Smoke test - version
+        run: ./tea-rust-linux-arm64-llm --version
+
+      - name: Smoke test - impl
+        run: |
+          impl=$(./tea-rust-linux-arm64-llm --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check binary size
+        run: |
+          size=$(stat -c%s "tea-rust-linux-arm64-llm")
+          size_mb=$((size / 1024 / 1024))
+          echo "Binary size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-tea-rust-linux-arm64-llm
+          path: tea-rust-linux-arm64-llm
+          retention-days: 1
+
+  # Gemma LLM AppImage for x86_64 (~5GB, best quality)
+  build-rust-llm-gemma-appimage-x86_64:
+    runs-on: ubuntu-22.04
+    needs: [build-rust-llm-linux-x86_64]
+    name: Rust LLM AppImage x86_64 (Gemma)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2
+
+      - name: Download LLM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-llm
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Download Gemma model from HuggingFace
+        run: |
+          mkdir -p models
+          echo "Downloading Gemma 3n E4B model (~4.5GB)..."
+          wget -q --show-progress \
+            "https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf" \
+            -O models/gemma-3n-E4B-it-Q4_K_M.gguf
+          ls -lh models/
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent (LLM)
+          Comment=Lightweight state graph workflow engine with local LLM
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-llm.AppDir/usr/bin
+          mkdir -p tea-llm.AppDir/usr/lib
+          mkdir -p tea-llm.AppDir/usr/share/models
+          chmod +x tea-rust-linux-x86_64-llm
+          cp tea-rust-linux-x86_64-llm tea-llm.AppDir/usr/bin/tea
+          cp models/gemma-3n-E4B-it-Q4_K_M.gguf tea-llm.AppDir/usr/share/models/
+
+      - name: Run linuxdeploy
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-llm.AppDir \
+            --executable tea-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-llm.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          rm -f tea-llm.AppDir/AppRun
+          cat > tea-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          # Auto-detect model in bundled models directory
+          if [ -z "$TEA_MODEL_PATH" ]; then
+            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
+            if [ -n "$MODEL_FILE" ]; then
+              export TEA_MODEL_PATH="$MODEL_FILE"
+            fi
+          fi
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-llm.AppDir "tea-rust-llm-gemma-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-rust-llm-gemma-*-x86_64.AppImage
+          ./tea-rust-llm-gemma-*-x86_64.AppImage --version
+          impl=$(./tea-rust-llm-gemma-*-x86_64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-rust-llm-gemma-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-appimage-gemma-x86_64
+          path: tea-rust-llm-gemma-*-x86_64.AppImage
+          retention-days: 1
+
+  # Phi-4-mini LLM AppImage for x86_64 (~2.5GB, compact)
+  build-rust-llm-phi4-appimage-x86_64:
+    runs-on: ubuntu-22.04
+    needs: [build-rust-llm-linux-x86_64]
+    name: Rust LLM AppImage x86_64 (Phi-4)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2
+
+      - name: Download LLM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-llm
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Download Phi-4-mini model from HuggingFace
+        run: |
+          mkdir -p models
+          echo "Downloading Phi-4-mini Q3_K_S model (~1.9GB)..."
+          wget -q --show-progress \
+            "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf" \
+            -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
+          ls -lh models/
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent (LLM Phi-4)
+          Comment=Lightweight state graph workflow engine with local LLM
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-llm.AppDir/usr/bin
+          mkdir -p tea-llm.AppDir/usr/lib
+          mkdir -p tea-llm.AppDir/usr/share/models
+          chmod +x tea-rust-linux-x86_64-llm
+          cp tea-rust-linux-x86_64-llm tea-llm.AppDir/usr/bin/tea
+          cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-llm.AppDir/usr/share/models/
+
+      - name: Run linuxdeploy
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-llm.AppDir \
+            --executable tea-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-llm.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          rm -f tea-llm.AppDir/AppRun
+          cat > tea-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          # Auto-detect model in bundled models directory
+          if [ -z "$TEA_MODEL_PATH" ]; then
+            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
+            if [ -n "$MODEL_FILE" ]; then
+              export TEA_MODEL_PATH="$MODEL_FILE"
+            fi
+          fi
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-llm.AppDir "tea-rust-llm-phi4-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-rust-llm-phi4-*-x86_64.AppImage
+          ./tea-rust-llm-phi4-*-x86_64.AppImage --version
+          impl=$(./tea-rust-llm-phi4-*-x86_64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-rust-llm-phi4-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-appimage-phi4-x86_64
+          path: tea-rust-llm-phi4-*-x86_64.AppImage
+          retention-days: 1
+
+  # Phi-4-mini LLM AppImage for ARM64 (~2.5GB, compact)
+  build-rust-llm-phi4-appimage-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: [build-rust-llm-linux-arm64]
+    name: Rust LLM AppImage aarch64 (Phi-4)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2
+
+      - name: Download LLM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-arm64-llm
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Download Phi-4-mini model from HuggingFace
+        run: |
+          mkdir -p models
+          echo "Downloading Phi-4-mini Q3_K_S model (~1.9GB)..."
+          wget -q --show-progress \
+            "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf" \
+            -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
+          ls -lh models/
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent (LLM Phi-4)
+          Comment=Lightweight state graph workflow engine with local LLM
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-llm.AppDir/usr/bin
+          mkdir -p tea-llm.AppDir/usr/lib
+          mkdir -p tea-llm.AppDir/usr/share/models
+          chmod +x tea-rust-linux-arm64-llm
+          cp tea-rust-linux-arm64-llm tea-llm.AppDir/usr/bin/tea
+          cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-llm.AppDir/usr/share/models/
+
+      - name: Run linuxdeploy
+        run: |
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-llm.AppDir \
+            --executable tea-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-llm.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          rm -f tea-llm.AppDir/AppRun
+          cat > tea-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          # Auto-detect model in bundled models directory
+          if [ -z "$TEA_MODEL_PATH" ]; then
+            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
+            if [ -n "$MODEL_FILE" ]; then
+              export TEA_MODEL_PATH="$MODEL_FILE"
+            fi
+          fi
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-llm.AppDir "tea-rust-llm-phi4-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-rust-llm-phi4-*-aarch64.AppImage
+          ./tea-rust-llm-phi4-*-aarch64.AppImage --version
+          impl=$(./tea-rust-llm-phi4-*-aarch64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-rust-llm-phi4-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-appimage-phi4-aarch64
+          path: tea-rust-llm-phi4-*-aarch64.AppImage
+          retention-days: 1
+
+  # ============================================================
   # Python AppImage Distribution (Linux only - self-contained with Prolog)
   # Uses tea-python-linux-{arch}-full-prolog as base binary
   # Bundles ALL optional dependencies + janus-swi + libswipl.so + SWI-Prolog runtime
@@ -2418,6 +2925,653 @@ jobs:
           retention-days: 1
 
   # ============================================================
+  # Python LLM AppImages - Gemma Model (TEA-RELEASE-004.2)
+  # Self-contained with bundled Gemma GGUF model (~5GB)
+  # ============================================================
+  build-python-llm-gemma-x86_64:
+    runs-on: ubuntu-22.04
+    needs: [build-python-linux-full-prolog-x86_64]
+    name: Python LLM AppImage x86_64 (Gemma)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: .
+
+      - name: Download Gemma model from Hugging Face
+        run: |
+          mkdir -p models
+          # Download Gemma 3n E4B Instruct Q4_K_M (~5GB)
+          wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+            "https://huggingface.co/QuantFactory/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it.Q4_K_M.gguf" || {
+            echo "Primary download failed, trying mirror..."
+            wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+              "https://huggingface.co/bartowski/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
+          }
+          ls -lh models/
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent LLM (Python)
+          Comment=Lightweight state graph workflow engine with bundled LLM
+          Exec=tea
+          Icon=tea-python-llm
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea-python-llm.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#4B0082"/>
+            <text x="128" y="140" font-family="monospace" font-size="60" fill="#FFD700" text-anchor="middle">LLM</text>
+            <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFD700" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python-llm.AppDir/usr/bin
+          mkdir -p tea-python-llm.AppDir/usr/lib/swipl
+          mkdir -p tea-python-llm.AppDir/usr/share/models
+          chmod +x tea-python-linux-x86_64-full-prolog
+          cp tea-python-linux-x86_64-full-prolog tea-python-llm.AppDir/usr/bin/tea
+          cp models/gemma-3n-E4B-it-Q4_K_M.gguf tea-python-llm.AppDir/usr/share/models/
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          tar -xzf python-swipl-runtime-x86_64-full.tar.gz
+          cp -r python-swipl-runtime-x86_64-full/home/* tea-python-llm.AppDir/usr/lib/swipl/
+          mkdir -p tea-python-llm.AppDir/usr/lib
+          cp -L python-swipl-runtime-x86_64-full/lib/libswipl.so* tea-python-llm.AppDir/usr/lib/
+
+          cd tea-python-llm.AppDir/usr/lib
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+      - name: Run linuxdeploy
+        run: |
+          export LD_LIBRARY_PATH="$(pwd)/tea-python-llm.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-python-llm.AppDir \
+            --executable tea-python-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-python-llm.desktop \
+            --icon-file tea-python-llm.svg \
+            --output appimage
+
+      - name: Create custom AppRun with LLM model path
+        run: |
+          rm -f tea-python-llm.AppDir/AppRun
+          cat > tea-python-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          export TEA_MODEL_PATH="${HERE}/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-python-llm.AppDir "tea-python-llm-gemma-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-llm-gemma-*-x86_64.AppImage
+          ./tea-python-llm-gemma-*-x86_64.AppImage --version
+          impl=$(./tea-python-llm-gemma-*-x86_64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - verify model is bundled
+        run: |
+          ./tea-python-llm-gemma-*-x86_64.AppImage --appimage-extract
+          if [ ! -f squashfs-root/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf ]; then
+            echo "Error: Model file not found in AppImage"
+            exit 1
+          fi
+          model_size=$(stat -c%s "squashfs-root/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf")
+          model_size_gb=$((model_size / 1024 / 1024 / 1024))
+          echo "Bundled model size: ${model_size_gb}GB"
+          rm -rf squashfs-root
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-llm-gemma-*-x86_64.AppImage)
+          size_gb=$((size / 1024 / 1024 / 1024))
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB (${size_gb}GB)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-llm-gemma-appimage-x86_64
+          path: tea-python-llm-gemma-*-x86_64.AppImage
+          retention-days: 1
+
+  build-python-llm-gemma-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: [build-python-linux-full-prolog-arm64]
+    name: Python LLM AppImage aarch64 (Gemma)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: .
+
+      - name: Download Gemma model from Hugging Face
+        run: |
+          mkdir -p models
+          wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+            "https://huggingface.co/QuantFactory/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it.Q4_K_M.gguf" || {
+            echo "Primary download failed, trying mirror..."
+            wget -q --show-progress -O models/gemma-3n-E4B-it-Q4_K_M.gguf \
+              "https://huggingface.co/bartowski/gemma-3n-E4B-it-GGUF/resolve/main/gemma-3n-E4B-it-Q4_K_M.gguf"
+          }
+          ls -lh models/
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent LLM (Python)
+          Comment=Lightweight state graph workflow engine with bundled LLM
+          Exec=tea
+          Icon=tea-python-llm
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea-python-llm.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#4B0082"/>
+            <text x="128" y="140" font-family="monospace" font-size="60" fill="#FFD700" text-anchor="middle">LLM</text>
+            <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFD700" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python-llm.AppDir/usr/bin
+          mkdir -p tea-python-llm.AppDir/usr/lib/swipl
+          mkdir -p tea-python-llm.AppDir/usr/share/models
+          chmod +x tea-python-linux-arm64-full-prolog
+          cp tea-python-linux-arm64-full-prolog tea-python-llm.AppDir/usr/bin/tea
+          cp models/gemma-3n-E4B-it-Q4_K_M.gguf tea-python-llm.AppDir/usr/share/models/
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          tar -xzf python-swipl-runtime-aarch64-full.tar.gz
+          cp -r python-swipl-runtime-aarch64-full/home/* tea-python-llm.AppDir/usr/lib/swipl/
+          mkdir -p tea-python-llm.AppDir/usr/lib
+          cp -L python-swipl-runtime-aarch64-full/lib/libswipl.so* tea-python-llm.AppDir/usr/lib/
+
+          cd tea-python-llm.AppDir/usr/lib
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+      - name: Run linuxdeploy
+        run: |
+          export LD_LIBRARY_PATH="$(pwd)/tea-python-llm.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-python-llm.AppDir \
+            --executable tea-python-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-python-llm.desktop \
+            --icon-file tea-python-llm.svg \
+            --output appimage
+
+      - name: Create custom AppRun with LLM model path
+        run: |
+          rm -f tea-python-llm.AppDir/AppRun
+          cat > tea-python-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          export TEA_MODEL_PATH="${HERE}/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-python-llm.AppDir "tea-python-llm-gemma-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-llm-gemma-*-aarch64.AppImage
+          ./tea-python-llm-gemma-*-aarch64.AppImage --version
+          impl=$(./tea-python-llm-gemma-*-aarch64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - verify model is bundled
+        run: |
+          ./tea-python-llm-gemma-*-aarch64.AppImage --appimage-extract
+          if [ ! -f squashfs-root/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf ]; then
+            echo "Error: Model file not found in AppImage"
+            exit 1
+          fi
+          model_size=$(stat -c%s "squashfs-root/usr/share/models/gemma-3n-E4B-it-Q4_K_M.gguf")
+          model_size_gb=$((model_size / 1024 / 1024 / 1024))
+          echo "Bundled model size: ${model_size_gb}GB"
+          rm -rf squashfs-root
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-llm-gemma-*-aarch64.AppImage)
+          size_gb=$((size / 1024 / 1024 / 1024))
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB (${size_gb}GB)"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-llm-gemma-appimage-aarch64
+          path: tea-python-llm-gemma-*-aarch64.AppImage
+          retention-days: 1
+
+  # ============================================================
+  # Python LLM AppImages - Phi-4-mini Model (TEA-RELEASE-004.2)
+  # Self-contained with bundled Phi-4-mini Q3_K_S GGUF model (~1.9GB)
+  # ============================================================
+  build-python-llm-phi4-x86_64:
+    runs-on: ubuntu-22.04
+    needs: [build-python-linux-full-prolog-x86_64]
+    name: Python LLM AppImage x86_64 (Phi-4-mini)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-x86_64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-x86_64-full
+          path: .
+
+      - name: Download Phi-4-mini Q3_K_S model from Hugging Face
+        run: |
+          mkdir -p models
+          wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+            "https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf" || {
+            echo "Primary download failed, trying mirror..."
+            wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+              "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
+          }
+          ls -lh models/
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent LLM (Python/Phi-4)
+          Comment=Lightweight state graph workflow engine with bundled Phi-4 LLM
+          Exec=tea
+          Icon=tea-python-llm
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea-python-llm.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#1E90FF"/>
+            <text x="128" y="140" font-family="monospace" font-size="50" fill="#FFFFFF" text-anchor="middle">Phi-4</text>
+            <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFFFFF" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python-llm.AppDir/usr/bin
+          mkdir -p tea-python-llm.AppDir/usr/lib/swipl
+          mkdir -p tea-python-llm.AppDir/usr/share/models
+          chmod +x tea-python-linux-x86_64-full-prolog
+          cp tea-python-linux-x86_64-full-prolog tea-python-llm.AppDir/usr/bin/tea
+          cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-python-llm.AppDir/usr/share/models/
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          tar -xzf python-swipl-runtime-x86_64-full.tar.gz
+          cp -r python-swipl-runtime-x86_64-full/home/* tea-python-llm.AppDir/usr/lib/swipl/
+          mkdir -p tea-python-llm.AppDir/usr/lib
+          cp -L python-swipl-runtime-x86_64-full/lib/libswipl.so* tea-python-llm.AppDir/usr/lib/
+
+          cd tea-python-llm.AppDir/usr/lib
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+      - name: Run linuxdeploy
+        run: |
+          export LD_LIBRARY_PATH="$(pwd)/tea-python-llm.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-python-llm.AppDir \
+            --executable tea-python-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-python-llm.desktop \
+            --icon-file tea-python-llm.svg \
+            --output appimage
+
+      - name: Create custom AppRun with LLM model path
+        run: |
+          rm -f tea-python-llm.AppDir/AppRun
+          cat > tea-python-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          export TEA_MODEL_PATH="${HERE}/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-python-llm.AppDir "tea-python-llm-phi4-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-llm-phi4-*-x86_64.AppImage
+          ./tea-python-llm-phi4-*-x86_64.AppImage --version
+          impl=$(./tea-python-llm-phi4-*-x86_64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - verify model is bundled
+        run: |
+          ./tea-python-llm-phi4-*-x86_64.AppImage --appimage-extract
+          if [ ! -f squashfs-root/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf ]; then
+            echo "Error: Model file not found in AppImage"
+            exit 1
+          fi
+          model_size=$(stat -c%s "squashfs-root/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf")
+          model_size_mb=$((model_size / 1024 / 1024))
+          echo "Bundled model size: ${model_size_mb}MB"
+          rm -rf squashfs-root
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-llm-phi4-*-x86_64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-llm-phi4-appimage-x86_64
+          path: tea-python-llm-phi4-*-x86_64.AppImage
+          retention-days: 1
+
+  build-python-llm-phi4-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: [build-python-linux-full-prolog-arm64]
+    name: Python LLM AppImage aarch64 (Phi-4-mini)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libossp-uuid16 wget
+
+      - name: Download Python Full Prolog binary
+        uses: actions/download-artifact@v4
+        with:
+          name: python-linux-arm64-full-prolog
+          path: .
+
+      - name: Download SWI-Prolog runtime from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-swipl-runtime-aarch64-full
+          path: .
+
+      - name: Download Phi-4-mini Q3_K_S model from Hugging Face
+        run: |
+          mkdir -p models
+          wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+            "https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf" || {
+            echo "Primary download failed, trying mirror..."
+            wget -q --show-progress -O models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+              "https://huggingface.co/bartowski/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q3_K_S.gguf"
+          }
+          ls -lh models/
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-python-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=The Edge Agent LLM (Python/Phi-4)
+          Comment=Lightweight state graph workflow engine with bundled Phi-4 LLM
+          Exec=tea
+          Icon=tea-python-llm
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea-python-llm.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#1E90FF"/>
+            <text x="128" y="140" font-family="monospace" font-size="50" fill="#FFFFFF" text-anchor="middle">Phi-4</text>
+            <text x="128" y="200" font-family="monospace" font-size="40" fill="#FFFFFF" text-anchor="middle">py</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-python-llm.AppDir/usr/bin
+          mkdir -p tea-python-llm.AppDir/usr/lib/swipl
+          mkdir -p tea-python-llm.AppDir/usr/share/models
+          chmod +x tea-python-linux-arm64-full-prolog
+          cp tea-python-linux-arm64-full-prolog tea-python-llm.AppDir/usr/bin/tea
+          cp models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf tea-python-llm.AppDir/usr/share/models/
+
+      - name: Bundle SWI-Prolog runtime
+        run: |
+          tar -xzf python-swipl-runtime-aarch64-full.tar.gz
+          cp -r python-swipl-runtime-aarch64-full/home/* tea-python-llm.AppDir/usr/lib/swipl/
+          mkdir -p tea-python-llm.AppDir/usr/lib
+          cp -L python-swipl-runtime-aarch64-full/lib/libswipl.so* tea-python-llm.AppDir/usr/lib/
+
+          cd tea-python-llm.AppDir/usr/lib
+          FULL_LIB=$(ls libswipl.so.*.*.* 2>/dev/null | head -1 || true)
+          if [ -n "$FULL_LIB" ]; then
+            MAJOR_VERSION=$(echo "$FULL_LIB" | sed 's/libswipl.so.\([0-9]*\).*/\1/')
+            [ ! -e "libswipl.so.${MAJOR_VERSION}" ] && ln -sf "$FULL_LIB" "libswipl.so.${MAJOR_VERSION}"
+            [ ! -e "libswipl.so" ] && ln -sf "libswipl.so.${MAJOR_VERSION}" "libswipl.so"
+          fi
+          cd ../../..
+
+      - name: Run linuxdeploy
+        run: |
+          export LD_LIBRARY_PATH="$(pwd)/tea-python-llm.AppDir/usr/lib:${LD_LIBRARY_PATH}"
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-python-llm.AppDir \
+            --executable tea-python-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-python-llm.desktop \
+            --icon-file tea-python-llm.svg \
+            --output appimage
+
+      - name: Create custom AppRun with LLM model path
+        run: |
+          rm -f tea-python-llm.AppDir/AppRun
+          cat > tea-python-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          export SWI_HOME_DIR="${HERE}/usr/lib/swipl"
+          export PYTHONDONTWRITEBYTECODE=1
+          export PYTHONUNBUFFERED=1
+          export TEA_MODEL_PATH="${HERE}/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf"
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-python-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-python-llm.AppDir "tea-python-llm-phi4-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-python-llm-phi4-*-aarch64.AppImage
+          ./tea-python-llm-phi4-*-aarch64.AppImage --version
+          impl=$(./tea-python-llm-phi4-*-aarch64.AppImage --impl)
+          if [ "$impl" != "python" ]; then
+            echo "Error: Expected 'python', got '$impl'"
+            exit 1
+          fi
+
+      - name: Functional test - verify model is bundled
+        run: |
+          ./tea-python-llm-phi4-*-aarch64.AppImage --appimage-extract
+          if [ ! -f squashfs-root/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf ]; then
+            echo "Error: Model file not found in AppImage"
+            exit 1
+          fi
+          model_size=$(stat -c%s "squashfs-root/usr/share/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf")
+          model_size_mb=$((model_size / 1024 / 1024))
+          echo "Bundled model size: ${model_size_mb}MB"
+          rm -rf squashfs-root
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-python-llm-phi4-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-llm-phi4-appimage-aarch64
+          path: tea-python-llm-phi4-*-aarch64.AppImage
+          retention-days: 1
+
+  # ============================================================
   # Python Wheel (existing)
   # ============================================================
   build-wheel:
@@ -2443,6 +3597,127 @@ jobs:
         with:
           name: python-wheel
           path: python/dist/*.whl
+          retention-days: 1
+
+  # ============================================================
+  # WASM LLM Package (TEA-RELEASE-004.3c)
+  # Builds WASM package with model for browser LLM inference
+  # ============================================================
+  build-wasm-llm:
+    runs-on: ubuntu-latest
+    name: WASM LLM Package
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build WASM package
+        run: |
+          cd rust/tea-wasm-llm
+          wasm-pack build --target web --release
+
+      - name: Compile TypeScript wrapper
+        run: |
+          cd rust/tea-wasm-llm
+          npm install typescript
+          # Create tsconfig if not exists
+          if [ ! -f tsconfig.json ]; then
+            cat > tsconfig.json << 'EOF'
+          {
+            "compilerOptions": {
+              "target": "ESNext",
+              "module": "ESNext",
+              "moduleResolution": "node",
+              "declaration": true,
+              "declarationMap": true,
+              "strict": true,
+              "esModuleInterop": true,
+              "skipLibCheck": true,
+              "outDir": "./pkg"
+            },
+            "include": ["js/**/*.ts"],
+            "exclude": ["node_modules", "pkg"]
+          }
+          EOF
+          fi
+          npx tsc --project tsconfig.json || echo "TypeScript compilation had warnings"
+
+      - name: Download model
+        run: |
+          cd rust/tea-wasm-llm
+          chmod +x scripts/download-model.sh
+          ./scripts/download-model.sh
+
+      - name: Check model size
+        run: |
+          size=$(stat -c%s "rust/tea-wasm-llm/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf")
+          size_mb=$((size / 1024 / 1024))
+          echo "Model size: ${size_mb}MB"
+          # Verify it's under GitHub's 2GB limit
+          if [ $size -gt 2147483648 ]; then
+            echo "ERROR: Model exceeds 2GB limit"
+            exit 1
+          fi
+
+      - name: Create release tarball
+        run: |
+          cd rust/tea-wasm-llm
+          # Get version from tag
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Create tarball with pkg and js directories
+          tar -czvf "tea-wasm-llm-${VERSION}.tar.gz" pkg/ js/
+
+          echo "Created tea-wasm-llm-${VERSION}.tar.gz"
+          ls -lh "tea-wasm-llm-${VERSION}.tar.gz"
+
+      - name: Generate WASM SHA256SUMS
+        run: |
+          cd rust/tea-wasm-llm
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+
+          # Generate checksums for all WASM release assets
+          sha256sum "tea-wasm-llm-${VERSION}.tar.gz" \
+                    models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf \
+                    models/manifest.json > SHA256SUMS.wasm
+
+          echo "SHA256SUMS.wasm contents:"
+          cat SHA256SUMS.wasm
+
+      - name: Upload WASM package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-llm-package
+          path: |
+            rust/tea-wasm-llm/tea-wasm-llm-*.tar.gz
+            rust/tea-wasm-llm/SHA256SUMS.wasm
+          retention-days: 1
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-llm-model
+          path: |
+            rust/tea-wasm-llm/models/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
+            rust/tea-wasm-llm/models/manifest.json
           retention-days: 1
 
   # ============================================================
@@ -2475,8 +3750,19 @@ jobs:
       # Rust AppImages (self-contained with Prolog)
       - build-appimage-x86_64
       - build-appimage-aarch64
+      # Rust LLM AppImages (self-contained with bundled GGUF models)
+      - build-rust-llm-gemma-appimage-x86_64
+      - build-rust-llm-phi4-appimage-x86_64
+      - build-rust-llm-phi4-appimage-aarch64
+      # Python LLM AppImages (self-contained with bundled GGUF models) - TEA-RELEASE-004.2
+      - build-python-llm-gemma-x86_64
+      - build-python-llm-gemma-aarch64
+      - build-python-llm-phi4-x86_64
+      - build-python-llm-phi4-aarch64
       # Python wheel
       - build-wheel
+      # WASM LLM package
+      - build-wasm-llm
     runs-on: ubuntu-latest
     name: Create Release
 

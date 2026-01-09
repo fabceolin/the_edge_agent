@@ -1206,6 +1206,12 @@ def from_dot(
         help="Override tea executable name in commands (e.g., tea-python, tea-rust). "
         "Replaces 'tea' at start of command with the specified executable name.",
     ),
+    timeout: int = typer.Option(
+        900,
+        "--timeout",
+        "-t",
+        help="Subprocess timeout in seconds (default: 900 = 15 minutes)",
+    ),
 ):
     """
     Convert DOT/Graphviz diagram to TEA YAML workflow.
@@ -1275,6 +1281,7 @@ def from_dot(
             use_node_commands=use_node_commands,
             allow_cycles=allow_cycles,
             tea_executable=tea_executable,
+            subprocess_timeout=timeout,
         )
 
         if output:

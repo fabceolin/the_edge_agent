@@ -2,7 +2,10 @@
 
 ## Status
 
-Draft
+Ready for Development
+
+**Updated:** 2026-01-08
+**Notes:** Epic validated with comprehensive QA test design (127 test scenarios). Quality gate passed with concerns noted. All 8 stories defined with acceptance criteria. Dual-model strategy addresses GitHub 2GB limit risk.
 
 ## Epic Goal
 
@@ -248,6 +251,122 @@ The WASM feasibility spike validated:
 | 2026-01-08 | 0.1 | Initial epic draft | Sarah (PO Agent) |
 | 2026-01-08 | 0.2 | Split Story 3 into 3a/3b/3c for manageability | Bob (SM Agent) |
 | 2026-01-08 | 0.3 | Dual-model strategy: Gemma for AppImage (quality), Phi-4-mini for WASM/smaller (1.9GB, no chunking) | Sarah (PO Agent) |
+
+---
+
+## QA Notes
+
+**Assessment Date:** 2026-01-08
+**Test Architect:** Quinn (QA Agent)
+**Test Design Reference:** `docs/qa/assessments/TEA-RELEASE-004-test-design-20260108.md`
+
+### Test Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| **Total Test Scenarios** | 127 |
+| **Unit Tests** | 52 (41%) |
+| **Integration Tests** | 48 (38%) |
+| **E2E Tests** | 27 (21%) |
+
+**Priority Distribution:**
+- **P0 (Critical):** 34 tests - Must pass before release
+- **P1 (High):** 51 tests - Should pass
+- **P2 (Medium):** 32 tests - Full regression
+- **P3 (Low):** 10 tests - Release candidates only
+
+**Coverage by Story:**
+
+| Story | Unit | Int | E2E | Total |
+|-------|------|-----|-----|-------|
+| 004.1 - Rust LLM AppImage | 8 | 9 | 4 | 21 |
+| 004.2 - Python LLM AppImage | 8 | 9 | 4 | 21 |
+| 004.3a - WASM LLM Core | 7 | 6 | 3 | 16 |
+| 004.3b - Model Loading/Caching | 8 | 7 | 4 | 19 |
+| 004.3c - WASM Release/Testing | 3 | 4 | 5 | 12 |
+| 004.4 - Rust LLM Actions | 9 | 6 | 2 | 17 |
+| 004.5 - Python LLM Actions | 9 | 6 | 2 | 17 |
+| 004.6 - Documentation | 0 | 1 | 3 | 4 |
+
+### Risk Areas Identified
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| **AppImage size exceeds GitHub 2GB limit** | Medium | High | Phi-4-mini Q3_K_S variant (~1.9GB) fits within limit; Gemma variants (~5GB) require external hosting |
+| **llama-cpp-2 ARM64 compilation failures** | Medium | High | Native ARM64 runner tests (004.1-INT-002/004, 004.2-INT-002/004) |
+| **IndexedDB storage limits in Safari** | Medium | Medium | Safari 1GB limit test (004.3b-E2E-004), graceful fallback |
+| **Model load failure at runtime** | Low | High | API fallback tests (004.4-UNIT-008, 004.5-UNIT-008) |
+| **COOP/COEP header misconfiguration** | Medium | High | Header validation tests (004.3a-INT-001/002, 004.3c-UNIT-002) |
+| **Regression in non-LLM builds** | Low | Critical | Feature isolation tests (004.1-UNIT-009, 004.2-UNIT-009, 004.4-INT-006, 004.5-INT-006) |
+
+### Recommended Test Scenarios
+
+**Critical Path (P0 - Must Execute):**
+
+1. **Build Validation:**
+   - All 8 AppImage variants build successfully (Gemma x86_64/ARM64, Phi-4-mini x86_64/ARM64 for both Rust and Python)
+   - WASM package builds with wasm-pack
+   - GitHub Actions release workflow triggers correctly
+
+2. **Self-Contained Execution:**
+   - AppImages run on clean Ubuntu 22.04/24.04 containers with no dependencies installed
+   - WASM package loads in headless Chrome with COOP/COEP headers
+   - Model auto-detection from $APPDIR/usr/share/models/ works
+
+3. **LLM Actions:**
+   - `llm.call`, `llm.chat`, `llm.embed` actions work with bundled models
+   - Chat format templates (ChatML for Phi-4-mini, Gemma format for Gemma) apply correctly
+   - Model context windows respected (128K for Phi-4-mini, 32K for Gemma)
+
+4. **Regression Prevention:**
+   - `cargo build` without `llm-local` feature succeeds
+   - `pip install` without `[llm-local]` extras succeeds
+   - Existing Prolog AppImages remain unchanged and functional
+
+**Secondary Path (P1 - Should Execute):**
+
+5. **Model Loading & Caching:**
+   - IndexedDB caching verified (second page load uses cache)
+   - Progress callbacks fire during model download
+   - SHA256 checksum verification works
+
+6. **Configuration Flexibility:**
+   - TEA_MODEL_PATH environment variable override works
+   - YAML settings model_path respected
+   - API fallback triggers when local model unavailable
+
+### Concerns & Blockers
+
+| Type | Description | Severity | Status |
+|------|-------------|----------|--------|
+| **CONCERN** | Gemma ~5GB variants exceed GitHub Releases 2GB limit - requires external hosting strategy | Medium | Needs decision on hosting (e.g., HuggingFace, separate CDN) |
+| **CONCERN** | Safari 1GB IndexedDB limit may prevent WASM model caching on iOS Safari | Low | Documented in troubleshooting guide, fallback to streaming |
+| **CONCERN** | ARM64 GitHub Actions runners may have limited availability | Medium | Self-hosted runner or emulation fallback needed |
+| **BLOCKER** | None identified at test design phase | - | - |
+
+### Test Environment Requirements
+
+| Environment | Purpose |
+|-------------|---------|
+| Ubuntu 22.04 container (clean) | AppImage E2E validation |
+| Ubuntu 24.04 container (clean) | AppImage E2E validation |
+| Fedora latest container | Cross-distro AppImage validation |
+| Chrome headless + COOP/COEP | WASM browser testing |
+| Firefox headless | WASM browser compatibility |
+| Safari (manual) | IndexedDB limit validation |
+
+### Quality Gate Recommendation
+
+**Status:** PASS (with concerns noted)
+
+The epic has comprehensive test coverage across all 8 stories. All acceptance criteria have mapped test scenarios. Risk mitigations are in place for identified concerns. The dual-model strategy (Gemma for quality, Phi-4-mini for size constraints) addresses the primary GitHub 2GB limit risk effectively.
+
+**Pre-Release Checklist:**
+- [ ] All P0 tests pass
+- [ ] All P1 tests pass (or have documented waivers)
+- [ ] External hosting solution confirmed for >2GB artifacts
+- [ ] ARM64 build strategy confirmed
+- [ ] Documentation reviewed and examples validated
 
 ---
 

@@ -178,6 +178,171 @@ settings:
 
 See [YAML Reference](../shared/YAML_REFERENCE.md) for complete documentation.
 
+#### Local LLM Provider (TEA-RELEASE-004)
+
+Run LLM inference locally using bundled GGUF models via llama.cpp. No API keys or network required.
+
+**Installation:**
+
+```bash
+pip install the_edge_agent[llm-local]
+```
+
+**Or use an LLM-bundled AppImage** (recommended):
+
+```bash
+./tea-python-llm-gemma-0.9.5-x86_64.AppImage run workflow.yaml
+```
+
+##### llm.chat (Local Backend)
+
+Generate text using a local llama.cpp model.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `backend` | string | No | "auto" | "local", "api", or "auto" |
+| `prompt` | string | Yes | - | Text prompt for generation |
+| `system` | string | No | - | System prompt for context |
+| `max_tokens` | int | No | 100 | Maximum tokens to generate |
+| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
+| `model_path` | string | No | auto | Path to GGUF model file |
+
+**Returns:**
+
+```json
+{
+  "content": "Generated response text",
+  "backend": "local",
+  "model": "gemma-3n-E4B"
+}
+```
+
+**Settings:**
+
+Configure in workflow `settings.llm`:
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `backend` | string | "auto" | "local", "api", or "auto" |
+| `model_path` | string | auto | Path to GGUF model file |
+| `n_ctx` | int | 2048 | Context window size |
+| `n_gpu_layers` | int | 0 | GPU layers (0=CPU, -1=all GPU) |
+
+**Example:**
+
+```yaml
+settings:
+  llm:
+    backend: local
+    model_path: ~/.cache/tea/models/gemma-3n-E4B-it-Q4_K_M.gguf
+
+nodes:
+  - name: generate
+    action: llm.chat
+    params:
+      prompt: "Explain quantum computing in simple terms."
+      system: "You are a helpful assistant."
+      max_tokens: 200
+    outputs:
+      answer: "{{ action_result.content }}"
+```
+
+##### llm.embed (Local Backend)
+
+Generate text embeddings using a local model.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `backend` | string | No | "auto" | "local", "api", or "auto" |
+| `text` | string | Yes | - | Text to embed |
+| `model_path` | string | No | auto | Path to embedding model |
+
+**Returns:**
+
+```json
+{
+  "embedding": [0.123, -0.456, ...],
+  "dimensions": 768,
+  "model": "nomic-embed-text"
+}
+```
+
+**Note:** Not all models support embeddings. Use dedicated embedding models like `nomic-embed-text` or `all-MiniLM` for best results.
+
+**Example:**
+
+```yaml
+- name: embed_text
+  action: llm.embed
+  params:
+    backend: local
+    text: "{{ state.document }}"
+  outputs:
+    embedding: "{{ action_result.embedding }}"
+```
+
+##### llm.stream (Local Backend)
+
+Stream LLM responses token-by-token with callback support.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `backend` | string | No | "auto" | "local", "api", or "auto" |
+| `prompt` | string | Yes | - | Text prompt for generation |
+| `system` | string | No | - | System prompt |
+| `max_tokens` | int | No | 100 | Maximum tokens |
+| `on_token` | callable | No | - | Callback for each token |
+
+**Returns:**
+
+```json
+{
+  "content": "Full generated response",
+  "backend": "local",
+  "model": "gemma-3n-E4B",
+  "token_count": 45
+}
+```
+
+**Streaming Callback Pattern:**
+
+```python
+def on_token(token: str):
+    print(token, end="", flush=True)
+
+result = engine.execute(
+    workflow,
+    {"question": "Hello!"},
+    callbacks={"on_token": on_token}
+)
+```
+
+##### Model Path Resolution
+
+Models are discovered in this order:
+
+1. `TEA_MODEL_PATH` environment variable
+2. `params.model_path` in action
+3. `settings.llm.model_path` in YAML
+4. `$APPDIR/usr/share/models/` (AppImage bundle)
+5. `~/.cache/tea/models/` (default cache)
+
+##### Backend Selection: auto vs local vs api
+
+| Backend | Behavior |
+|---------|----------|
+| `auto` | Prefer local if model available, fallback to API |
+| `local` | Force local model, error if not found |
+| `api` | Force API call (requires OPENAI_API_KEY) |
+
+The `auto` backend is recommended for portable workflows that work both offline (with AppImage) and online (with API).
+
 ### HTTP Actions
 
 | Action | Module | Description |
