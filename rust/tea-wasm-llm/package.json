@@ -1,0 +1,81 @@
+{
+  "name": "tea-wasm-llm",
+  "version": "0.2.0",
+  "description": "TEA WASM LLM - Batteries-included browser LLM with bundled wllama engine and model caching",
+  "main": "./dist/js/index.js",
+  "module": "./dist/js/index.js",
+  "types": "./dist/js/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/js/index.d.ts",
+      "import": "./dist/js/index.js"
+    },
+    "./model-loader": {
+      "types": "./dist/js/model-loader.d.ts",
+      "import": "./dist/js/model-loader.js"
+    },
+    "./model-cache": {
+      "types": "./dist/js/model-cache.d.ts",
+      "import": "./dist/js/model-cache.js"
+    },
+    "./wllama-loader": {
+      "types": "./dist/js/wllama-loader.d.ts",
+      "import": "./dist/js/wllama-loader.js"
+    }
+  },
+  "files": [
+    "dist",
+    "pkg",
+    "js",
+    "assets"
+  ],
+  "scripts": {
+    "build": "./build.sh",
+    "build:wasm": "wasm-pack build --target web --out-dir pkg",
+    "build:ts": "tsc -p js/tsconfig.json",
+    "build:assets": "./scripts/copy-wllama-assets.sh",
+    "download-model": "./scripts/download-model.sh",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:server": "node tests/server.js",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:ui": "playwright test --ui",
+    "test:browser": "echo 'Open tests/test.html in a browser with a local server'",
+    "test:cache": "echo 'Open tests/model-cache-test.html in a browser with a local server'",
+    "lint": "eslint js/**/*.ts",
+    "typecheck": "tsc --noEmit -p js/tsconfig.json",
+    "build:bundle": "esbuild js/index.ts --bundle --format=esm --outfile=dist/bundle/tea-wasm-llm.js --external:../pkg/* --platform=browser --target=es2020",
+    "build:demo": "npm run build:wasm && npm run build:ts && node scripts/bundle-for-demo.cjs"
+  },
+  "dependencies": {
+    "@wllama/wllama": "^2.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "fake-indexeddb": "^5.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "wasm",
+    "llm",
+    "edge-computing",
+    "offline-ai",
+    "the-edge-agent",
+    "indexeddb",
+    "model-caching"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fabceolin/the_edge_agent.git",
+    "directory": "rust/tea-wasm-llm"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

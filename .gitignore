@@ -182,6 +182,8 @@ log
 node_modules/
 package-lock.json
 package.json
+# But include tea-wasm-llm package.json (needed for CI)
+!rust/tea-wasm-llm/package.json
 setup.py.orig
 web-bundles/
 {{ variables.output_dir }}/
