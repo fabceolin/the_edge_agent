@@ -108,7 +108,7 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools && \
+            "apt-get update && apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc && \
              cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
@@ -263,7 +263,8 @@ jobs:
       - name: Install OpenMP and Vulkan dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools
+          # On Ubuntu 24.04, glslc is available in universe repo
+          sudo apt-get install -y libgomp1 libvulkan-dev glslang-tools glslc
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -966,7 +967,7 @@ jobs:
   # All optional deps + janus-swi (requires SWI-Prolog 9.1+ on system)
   # ============================================================
   build-python-linux-full-prolog-x86_64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     name: Python linux-x86_64-full-prolog
 
     steps:
@@ -977,7 +978,7 @@ jobs:
           # Official PPA required for 9.1+
           sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev glslang-tools
+          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev glslang-tools glslc
 
           # Verify version (must be 9.1+)
           swipl --version
@@ -1147,7 +1148,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
             libreadline-dev libedit-dev pkg-config libgomp1 \
-            libvulkan-dev glslang-tools
+            libvulkan-dev glslang-tools glslc
 
           # Clone and build SWI-Prolog 9.3.x
           git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
@@ -2107,7 +2108,7 @@ jobs:
 
   # Build Rust binary with llm-local feature for x86_64
   build-rust-llm-linux-x86_64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     name: Rust linux-x86_64-llm
 
     steps:
@@ -2118,7 +2119,7 @@ jobs:
           sudo apt-get update
           # OpenMP comes with GCC (build-essential), no separate libgomp-dev needed
           sudo apt-get install -y build-essential cmake pkg-config \
-            libvulkan-dev glslang-tools
+            libvulkan-dev glslang-tools glslc
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -2183,7 +2184,7 @@ jobs:
           sudo apt-get update
           # OpenMP comes with GCC (build-essential), no separate libgomp-dev needed
           sudo apt-get install -y build-essential cmake pkg-config \
-            libvulkan-dev glslang-tools
+            libvulkan-dev glslang-tools glslc
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
