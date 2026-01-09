@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA WASM LLM Demo</title>
+
+    <!-- COOP/COEP Service Worker for multi-threading on GitHub Pages -->
+    <script src="coi-serviceworker.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>TEA WASM LLM Demo</h1>
+            <p class="subtitle">Batteries-included browser LLM</p>
+            <a href="https://github.com/fabceolin/the_edge_agent" target="_blank" class="github-link">
+                GitHub
+            </a>
+        </header>
+
+        <div id="status-bar">
+            <span id="status">Initializing...</span>
+            <span id="threading-status"></span>
+            <span id="cache-status"></span>
+        </div>
+
+        <div id="progress-container" class="hidden">
+            <div id="progress-bar">
+                <div id="progress-fill"></div>
+            </div>
+            <span id="progress-text">0%</span>
+        </div>
+
+        <nav class="tabs">
+            <button class="tab active" data-tab="chat">Chat</button>
+            <button class="tab" data-tab="yaml">YAML Demo</button>
+        </nav>
+
+        <main>
+            <!-- Chat Tab -->
+            <div id="chat-tab" class="tab-content active">
+                <div id="messages"></div>
+                <form id="chat-form">
+                    <input
+                        type="text"
+                        id="chat-input"
+                        placeholder="Type your message..."
+                        autocomplete="off"
+                        disabled
+                    >
+                    <button type="submit" id="send-btn" disabled>Send</button>
+                </form>
+            </div>
+
+            <!-- YAML Demo Tab -->
+            <div id="yaml-tab" class="tab-content hidden">
+                <div class="yaml-container">
+                    <div class="yaml-editor">
+                        <label for="yaml-input">YAML Workflow:</label>
+                        <textarea id="yaml-input" rows="15">name: simple-chat
+nodes:
+  - name: respond
+    action: llm.call
+    with:
+      prompt: "{{ state.question }}"
+      max_tokens: 100
+      temperature: 0.7
+edges:
+  - from: __start__
+    to: respond
+  - from: respond
+    to: __end__</textarea>
+                    </div>
+                    <div class="yaml-state">
+                        <label for="state-input">Initial State (JSON):</label>
+                        <textarea id="state-input" rows="4">{"question": "What is the capital of France?"}</textarea>
+                    </div>
+                </div>
+                <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
+                <div id="yaml-output" class="hidden">
+                    <h3>Output:</h3>
+                    <pre id="yaml-result"></pre>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <button id="clear-cache-btn">Clear Cache</button>
+            <button id="reload-model-btn">Reload Model</button>
+            <span id="version"></span>
+        </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

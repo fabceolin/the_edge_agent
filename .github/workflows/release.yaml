@@ -122,12 +122,16 @@ jobs:
              cd /tmp/llama-cpp-python && \
              git submodule update --init --recursive && \
              cd vendor/llama.cpp && git fetch origin && git checkout origin/master && cd ../.. && \
-             CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
+             CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
              cd /src/python && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
+             GGML_LIBS=\$(find /usr -path '*/llama_cpp/lib/*' -name 'libggml*.so' 2>/dev/null | tr '\n' ' ') && \
+             GGML_ADD_BINARIES='' && \
+             for lib in \$GGML_LIBS; do GGML_ADD_BINARIES=\"\$GGML_ADD_BINARIES --add-binary \$lib:lib\"; done && \
              pyinstaller --onefile --name tea-python-linux-x86_64-full \
                --add-binary \"\${LIBGOMP_PATH}:.\" \
+               \$GGML_ADD_BINARIES \
                --hidden-import=the_edge_agent \
                --hidden-import=the_edge_agent.yaml_engine \
                --hidden-import=the_edge_agent.stategraph \
@@ -282,7 +286,8 @@ jobs:
       - name: Install Python dependencies (full)
         env:
           # CMake args matching llama.cpp official Vulkan builds
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
+          # BACKEND_DL required for CPU_ALL_VARIANTS (runtime CPU feature detection)
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -309,8 +314,14 @@ jobs:
         run: |
           cd python
           LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          # Find GGML backend libraries for CPU_ALL_VARIANTS + BACKEND_DL
+          GGML_ADD_BINARIES=""
+          for lib in $(find /usr /opt -path '*/llama_cpp/lib/*' -name 'libggml*.so' 2>/dev/null); do
+            GGML_ADD_BINARIES="$GGML_ADD_BINARIES --add-binary $lib:lib"
+          done
           pyinstaller --onefile --name tea-python-linux-arm64-full \
             --add-binary "${LIBGOMP_PATH}:." \
+            $GGML_ADD_BINARIES \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -1027,8 +1038,8 @@ jobs:
           # CMake args matching llama.cpp official builds
           # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
           # OpenBLAS: Optimized CPU matrix operations
-          # CPU_ALL_VARIANTS: Runtime detection of AVX/AVX2/AVX512
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
+          # CPU_ALL_VARIANTS + BACKEND_DL: Runtime detection of AVX/AVX2/AVX512
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1056,8 +1067,14 @@ jobs:
         run: |
           cd python
           LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          # Find GGML backend libraries for CPU_ALL_VARIANTS + BACKEND_DL
+          GGML_ADD_BINARIES=""
+          for lib in $(find /usr /opt -path '*/llama_cpp/lib/*' -name 'libggml*.so' 2>/dev/null); do
+            GGML_ADD_BINARIES="$GGML_ADD_BINARIES --add-binary $lib:lib"
+          done
           pyinstaller --onefile --name tea-python-linux-x86_64-full-prolog \
             --add-binary "${LIBGOMP_PATH}:." \
+            $GGML_ADD_BINARIES \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -1229,8 +1246,8 @@ jobs:
           # CMake args matching llama.cpp official builds
           # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
           # OpenBLAS: Optimized CPU matrix operations
-          # CPU_ALL_VARIANTS: Runtime detection of NEON/SVE
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
+          # CPU_ALL_VARIANTS + BACKEND_DL: Runtime detection of NEON/SVE
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1258,8 +1275,14 @@ jobs:
         run: |
           cd python
           LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          # Find GGML backend libraries for CPU_ALL_VARIANTS + BACKEND_DL
+          GGML_ADD_BINARIES=""
+          for lib in $(find /usr /opt -path '*/llama_cpp/lib/*' -name 'libggml*.so' 2>/dev/null); do
+            GGML_ADD_BINARIES="$GGML_ADD_BINARIES --add-binary $lib:lib"
+          done
           pyinstaller --onefile --name tea-python-linux-arm64-full-prolog \
             --add-binary "${LIBGOMP_PATH}:." \
+            $GGML_ADD_BINARIES \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \

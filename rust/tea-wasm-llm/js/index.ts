@@ -1,60 +1,58 @@
 /**
- * TEA WASM LLM - TypeScript wrapper for The Edge Agent WASM LLM module
+ * TEA WASM LLM - Batteries-Included Browser LLM
  *
- * This module provides a high-level API for running LLM workflows in the browser
- * using wllama (llama.cpp WASM port).
+ * This module provides a high-level API for running LLM inference in the browser
+ * with wllama bundled internally - zero external npm dependencies required.
  *
  * Features:
- * - YAML workflow execution with LLM actions
+ * - Single import, zero external dependencies ("batteries included")
  * - Model loading with IndexedDB caching
  * - Progress tracking during model download
- * - Automatic cache invalidation on version change
- * - Corrupted cache recovery
+ * - Automatic multi-threading detection
+ * - YAML workflow execution with LLM actions
+ * - Backward compatible with legacy callback API
+ *
+ * ## Quick Start (New Batteries-Included API)
  *
  * @example
  * ```typescript
- * import { Wllama } from '@wllama/wllama';
- * import { initTeaLlm, executeLlmYaml, loadBundledModel } from 'tea-wasm-llm';
+ * import { initLlm, chat, chatStream, embed } from 'tea-wasm-llm';
  *
- * // Load model with caching (first load downloads, subsequent loads use cache)
- * const modelData = await loadBundledModel({
- *   modelBasePath: './models',
- *   useCache: true,
- *   onProgress: (loaded, total) => {
- *     console.log(`Loading: ${Math.round(loaded / total * 100)}%`);
- *   }
+ * // Initialize and load model (one-time)
+ * await initLlm({
+ *   modelUrl: 'https://huggingface.co/.../Phi-4-mini-Q3_K_S.gguf',
+ *   onProgress: (loaded, total) => console.log(`${Math.round(loaded/total*100)}%`),
  * });
  *
- * // Initialize wllama with the loaded model
- * const wllama = new Wllama(CONFIG_PATHS);
- * await wllama.loadModel(modelData);
+ * // Simple chat
+ * const response = await chat("What is 2+2?", { maxTokens: 50 });
+ * console.log(response.content);
  *
- * // Initialize TEA LLM with wllama handler
+ * // Streaming chat
+ * await chatStream("Tell me a story", (token) => {
+ *   process.stdout.write(token);
+ * });
+ *
+ * // Generate embeddings
+ * const embedding = await embed("Hello world");
+ * console.log(embedding.vector);
+ * ```
+ *
+ * ## Legacy Callback API (Backward Compatible)
+ *
+ * @example
+ * ```typescript
+ * import { initTeaLlm, executeLlmYaml } from 'tea-wasm-llm';
+ *
+ * // Register custom LLM handler (e.g., external wllama instance)
  * await initTeaLlm({}, async (paramsJson) => {
  *     const params = JSON.parse(paramsJson);
- *     const result = await wllama.createCompletion(params.prompt, {
- *         nPredict: params.max_tokens || 100,
- *     });
- *     return JSON.stringify({ content: result, model: 'local-wllama' });
+ *     const result = await wllama.createCompletion(params.prompt, {...});
+ *     return JSON.stringify({ content: result });
  * });
  *
- * // Execute a YAML workflow
- * const result = await executeLlmYaml(`
- * name: test
- * nodes:
- *   - name: gen
- *     action: llm.call
- *     with:
- *       prompt: "Once upon a time"
- *       max_tokens: 50
- * edges:
- *   - from: __start__
- *     to: gen
- *   - from: gen
- *     to: __end__
- * `, {});
- *
- * console.log(result.llm_response.content);
+ * // Execute YAML workflow
+ * const result = await executeLlmYaml(yaml, {});
  * ```
  */
 
@@ -516,7 +514,17 @@ export async function clearModelCache(): Promise<void> {
   return clearCache();
 }
 
-// Re-export raw WASM bindings for advanced use
+/**
+ * Re-export raw WASM bindings for advanced use.
+ *
+ * @deprecated For new projects, use the batteries-included API instead:
+ * - initLlm() instead of init() + set_llm_handler()
+ * - chat() / chatStream() instead of llm_call_async()
+ * - embed() instead of llm_embed_async()
+ *
+ * The callback API (set_llm_handler) is maintained for backward compatibility
+ * and for advanced use cases where you need a custom LLM handler.
+ */
 export {
   init,
   execute_yaml,
@@ -554,3 +562,46 @@ export {
   type CachedModel,
   type CacheStats,
 };
+
+// ============================================================================
+// NEW: Batteries-Included API (wllama bundled internally)
+// ============================================================================
+
+// Re-export from wllama-loader for the new simplified API
+export {
+  // Core API
+  initLlm,
+  chat,
+  chatStream,
+  embed,
+  isLlmReady,
+  disposeLlm,
+  // Threading detection (renamed to avoid conflict with WASM export)
+  hasSharedArrayBuffer as hasSharedArrayBufferJs,
+  hasCoopCoep,
+  // Cache helpers
+  getLlmCacheStats,
+  clearLlmCache,
+  // Advanced
+  getWllamaInstance,
+  getDefaultAssetPaths,
+  // Types
+  type InitLlmConfig,
+  type ChatOptions,
+  type ChatResponse,
+  type EmbedResponse,
+  type TokenCallback,
+  type WllamaAssetPaths,
+} from './wllama-loader';
+
+/**
+ * @deprecated Use initLlm() instead for the batteries-included API.
+ * This function is maintained for backward compatibility with the callback pattern.
+ */
+export { initTeaLlm };
+
+/**
+ * @deprecated Use chat() or chatStream() instead for the batteries-included API.
+ * This function is maintained for backward compatibility with the callback pattern.
+ */
+export { executeLlmYaml };

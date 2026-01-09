@@ -1,16 +1,79 @@
 # TEA WASM LLM
 
-Run TEA YAML workflows with local LLM inference in the browser.
+**Batteries-included browser LLM with zero external dependencies.**
 
-This package provides WebAssembly-based LLM execution for The Edge Agent, enabling offline AI inference directly in web browsers without requiring a server backend.
+Run local LLM inference directly in the browser with a single import. No npm peer dependencies required - wllama engine is bundled internally.
 
 ## Features
 
-- YAML workflow execution with LLM actions
+- **Single import** - No external wllama dependency to install
+- **Simple API** - `initLlm()`, `chat()`, `chatStream()`, `embed()`
 - Model loading with IndexedDB caching
 - Progress tracking during model download
 - Automatic cache invalidation on version change
-- Multi-threaded inference (with SharedArrayBuffer)
+- Multi-threaded inference (with SharedArrayBuffer/COOP/COEP)
+- YAML workflow execution with LLM actions
+- Backward compatible with legacy callback API
+
+## Quick Start (Batteries-Included API)
+
+```typescript
+import { initLlm, chat, chatStream, embed } from 'tea-wasm-llm';
+
+// Initialize and load model (one-time)
+await initLlm({
+  modelUrl: 'https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf',
+  onProgress: (loaded, total) => {
+    console.log(`Loading: ${Math.round(loaded / total * 100)}%`);
+  },
+  onReady: () => console.log('Ready!'),
+});
+
+// Simple chat
+const response = await chat("What is the capital of France?", {
+  maxTokens: 100,
+  temperature: 0.7,
+});
+console.log(response.content);
+
+// Streaming chat
+await chatStream("Tell me a story", (token) => {
+  process.stdout.write(token);
+});
+
+// Generate embeddings
+const embedding = await embed("Hello world");
+console.log(embedding.vector); // Float32Array
+```
+
+## HTML Example
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="coi-serviceworker.js"></script> <!-- For multi-threading -->
+</head>
+<body>
+  <div id="output"></div>
+  <script type="module">
+    import { initLlm, chat } from './pkg/index.js';
+
+    const output = document.getElementById('output');
+
+    await initLlm({
+      modelUrl: './models/Phi-4-mini-Q3_K_S.gguf',
+      onProgress: (loaded, total) => {
+        output.textContent = `Loading: ${Math.round(loaded / total * 100)}%`;
+      },
+    });
+
+    const response = await chat("Hello!");
+    output.textContent = response.content;
+  </script>
+</body>
+</html>
+```
 
 ## Installation
 
@@ -101,7 +164,12 @@ node tests/server.js
 
 ## Usage
 
-### Basic Usage
+### Legacy Callback API (Backward Compatible)
+
+> **Note:** For new projects, use the batteries-included API shown in Quick Start above.
+> The callback API is maintained for backward compatibility and advanced use cases.
+
+#### Basic Usage (Legacy)
 
 ```html
 <!DOCTYPE html>
