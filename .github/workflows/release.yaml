@@ -108,15 +108,18 @@ jobs:
       - name: Build with PyInstaller Docker (full dependencies)
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
-            "cd /src/python && \
+            "apt-get update && apt-get install -y libgomp-dev libvulkan-dev glslang-tools && \
+             cd /src/python && \
              pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
                          firebase-admin duckdb && \
-             CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python && \
+             CMAKE_ARGS='-DGGML_VULKAN=on -DGGML_OPENMP=on' FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall && \
              pip install -e . --no-deps && \
+             LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
              pyinstaller --onefile --name tea-python-linux-x86_64-full \
+               --add-binary \"\${LIBGOMP_PATH}:.\" \
                --hidden-import=the_edge_agent \
                --hidden-import=the_edge_agent.yaml_engine \
                --hidden-import=the_edge_agent.stategraph \
@@ -257,12 +260,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install OpenMP and Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgomp-dev libvulkan-dev glslang-tools
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Python dependencies (full)
+        env:
+          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          FORCE_CMAKE: "1"
         run: |
           cd python
           pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
@@ -270,14 +281,16 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
           pip install -e . --no-deps
           pip install pyinstaller
 
       - name: Build standalone binary (full)
         run: |
           cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
           pyinstaller --onefile --name tea-python-linux-arm64-full \
+            --add-binary "${LIBGOMP_PATH}:." \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -959,12 +972,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog 9.1+
+      - name: Install SWI-Prolog 9.1+, OpenMP, and Vulkan
         run: |
           # Official PPA required for 9.1+
           sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config
+          sudo apt-get install -y swi-prolog-nox pkg-config libgomp-dev libvulkan-dev glslang-tools
 
           # Verify version (must be 9.1+)
           swipl --version
@@ -977,6 +990,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Python dependencies (full + janus-swi + llm-local)
+        env:
+          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          FORCE_CMAKE: "1"
         run: |
           cd python
           pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
@@ -984,7 +1000,7 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -992,7 +1008,9 @@ jobs:
       - name: Build standalone binary (full + prolog)
         run: |
           cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
           pyinstaller --onefile --name tea-python-linux-x86_64-full-prolog \
+            --add-binary "${LIBGOMP_PATH}:." \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
@@ -1119,16 +1137,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SWI-Prolog 9.1+ (build from source)
+      - name: Install SWI-Prolog 9.1+ (build from source), OpenMP, and Vulkan
         run: |
           # Ubuntu 24.04 has SWI-Prolog 9.0.4, but janus-swi requires >= 9.1.12
           # Build SWI-Prolog 9.3.x from source
 
-          # Install build dependencies
+          # Install build dependencies, OpenMP, and Vulkan libraries
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
-            libreadline-dev libedit-dev pkg-config
+            libreadline-dev libedit-dev pkg-config libgomp-dev \
+            libvulkan-dev glslang-tools
 
           # Clone and build SWI-Prolog 9.3.x
           git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
@@ -1158,6 +1177,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Python dependencies (full + janus-swi + llm-local)
+        env:
+          CMAKE_ARGS: "-DGGML_VULKAN=on -DGGML_OPENMP=on"
+          FORCE_CMAKE: "1"
         run: |
           cd python
           pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
@@ -1165,7 +1187,7 @@ jobs:
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
                       firebase-admin duckdb
-          CMAKE_ARGS='-DGGML_OPENMP=OFF' pip install llama-cpp-python
+          pip install llama-cpp-python --no-cache-dir --force-reinstall
           pip install janus-swi
           pip install -e . --no-deps
           pip install pyinstaller
@@ -1173,7 +1195,9 @@ jobs:
       - name: Build standalone binary (full + prolog)
         run: |
           cd python
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
           pyinstaller --onefile --name tea-python-linux-arm64-full-prolog \
+            --add-binary "${LIBGOMP_PATH}:." \
             --hidden-import=the_edge_agent \
             --hidden-import=the_edge_agent.yaml_engine \
             --hidden-import=the_edge_agent.stategraph \
