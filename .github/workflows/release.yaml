@@ -120,8 +120,8 @@ jobs:
              git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python && \
              cd /tmp/llama-cpp-python && \
              git submodule update --init --recursive && \
-             cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../.. && \
-             CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
+             cd vendor/llama.cpp && git fetch origin && git checkout b6188 && cd ../.. && \
+             CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.6188' FORCE_CMAKE=1 pip install . --no-cache-dir -v && \
              cd /src/python && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
@@ -289,7 +289,7 @@ jobs:
           CC: gcc-14
           CXX: g++-14
           # CMake args with CPU_ALL_VARIANTS for runtime CPU feature detection
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684"
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.6188"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -304,8 +304,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Pin llama.cpp to stable release (b7684) for reproducible builds
-          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
+          # Pin llama.cpp to stable release (b6188) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b6188 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 
@@ -1045,7 +1045,7 @@ jobs:
           # Vulkan: GPU acceleration (works on NVIDIA, AMD, Intel)
           # OpenBLAS: Optimized CPU matrix operations
           # CPU_ALL_VARIANTS + BACKEND_DL: Runtime detection of AVX/AVX2/AVX512
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684"
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.6188"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1060,8 +1060,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Pin llama.cpp to stable release (b7684) for reproducible builds
-          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
+          # Pin llama.cpp to stable release (b6188) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b6188 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 
@@ -1255,7 +1255,7 @@ jobs:
           CXX: g++-14
           # CMake args with CPU_ALL_VARIANTS for runtime CPU feature detection
           # Vulkan: GPU acceleration, OpenBLAS: Optimized CPU matrix operations
-          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.7684"
+          CMAKE_ARGS: "-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DLLAMA_INSTALL_VERSION=0.0.6188"
           FORCE_CMAKE: "1"
         run: |
           cd python
@@ -1270,8 +1270,8 @@ jobs:
           git clone --recurse-submodules https://github.com/abetlen/llama-cpp-python.git /tmp/llama-cpp-python
           cd /tmp/llama-cpp-python
           git submodule update --init --recursive
-          # Pin llama.cpp to stable release (b7684) for reproducible builds
-          cd vendor/llama.cpp && git fetch origin && git checkout b7684 && cd ../..
+          # Pin llama.cpp to stable release (b6188) for reproducible builds
+          cd vendor/llama.cpp && git fetch origin && git checkout b6188 && cd ../..
           pip install . --no-cache-dir -v
           cd $GITHUB_WORKSPACE/python
 

@@ -4,8 +4,8 @@
 
 Ready for Development
 
-**Updated:** 2026-01-08
-**Notes:** Epic validated with comprehensive QA test design (127 test scenarios). Quality gate passed with concerns noted. All 8 stories defined with acceptance criteria. Dual-model strategy addresses GitHub 2GB limit risk.
+**Updated:** 2026-01-09
+**Notes:** Epic validated with comprehensive QA test design (127 test scenarios). Quality gate passed with concerns noted. All 9 stories defined with acceptance criteria. Triple-model strategy: Gemma 3n E4B (best quality, ~5GB), Phi-4-mini (128K context, ~2GB), Gemma 3 1B (ultra-lightweight, ~1GB).
 
 ## Epic Goal
 
@@ -138,6 +138,25 @@ The WASM feasibility spike validated:
 - Document WASM deployment with bundled model
 - Add decision flowchart for LLM distribution selection
 
+### Story 7: TEA-RELEASE-004.7 - Gemma 3 1B Variant (Ultra-Lightweight)
+
+**As a** developer using The Edge Agent,
+**I want** AppImage and WASM distributions with bundled Gemma 3 1B model (Q8_0, ~1.07GB),
+**So that** I can run LLM-powered workflows on resource-constrained devices with minimal download size.
+
+**Key deliverables:**
+- Rust AppImage variants: `tea-rust-llm-gemma3-1b-{version}-{arch}.AppImage` (~1.5GB)
+- Python AppImage variants: `tea-python-llm-gemma3-1b-{version}-{arch}.AppImage` (~1.5GB)
+- WASM support for Gemma 3 1B model loading
+- Bundle `gemma-3-1b-it-Q8_0.gguf` from [unsloth/gemma-3-1b-it-GGUF](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF)
+- GitHub Actions jobs for x86_64 and ARM64
+
+**Model specifications:**
+- Source: `unsloth/gemma-3-1b-it-GGUF`
+- Size: 1.07GB (Q8_0 quantization)
+- Context: 8K tokens
+- Use case: Edge devices, fast prototyping, minimal footprint
+
 ## Compatibility Requirements
 
 - [x] Existing APIs remain unchanged (new `llm.call` action, backward compatible)
@@ -176,12 +195,22 @@ The WASM feasibility spike validated:
 | `tea-python-llm-phi4-{version}-x86_64.AppImage` | ~2.5GB | Python + Phi-4-mini Q3_K_S (128K context) |
 | `tea-python-llm-phi4-{version}-aarch64.AppImage` | ~2.5GB | Python ARM64 + Phi-4-mini Q3_K_S |
 
-**WASM Browser Package (Phi-4-mini only)**
+**Gemma 3 1B Variants (Ultra-Lightweight - ~1.5GB)**
+
+| Artifact | Size (est.) | Description |
+|----------|-------------|-------------|
+| `tea-rust-llm-gemma3-1b-{version}-x86_64.AppImage` | ~1.5GB | Rust + Gemma 3 1B Q8_0 (edge devices) |
+| `tea-rust-llm-gemma3-1b-{version}-aarch64.AppImage` | ~1.5GB | Rust ARM64 + Gemma 3 1B Q8_0 |
+| `tea-python-llm-gemma3-1b-{version}-x86_64.AppImage` | ~1.5GB | Python + Gemma 3 1B Q8_0 (edge devices) |
+| `tea-python-llm-gemma3-1b-{version}-aarch64.AppImage` | ~1.5GB | Python ARM64 + Gemma 3 1B Q8_0 |
+
+**WASM Browser Package (Phi-4-mini + Gemma 3 1B)**
 
 | Artifact | Size (est.) | Description |
 |----------|-------------|-------------|
 | `tea-wasm-llm-{version}.tar.gz` | ~50MB | WASM + wllama package |
-| `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` | ~1.9GB | Single-file model (no chunking!) |
+| `microsoft_Phi-4-mini-instruct-Q3_K_S.gguf` | ~1.9GB | Phi-4-mini model (128K context) |
+| `gemma-3-1b-it-Q8_0.gguf` | ~1.07GB | Gemma 3 1B model (smallest, 8K context) |
 
 ### Existing Artifacts (Unchanged)
 
@@ -224,18 +253,20 @@ The WASM feasibility spike validated:
 - TEA-RELEASE-002 (Done) - Rust AppImage build patterns
 - TEA-RELEASE-003 (Done) - Python AppImage build patterns
 - TEA-WASM-001 (Done) - WASM feasibility spike with wllama integration
-- [ggml-org/gemma-3n-E4B-it-GGUF](https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF) - Model source
+- [ggml-org/gemma-3n-E4B-it-GGUF](https://huggingface.co/ggml-org/gemma-3n-E4B-it-GGUF) - Gemma 3n E4B model source
+- [unsloth/gemma-3-1b-it-GGUF](https://huggingface.co/unsloth/gemma-3-1b-it-GGUF) - Gemma 3 1B model source
 
 ## Definition of Done
 
-- [ ] All 8 stories completed with acceptance criteria met (6 original + 2 from Story 3 split)
-- [ ] Rust LLM AppImage builds for x86_64 and ARM64
-- [ ] Python LLM AppImage builds for x86_64 and ARM64
-- [ ] WASM package with bundled model published
+- [ ] All 9 stories completed with acceptance criteria met (6 original + 2 from Story 3 split + Story 7)
+- [ ] Rust LLM AppImage builds for x86_64 and ARM64 (Gemma, Phi-4-mini, Gemma 3 1B variants)
+- [ ] Python LLM AppImage builds for x86_64 and ARM64 (Gemma, Phi-4-mini, Gemma 3 1B variants)
+- [ ] WASM package with bundled model published (Phi-4-mini + Gemma 3 1B support)
 - [ ] `llm.call` action works offline in all three platforms
 - [ ] Documentation updated with usage instructions
 - [ ] No regression in existing non-LLM builds
 - [ ] Example YAML workflows demonstrate offline LLM usage
+- [ ] Gemma 3 1B ultra-lightweight variants available for edge deployment
 
 ## Out of Scope
 
@@ -251,6 +282,7 @@ The WASM feasibility spike validated:
 | 2026-01-08 | 0.1 | Initial epic draft | Sarah (PO Agent) |
 | 2026-01-08 | 0.2 | Split Story 3 into 3a/3b/3c for manageability | Bob (SM Agent) |
 | 2026-01-08 | 0.3 | Dual-model strategy: Gemma for AppImage (quality), Phi-4-mini for WASM/smaller (1.9GB, no chunking) | Sarah (PO Agent) |
+| 2026-01-09 | 0.4 | Added Story 7: Gemma 3 1B ultra-lightweight variant (~1.07GB) for edge devices | Sarah (PO Agent) |
 
 ---
 
