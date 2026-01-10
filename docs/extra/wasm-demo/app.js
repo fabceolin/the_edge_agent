@@ -24,7 +24,43 @@ import {
   clearLlmCache,
   hasCoopCoep,
   getVersion,
+  // Lua callback bridge
+  registerLuaCallback,
+  clearLuaCallback,
+  isLuaCallbackRegistered,
 } from './pkg/index.js';
+
+// Lua engine instance
+let luaEngine = null;
+
+// Initialize Lua engine (wasmoon)
+async function initLuaEngine() {
+  if (luaEngine) return luaEngine;
+  try {
+    const { LuaFactory } = await import('wasmoon');
+    const factory = new LuaFactory();
+    luaEngine = await factory.createEngine();
+    console.log('[TEA-DEMO] Lua engine loaded (wasmoon)');
+
+    // Register Lua callback with TEA
+    registerLuaCallback(async (code, stateJson) => {
+      const state = JSON.parse(stateJson);
+      // Set all state variables in Lua global scope
+      for (const [key, value] of Object.entries(state)) {
+        luaEngine.global.set(key, value);
+      }
+      // Execute Lua code
+      const result = await luaEngine.doString(code);
+      return JSON.stringify({ result });
+    });
+
+    console.log('[TEA-DEMO] Lua callback registered');
+    return luaEngine;
+  } catch (e) {
+    console.warn('[TEA-DEMO] Could not load Lua engine:', e.message);
+    return null;
+  }
+}
 
 // Configuration
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
@@ -32,14 +68,28 @@ const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/mai
 // Default YAML workflow (implicit edges - no edges section needed)
 const DEFAULT_YAML = `name: qa-workflow
 nodes:
+  # First, use Lua to compute word count
+  - name: analyze
+    action: lua.eval
+    with:
+      code: |
+        local words = 0
+        for _ in string.gmatch(question, "%S+") do
+          words = words + 1
+        end
+        return { word_count = words, is_short = words < 10 }
+
+  # Then ask LLM to think about the question
   - name: think
     action: llm.call
     with:
       prompt: |
-        Think step by step about: {{ state.question }}
+        Question ({{ state.lua_result.word_count }} words): {{ state.question }}
+        Think step by step about this question.
       max_tokens: 150
       temperature: 0.3
 
+  # Finally, provide an answer
   - name: answer
     action: llm.call
     with:
@@ -210,6 +260,11 @@ async function initializeLlm() {
         temperature: params.temperature || 0.7,
       });
       return JSON.stringify({ content: response.content });
+    });
+
+    // Initialize Lua engine (non-blocking)
+    initLuaEngine().then(() => {
+      updateStatus('Ready (with Lua)', 'ready');
     });
 
     await updateCacheStatus();

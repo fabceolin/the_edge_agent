@@ -94,6 +94,16 @@
     <h2>Test Configuration</h2>
     <pre id="config">Loading...</pre>
 
+    <!-- Import maps for external libraries -->
+    <script type="importmap">
+    {
+        "imports": {
+            "wasmoon": "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/+esm",
+            "swipl-wasm": "https://cdn.jsdelivr.net/npm/swipl-wasm@3.6.0/+esm"
+        }
+    }
+    </script>
+
     <script type="module">
         import init, {
             execute_yaml,
@@ -103,7 +113,21 @@
             llm_call_async,
             has_shared_array_buffer,
             version,
+            // Lua callback functions
+            set_lua_callback,
+            clear_lua_callback,
+            has_lua_callback,
+            lua_eval_async,
+            // Prolog handler functions
+            set_prolog_handler,
+            clear_prolog_handler,
+            has_prolog_handler,
+            prolog_query_async,
         } from '../pkg/tea_wasm_llm.js';
+
+        // Lua and Prolog engine instances (loaded on demand)
+        let luaEngine = null;
+        let prologEngine = null;
 
         // Make functions available globally for buttons
         window.init = init;
@@ -114,6 +138,16 @@
         window.llm_call_async = llm_call_async;
         window.has_shared_array_buffer = has_shared_array_buffer;
         window.version = version;
+        // Lua functions
+        window.set_lua_callback = set_lua_callback;
+        window.clear_lua_callback = clear_lua_callback;
+        window.has_lua_callback = has_lua_callback;
+        window.lua_eval_async = lua_eval_async;
+        // Prolog functions
+        window.set_prolog_handler = set_prolog_handler;
+        window.clear_prolog_handler = clear_prolog_handler;
+        window.has_prolog_handler = has_prolog_handler;
+        window.prolog_query_async = prolog_query_async;
 
         // Test state
         let testResults = { total: 0, passed: 0, failed: 0 };
@@ -341,6 +375,219 @@ edges:
             assert(parsed.message === 'Hello!', 'should have message');
         }
 
+        // ==================== LUA TESTS ====================
+
+        async function initLuaEngine() {
+            if (luaEngine) return luaEngine;
+            log('  Loading wasmoon (Lua 5.4)...', 'info');
+            try {
+                const { LuaFactory } = await import('wasmoon');
+                const factory = new LuaFactory();
+                luaEngine = await factory.createEngine();
+                log('  ✓ Lua engine loaded', 'info');
+                return luaEngine;
+            } catch (e) {
+                log(`  ⚠ Could not load wasmoon: ${e.message}`, 'pending');
+                return null;
+            }
+        }
+
+        async function testLuaCallbackNotRegistered() {
+            clear_lua_callback();
+            assert(!has_lua_callback(), 'Lua callback should not be registered initially');
+        }
+
+        async function testLuaCallbackRegistration() {
+            const mockCallback = async (code, state) => JSON.stringify({ result: 42 });
+            set_lua_callback(mockCallback);
+            assert(has_lua_callback(), 'Lua callback should be registered');
+            clear_lua_callback();
+            assert(!has_lua_callback(), 'Lua callback should be cleared');
+        }
+
+        async function testLuaEvalWithWasmoon() {
+            const lua = await initLuaEngine();
+            if (!lua) {
+                log('  Skipping (wasmoon not available)', 'pending');
+                return;
+            }
+
+            // Register real Lua callback using wasmoon
+            set_lua_callback(async (code, stateJson) => {
+                const state = JSON.parse(stateJson);
+                // Set state variables in Lua
+                for (const [key, value] of Object.entries(state)) {
+                    lua.global.set(key, value);
+                }
+                // Execute Lua code
+                const result = await lua.doString(code);
+                return JSON.stringify({ result });
+            });
+
+            const result = await lua_eval_async(
+                'return value * 2',
+                JSON.stringify({ value: 21 })
+            );
+            const parsed = JSON.parse(result);
+
+            assert(parsed.lua_result === 42, `Expected 42, got ${parsed.lua_result}`);
+            log(`  Lua result: ${parsed.lua_result}`, 'info');
+            clear_lua_callback();
+        }
+
+        async function testLuaWorkflow() {
+            const lua = await initLuaEngine();
+            if (!lua) {
+                log('  Skipping (wasmoon not available)', 'pending');
+                return;
+            }
+
+            // Register Lua callback
+            set_lua_callback(async (code, stateJson) => {
+                const state = JSON.parse(stateJson);
+                for (const [key, value] of Object.entries(state)) {
+                    lua.global.set(key, value);
+                }
+                const result = await lua.doString(code);
+                return JSON.stringify({ result });
+            });
+
+            // Mock LLM handler
+            set_llm_handler(async () => JSON.stringify({ content: 'test', model: 'mock' }));
+
+            const yaml = `
+name: lua-workflow
+nodes:
+  - name: compute
+    action: lua.eval
+    with:
+      code: |
+        return input * input
+edges:
+  - from: __start__
+    to: compute
+  - from: compute
+    to: __end__
+`;
+
+            const result = await execute_yaml(yaml, JSON.stringify({ input: 7 }));
+            const parsed = JSON.parse(result);
+
+            assert(parsed.lua_result === 49, `Expected 49, got ${parsed.lua_result}`);
+            log(`  7² = ${parsed.lua_result}`, 'info');
+
+            clear_lua_callback();
+        }
+
+        // ==================== PROLOG TESTS ====================
+
+        async function initPrologEngine() {
+            if (prologEngine) return prologEngine;
+            log('  Loading swipl-wasm (SWI-Prolog)...', 'info');
+            try {
+                const SWIPL = await import('swipl-wasm');
+                prologEngine = await SWIPL.default({ arguments: ['-q'] });
+                log('  ✓ Prolog engine loaded', 'info');
+                return prologEngine;
+            } catch (e) {
+                // swipl-wasm requires Node.js fs module, can't load via CDN
+                // Install with: npm install swipl-wasm
+                log('  ⚠ swipl-wasm requires npm install (uses Node.js fs)', 'pending');
+                return null;
+            }
+        }
+
+        async function testPrologHandlerNotRegistered() {
+            clear_prolog_handler();
+            assert(!has_prolog_handler(), 'Prolog handler should not be registered initially');
+        }
+
+        async function testPrologHandlerRegistration() {
+            const mockHandler = async (queryJson) => JSON.stringify({ bindings: [], success: true });
+            set_prolog_handler(mockHandler);
+            assert(has_prolog_handler(), 'Prolog handler should be registered');
+            clear_prolog_handler();
+            assert(!has_prolog_handler(), 'Prolog handler should be cleared');
+        }
+
+        async function testPrologQueryWithSwipl() {
+            const pl = await initPrologEngine();
+            if (!pl) {
+                log('  Skipping (swipl-wasm not available)', 'pending');
+                return;
+            }
+
+            // Register real Prolog handler
+            set_prolog_handler(async (queryJson) => {
+                const { code, facts } = JSON.parse(queryJson);
+                try {
+                    // Consult facts if provided
+                    if (facts) {
+                        pl.call(`assertz(${facts})`);
+                    }
+                    // Query
+                    const query = pl.query(code);
+                    const bindings = [];
+                    let result;
+                    while ((result = query.next()) && !result.done) {
+                        bindings.push(result.value);
+                    }
+                    query.close();
+                    return JSON.stringify({ bindings, success: true });
+                } catch (e) {
+                    return JSON.stringify({ bindings: [], success: false, error: e.message });
+                }
+            });
+
+            const result = await prolog_query_async(
+                JSON.stringify({ code: 'member(X, [1,2,3])' }),
+                '{}'
+            );
+            const parsed = JSON.parse(result);
+
+            assert(parsed.prolog_result.success, 'Prolog query should succeed');
+            log(`  Prolog bindings: ${JSON.stringify(parsed.prolog_result.bindings)}`, 'info');
+            clear_prolog_handler();
+        }
+
+        async function testPrologWorkflow() {
+            // Use mock handler for workflow test (simpler)
+            set_prolog_handler(async (queryJson) => {
+                const { code } = JSON.parse(queryJson);
+                // Mock: simple member query
+                if (code.includes('member')) {
+                    return JSON.stringify({
+                        bindings: [{ X: 1 }, { X: 2 }, { X: 3 }],
+                        success: true
+                    });
+                }
+                return JSON.stringify({ bindings: [], success: true });
+            });
+
+            const yaml = `
+name: prolog-workflow
+nodes:
+  - name: query
+    action: prolog.query
+    with:
+      code: "member(X, [1,2,3])"
+edges:
+  - from: __start__
+    to: query
+  - from: query
+    to: __end__
+`;
+
+            const result = await execute_yaml(yaml, '{}');
+            const parsed = JSON.parse(result);
+
+            assert(parsed.prolog_result, 'Should have prolog_result');
+            assert(parsed.prolog_result.bindings.length === 3, 'Should have 3 solutions');
+            log(`  Found ${parsed.prolog_result.bindings.length} solutions`, 'info');
+
+            clear_prolog_handler();
+        }
+
         // Run all tests
         window.runAllTests = async function() {
             testResults = { total: 0, passed: 0, failed: 0 };
@@ -364,6 +611,22 @@ edges:
             await runTest('Execute YAML Invalid YAML Errors', testExecuteYamlInvalidYaml);
             await runTest('Return Action Works', testReturnAction);
 
+            // Lua tests
+            log('', 'info');
+            log('🌙 Lua Tests (wasmoon)', 'info');
+            await runTest('Lua Callback Not Registered Initially', testLuaCallbackNotRegistered);
+            await runTest('Lua Callback Registration/Clear', testLuaCallbackRegistration);
+            await runTest('Lua Eval with wasmoon', testLuaEvalWithWasmoon);
+            await runTest('Lua Workflow Execution', testLuaWorkflow);
+
+            // Prolog tests
+            log('', 'info');
+            log('🦉 Prolog Tests (swipl-wasm)', 'info');
+            await runTest('Prolog Handler Not Registered Initially', testPrologHandlerNotRegistered);
+            await runTest('Prolog Handler Registration/Clear', testPrologHandlerRegistration);
+            await runTest('Prolog Query with swipl-wasm', testPrologQueryWithSwipl);
+            await runTest('Prolog Workflow Execution', testPrologWorkflow);
+
             log('', 'info');
             log(`✨ Tests complete: ${testResults.passed}/${testResults.total} passed`,
                 testResults.failed === 0 ? 'pass' : 'fail');
@@ -386,11 +649,17 @@ edges:
                 document.getElementById('config').textContent = JSON.stringify({
                     version: version(),
                     sharedArrayBuffer: has_shared_array_buffer(),
-                    userAgent: navigator.userAgent.slice(0, 100) + '...',
                     crossOriginIsolated: window.crossOriginIsolated,
+                    callbacks: {
+                        llm: has_llm_handler(),
+                        lua: has_lua_callback(),
+                        prolog: has_prolog_handler(),
+                    },
+                    userAgent: navigator.userAgent.slice(0, 80) + '...',
                 }, null, 2);
 
                 log('✅ WASM module loaded successfully', 'pass');
+                log('📦 Scripting: wasmoon (Lua) + swipl-wasm (Prolog) via CDN', 'info');
                 log('Press "Run All Tests" to begin testing', 'info');
             } catch (error) {
                 document.getElementById('config').textContent = `Error: ${error.message}`;

@@ -368,6 +368,254 @@ const stats = await getModelCacheStats();
 await clearModelCache();
 ```
 
+## Scripting Bridges (Lua & Prolog)
+
+TEA WASM LLM supports Lua and Prolog scripting through JavaScript bridges. This enables `lua.eval` and `prolog.query` actions in YAML workflows.
+
+### Lua Integration (with wasmoon)
+
+Use [wasmoon](https://github.com/ceifa/wasmoon) (~200KB) for Lua 5.4 scripting in the browser:
+
+```typescript
+import { LuaFactory } from 'wasmoon';
+import {
+  initTeaLlm,
+  executeLlmYaml,
+  registerLuaCallback,
+  evalLua,
+  isLuaCallbackRegistered,
+  clearLuaCallback,
+} from 'tea-wasm-llm';
+
+// Initialize wasmoon Lua engine
+const lua = await (new LuaFactory()).createEngine();
+
+// Register Lua callback
+registerLuaCallback(async (code, stateJson) => {
+  const state = JSON.parse(stateJson);
+  lua.global.set('state', state);
+  try {
+    const result = await lua.doString(code);
+    return JSON.stringify({ result });
+  } catch (e) {
+    return JSON.stringify({ result: null, error: String(e) });
+  }
+});
+
+// Check registration
+console.log('Lua registered:', isLuaCallbackRegistered());
+
+// Use in YAML workflows
+const result = await executeLlmYaml(`
+name: lua-validation
+nodes:
+  - name: validate
+    action: lua.eval
+    with:
+      code: |
+        return state.value > 0 and state.value < 100
+    output: is_valid
+edges:
+  - from: __start__
+    to: validate
+  - from: validate
+    to: __end__
+`, { value: 42 });
+
+console.log(result.is_valid); // true
+
+// Or use directly
+const evalResult = await evalLua('return state.x * 2', { x: 21 });
+console.log(evalResult.lua_result); // 42
+
+// Clean up
+clearLuaCallback();
+```
+
+### Prolog Integration (with swipl-wasm)
+
+Use [swipl-wasm](https://npmjs.com/package/swipl-wasm) for full SWI-Prolog with CLP(FD), constraint solving, and all standard predicates:
+
+```typescript
+import SWIPL from 'swipl-wasm';
+import {
+  initTeaLlm,
+  executeLlmYaml,
+  registerPrologHandler,
+  queryProlog,
+  isPrologHandlerRegistered,
+  clearPrologHandler,
+} from 'tea-wasm-llm';
+
+// Initialize SWI-Prolog WASM
+const swipl = await SWIPL();
+
+// Register Prolog handler
+registerPrologHandler(async (queryJson) => {
+  const { code, facts } = JSON.parse(queryJson);
+  try {
+    // Assert facts if provided
+    if (facts) {
+      for (const fact of facts.split('.').filter(f => f.trim())) {
+        swipl.call(`assertz(${fact.trim()})`);
+      }
+    }
+    // Execute query
+    const result = swipl.call(code);
+    return JSON.stringify({
+      bindings: result ? [result] : [],
+      success: !!result
+    });
+  } catch (e) {
+    return JSON.stringify({ bindings: [], success: false, error: String(e) });
+  }
+});
+
+// Check registration
+console.log('Prolog registered:', isPrologHandlerRegistered());
+
+// Use in YAML workflows
+const result = await executeLlmYaml(`
+name: prolog-query
+nodes:
+  - name: find_path
+    action: prolog.query
+    with:
+      facts: |
+        edge(a, b).
+        edge(b, c).
+        edge(c, d).
+        path(X, Y) :- edge(X, Y).
+        path(X, Y) :- edge(X, Z), path(Z, Y)
+      code: "path(a, X)"
+    output: paths
+edges:
+  - from: __start__
+    to: find_path
+  - from: find_path
+    to: __end__
+`, {});
+
+console.log(result.paths); // { bindings: [{X: 'b'}], success: true }
+
+// Or use directly
+const queryResult = await queryProlog(
+  'member(X, [1,2,3])',
+  undefined, // no facts needed
+  {}
+);
+console.log(queryResult.prolog_result.bindings); // [{X: 1}]
+
+// Clean up
+clearPrologHandler();
+```
+
+### CLP(FD) Example with swipl-wasm
+
+```typescript
+// Use constraint logic programming for puzzle solving
+const yaml = `
+name: sudoku-solver
+nodes:
+  - name: solve
+    action: prolog.query
+    with:
+      code: |
+        use_module(library(clpfd)),
+        X in 1..9,
+        Y in 1..9,
+        X + Y #= 10,
+        label([X, Y])
+    output: solution
+edges:
+  - from: __start__
+    to: solve
+  - from: solve
+    to: __end__
+`;
+
+const result = await executeLlmYaml(yaml, {});
+console.log(result.solution.bindings); // Solutions where X + Y = 10
+```
+
+### Alternative: trealla (Lightweight)
+
+For minimal bundle size (~500KB), use [trealla](https://github.com/trealla-prolog/trealla):
+
+```typescript
+import { Prolog } from 'trealla';
+import { registerPrologHandler } from 'tea-wasm-llm';
+
+const pl = new Prolog();
+
+registerPrologHandler(async (queryJson) => {
+  const { code, facts } = JSON.parse(queryJson);
+  try {
+    if (facts) await pl.consultText(facts);
+    const results = await pl.queryOnce(code);
+    return JSON.stringify({
+      bindings: results ? [results] : [],
+      success: !!results
+    });
+  } catch (e) {
+    return JSON.stringify({ bindings: [], success: false, error: String(e) });
+  }
+});
+```
+
+### Combined Example: LLM + Lua + Prolog
+
+This example shows how to use all three runtimes in a single workflow:
+
+```yaml
+name: intelligent-agent
+description: Uses LLM, Lua validation, and Prolog reasoning
+
+nodes:
+  - name: generate
+    action: llm.call
+    with:
+      prompt: "Generate a number between 1 and 100: "
+      max_tokens: 10
+    output: generated
+
+  - name: validate
+    action: lua.eval
+    with:
+      code: |
+        local num = tonumber(state.generated.content)
+        return num and num > 0 and num <= 100
+    output: is_valid
+
+  - name: classify
+    action: prolog.query
+    with:
+      facts: |
+        small(X) :- X < 33.
+        medium(X) :- X >= 33, X < 66.
+        large(X) :- X >= 66.
+      code: "small({{ state.generated.content }})"
+    output: classification
+
+edges:
+  - from: __start__
+    to: generate
+  - from: generate
+    to: validate
+  - from: validate
+    to: classify
+  - from: classify
+    to: __end__
+```
+
+### Runtime Comparison
+
+| Runtime | Library | Bundle Size | Use Case |
+|---------|---------|-------------|----------|
+| Lua | [wasmoon](https://github.com/ceifa/wasmoon) | ~200KB | Validation, data transformation |
+| **Prolog** | [**swipl-wasm**](https://npmjs.com/package/swipl-wasm) | ~5-10MB | **Full SWI-Prolog with CLP(FD) (Recommended)** |
+| Prolog | [trealla](https://github.com/trealla-prolog/trealla) | ~500KB | Lightweight, basic logic |
+
 ## Troubleshooting
 
 ### "SharedArrayBuffer is not defined"

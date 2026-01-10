@@ -63,6 +63,16 @@ import init, {
   has_llm_handler,
   llm_call_async,
   llm_embed_async,
+  // Lua callback bridge
+  set_lua_callback,
+  clear_lua_callback,
+  has_lua_callback,
+  lua_eval_async,
+  // Prolog handler bridge
+  set_prolog_handler,
+  clear_prolog_handler,
+  has_prolog_handler,
+  prolog_query_async,
   has_shared_array_buffer,
   version,
 } from '../pkg/tea_wasm_llm.js';
@@ -193,6 +203,125 @@ export interface LlmResponse {
  * Receives JSON string with LlmParams, returns Promise<JSON string with LlmResponse>
  */
 export type LlmHandler = (paramsJson: string) => Promise<string>;
+
+// ============================================================================
+// Lua Callback Bridge Types
+// ============================================================================
+
+/**
+ * Lua evaluation parameters
+ */
+export interface LuaParams {
+  /**
+   * Lua code to execute
+   */
+  code: string;
+
+  /**
+   * Output key to store result (optional)
+   */
+  output?: string;
+}
+
+/**
+ * Lua evaluation response
+ */
+export interface LuaResponse {
+  /**
+   * Result from Lua execution
+   */
+  result: unknown;
+
+  /**
+   * Error message if execution failed (optional)
+   */
+  error?: string;
+}
+
+/**
+ * Handler function type for Lua evaluation
+ * Receives (code: string, stateJson: string) and returns Promise<JSON string with LuaResponse>
+ *
+ * @example
+ * ```typescript
+ * import { LuaFactory } from 'wasmoon';
+ *
+ * const lua = await (new LuaFactory()).createEngine();
+ *
+ * const luaCallback: LuaCallback = async (code, stateJson) => {
+ *   const state = JSON.parse(stateJson);
+ *   lua.global.set('state', state);
+ *   const result = await lua.doString(code);
+ *   return JSON.stringify({ result });
+ * };
+ * ```
+ */
+export type LuaCallback = (code: string, stateJson: string) => Promise<string>;
+
+// ============================================================================
+// Prolog Handler Bridge Types
+// ============================================================================
+
+/**
+ * Prolog query parameters
+ */
+export interface PrologParams {
+  /**
+   * Prolog query to execute
+   */
+  code: string;
+
+  /**
+   * Optional facts to assert before query
+   */
+  facts?: string;
+
+  /**
+   * Output key to store result (optional)
+   */
+  output?: string;
+}
+
+/**
+ * Prolog query response
+ */
+export interface PrologResponse {
+  /**
+   * Variable bindings from query results (array of binding objects)
+   */
+  bindings: Record<string, unknown>[];
+
+  /**
+   * Whether the query succeeded
+   */
+  success: boolean;
+
+  /**
+   * Error message if query failed (optional)
+   */
+  error?: string;
+}
+
+/**
+ * Handler function type for Prolog queries
+ * Receives (queryJson: string) containing code and optional facts
+ * Returns Promise<JSON string with PrologResponse>
+ *
+ * @example
+ * ```typescript
+ * import { Prolog } from 'trealla';
+ *
+ * const pl = new Prolog();
+ *
+ * const prologHandler: PrologHandler = async (queryJson) => {
+ *   const { code, facts } = JSON.parse(queryJson);
+ *   if (facts) await pl.consultText(facts);
+ *   const results = await pl.queryOnce(code);
+ *   return JSON.stringify({ bindings: results ? [results] : [], success: !!results });
+ * };
+ * ```
+ */
+export type PrologHandler = (queryJson: string) => Promise<string>;
 
 // Track initialization state
 let initialized = false;
@@ -348,6 +477,150 @@ export function getVersion(): string {
 }
 
 // ============================================================================
+// Lua Callback Bridge Functions
+// ============================================================================
+
+/**
+ * Register a Lua evaluation callback
+ *
+ * The callback receives (code: string, stateJson: string) and should return
+ * a Promise that resolves to JSON string with { result: any, error?: string }
+ *
+ * @param callback - Function to handle Lua evaluation (typically wraps wasmoon)
+ *
+ * @example
+ * ```typescript
+ * import { LuaFactory } from 'wasmoon';
+ *
+ * const lua = await (new LuaFactory()).createEngine();
+ *
+ * registerLuaCallback(async (code, stateJson) => {
+ *   const state = JSON.parse(stateJson);
+ *   lua.global.set('state', state);
+ *   try {
+ *     const result = await lua.doString(code);
+ *     return JSON.stringify({ result });
+ *   } catch (e) {
+ *     return JSON.stringify({ result: null, error: String(e) });
+ *   }
+ * });
+ * ```
+ */
+export function registerLuaCallback(callback: LuaCallback): void {
+  set_lua_callback(callback);
+}
+
+/**
+ * Clear the registered Lua callback
+ */
+export function clearLuaCallback(): void {
+  clear_lua_callback();
+}
+
+/**
+ * Check if a Lua callback is registered
+ */
+export function isLuaCallbackRegistered(): boolean {
+  return has_lua_callback();
+}
+
+/**
+ * Evaluate Lua code (low-level API)
+ *
+ * @param code - Lua code to execute
+ * @param state - Current state object
+ * @returns Promise resolving to updated state with lua_result
+ */
+export async function evalLua(
+  code: string,
+  state: Record<string, unknown> = {}
+): Promise<Record<string, unknown>> {
+  if (!has_lua_callback()) {
+    throw new Error(
+      'No Lua callback registered. Call registerLuaCallback() with a wasmoon handler first.'
+    );
+  }
+
+  const result = await lua_eval_async(code, JSON.stringify(state));
+  return JSON.parse(result);
+}
+
+// ============================================================================
+// Prolog Handler Bridge Functions
+// ============================================================================
+
+/**
+ * Register a Prolog query handler
+ *
+ * The handler receives (queryJson: string) containing { code, facts? } and should
+ * return a Promise that resolves to JSON string with { bindings: [], success: boolean, error?: string }
+ *
+ * @param handler - Function to handle Prolog queries (typically wraps trealla or swipl-wasm)
+ *
+ * @example
+ * ```typescript
+ * import { Prolog } from 'trealla';
+ *
+ * const pl = new Prolog();
+ *
+ * registerPrologHandler(async (queryJson) => {
+ *   const { code, facts } = JSON.parse(queryJson);
+ *   try {
+ *     if (facts) await pl.consultText(facts);
+ *     const results = await pl.queryOnce(code);
+ *     return JSON.stringify({
+ *       bindings: results ? [results] : [],
+ *       success: !!results
+ *     });
+ *   } catch (e) {
+ *     return JSON.stringify({ bindings: [], success: false, error: String(e) });
+ *   }
+ * });
+ * ```
+ */
+export function registerPrologHandler(handler: PrologHandler): void {
+  set_prolog_handler(handler);
+}
+
+/**
+ * Clear the registered Prolog handler
+ */
+export function clearPrologHandler(): void {
+  clear_prolog_handler();
+}
+
+/**
+ * Check if a Prolog handler is registered
+ */
+export function isPrologHandlerRegistered(): boolean {
+  return has_prolog_handler();
+}
+
+/**
+ * Execute a Prolog query (low-level API)
+ *
+ * @param code - Prolog query to execute
+ * @param facts - Optional facts to assert before query
+ * @param state - Current state object
+ * @returns Promise resolving to updated state with prolog_result
+ */
+export async function queryProlog(
+  code: string,
+  facts?: string,
+  state: Record<string, unknown> = {}
+): Promise<Record<string, unknown>> {
+  if (!has_prolog_handler()) {
+    throw new Error(
+      'No Prolog handler registered. Call registerPrologHandler() with a trealla/swipl handler first.'
+    );
+  }
+
+  const queryJson = JSON.stringify({ code, facts });
+  const result = await prolog_query_async(queryJson, JSON.stringify(state));
+  return JSON.parse(result);
+}
+
+// ============================================================================
 // Model Loading with Caching
 // ============================================================================
 // loadBundledModel and loadBundledModelSafe are imported from model-loader.ts
@@ -392,11 +665,23 @@ export async function clearModelCache(): Promise<void> {
 export {
   init,
   execute_yaml,
+  // LLM handler
   set_llm_handler,
   clear_llm_handler,
   has_llm_handler,
   llm_call_async,
   llm_embed_async,
+  // Lua callback bridge
+  set_lua_callback,
+  clear_lua_callback,
+  has_lua_callback,
+  lua_eval_async,
+  // Prolog handler bridge
+  set_prolog_handler,
+  clear_prolog_handler,
+  has_prolog_handler,
+  prolog_query_async,
+  // Utilities
   has_shared_array_buffer,
   version,
 };
