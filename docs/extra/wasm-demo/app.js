@@ -47,9 +47,7 @@ nodes:
         Based on this analysis: {{ state.think.content }}
         Provide a concise answer.
       max_tokens: 100
-      temperature: 0.7
-
-# No edges needed - implicit flow: think -> answer -> __end__`;
+      temperature: 0.7`;
 
 // Default state (YAML format)
 const DEFAULT_STATE_YAML = `question: What is the capital of France?`;
