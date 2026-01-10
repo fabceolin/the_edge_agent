@@ -120,6 +120,19 @@ async function initializeLlm() {
   }
 }
 
+// Prettify JSON in state input
+function prettifyStateInput() {
+  try {
+    const parsed = JSON.parse(stateInput.value);
+    stateInput.value = JSON.stringify(parsed, null, 2);
+  } catch (e) {
+    // Invalid JSON, leave as-is
+  }
+}
+
+// Prettify on blur
+stateInput.addEventListener('blur', prettifyStateInput);
+
 // Handle YAML execution
 runYamlBtn.addEventListener('click', async () => {
   const yaml = yamlInput.value.trim();
@@ -127,6 +140,8 @@ runYamlBtn.addEventListener('click', async () => {
 
   try {
     state = JSON.parse(stateInput.value.trim());
+    // Prettify the input
+    stateInput.value = JSON.stringify(state, null, 2);
   } catch (e) {
     yamlOutput.classList.remove('hidden');
     yamlResult.textContent = `Error parsing state JSON: ${e.message}`;
