@@ -8,15 +8,16 @@
     <!-- COOP/COEP Service Worker for multi-threading on GitHub Pages -->
     <script src="coi-serviceworker.js"></script>
 
-    <!-- CodeMirror 6 from CDN -->
+    <!-- CodeMirror 6 from CDN (using esm.sh with shared deps to avoid duplicate instances) -->
     <script type="importmap">
     {
       "imports": {
-        "codemirror": "https://esm.sh/codemirror@6.0.1",
+        "codemirror": "https://esm.sh/codemirror@6.0.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/state": "https://esm.sh/@codemirror/state@6.4.1",
-        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1",
-        "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1",
-        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2"
+        "@codemirror/view": "https://esm.sh/@codemirror/view@6.26.0?external=@codemirror/state",
+        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1?external=@codemirror/state,@codemirror/view",
+        "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1?external=@codemirror/state,@codemirror/view",
+        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2?external=@codemirror/state,@codemirror/view"
       }
     }
     </script>
