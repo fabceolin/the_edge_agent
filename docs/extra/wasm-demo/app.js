@@ -7,10 +7,12 @@
 
 // CodeMirror imports
 import { EditorView, basicSetup } from 'codemirror';
-import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorState } from '@codemirror/state';
+
+// YAML serialization
+import jsYaml from 'js-yaml';
 
 // Import from the bundled package
 import {
@@ -33,23 +35,24 @@ nodes:
   - name: think
     action: llm.call
     with:
-      prompt: "Think step by step about: {{ state.question }}"
+      prompt: |
+        Think step by step about: {{ state.question }}
       max_tokens: 150
       temperature: 0.3
 
   - name: answer
     action: llm.call
     with:
-      prompt: "Based on this analysis: {{ state.think.content }}\\nProvide a concise answer."
+      prompt: |
+        Based on this analysis: {{ state.think.content }}
+        Provide a concise answer.
       max_tokens: 100
       temperature: 0.7
 
 # No edges needed - implicit flow: think -> answer -> __end__`;
 
-// Default state
-const DEFAULT_STATE = {
-  question: "What is the capital of France?"
-};
+// Default state (YAML format)
+const DEFAULT_STATE_YAML = `question: What is the capital of France?`;
 
 // DOM Elements
 const statusEl = document.getElementById('status');
@@ -85,13 +88,13 @@ function initEditors() {
     parent: document.getElementById('yaml-editor'),
   });
 
-  // JSON state editor
+  // YAML state editor
   stateEditor = new EditorView({
     state: EditorState.create({
-      doc: JSON.stringify(DEFAULT_STATE, null, 2),
+      doc: DEFAULT_STATE_YAML,
       extensions: [
         basicSetup,
-        json(),
+        yaml(),
         oneDark,
         EditorView.lineWrapping,
       ],
@@ -99,13 +102,13 @@ function initEditors() {
     parent: document.getElementById('state-editor'),
   });
 
-  // Output editor (read-only)
+  // Output editor (read-only, YAML)
   outputEditor = new EditorView({
     state: EditorState.create({
       doc: '',
       extensions: [
         basicSetup,
-        json(),
+        yaml(),
         oneDark,
         EditorView.lineWrapping,
         EditorState.readOnly.of(true),
@@ -226,10 +229,10 @@ runYamlBtn.addEventListener('click', async () => {
   let state;
 
   try {
-    state = JSON.parse(getStateContent());
+    state = jsYaml.load(getStateContent());
   } catch (e) {
     yamlOutput.classList.remove('hidden');
-    setOutputContent(`Error parsing state JSON: ${e.message}`);
+    setOutputContent(`# Error parsing state YAML:\n# ${e.message}`);
     return;
   }
 
@@ -240,7 +243,13 @@ runYamlBtn.addEventListener('click', async () => {
     const result = await executeLlmYaml(yamlContent, state);
 
     yamlOutput.classList.remove('hidden');
-    setOutputContent(JSON.stringify(result, null, 2));
+    // Convert output to YAML with nice formatting
+    setOutputContent(jsYaml.dump(result, {
+      indent: 2,
+      lineWidth: 80,
+      noRefs: true,
+      sortKeys: false,
+    }));
 
   } catch (error) {
     console.error('YAML execution error:', error);

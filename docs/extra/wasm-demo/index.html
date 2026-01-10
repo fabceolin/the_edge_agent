@@ -8,16 +8,16 @@
     <!-- COOP/COEP Service Worker for multi-threading on GitHub Pages -->
     <script src="coi-serviceworker.js"></script>
 
-    <!-- CodeMirror 6 from CDN (using esm.sh with shared deps to avoid duplicate instances) -->
+    <!-- CodeMirror 6 + js-yaml from CDN -->
     <script type="importmap">
     {
       "imports": {
         "codemirror": "https://esm.sh/codemirror@6.0.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/state": "https://esm.sh/@codemirror/state@6.4.1",
         "@codemirror/view": "https://esm.sh/@codemirror/view@6.26.0?external=@codemirror/state",
-        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1?external=@codemirror/state,@codemirror/view",
-        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2?external=@codemirror/state,@codemirror/view"
+        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2?external=@codemirror/state,@codemirror/view",
+        "js-yaml": "https://esm.sh/js-yaml@4.1.0"
       }
     }
     </script>
@@ -91,7 +91,7 @@
                     <div id="yaml-editor" class="editor-container"></div>
                 </div>
                 <div class="yaml-state">
-                    <label>Initial State (JSON):</label>
+                    <label>Initial State (YAML):</label>
                     <div id="state-editor" class="state-editor-container"></div>
                 </div>
             </div>
