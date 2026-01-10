@@ -11,6 +11,7 @@
 // Import from the bundled package in pkg/ directory
 import {
   initLlm,
+  initTeaLlm,
   chat,
   chatStream,
   executeLlmYaml,
@@ -147,6 +148,16 @@ async function initializeLlm() {
         showProgress(false);
         enableChat(true);
       },
+    });
+
+    // Initialize TEA YAML engine with LLM handler that uses wllama
+    await initTeaLlm({ verbose: true }, async (paramsJson) => {
+      const params = JSON.parse(paramsJson);
+      const response = await chat(params.prompt, {
+        maxTokens: params.max_tokens || 100,
+        temperature: params.temperature || 0.7,
+      });
+      return JSON.stringify({ content: response.content });
     });
 
     await updateCacheStatus();
