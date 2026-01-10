@@ -52,7 +52,9 @@ async function initLuaEngine() {
     // Register Lua callback with TEA
     registerLuaCallback(async (code, stateJson) => {
       const state = JSON.parse(stateJson);
-      // Set all state variables in Lua global scope
+      // Set 'state' as a global object (allows state.think.content syntax)
+      luaEngine.global.set('state', state);
+      // Also set individual keys as globals for convenience (allows think.content syntax)
       for (const [key, value] of Object.entries(state)) {
         luaEngine.global.set(key, value);
       }

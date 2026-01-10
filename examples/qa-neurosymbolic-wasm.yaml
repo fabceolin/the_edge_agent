@@ -1,0 +1,125 @@
+# Q&A Agent for TEA-WASM-LLM Runtime
+# Uses LLM + Lua + Prolog for neurosymbolic reasoning
+
+name: qa-neurosymbolic
+description: Question answering with LLM + symbolic verification
+
+nodes:
+  # Step 1: LLM thinks through the question
+  - name: think
+    action: llm.call
+    with:
+      prompt: "{{ state.question }}"
+      system: |
+        You are a helpful assistant. Think step by step.
+        After reasoning, write your answer on a NEW line in this EXACT format:
+        FINAL_ANSWER: <your answer>
+
+        Do NOT include code blocks after your answer.
+      max_tokens: 256
+      temperature: 0.7
+      stop:
+        - "```lua"
+        - "```python"
+        - "```\n```"
+    output: think
+
+  # Step 2: Prolog validation (classify question type)
+  - name: validate_prolog
+    action: prolog.query
+    with:
+      code: |
+        classify(Q, geography) :- sub_string(Q, _, _, _, "capital"), !.
+        classify(Q, politics) :- sub_string(Q, _, _, _, "president"), !.
+        classify(Q, science) :- sub_string(Q, _, _, _, "formula"), !.
+        classify(_, general).
+
+        ?- classify("{{ state.question }}", Category).
+    output: prolog_result
+
+  # Step 3: Lua word count validation (uses state.think.content)
+  - name: validate_lua
+    action: lua.eval
+    with:
+      code: |
+        local content = ""
+        if state.think and state.think.content then
+          content = state.think.content
+        end
+        local word_count = 0
+        for _ in string.gmatch(content, "%S+") do
+          word_count = word_count + 1
+        end
+        return {
+          word_count = word_count,
+          is_short = word_count < 100
+        }
+    output: lua_result
+
+  # Step 4: Extract clean answer using Lua
+  - name: extract_answer
+    action: lua.eval
+    with:
+      code: |
+        local content = ""
+        if state.think and state.think.content then
+          content = state.think.content
+        end
+        local answer = nil
+
+        -- Try FINAL_ANSWER pattern
+        answer = string.match(content, "FINAL_ANSWER:%s*(.-)[\n$]")
+        if answer then
+          answer = string.gsub(answer, "^%s*(.-)%s*$", "%1")
+        end
+
+        if not answer or answer == "" then
+          answer = string.match(content, "Final Answer:.-is%s+([^%.%\n]+)")
+        end
+        if not answer or answer == "" then
+          answer = string.match(content, "[Tt]he answer is[:%s]+([^%.%\n]+)")
+        end
+        if not answer or answer == "" then
+          answer = string.match(content, "[Aa]nswer:%s*([^%.%\n]+)")
+        end
+
+        -- Fallback: last non-empty line before code blocks
+        if not answer or answer == "" then
+          local clean = string.gsub(content, "```.-```", "")
+          clean = string.gsub(clean, "```.*$", "")
+          local last_line = nil
+          for line in string.gmatch(clean, "[^\n]+") do
+            local trimmed = string.gsub(line, "^%s*(.-)%s*$", "%1")
+            if trimmed and #trimmed > 0 then
+              last_line = trimmed
+            end
+          end
+          answer = last_line
+        end
+
+        return { final_answer = answer or "Unable to extract answer" }
+    output: extracted
+
+  # Step 5: Format final output
+  - name: format_answer
+    action: return
+    with:
+      value:
+        answer:
+          content: "{{ state.extracted.final_answer }}"
+          question: "{{ state.question }}"
+          category: "{{ state.prolog_result.bindings }}"
+
+edges:
+  - from: __start__
+    to: think
+  - from: think
+    to: validate_prolog
+  - from: validate_prolog
+    to: validate_lua
+  - from: validate_lua
+    to: extract_answer
+  - from: extract_answer
+    to: format_answer
+  - from: format_answer
+    to: __end__

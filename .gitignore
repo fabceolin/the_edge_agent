@@ -217,4 +217,9 @@ workflows/
 !.github/workflows/
 
 # WASM demo build artifacts (built by CI)
+rust/Cargo.lock.old
+test_video.mp4
+wozniak_floorplan1.mp4
+wozniak_smooth.mp4
+wozniak_test.mp4
 docs/extra/wasm-demo/pkg/
