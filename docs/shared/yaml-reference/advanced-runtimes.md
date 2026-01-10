@@ -2,7 +2,7 @@
 
 > **Parent document:** [YAML Reference](../YAML_REFERENCE.md)
 > **Related:** [Node Specification](./nodes.md)
-> **Epic:** [DOC-002](../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 
@@ -396,6 +396,6 @@ nodes:
 ## See Also
 
 - [Node Specification](./nodes.md) - All execution methods
-- [examples/prolog/neurosymbolic/](../../../examples/prolog/neurosymbolic/) - Example agents
+- `examples/prolog/neurosymbolic/` - Example agents
 - [Navigation & Flow](./navigation.md) - Workflow routing
 - [Actions Overview](./actions/README.md) - Built-in action reference

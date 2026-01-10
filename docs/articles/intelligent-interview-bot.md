@@ -153,7 +153,7 @@ state_schema:
 
 ### 4.2 Embedded Question Bank
 
-```yaml
+```python
 question_bank = {
     "competencies": {
         "sales_technique": {

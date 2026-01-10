@@ -2,7 +2,7 @@
 
 > **Parent document:** [Actions Index](./README.md)
 > **Related:** [LLM Actions](./llm.md) | [Node Specification](../nodes.md)
-> **Story:** [TEA-AGENT-001.4](../../../stories/TEA-AGENT-001.4-reasoning-techniques.md)
+> **Story:** TEA-AGENT-001.4 (Reasoning Techniques)
 
 ## Overview
 
@@ -519,7 +519,7 @@ Returns: `{imported: 2, keys: [...]}`
 
 If DSPy is not installed, the DSPy actions automatically fall back to native `reason.*` implementations:
 
-```python
+```text
 # When DSPy is unavailable:
 reason.dspy.cot → reason.cot
 reason.dspy.react → reason.react
@@ -592,4 +592,4 @@ The `reasoning_trace` field contains timestamped entries for each reasoning step
 - [LLM Actions](./llm.md) - Basic LLM calls and tool integration
 - [Integrations](./integrations.md) - Web scraping and external APIs
 - [Node Specification](../nodes.md) - Complete node structure
-- [TEA-AGENT-001.4](../../../stories/TEA-AGENT-001.4-reasoning-techniques.md) - Story specification
+- TEA-AGENT-001.4 (Reasoning Techniques) - Story specification

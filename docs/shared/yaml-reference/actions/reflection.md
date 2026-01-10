@@ -1,7 +1,7 @@
 # Reflection Actions
 
 > **Parent document:** [Actions Index](./README.md)
-> **Story:** [TEA-AGENT-001.2 Reflection Loop](../../../stories/TEA-AGENT-001.2-reflection-loop.md)
+> **Story:** TEA-AGENT-001.2 (Reflection Loop)
 
 ## Overview
 

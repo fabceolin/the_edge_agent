@@ -477,7 +477,25 @@ fn execute_return(
     Ok(state)
 }
 
-/// Simple template processing (replaces {{ state.key }} patterns)
+/// Resolve a nested path like "think.content" in a JSON value
+fn resolve_json_path<'a>(value: &'a JsonValue, path: &str) -> Option<&'a JsonValue> {
+    let mut current = value;
+    for key in path.split('.') {
+        current = current.get(key)?;
+    }
+    Some(current)
+}
+
+/// Convert a JSON value to string for template substitution
+fn json_value_to_string(value: &JsonValue) -> String {
+    match value {
+        JsonValue::String(s) => s.clone(),
+        JsonValue::Null => String::new(),
+        _ => value.to_string(),
+    }
+}
+
+/// Simple template processing (replaces {{ state.key.subkey }} patterns)
 fn process_template(
     template: &str,
     state: &JsonValue,
@@ -485,34 +503,37 @@ fn process_template(
 ) -> String {
     let mut result = template.to_string();
 
-    // Replace {{ state.key }} patterns
-    let state_re = regex_lite::Regex::new(r"\{\{\s*state\.(\w+)\s*\}\}").unwrap();
+    // Replace {{ state.key.subkey }} patterns (supports nested paths)
+    let state_re = regex_lite::Regex::new(r"\{\{\s*state\.([\w.]+)\s*\}\}").unwrap();
     result = state_re
         .replace_all(&result, |caps: &regex_lite::Captures| {
-            let key = &caps[1];
-            state
-                .get(key)
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| state.get(key).map(|v| v.to_string()).unwrap_or_default())
+            let path = &caps[1];
+            resolve_json_path(state, path)
+                .map(json_value_to_string)
+                .unwrap_or_default()
         })
         .to_string();
 
-    // Replace {{ variables.key }} patterns
-    let var_re = regex_lite::Regex::new(r"\{\{\s*variables\.(\w+)\s*\}\}").unwrap();
+    // Replace {{ variables.key.subkey }} patterns (supports nested paths)
+    let var_re = regex_lite::Regex::new(r"\{\{\s*variables\.([\w.]+)\s*\}\}").unwrap();
     result = var_re
         .replace_all(&result, |caps: &regex_lite::Captures| {
-            let key = &caps[1];
-            variables
-                .get(key)
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| {
-                    variables
-                        .get(key)
-                        .map(|v| v.to_string())
+            let path = &caps[1];
+            // First key is the variable name, rest is the path within it
+            let parts: Vec<&str> = path.splitn(2, '.').collect();
+            let var_name = parts[0];
+            if let Some(var_value) = variables.get(var_name) {
+                if parts.len() > 1 {
+                    // Nested path within variable
+                    resolve_json_path(var_value, parts[1])
+                        .map(json_value_to_string)
                         .unwrap_or_default()
-                })
+                } else {
+                    json_value_to_string(var_value)
+                }
+            } else {
+                String::new()
+            }
         })
         .to_string();
 
@@ -573,6 +594,32 @@ mod tests {
 
         let result = process_template("Hello, {{ state.name }}!", &state, &variables);
         assert_eq!(result, "Hello, Alice!");
+    }
+
+    #[test]
+    fn test_template_nested_path() {
+        let state = serde_json::json!({
+            "think": {
+                "content": "The answer is Paris"
+            },
+            "lua_result": {
+                "word_count": 6,
+                "is_short": true
+            }
+        });
+        let variables = std::collections::HashMap::new();
+
+        // Test nested path access
+        let result = process_template("Answer: {{ state.think.content }}", &state, &variables);
+        assert_eq!(result, "Answer: The answer is Paris");
+
+        // Test deeply nested numeric value
+        let result = process_template("Words: {{ state.lua_result.word_count }}", &state, &variables);
+        assert_eq!(result, "Words: 6");
+
+        // Test non-existent path returns empty
+        let result = process_template("Missing: {{ state.foo.bar }}", &state, &variables);
+        assert_eq!(result, "Missing: ");
     }
 
     #[test]

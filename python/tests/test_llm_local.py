@@ -32,12 +32,12 @@ class TestLlmLocalImport(unittest.TestCase):
         self.assertEqual(SUPPORTED_MODELS["gemma"]["n_ctx"], 32768)
 
     def test_default_models_order(self):
-        """DEFAULT_MODELS should prefer Phi-4-mini over Gemma."""
+        """DEFAULT_MODELS should prefer lightweight models first."""
         from the_edge_agent.actions.llm_local import DEFAULT_MODELS
 
-        self.assertEqual(len(DEFAULT_MODELS), 2)
-        # Phi-4-mini should be first (smaller download)
-        self.assertIn("Phi-4-mini", DEFAULT_MODELS[0])
+        self.assertEqual(len(DEFAULT_MODELS), 3)
+        # Gemma 3 1B should be first (ultra-lightweight, 8K ctx)
+        self.assertIn("gemma-3-1b", DEFAULT_MODELS[0])
 
 
 class TestGetModelInfo(unittest.TestCase):

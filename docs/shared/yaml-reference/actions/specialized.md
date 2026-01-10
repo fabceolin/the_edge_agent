@@ -2,7 +2,7 @@
 
 > **Parent document:** [Actions Overview](./README.md)
 > **Related:** [Node Specification](../nodes.md)
-> **Epic:** [DOC-002](../../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 
@@ -603,7 +603,7 @@ validation_logging:
 
 **JSONL Output Format:**
 
-```json
+```text
 {
   "agent_name": "family-extractor",
   "source_hash": "a1b2c3...",
@@ -1060,7 +1060,7 @@ Wrap any action with rate limiting:
 | `timeout` | float | No | - | Maximum wait time in seconds. Returns error if exceeded. |
 
 **Returns:**
-```json
+```text
 {
   "success": true,
   "result": {...},              // Wrapped action result
@@ -1200,7 +1200,7 @@ nodes:
 
 Access secrets from cloud providers (AWS Secrets Manager, Azure Key Vault, GCP Secret Manager) or environment variables through a unified interface.
 
-> **Epic:** [TEA-BUILTIN-012](../../../stories/TEA-BUILTIN-012-secrets-backend-epic.md)
+> **Epic:** TEA-BUILTIN-012 (Secrets Backend)
 > **Status:** Implemented (Python-only)
 
 ### `secrets.get`
@@ -1773,7 +1773,7 @@ tea_agent_errors_total{agent="research",error_type="timeout"} 15
 Returns OpenAPI 3.0 specification aggregating all agent endpoints.
 
 **Response:**
-```json
+```text
 {
   "openapi": "3.0.3",
   "info": {"title": "tea-agents", "version": "1.0.0"},
@@ -1839,7 +1839,7 @@ spec:
 
 ## SemTools Semantic Search
 
-> **Story:** [TEA-BUILTIN-014](../../../stories/TEA-BUILTIN-014-semtools-semantic-search.md)
+> **Story:** TEA-BUILTIN-014 (SemTools Semantic Search)
 
 Local semantic search using [SemTools CLI](https://github.com/run-llama/semtools), enabling grep-like semantic similarity search without API calls or vector databases.
 

@@ -269,4 +269,4 @@ config:
 - [Node Specification](./nodes.md) - All execution methods
 - [Navigation](./navigation.md) - Flow control patterns
 - [Actions Reference](./actions/README.md) - Built-in actions
-- [examples/yaml/](../../examples/yaml/) - Additional example agents
+- `examples/yaml/` - Additional example agents

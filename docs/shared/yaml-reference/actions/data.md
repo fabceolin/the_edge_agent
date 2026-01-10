@@ -2,7 +2,7 @@
 
 > **Parent document:** [Actions Overview](./README.md)
 > **Related:** [Node Specification](../nodes.md)
-> **Epic:** [DOC-002](../../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 

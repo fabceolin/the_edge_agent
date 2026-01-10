@@ -1,7 +1,7 @@
 # Navigation and Flow Control
 
 > **Parent document:** [YAML Reference](../YAML_REFERENCE.md)
-> **Epic:** [DOC-002](../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 
@@ -205,7 +205,7 @@ To migrate from the legacy `edges` format:
 
 > **Note:** Parallel edges with `parallel: true` and `fan_in:` are not deprecated and should remain in the `edges` section. Only sequential navigation edges are being migrated to `goto`.
 
-See [TEA-YAML-002](../../stories/TEA-YAML-002-implicit-graph-goto-syntax.md) for the full migration guide and LLM prompt.
+See TEA-YAML-002 (Implicit Graph Goto Syntax) for the full migration guide and LLM prompt.
 
 ---
 

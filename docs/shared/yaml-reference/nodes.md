@@ -1,7 +1,7 @@
 # Node Specification
 
 > **Parent document:** [YAML Reference](../YAML_REFERENCE.md)
-> **Epic:** [DOC-002](../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 

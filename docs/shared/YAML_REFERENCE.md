@@ -734,7 +734,7 @@ nodes:
       system: "You are a helpful assistant."
 ```
 
-See [Python Actions Reference](../python/actions-reference.md#local-llm-provider-tea-release-004) and [Rust Actions Reference](../rust/actions-reference.md#local-llm-provider-tea-release-004) for complete action documentation.
+See [Python Actions Reference](../python/actions-reference.md) and [Rust Actions Reference](../rust/actions-reference.md) for complete action documentation (search for "Local LLM Provider").
 
 ---
 

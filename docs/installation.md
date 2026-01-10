@@ -277,12 +277,12 @@ mv microsoft_Phi-4-mini-instruct-Q3_K_S.gguf manifest.json models/
 
 **CRITICAL:** Your web server MUST set these headers for SharedArrayBuffer support:
 
-```http
+```text
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-See [rust/tea-wasm-llm/README.md](../rust/tea-wasm-llm/README.md) for Nginx, Apache, and Caddy configuration examples.
+See `rust/tea-wasm-llm/README.md` for Nginx, Apache, and Caddy configuration examples.
 
 ### Basic Usage
 
@@ -309,7 +309,7 @@ const result = await executeLlmYaml(yamlString, { input: 'hello' });
 </script>
 ```
 
-For complete documentation, see [rust/tea-wasm-llm/README.md](../rust/tea-wasm-llm/README.md).
+For complete documentation, see `rust/tea-wasm-llm/README.md`.
 
 ## Python Installation
 

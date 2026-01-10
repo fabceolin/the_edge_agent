@@ -51,7 +51,7 @@ Decompose a goal into subtasks using LLM. Returns a structured plan with subtask
 
 ### Returns
 
-```json
+```text
 {
   "plan": {
     "id": "plan_abc123",
@@ -152,7 +152,7 @@ subtask_executor:
 
 ### Returns
 
-```json
+```text
 {
   "plan": {...},
   "subtask_results": {
@@ -213,7 +213,7 @@ Re-plan from current state, preserving completed subtasks. Used when a subtask f
 
 ### Returns
 
-```json
+```text
 {
   "plan": {...},
   "preserved_subtasks": 2,
@@ -250,7 +250,7 @@ Get current plan execution status with aggregated counts and optional subtask de
 
 ### Returns
 
-```json
+```text
 {
   "status": {
     "total": 5,
@@ -402,7 +402,7 @@ navigation:
 
 Planning actions return structured errors:
 
-```json
+```text
 {
   "error": "Invalid plan structure: Cycle detected: a -> b -> c -> a",
   "success": false,

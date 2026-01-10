@@ -263,7 +263,7 @@ Generate text embeddings using a local model.
 
 **Returns:**
 
-```json
+```text
 {
   "embedding": [0.123, -0.456, ...],
   "dimensions": 768,

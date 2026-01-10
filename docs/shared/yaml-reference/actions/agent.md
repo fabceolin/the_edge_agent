@@ -145,7 +145,7 @@ Dispatch the same task to multiple agents in parallel with aggregation.
 
 **Returns (varies by aggregation):**
 
-```json
+```text
 {
   "result": "Yes",
   "votes": {"Yes": 2, "No": 1},
@@ -228,7 +228,7 @@ Coordinator pattern with a leader agent dispatching to workers.
 
 **Returns:**
 
-```json
+```text
 {
   "response": "Coordinated implementation complete...",
   "rounds": 2,

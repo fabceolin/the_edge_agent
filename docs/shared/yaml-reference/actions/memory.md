@@ -2,7 +2,7 @@
 
 > **Parent document:** [Actions Overview](./README.md)
 > **Related:** [Node Specification](../nodes.md)
-> **Epic:** [DOC-002](../../../stories/DOC-002-yaml-reference-modularization.md)
+> **Epic:** DOC-002 (YAML Reference Modularization)
 
 ## Overview
 
@@ -144,7 +144,7 @@ Summarize conversation history using LLM:
 
 ## Mem0 Universal Memory Actions
 
-> **Story:** [TEA-AGENT-001.6](../../../stories/TEA-AGENT-001.6-mem0-memory.md)
+> **Story:** TEA-AGENT-001.6 (Mem0 Memory)
 
 Mem0 integration for universal memory management with automatic fact extraction, semantic search, and user/session/agent scoped memories. Optionally supports graph memory for entity-relationship extraction.
 
@@ -236,7 +236,7 @@ Semantic search over stored memories:
 | `include_relations` | bool | No | false | Include graph relations (graph mode) |
 
 **Returns:**
-```json
+```text
 {
   "success": true,
   "results": [
@@ -633,7 +633,7 @@ Wrap any action with automatic caching:
 | `cleanup_limit` | int | No | 5 | Max expired entries to delete per cleanup |
 
 **Returns:**
-```json
+```text
 {
   "success": true,
   "result": {...},
@@ -915,7 +915,7 @@ settings:
 
 When `session_id` is present in the initial state, session data is automatically loaded and merged before execution:
 
-```yaml
+```python
 # First turn
 events = graph.stream({"session_id": "conv_123", "message": "Hello"})
 
@@ -1358,7 +1358,7 @@ Retrieve contextual information for entity:
 
 SQL/PGQ graph queries via the DuckDB DuckPGQ extension. Provides property graphs, pattern matching, path finding, and graph algorithms (PageRank, clustering, connected components) using standard SQL/PGQ syntax (ISO SQL:2023).
 
-> **Story:** [TEA-BUILTIN-001.8](../../../stories/TEA-BUILTIN-001.8.duckpgq-graph-queries.md)
+> **Story:** TEA-BUILTIN-001.8 (DuckPGQ Graph Queries)
 
 **Required:**
 - DuckDB with DuckPGQ extension (auto-installs from community)

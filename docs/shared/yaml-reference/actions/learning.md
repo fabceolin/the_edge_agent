@@ -294,4 +294,4 @@ When TextGrad is not installed, actions will:
 
 - [TextGrad GitHub](https://github.com/zou-group/textgrad)
 - [TextGrad Paper](https://arxiv.org/abs/2406.07496) (Nature 2024)
-- [Story: TEA-AGENT-001.9](../../stories/TEA-AGENT-001.9-textgrad-learning.md)
+- Story: TEA-AGENT-001.9 (TextGrad Learning)
