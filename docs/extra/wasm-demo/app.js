@@ -27,20 +27,24 @@ import {
 // Configuration
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
 
-// Default YAML workflow
-const DEFAULT_YAML = `name: simple-chat
+// Default YAML workflow (implicit edges - no edges section needed)
+const DEFAULT_YAML = `name: qa-workflow
 nodes:
-  - name: respond
+  - name: think
     action: llm.call
     with:
-      prompt: "{{ state.question }}"
+      prompt: "Think step by step about: {{ state.question }}"
+      max_tokens: 150
+      temperature: 0.3
+
+  - name: answer
+    action: llm.call
+    with:
+      prompt: "Based on this analysis: {{ state.think.content }}\\nProvide a concise answer."
       max_tokens: 100
       temperature: 0.7
-edges:
-  - from: __start__
-    to: respond
-  - from: respond
-    to: __end__`;
+
+# No edges needed - implicit flow: think -> answer -> __end__`;
 
 // Default state
 const DEFAULT_STATE = {
