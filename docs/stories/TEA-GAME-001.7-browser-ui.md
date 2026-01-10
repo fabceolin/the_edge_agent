@@ -2,14 +2,16 @@
 
 ## Status
 
-Needs Revision
+Ready for Development (Blocked by TEA-GAME-001.6)
 
-**Notes:** Story has identified blockers from QA assessment:
-- BLOCKER: Dependency on Story 6 (TEA-GAME-001.6) WASM exports - cannot execute integration/E2E tests until WASM functions are available
-- CONCERN: Story lacks AC for WASM call failures - recommend adding error states for robustness
-- CONCERN: LLM call timeouts need specification (10+ second timeouts for `game_generate_round()`)
+**Validation Date:** 2026-01-10
+**QA Assessment:** Passed with dependency blocker
+**Unblock Condition:** Story 6 (WASM Port) must be implemented first
 
-Story should be revisited after Story 6 is complete and error handling ACs are added.
+**Notes:**
+- Integration/E2E tests require Story 6 WASM exports
+- Error handling ACs added (AC-11, AC-12) per QA recommendation
+- Story is fully specified and ready for implementation once unblocked
 
 ## Story
 
@@ -42,6 +44,8 @@ Story should be revisited after Story 6 is complete and error handling ACs are a
 8. **AC-8**: "Play Again" button from leaderboard screen
 9. **AC-9**: Loading states during LLM calls
 10. **AC-10**: Responsive design matching existing demo style
+11. **AC-11**: Error state displays when WASM calls fail (network error, timeout)
+12. **AC-12**: LLM call timeout of 30 seconds with user-friendly "Taking longer than expected..." message after 10 seconds
 
 ## Tasks / Subtasks
 
@@ -94,6 +98,12 @@ Story should be revisited after Story 6 is complete and error handling ACs are a
   - [ ] Stack layout on narrow screens
   - [ ] Match existing demo dark theme
   - [ ] Test on mobile viewport
+
+- [ ] Implement error handling (AC-11, AC-12)
+  - [ ] Catch WASM call failures in game.js
+  - [ ] Display error modal with "Retry" and "Return to Welcome" options
+  - [ ] Show "Taking longer than expected..." after 10s during LLM calls
+  - [ ] Implement 30s timeout with graceful failure message
 
 ## Dev Notes
 
@@ -590,3 +600,4 @@ Full test matrix: `docs/qa/assessments/TEA-GAME-001.7-test-design-20260110.md`
 |------|---------|-------------|--------|
 | 2026-01-10 | 0.1 | Initial story creation | Sarah (PO Agent) |
 | 2026-01-10 | 0.2 | Added QA Notes section | Quinn (Test Architect) |
+| 2026-01-10 | 0.3 | Added AC-11, AC-12 for error handling; Updated status to "Ready (Blocked)" | Sarah (PO Agent) |
