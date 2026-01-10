@@ -243,8 +243,12 @@ runYamlBtn.addEventListener('click', async () => {
     const result = await executeLlmYaml(yamlContent, state);
 
     yamlOutput.classList.remove('hidden');
+    // Filter out null/undefined values recursively
+    const cleanResult = JSON.parse(JSON.stringify(result, (key, value) =>
+      value === null || value === undefined ? undefined : value
+    ));
     // Convert output to YAML with nice formatting
-    setOutputContent(jsYaml.dump(result, {
+    setOutputContent(jsYaml.dump(cleanResult, {
       indent: 2,
       lineWidth: 80,
       noRefs: true,
