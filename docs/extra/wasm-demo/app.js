@@ -1,24 +1,18 @@
 /**
  * TEA WASM LLM Demo Application
  *
- * Demonstrates the batteries-included browser LLM with:
- * - Simple chat interface
- * - Model loading progress
- * - Cache status display
- * - YAML workflow execution
+ * Demonstrates YAML workflow execution with browser-based LLM.
  */
 
-// Import from the bundled package in pkg/ directory
+// Import from the bundled package
 import {
   initLlm,
   initTeaLlm,
   chat,
-  chatStream,
   executeLlmYaml,
   getLlmCacheStats,
   clearLlmCache,
   hasCoopCoep,
-  isLlmReady,
   getVersion,
 } from './pkg/index.js';
 
@@ -32,10 +26,6 @@ const cacheStatusEl = document.getElementById('cache-status');
 const progressContainer = document.getElementById('progress-container');
 const progressFill = document.getElementById('progress-fill');
 const progressText = document.getElementById('progress-text');
-const messagesEl = document.getElementById('messages');
-const chatForm = document.getElementById('chat-form');
-const chatInput = document.getElementById('chat-input');
-const sendBtn = document.getElementById('send-btn');
 const yamlInput = document.getElementById('yaml-input');
 const stateInput = document.getElementById('state-input');
 const runYamlBtn = document.getElementById('run-yaml-btn');
@@ -44,18 +34,6 @@ const yamlResult = document.getElementById('yaml-result');
 const clearCacheBtn = document.getElementById('clear-cache-btn');
 const reloadModelBtn = document.getElementById('reload-model-btn');
 const versionEl = document.getElementById('version');
-
-// Tab switching
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-
-    tab.classList.add('active');
-    const tabId = tab.dataset.tab + '-tab';
-    document.getElementById(tabId).classList.remove('hidden');
-  });
-});
 
 // Update status display
 function updateStatus(text, type = 'loading') {
@@ -100,33 +78,6 @@ function updateThreadingStatus() {
   threadingStatusEl.textContent = multiThread ? 'Multi-thread' : 'Single-thread';
 }
 
-// Add message to chat
-function addMessage(role, content, isStreaming = false) {
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${role}${isStreaming ? ' streaming' : ''}`;
-  messageDiv.textContent = content;
-  messagesEl.appendChild(messageDiv);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return messageDiv;
-}
-
-// Update last message (for streaming)
-function updateLastMessage(content) {
-  const lastMessage = messagesEl.lastElementChild;
-  if (lastMessage) {
-    lastMessage.textContent = content;
-    lastMessage.classList.remove('streaming');
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-}
-
-// Enable/disable chat controls
-function enableChat(enabled) {
-  chatInput.disabled = !enabled;
-  sendBtn.disabled = !enabled;
-  runYamlBtn.disabled = !enabled;
-}
-
 // Initialize LLM
 async function initializeLlm() {
   try {
@@ -136,7 +87,7 @@ async function initializeLlm() {
 
     await initLlm({
       modelUrl: MODEL_URL,
-      useCdn: true, // Use CDN for wllama assets
+      useCdn: true,
       verbose: true,
       onProgress: (loaded, total) => {
         updateProgress(loaded, total);
@@ -146,11 +97,11 @@ async function initializeLlm() {
       onReady: () => {
         updateStatus('Ready', 'ready');
         showProgress(false);
-        enableChat(true);
+        runYamlBtn.disabled = false;
       },
     });
 
-    // Initialize TEA YAML engine with LLM handler that uses wllama
+    // Initialize TEA YAML engine with LLM handler
     await initTeaLlm({ verbose: true }, async (paramsJson) => {
       const params = JSON.parse(paramsJson);
       const response = await chat(params.prompt, {
@@ -166,46 +117,8 @@ async function initializeLlm() {
     console.error('Initialization failed:', error);
     updateStatus(`Error: ${error.message}`, 'error');
     showProgress(false);
-    addMessage('error', `Failed to initialize: ${error.message}`);
   }
 }
-
-// Handle chat form submission
-chatForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  const prompt = chatInput.value.trim();
-  if (!prompt || !isLlmReady()) return;
-
-  chatInput.value = '';
-  addMessage('user', prompt);
-
-  try {
-    enableChat(false);
-
-    // Create streaming message
-    const messageDiv = addMessage('assistant', '', true);
-    let fullResponse = '';
-
-    await chatStream(prompt, (token) => {
-      fullResponse += token;
-      messageDiv.textContent = fullResponse;
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }, {
-      maxTokens: 200,
-      temperature: 0.7,
-    });
-
-    messageDiv.classList.remove('streaming');
-
-  } catch (error) {
-    console.error('Chat error:', error);
-    addMessage('error', `Error: ${error.message}`);
-  } finally {
-    enableChat(true);
-    chatInput.focus();
-  }
-});
 
 // Handle YAML execution
 runYamlBtn.addEventListener('click', async () => {
@@ -244,10 +157,12 @@ clearCacheBtn.addEventListener('click', async () => {
   try {
     await clearLlmCache();
     await updateCacheStatus();
-    addMessage('assistant', 'Cache cleared successfully.');
+    yamlOutput.classList.remove('hidden');
+    yamlResult.textContent = 'Cache cleared successfully.';
   } catch (error) {
     console.error('Clear cache error:', error);
-    addMessage('error', `Failed to clear cache: ${error.message}`);
+    yamlOutput.classList.remove('hidden');
+    yamlResult.textContent = `Failed to clear cache: ${error.message}`;
   }
 });
 
@@ -255,11 +170,10 @@ clearCacheBtn.addEventListener('click', async () => {
 reloadModelBtn.addEventListener('click', async () => {
   try {
     await clearLlmCache();
-    enableChat(false);
+    runYamlBtn.disabled = true;
     await initializeLlm();
   } catch (error) {
     console.error('Reload error:', error);
-    addMessage('error', `Failed to reload: ${error.message}`);
   }
 });
 
