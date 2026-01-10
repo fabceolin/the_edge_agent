@@ -28,10 +28,17 @@ import {
   registerLuaCallback,
   clearLuaCallback,
   isLuaCallbackRegistered,
+  // Prolog handler bridge
+  registerPrologHandler,
+  clearPrologHandler,
+  isPrologHandlerRegistered,
 } from './pkg/index.js';
 
 // Lua engine instance
 let luaEngine = null;
+
+// Prolog engine instance
+let prologEngine = null;
 
 // Initialize Lua engine (wasmoon)
 async function initLuaEngine() {
@@ -62,14 +69,55 @@ async function initLuaEngine() {
   }
 }
 
+// Initialize Prolog engine (trealla)
+async function initPrologEngine() {
+  if (prologEngine) return prologEngine;
+  try {
+    const { Prolog } = await import('trealla');
+    prologEngine = new Prolog();
+    console.log('[TEA-DEMO] Prolog engine loaded (trealla)');
+
+    // Register Prolog handler with TEA
+    registerPrologHandler(async (queryJson) => {
+      const { code, facts } = JSON.parse(queryJson);
+      try {
+        // Consult facts if provided
+        if (facts) {
+          await prologEngine.consultText(facts);
+        }
+
+        // Run query and collect results
+        const query = prologEngine.query(code);
+        const bindings = [];
+
+        for await (const result of query) {
+          if (result.status === 'success' && result.answer) {
+            bindings.push(result.answer);
+          }
+        }
+
+        return JSON.stringify({ bindings, success: true });
+      } catch (e) {
+        return JSON.stringify({ bindings: [], success: false, error: e.message });
+      }
+    });
+
+    console.log('[TEA-DEMO] Prolog handler registered');
+    return prologEngine;
+  } catch (e) {
+    console.warn('[TEA-DEMO] Could not load Prolog engine:', e.message);
+    return null;
+  }
+}
+
 // Configuration
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
 
 // Default YAML workflow (implicit edges - no edges section needed)
-const DEFAULT_YAML = `name: qa-workflow
+const DEFAULT_YAML = `name: multi-engine-workflow
 nodes:
-  # First, use Lua to compute word count
-  - name: analyze
+  # Step 1: Use Lua to analyze the question
+  - name: lua_analyze
     action: lua.eval
     with:
       code: |
@@ -79,22 +127,36 @@ nodes:
         end
         return { word_count = words, is_short = words < 10 }
 
-  # Then ask LLM to think about the question
+  # Step 2: Use Prolog for logical classification
+  - name: prolog_classify
+    action: prolog.query
+    with:
+      code: "category(X), X \\\\= unknown"
+      facts: |
+        category(geography) :- sub_string("{{ state.question }}", _, _, _, "capital").
+        category(geography) :- sub_string("{{ state.question }}", _, _, _, "country").
+        category(math) :- sub_string("{{ state.question }}", _, _, _, "calculate").
+        category(math) :- sub_string("{{ state.question }}", _, _, _, "sum").
+        category(science) :- sub_string("{{ state.question }}", _, _, _, "why").
+        category(unknown).
+
+  # Step 3: LLM thinks about the question
   - name: think
     action: llm.call
     with:
       prompt: |
-        Question ({{ state.lua_result.word_count }} words): {{ state.question }}
+        Question: {{ state.question }}
+        Word count: {{ state.lua_result.word_count }}
         Think step by step about this question.
       max_tokens: 150
       temperature: 0.3
 
-  # Finally, provide an answer
+  # Step 4: LLM provides final answer
   - name: answer
     action: llm.call
     with:
       prompt: |
-        Based on this analysis: {{ state.think.content }}
+        Based on: {{ state.think.content }}
         Provide a concise answer.
       max_tokens: 100
       temperature: 0.7`;
@@ -262,9 +324,14 @@ async function initializeLlm() {
       return JSON.stringify({ content: response.content });
     });
 
-    // Initialize Lua engine (non-blocking)
-    initLuaEngine().then(() => {
-      updateStatus('Ready (with Lua)', 'ready');
+    // Initialize Lua and Prolog engines (non-blocking)
+    Promise.all([initLuaEngine(), initPrologEngine()]).then(([lua, prolog]) => {
+      const engines = [];
+      if (lua) engines.push('Lua');
+      if (prolog) engines.push('Prolog');
+      if (engines.length > 0) {
+        updateStatus(`Ready (with ${engines.join(' + ')})`, 'ready');
+      }
     });
 
     await updateCacheStatus();
