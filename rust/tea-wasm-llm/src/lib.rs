@@ -176,7 +176,7 @@ pub async fn execute_yaml(yaml: &str, initial_state: &str) -> Result<String, JsV
         }
 
         // Find next node
-        current_node = find_next_node(&current_node, &config.edges)?;
+        current_node = find_next_node(&current_node, &config)?;
     }
 
     web_sys::console::log_1(&"[TEA-WASM-LLM] Workflow complete".into());
@@ -201,12 +201,29 @@ fn find_start_node(config: &LlmYamlConfig) -> Result<String, JsValue> {
 }
 
 /// Find the next node from current node
-fn find_next_node(current: &str, edges: &[LlmEdgeConfig]) -> Result<String, JsValue> {
-    for edge in edges {
+/// Explicit edges take precedence, otherwise use implicit sequential order.
+fn find_next_node(current: &str, config: &LlmYamlConfig) -> Result<String, JsValue> {
+    // First, check for explicit edge from current node
+    for edge in &config.edges {
         if edge.from == current {
             return Ok(edge.to.clone());
         }
     }
+
+    // No explicit edge found - use implicit sequential order
+    // Find current node index and return next node in sequence
+    for (i, node) in config.nodes.iter().enumerate() {
+        if node.name == current {
+            // Return next node if exists, otherwise __end__
+            return Ok(config
+                .nodes
+                .get(i + 1)
+                .map(|n| n.name.clone())
+                .unwrap_or_else(|| "__end__".to_string()));
+        }
+    }
+
+    // Current node not found in nodes list - end workflow
     Ok("__end__".to_string())
 }
 
