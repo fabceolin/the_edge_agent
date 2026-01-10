@@ -28,6 +28,8 @@
 //! ```
 
 mod llm;
+mod lua;
+mod prolog;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -37,6 +39,15 @@ use wasm_bindgen::prelude::*;
 pub use llm::{
     clear_llm_handler, has_llm_handler, llm_call_async, llm_embed_async, set_llm_handler,
     LlmParams, LlmResponse,
+};
+
+pub use lua::{
+    clear_lua_callback, has_lua_callback, lua_eval_async, set_lua_callback, LuaParams, LuaResponse,
+};
+
+pub use prolog::{
+    clear_prolog_handler, has_prolog_handler, prolog_query_async, set_prolog_handler,
+    PrologParams, PrologResponse,
 };
 
 /// Error types for TEA WASM LLM operations
@@ -218,6 +229,8 @@ async fn execute_node(
     match action {
         "llm.call" => execute_llm_call(node, state, variables).await,
         "llm.embed" => execute_llm_embed(node, state, variables).await,
+        "lua.eval" => execute_lua_eval(node, state, variables).await,
+        "prolog.query" => execute_prolog_query(node, state, variables).await,
         "return" => execute_return(node, state, variables),
         _ => Ok(state), // passthrough or unknown actions
     }
@@ -286,19 +299,20 @@ async fn execute_llm_call(
     let result: JsonValue = serde_json::from_str(&result_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse LLM result: {}", e)))?;
 
-    // Store result in output key if specified
-    if let Some(ref output_key) = node.output {
-        if let Some(llm_response) = result.get("llm_response").cloned() {
-            if let Some(obj) = state.as_object_mut() {
-                obj.insert(output_key.clone(), llm_response);
-            }
-            Ok(state)
-        } else {
-            Ok(result)
-        }
+    // Store result in output key (default to node name)
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+
+    // Extract content from LLM response or use whole result
+    let output_value = if let Some(llm_response) = result.get("llm_response").cloned() {
+        llm_response
     } else {
-        Ok(result)
+        result
+    };
+
+    if let Some(obj) = state.as_object_mut() {
+        obj.insert(output_key.clone(), output_value);
     }
+    Ok(state)
 }
 
 /// Execute llm.embed action
@@ -325,6 +339,98 @@ async fn execute_llm_embed(
 
     serde_json::from_str(&result_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse embed result: {}", e)))
+}
+
+/// Execute lua.eval action
+async fn execute_lua_eval(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("lua.eval requires 'with' parameters"))?;
+
+    let code = params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .map(|c| process_template(c, &state, variables))
+        .ok_or_else(|| JsValue::from_str("lua.eval requires 'code' parameter"))?;
+
+    let state_json = serde_json::to_string(&state)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize state: {}", e)))?;
+
+    let result_json = lua_eval_async(&code, &state_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse Lua result: {}", e)))?;
+
+    // Store result in output key if specified
+    if let Some(ref output_key) = node.output {
+        if let Some(lua_result) = result.get("lua_result").cloned() {
+            if let Some(obj) = state.as_object_mut() {
+                obj.insert(output_key.clone(), lua_result);
+            }
+            Ok(state)
+        } else {
+            Ok(result)
+        }
+    } else {
+        Ok(result)
+    }
+}
+
+/// Execute prolog.query action
+async fn execute_prolog_query(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("prolog.query requires 'with' parameters"))?;
+
+    let code = params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .map(|c| process_template(c, &state, variables))
+        .ok_or_else(|| JsValue::from_str("prolog.query requires 'code' parameter"))?;
+
+    let facts = params
+        .get("facts")
+        .and_then(|v| v.as_str())
+        .map(|f| process_template(f, &state, variables));
+
+    // Build query JSON
+    let query_params = serde_json::json!({
+        "code": code,
+        "facts": facts,
+    });
+
+    let query_json = serde_json::to_string(&query_params)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize query: {}", e)))?;
+
+    let state_json = serde_json::to_string(&state)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize state: {}", e)))?;
+
+    let result_json = prolog_query_async(&query_json, &state_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse Prolog result: {}", e)))?;
+
+    // Store result in output key if specified
+    if let Some(ref output_key) = node.output {
+        if let Some(prolog_result) = result.get("prolog_result").cloned() {
+            if let Some(obj) = state.as_object_mut() {
+                obj.insert(output_key.clone(), prolog_result);
+            }
+            Ok(state)
+        } else {
+            Ok(result)
+        }
+    } else {
+        Ok(result)
+    }
 }
 
 /// Execute return action
