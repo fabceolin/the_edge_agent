@@ -412,3 +412,160 @@ edges:
     expect(unexpectedErrors.length).toBe(0);
   });
 });
+
+test.describe('Opik Tracing (TEA-OBS-002)', () => {
+  test('should register Opik callback', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    // Check callback not registered initially
+    const hasCallbackBefore = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+      return init.has_opik_callback();
+    });
+    expect(hasCallbackBefore).toBe(false);
+
+    // Register callback
+    await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      init.set_opik_callback(() => {
+        console.log('Opik trace received');
+      });
+    });
+
+    // Check callback is registered
+    const hasCallbackAfter = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      return init.has_opik_callback();
+    });
+    expect(hasCallbackAfter).toBe(true);
+  });
+
+  test('should clear Opik callback', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    // Register and then clear
+    await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+      init.set_opik_callback(() => {});
+      init.clear_opik_callback();
+    });
+
+    const hasCallback = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      return init.has_opik_callback();
+    });
+    expect(hasCallback).toBe(false);
+  });
+
+  test('should configure Opik settings', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+      init.configure_opik(JSON.stringify({
+        project_name: 'test-project',
+        enabled: true,
+      }));
+    });
+
+    const config = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      return JSON.parse(init.get_opik_config());
+    });
+
+    expect(config.project_name).toBe('test-project');
+    expect(config.enabled).toBe(true);
+  });
+
+  test('should check is_opik_enabled', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    // Initially disabled (no callback)
+    const enabledBefore = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+      return init.is_opik_enabled();
+    });
+    expect(enabledBefore).toBe(false);
+
+    // Enable with callback and config
+    await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      init.configure_opik(JSON.stringify({ enabled: true }));
+      init.set_opik_callback(() => {});
+    });
+
+    const enabledAfter = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      return init.is_opik_enabled();
+    });
+    expect(enabledAfter).toBe(true);
+  });
+
+  test('should create LLM trace', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    const traceJson = await page.evaluate(async () => {
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+      return init.create_llm_trace(
+        'test-node',
+        JSON.stringify({ prompt: 'Hello', max_tokens: 10 }),
+        JSON.stringify({ content: 'World', usage: { total_tokens: 5 } }),
+        '2024-01-15T12:00:00.000Z',
+        '2024-01-15T12:00:01.000Z'
+      );
+    });
+
+    const trace = JSON.parse(traceJson);
+    expect(trace.name).toBe('test-node');
+    expect(trace.input.prompt).toBe('Hello');
+    expect(trace.output.content).toBe('World');
+    expect(trace.start_time).toBe('2024-01-15T12:00:00.000Z');
+    expect(trace.end_time).toBe('2024-01-15T12:00:01.000Z');
+  });
+
+  test('should send trace via callback', async ({ page }) => {
+    await page.goto(TEST_PAGE);
+    await waitForWasmLoad(page);
+
+    // Track received traces
+    const traces = await page.evaluate(async () => {
+      const receivedTraces: string[] = [];
+
+      const init = await import('../../pkg/tea_wasm_llm.js');
+      await init.default();
+
+      init.configure_opik(JSON.stringify({ enabled: true }));
+      init.set_opik_callback((traceJson: string) => {
+        receivedTraces.push(traceJson);
+      });
+
+      // Send a trace
+      await init.send_opik_trace_async(JSON.stringify({
+        id: 'test-trace-id',
+        name: 'test-op',
+        project_name: 'test-project',
+        start_time: '2024-01-15T12:00:00.000Z',
+        end_time: '2024-01-15T12:00:01.000Z',
+        input: {},
+        output: {},
+      }));
+
+      return receivedTraces;
+    });
+
+    expect(traces.length).toBe(1);
+    const trace = JSON.parse(traces[0]);
+    expect(trace.id).toBe('test-trace-id');
+    expect(trace.name).toBe('test-op');
+  });
+});

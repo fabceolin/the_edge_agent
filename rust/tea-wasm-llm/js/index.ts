@@ -73,6 +73,15 @@ import init, {
   clear_prolog_handler,
   has_prolog_handler,
   prolog_query_async,
+  // Opik tracing bridge (TEA-OBS-002)
+  set_opik_callback,
+  clear_opik_callback,
+  has_opik_callback,
+  configure_opik,
+  get_opik_config,
+  is_opik_enabled,
+  send_opik_trace_async,
+  create_llm_trace,
   has_shared_array_buffer,
   version,
 } from '../pkg/tea_wasm_llm.js';
@@ -621,6 +630,251 @@ export async function queryProlog(
 }
 
 // ============================================================================
+// Opik Tracing Bridge Functions (TEA-OBS-002)
+// ============================================================================
+
+/**
+ * Opik tracing configuration
+ */
+export interface OpikTracingConfig {
+  /**
+   * Opik API key (required for tracing to work)
+   * Can also be set via localStorage key 'OPIK_API_KEY'
+   */
+  apiKey?: string;
+
+  /**
+   * Project name for traces
+   * Defaults to 'tea-wasm'
+   */
+  projectName?: string;
+
+  /**
+   * Optional workspace name
+   */
+  workspace?: string;
+
+  /**
+   * Custom Opik API URL
+   * Defaults to 'https://www.comet.com/opik/api'
+   */
+  apiUrl?: string;
+
+  /**
+   * Whether to enable verbose logging
+   */
+  verbose?: boolean;
+}
+
+/**
+ * Opik trace structure (matches Opik REST API)
+ */
+export interface OpikTrace {
+  id: string;
+  name: string;
+  project_name: string;
+  start_time: string;
+  end_time: string;
+  input: unknown;
+  output: unknown;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Callback type for custom Opik trace handling
+ */
+export type OpikTraceCallback = (traceJson: string) => Promise<void> | void;
+
+// Store API key and config internally
+let opikApiKey: string | null = null;
+let opikApiUrl = 'https://www.comet.com/opik/api';
+let opikVerbose = false;
+
+/**
+ * Initialize Opik tracing
+ *
+ * Call this function to enable automatic tracing of LLM calls to Opik.
+ * Traces are sent to the Opik REST API after each LLM call completes.
+ *
+ * @param config - Opik tracing configuration
+ *
+ * @example
+ * ```typescript
+ * import { initOpikTracing, initLlm, chat } from 'tea-wasm-llm';
+ *
+ * // Initialize Opik tracing
+ * await initOpikTracing({
+ *   apiKey: 'your-opik-api-key',
+ *   projectName: 'my-agent',
+ * });
+ *
+ * // Initialize LLM
+ * await initLlm({ modelUrl: '...' });
+ *
+ * // Chat - traces are sent automatically
+ * const response = await chat("Hello!");
+ * ```
+ */
+export async function initOpikTracing(config: OpikTracingConfig = {}): Promise<void> {
+  // Get API key from config, localStorage, or error
+  opikApiKey = config.apiKey || localStorage.getItem('OPIK_API_KEY');
+
+  if (!opikApiKey) {
+    console.warn('[TEA-OPIK] No API key provided. Opik tracing disabled.');
+    console.warn('[TEA-OPIK] Set apiKey in config or store in localStorage as "OPIK_API_KEY"');
+    return;
+  }
+
+  opikApiUrl = config.apiUrl || 'https://www.comet.com/opik/api';
+  opikVerbose = config.verbose || false;
+
+  // Configure the WASM module
+  const wasmConfig = {
+    project_name: config.projectName || 'tea-wasm',
+    workspace: config.workspace,
+    enabled: true,
+  };
+  configure_opik(JSON.stringify(wasmConfig));
+
+  // Register the callback that sends traces to Opik API
+  set_opik_callback(async (traceJson: string) => {
+    await sendTraceToOpik(traceJson);
+  });
+
+  if (opikVerbose) {
+    console.log('[TEA-OPIK] Tracing initialized');
+    console.log('[TEA-OPIK] Project:', config.projectName || 'tea-wasm');
+    console.log('[TEA-OPIK] API URL:', opikApiUrl);
+  }
+}
+
+/**
+ * Internal function to send trace to Opik REST API
+ */
+async function sendTraceToOpik(traceJson: string): Promise<void> {
+  if (!opikApiKey) {
+    return; // Silently skip if no API key
+  }
+
+  try {
+    const response = await fetch(`${opikApiUrl}/v1/private/traces`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${opikApiKey}`,
+      },
+      body: traceJson,
+    });
+
+    if (!response.ok) {
+      if (opikVerbose) {
+        console.warn(`[TEA-OPIK] Failed to send trace: ${response.status} ${response.statusText}`);
+      }
+    } else if (opikVerbose) {
+      console.log('[TEA-OPIK] Trace sent successfully');
+    }
+  } catch (error) {
+    if (opikVerbose) {
+      console.warn('[TEA-OPIK] Error sending trace:', error);
+    }
+    // Don't throw - graceful degradation
+  }
+}
+
+/**
+ * Disable Opik tracing
+ */
+export function disableOpikTracing(): void {
+  clear_opik_callback();
+  opikApiKey = null;
+
+  // Disable in WASM config
+  configure_opik(JSON.stringify({ enabled: false }));
+}
+
+/**
+ * Check if Opik tracing is enabled
+ */
+export function isOpikTracingEnabled(): boolean {
+  return is_opik_enabled();
+}
+
+/**
+ * Check if Opik callback is registered
+ */
+export function isOpikCallbackRegistered(): boolean {
+  return has_opik_callback();
+}
+
+/**
+ * Get current Opik configuration
+ */
+export function getOpikConfig(): Record<string, unknown> {
+  return JSON.parse(get_opik_config());
+}
+
+/**
+ * Register a custom Opik trace callback
+ *
+ * Use this for advanced use cases where you want to handle traces differently
+ * (e.g., batching, custom endpoints, local logging)
+ *
+ * @param callback - Custom callback to handle traces
+ *
+ * @example
+ * ```typescript
+ * registerOpikCallback(async (traceJson) => {
+ *   const trace = JSON.parse(traceJson);
+ *   // Custom handling - e.g., batch traces, send to different endpoint
+ *   console.log('Trace:', trace);
+ * });
+ * ```
+ */
+export function registerOpikCallback(callback: OpikTraceCallback): void {
+  set_opik_callback(callback);
+}
+
+/**
+ * Manually send a trace to Opik
+ *
+ * Useful for tracing custom operations or non-LLM actions
+ *
+ * @param trace - The trace to send
+ */
+export async function sendOpikTrace(trace: OpikTrace): Promise<void> {
+  if (!has_opik_callback()) {
+    throw new Error('No Opik callback registered. Call initOpikTracing() first.');
+  }
+
+  await send_opik_trace_async(JSON.stringify(trace));
+}
+
+/**
+ * Create an LLM trace object (helper function)
+ *
+ * @param nodeName - Name of the node/operation
+ * @param params - LLM parameters (prompt, etc.)
+ * @param response - LLM response (content, usage, etc.)
+ * @param startTime - ISO 8601 start timestamp
+ * @param endTime - ISO 8601 end timestamp
+ * @returns Trace JSON string
+ */
+export function createLlmTrace(
+  nodeName: string,
+  params: Record<string, unknown>,
+  response: Record<string, unknown>,
+  startTime: string,
+  endTime: string
+): string {
+  return create_llm_trace(nodeName, JSON.stringify(params), JSON.stringify(response), startTime, endTime);
+}
+
+// ============================================================================
 // Model Loading with Caching
 // ============================================================================
 // loadBundledModel and loadBundledModelSafe are imported from model-loader.ts
@@ -681,6 +935,15 @@ export {
   clear_prolog_handler,
   has_prolog_handler,
   prolog_query_async,
+  // Opik tracing bridge (TEA-OBS-002)
+  set_opik_callback,
+  clear_opik_callback,
+  has_opik_callback,
+  configure_opik,
+  get_opik_config,
+  is_opik_enabled,
+  send_opik_trace_async,
+  create_llm_trace,
   // Utilities
   has_shared_array_buffer,
   version,
