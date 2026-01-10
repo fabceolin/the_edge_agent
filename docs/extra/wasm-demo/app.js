@@ -2,7 +2,15 @@
  * TEA WASM LLM Demo Application
  *
  * Demonstrates YAML workflow execution with browser-based LLM.
+ * Features syntax highlighting with CodeMirror.
  */
+
+// CodeMirror imports
+import { EditorView, basicSetup } from 'codemirror';
+import { json } from '@codemirror/lang-json';
+import { yaml } from '@codemirror/lang-yaml';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorState } from '@codemirror/state';
 
 // Import from the bundled package
 import {
@@ -16,8 +24,28 @@ import {
   getVersion,
 } from './pkg/index.js';
 
-// Configuration - Using Gemma 3 1B Q2 for minimal browser memory (~690MB)
+// Configuration
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
+
+// Default YAML workflow
+const DEFAULT_YAML = `name: simple-chat
+nodes:
+  - name: respond
+    action: llm.call
+    with:
+      prompt: "{{ state.question }}"
+      max_tokens: 100
+      temperature: 0.7
+edges:
+  - from: __start__
+    to: respond
+  - from: respond
+    to: __end__`;
+
+// Default state
+const DEFAULT_STATE = {
+  question: "What is the capital of France?"
+};
 
 // DOM Elements
 const statusEl = document.getElementById('status');
@@ -26,14 +54,82 @@ const cacheStatusEl = document.getElementById('cache-status');
 const progressContainer = document.getElementById('progress-container');
 const progressFill = document.getElementById('progress-fill');
 const progressText = document.getElementById('progress-text');
-const yamlInput = document.getElementById('yaml-input');
-const stateInput = document.getElementById('state-input');
 const runYamlBtn = document.getElementById('run-yaml-btn');
 const yamlOutput = document.getElementById('yaml-output');
-const yamlResult = document.getElementById('yaml-result');
 const clearCacheBtn = document.getElementById('clear-cache-btn');
 const reloadModelBtn = document.getElementById('reload-model-btn');
 const versionEl = document.getElementById('version');
+
+// CodeMirror editors
+let yamlEditor;
+let stateEditor;
+let outputEditor;
+
+// Initialize CodeMirror editors
+function initEditors() {
+  // YAML editor
+  yamlEditor = new EditorView({
+    state: EditorState.create({
+      doc: DEFAULT_YAML,
+      extensions: [
+        basicSetup,
+        yaml(),
+        oneDark,
+        EditorView.lineWrapping,
+      ],
+    }),
+    parent: document.getElementById('yaml-editor'),
+  });
+
+  // JSON state editor
+  stateEditor = new EditorView({
+    state: EditorState.create({
+      doc: JSON.stringify(DEFAULT_STATE, null, 2),
+      extensions: [
+        basicSetup,
+        json(),
+        oneDark,
+        EditorView.lineWrapping,
+      ],
+    }),
+    parent: document.getElementById('state-editor'),
+  });
+
+  // Output editor (read-only)
+  outputEditor = new EditorView({
+    state: EditorState.create({
+      doc: '',
+      extensions: [
+        basicSetup,
+        json(),
+        oneDark,
+        EditorView.lineWrapping,
+        EditorState.readOnly.of(true),
+      ],
+    }),
+    parent: document.getElementById('output-editor'),
+  });
+}
+
+// Get editor content
+function getYamlContent() {
+  return yamlEditor.state.doc.toString();
+}
+
+function getStateContent() {
+  return stateEditor.state.doc.toString();
+}
+
+// Set output content
+function setOutputContent(content) {
+  outputEditor.dispatch({
+    changes: {
+      from: 0,
+      to: outputEditor.state.doc.length,
+      insert: content,
+    },
+  });
+}
 
 // Update status display
 function updateStatus(text, type = 'loading') {
@@ -120,31 +216,16 @@ async function initializeLlm() {
   }
 }
 
-// Prettify JSON in state input
-function prettifyStateInput() {
-  try {
-    const parsed = JSON.parse(stateInput.value);
-    stateInput.value = JSON.stringify(parsed, null, 2);
-  } catch (e) {
-    // Invalid JSON, leave as-is
-  }
-}
-
-// Prettify on blur
-stateInput.addEventListener('blur', prettifyStateInput);
-
 // Handle YAML execution
 runYamlBtn.addEventListener('click', async () => {
-  const yaml = yamlInput.value.trim();
+  const yamlContent = getYamlContent();
   let state;
 
   try {
-    state = JSON.parse(stateInput.value.trim());
-    // Prettify the input
-    stateInput.value = JSON.stringify(state, null, 2);
+    state = JSON.parse(getStateContent());
   } catch (e) {
     yamlOutput.classList.remove('hidden');
-    yamlResult.textContent = `Error parsing state JSON: ${e.message}`;
+    setOutputContent(`Error parsing state JSON: ${e.message}`);
     return;
   }
 
@@ -152,15 +233,15 @@ runYamlBtn.addEventListener('click', async () => {
     runYamlBtn.disabled = true;
     runYamlBtn.textContent = 'Running...';
 
-    const result = await executeLlmYaml(yaml, state);
+    const result = await executeLlmYaml(yamlContent, state);
 
     yamlOutput.classList.remove('hidden');
-    yamlResult.textContent = JSON.stringify(result, null, 2);
+    setOutputContent(JSON.stringify(result, null, 2));
 
   } catch (error) {
     console.error('YAML execution error:', error);
     yamlOutput.classList.remove('hidden');
-    yamlResult.textContent = `Error: ${error.message}`;
+    setOutputContent(`Error: ${error.message}`);
   } finally {
     runYamlBtn.disabled = false;
     runYamlBtn.textContent = 'Run YAML Workflow';
@@ -173,11 +254,11 @@ clearCacheBtn.addEventListener('click', async () => {
     await clearLlmCache();
     await updateCacheStatus();
     yamlOutput.classList.remove('hidden');
-    yamlResult.textContent = 'Cache cleared successfully.';
+    setOutputContent('Cache cleared successfully.');
   } catch (error) {
     console.error('Clear cache error:', error);
     yamlOutput.classList.remove('hidden');
-    yamlResult.textContent = `Failed to clear cache: ${error.message}`;
+    setOutputContent(`Failed to clear cache: ${error.message}`);
   }
 });
 
@@ -199,5 +280,6 @@ try {
   versionEl.textContent = '';
 }
 
-// Initialize on load
+// Initialize editors first, then LLM
+initEditors();
 initializeLlm();

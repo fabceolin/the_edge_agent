@@ -8,7 +8,55 @@
     <!-- COOP/COEP Service Worker for multi-threading on GitHub Pages -->
     <script src="coi-serviceworker.js"></script>
 
+    <!-- CodeMirror 6 from CDN -->
+    <script type="importmap">
+    {
+      "imports": {
+        "codemirror": "https://esm.sh/codemirror@6.0.1",
+        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1",
+        "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1",
+        "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2"
+      }
+    }
+    </script>
+
     <link rel="stylesheet" href="style.css">
+    <style>
+      .cm-editor {
+        height: 100%;
+        font-size: 14px;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .cm-editor .cm-scroller {
+        font-family: 'Fira Code', 'Monaco', 'Consolas', monospace;
+      }
+      .editor-container {
+        height: 300px;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .state-editor-container {
+        height: 120px;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .output-editor-container {
+        height: 200px;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      #yaml-output {
+        margin-top: 1rem;
+      }
+      #yaml-output h3 {
+        margin-bottom: 0.5rem;
+        color: #4ade80;
+      }
+    </style>
 </head>
 <body>
     <div id="app">
@@ -37,32 +85,18 @@
             <!-- YAML Workflow -->
             <div class="yaml-container">
                 <div class="yaml-editor">
-                    <label for="yaml-input">YAML Workflow:</label>
-                    <textarea id="yaml-input" rows="15">name: simple-chat
-nodes:
-  - name: respond
-    action: llm.call
-    with:
-      prompt: "{{ state.question }}"
-      max_tokens: 100
-      temperature: 0.7
-edges:
-  - from: __start__
-    to: respond
-  - from: respond
-    to: __end__</textarea>
+                    <label>YAML Workflow:</label>
+                    <div id="yaml-editor" class="editor-container"></div>
                 </div>
                 <div class="yaml-state">
-                    <label for="state-input">Initial State (JSON):</label>
-                    <textarea id="state-input" rows="6">{
-  "question": "What is the capital of France?"
-}</textarea>
+                    <label>Initial State (JSON):</label>
+                    <div id="state-editor" class="state-editor-container"></div>
                 </div>
             </div>
             <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
             <div id="yaml-output" class="hidden">
                 <h3>Output:</h3>
-                <pre id="yaml-result"></pre>
+                <div id="output-editor" class="output-editor-container"></div>
             </div>
         </main>
 
