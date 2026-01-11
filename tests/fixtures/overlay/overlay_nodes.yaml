@@ -1,0 +1,11 @@
+# Overlay that replaces nodes array (arrays are replaced, not merged)
+nodes:
+  - name: custom_process
+    run: |
+      return {"result": "CUSTOM: " + state.get("input", "")}
+
+edges:
+  - from: __start__
+    to: custom_process
+  - from: custom_process
+    to: __end__

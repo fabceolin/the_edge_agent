@@ -486,6 +486,18 @@ def run(
         "-o",
         help="Write final state to JSON file (useful with --entry-point/--exit-point)",
     ),
+    # YE.8: YAML Overlay Merge Support
+    overlay: Optional[List[Path]] = typer.Option(
+        None,
+        "-f",
+        "--overlay",
+        help="Overlay YAML file(s) to merge with base. Applied in order (last wins).",
+    ),
+    dump_merged: bool = typer.Option(
+        False,
+        "--dump-merged",
+        help="Output merged YAML to stdout without executing.",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -509,6 +521,67 @@ def run(
     if not file.exists():
         typer.echo(f"Error: Workflow file not found: {file}", err=True)
         raise typer.Exit(1)
+
+    # YE.8: YAML Overlay Merge Support
+    # Load base YAML and apply overlays if specified
+    merged_config = None
+    if overlay or dump_merged:
+        from the_edge_agent.schema.deep_merge import merge_all
+
+        # Load base YAML
+        try:
+            with open(file) as f:
+                base_config = yaml.safe_load(f)
+            if not isinstance(base_config, dict):
+                typer.echo(
+                    f"Error: Base YAML must be a mapping, got {type(base_config).__name__}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        except yaml.YAMLError as e:
+            typer.echo(f"Error: Invalid YAML in base file {file}: {e}", err=True)
+            raise typer.Exit(1)
+
+        # Load and validate overlay files
+        configs = [base_config]
+        if overlay:
+            for overlay_path in overlay:
+                if not overlay_path.exists():
+                    typer.echo(
+                        f"Error: Overlay file not found: {overlay_path.resolve()}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                try:
+                    with open(overlay_path) as f:
+                        overlay_config = yaml.safe_load(f)
+                    if overlay_config is None:
+                        # Empty YAML file - treat as empty dict
+                        overlay_config = {}
+                    if not isinstance(overlay_config, dict):
+                        typer.echo(
+                            f"Error: Overlay YAML must be a mapping, got {type(overlay_config).__name__} in {overlay_path}",
+                            err=True,
+                        )
+                        raise typer.Exit(1)
+                    configs.append(overlay_config)
+                except yaml.YAMLError as e:
+                    typer.echo(
+                        f"Error: Invalid YAML in overlay file {overlay_path}: {e}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+        # Merge all configs (base + overlays in order, last wins)
+        merged_config = merge_all(configs)
+
+        # Handle --dump-merged: output and exit without executing
+        if dump_merged:
+            yaml_output = yaml.dump(
+                merged_config, default_flow_style=False, sort_keys=False
+            )
+            typer.echo(yaml_output, nl=False)
+            raise typer.Exit(0)
 
     # Parse inputs
     initial_state = parse_input(input)
@@ -550,7 +623,11 @@ def run(
         engine.secrets = secrets_dict
 
     try:
-        graph = engine.load_from_file(str(file))
+        # YE.8: Use merged config if overlays were applied, otherwise load from file
+        if merged_config is not None:
+            graph = engine.load_from_dict(merged_config)
+        else:
+            graph = engine.load_from_file(str(file))
     except Exception as e:
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)

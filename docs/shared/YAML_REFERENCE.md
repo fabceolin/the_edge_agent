@@ -23,6 +23,7 @@ Complete reference for declarative agent configuration in The Edge Agent using Y
 - [Checkpoint Persistence](#checkpoint-persistence)
 - [Complete Examples](#complete-examples)
 - [Python API](#python-api)
+- [YAML Overlay Merging](#yaml-overlay-merging)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 - [Parallel Execution Strategies](#parallel-execution-strategies)
@@ -1113,6 +1114,114 @@ for event in engine.resume_from_checkpoint(
 ):
     print(event)
 ```
+
+---
+
+## YAML Overlay Merging
+
+YE.8: The Edge Agent supports kubectl-style overlay merging for composing YAML configurations.
+
+### Overview
+
+Overlay merging allows you to:
+- Create a base agent configuration
+- Apply environment-specific overrides (dev, staging, prod)
+- Keep sensitive settings in separate files
+- Compose configurations from reusable components
+
+### CLI Usage
+
+Both Python and Rust CLIs support the same overlay options:
+
+```bash
+# Apply single overlay
+tea run base.yaml -f overlay.yaml
+
+# Apply multiple overlays (applied in order, last wins)
+tea run base.yaml -f dev.yaml -f secrets.yaml
+
+# Preview merged config without executing
+tea run base.yaml -f overlay.yaml --dump-merged
+```
+
+### Merge Semantics
+
+The merge follows **kubectl-style strategic merge patch** semantics:
+
+| Type | Behavior | Example |
+|------|----------|---------|
+| **Objects** | Recursively merged | Base `{a: 1}` + Overlay `{b: 2}` = `{a: 1, b: 2}` |
+| **Arrays** | Replaced (not concatenated) | Base `[1,2,3]` + Overlay `[4,5]` = `[4,5]` |
+| **Scalars** | Last wins | Base `count: 10` + Overlay `count: 20` = `count: 20` |
+| **Null** | Can override non-null | Base `enabled: true` + Overlay `enabled: null` = `enabled: null` |
+
+### Example: Environment Overlays
+
+**base.yaml** (shared configuration):
+```yaml
+name: my-agent
+settings:
+  ltm:
+    backend: sqlite
+    path: ./data/
+  model: gpt-4o-mini
+  temperature: 0.7
+nodes:
+  - name: process
+    uses: llm
+```
+
+**prod-overlay.yaml** (production overrides):
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: firestore
+    storage:
+      uri: gs://my-bucket/ltm/
+  model: gpt-4o
+  temperature: 0.3
+```
+
+**Run with overlay:**
+```bash
+tea run base.yaml -f prod-overlay.yaml
+```
+
+**Merged result:**
+```yaml
+name: my-agent  # Preserved from base
+settings:
+  ltm:
+    backend: duckdb      # From overlay (replaces)
+    path: ./data/        # Preserved from base (not in overlay)
+    catalog:             # Added from overlay
+      type: firestore
+    storage:             # Added from overlay
+      uri: gs://my-bucket/ltm/
+  model: gpt-4o          # From overlay (replaces)
+  temperature: 0.3       # From overlay (replaces)
+nodes:                   # Preserved from base (arrays replace, but no nodes in overlay)
+  - name: process
+    uses: llm
+```
+
+### Debug Merged Configuration
+
+Use `--dump-merged` to preview the final configuration:
+
+```bash
+# Output merged YAML without executing
+tea run base.yaml -f overlay.yaml --dump-merged > merged.yaml
+
+# Validate the merged result
+tea validate merged.yaml
+```
+
+### Cross-Implementation Parity
+
+Both Python and Rust implementations produce **identical merged output** for the same inputs. This is verified by the parity test suite.
 
 ---
 

@@ -146,6 +146,14 @@ enum Commands {
         /// Overrides YAML settings.max_iterations
         #[arg(long)]
         max_iterations: Option<usize>,
+
+        /// YE.8: Overlay YAML file(s) to merge with base. Applied in order (last wins).
+        #[arg(short = 'f', long = "overlay")]
+        overlay: Option<Vec<PathBuf>>,
+
+        /// YE.8: Output merged YAML to stdout without executing
+        #[arg(long)]
+        dump_merged: bool,
     },
 
     /// Resume execution from a checkpoint
@@ -304,6 +312,8 @@ fn main() -> Result<()> {
             input_timeout,
             allow_cycles,
             max_iterations,
+            overlay,
+            dump_merged,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -338,6 +348,8 @@ fn main() -> Result<()> {
                 input_timeout,
                 allow_cycles,
                 max_iterations,
+                overlay,
+                dump_merged,
             )
         }
 
@@ -410,7 +422,66 @@ fn run_workflow(
     input_timeout: Option<u64>,
     allow_cycles: bool,
     max_iterations: Option<usize>,
+    overlay: Option<Vec<PathBuf>>,
+    dump_merged: bool,
 ) -> Result<()> {
+    use the_edge_agent::engine::deep_merge::merge_all;
+
+    // YE.8: Handle overlay merging and --dump-merged
+    // Compute the YAML content to use (merged or original file)
+    let yaml_content: Option<String> = if overlay.is_some() || dump_merged {
+        // Load base YAML
+        let base_content =
+            fs::read_to_string(&file).context(format!("Failed to read base file {:?}", file))?;
+        let base_value: serde_yaml::Value = serde_yaml::from_str(&base_content)
+            .context(format!("Invalid YAML in base file {:?}", file))?;
+
+        // Collect configs to merge
+        let mut configs = vec![base_value];
+
+        // Load overlay files
+        if let Some(overlay_paths) = &overlay {
+            for overlay_path in overlay_paths {
+                if !overlay_path.exists() {
+                    eprintln!(
+                        "Error: Overlay file not found: {:?}",
+                        overlay_path.canonicalize().unwrap_or(overlay_path.clone())
+                    );
+                    std::process::exit(1);
+                }
+                let overlay_content = fs::read_to_string(overlay_path)
+                    .context(format!("Failed to read overlay file {:?}", overlay_path))?;
+                let overlay_value: serde_yaml::Value = serde_yaml::from_str(&overlay_content)
+                    .context(format!("Invalid YAML in overlay file {:?}", overlay_path))?;
+
+                // Handle empty YAML files (null) as empty mapping
+                let overlay_value = if overlay_value.is_null() {
+                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+                } else {
+                    overlay_value
+                };
+
+                configs.push(overlay_value);
+            }
+        }
+
+        // Merge all configs
+        let merged = merge_all(configs);
+
+        // Handle --dump-merged: output and exit
+        if dump_merged {
+            let yaml_output =
+                serde_yaml::to_string(&merged).context("Failed to serialize merged YAML")?;
+            print!("{}", yaml_output);
+            return Ok(());
+        }
+
+        // Return merged YAML string
+        Some(serde_yaml::to_string(&merged)?)
+    } else {
+        None
+    };
+
     // Load workflow
     let mut engine = YamlEngine::new();
 
@@ -421,9 +492,16 @@ fn run_workflow(
         tracing::debug!("Loaded {} secrets", engine.secrets().len());
     }
 
-    let mut graph = engine
-        .load_from_file(&file)
-        .context(format!("Failed to load workflow from {:?}", file))?;
+    // Load graph from merged content or file
+    let mut graph = if let Some(content) = yaml_content {
+        engine
+            .load_from_string(&content)
+            .context("Failed to load merged workflow")?
+    } else {
+        engine
+            .load_from_file(&file)
+            .context(format!("Failed to load workflow from {:?}", file))?
+    };
 
     // TEA-RUST-044: Apply CLI cycle overrides (CLI takes precedence over YAML settings)
     if allow_cycles {

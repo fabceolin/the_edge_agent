@@ -1,0 +1,3 @@
+# Overlay that sets a value to null (null override test)
+settings:
+  temperature: null
