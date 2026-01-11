@@ -7,6 +7,7 @@ and integration with YAMLEngine.
 Updated for the Typer-based CLI (TEA-CLI-004).
 """
 
+import re
 import unittest
 import sys
 import json
@@ -16,6 +17,21 @@ from unittest.mock import patch, MagicMock
 from io import StringIO
 
 from typer.testing import CliRunner
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text.
+
+    Rich/Typer adds escape codes around option names which can break
+    string matching in tests (e.g., '--backend' becomes
+    '\\x1b[1m-\\x1b[0m\\x1b[1m-backend\\x1b[0m').
+
+    Note: CliRunner behavior with ANSI codes varies across Python versions.
+    Python 3.10 on CI may preserve ANSI codes that Python 3.13 strips.
+    """
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
+
 
 # Import the CLI module - new Typer-based functions
 from the_edge_agent.cli import (
@@ -603,16 +619,20 @@ class TestCliGgufAndBackendParameters(unittest.TestCase):
         """Test that --help shows --gguf parameter."""
         result = runner.invoke(app, ["run", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--gguf", result.output)
-        self.assertIn("GGUF model file", result.output)
+        # Strip ANSI codes for reliable matching across Python versions
+        output = strip_ansi(result.output)
+        self.assertIn("--gguf", output)
+        self.assertIn("GGUF model file", output)
 
     def test_help_shows_backend_parameter(self):
         """Test that --help shows --backend parameter."""
         result = runner.invoke(app, ["run", "--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("--backend", result.output)
+        # Strip ANSI codes for reliable matching across Python versions
+        output = strip_ansi(result.output)
+        self.assertIn("--backend", output)
         # Check for key parts of the description (may be wrapped across lines)
-        self.assertIn("LLM backend selection", result.output)
+        self.assertIn("LLM backend selection", output)
 
     def test_gguf_missing_file_error(self):
         """Test that --gguf with nonexistent file shows error (AC-9)."""
