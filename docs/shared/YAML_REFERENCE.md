@@ -1,6 +1,6 @@
 # YAML Agent Reference
 
-Version: 0.9.32
+Version: 0.9.33
 
 Complete reference for declarative agent configuration in The Edge Agent using YAML files.
 
