@@ -1621,7 +1621,7 @@ def main():
     install_excepthook()
 
     # TEA-REPORT-001d: Install CLI excepthook for bug report URL display
-    from .report_cli import install_cli_excepthook
+    from the_edge_agent.report_cli import install_cli_excepthook
 
     install_cli_excepthook()
 

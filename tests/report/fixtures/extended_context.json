@@ -1,0 +1,31 @@
+{
+    "version": "0.9.34",
+    "platform": "linux-x86_64",
+    "runtime": "python",
+    "error_type": "ActionError",
+    "message": "HTTP request failed: 503 Service Unavailable",
+    "stack": [
+        {"addr": 9999, "symbol": "http_action.execute", "file": "http_actions.py", "line": 55}
+    ],
+    "context": {
+        "node_name": "fetch_api",
+        "action_type": "http.get"
+    },
+    "extended": {
+        "workflow_name": "data-pipeline",
+        "nodes": [
+            {"name": "start", "action_type": null},
+            {"name": "fetch_api", "action_type": "http.get"},
+            {"name": "process", "action_type": "data.transform"},
+            {"name": "end", "action_type": null}
+        ],
+        "edges": [
+            {"from": "__start__", "to": "fetch_api", "edge_type": "simple"},
+            {"from": "fetch_api", "to": "process", "edge_type": "simple"},
+            {"from": "process", "to": "__end__", "edge_type": "simple"}
+        ],
+        "schema_fields": ["input", "output", "status"],
+        "active_node": "fetch_api",
+        "active_action": "http.get"
+    }
+}

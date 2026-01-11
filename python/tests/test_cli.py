@@ -622,7 +622,10 @@ class TestCliGgufAndBackendParameters(unittest.TestCase):
         # Strip ANSI codes for reliable matching across Python versions
         output = strip_ansi(result.output)
         self.assertIn("--gguf", output)
-        self.assertIn("GGUF model file", output)
+        # Remove Rich box-drawing chars and normalize whitespace for line wrapping
+        normalized = re.sub(r"[│╭╮╰╯─]+", " ", output)
+        normalized = re.sub(r"\s+", " ", normalized)
+        self.assertIn("GGUF model file", normalized)
 
     def test_help_shows_backend_parameter(self):
         """Test that --help shows --backend parameter."""
@@ -631,8 +634,10 @@ class TestCliGgufAndBackendParameters(unittest.TestCase):
         # Strip ANSI codes for reliable matching across Python versions
         output = strip_ansi(result.output)
         self.assertIn("--backend", output)
-        # Check for key parts of the description (may be wrapped across lines)
-        self.assertIn("LLM backend selection", output)
+        # Remove Rich box-drawing chars and normalize whitespace for line wrapping
+        normalized = re.sub(r"[│╭╮╰╯─]+", " ", output)
+        normalized = re.sub(r"\s+", " ", normalized)
+        self.assertIn("LLM backend selection", normalized)
 
     def test_gguf_missing_file_error(self):
         """Test that --gguf with nonexistent file shows error (AC-9)."""

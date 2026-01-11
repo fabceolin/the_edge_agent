@@ -1,0 +1,16 @@
+{
+    "version": "0.9.34",
+    "platform": "windows-x86_64",
+    "runtime": "rust",
+    "error_type": "ExecutorError",
+    "message": "Node 'process_data' failed: timeout after 30 seconds",
+    "stack": [
+        {"addr": 5555, "symbol": "executor::run_node", "file": "src/executor.rs", "line": 89},
+        {"addr": 5500, "symbol": "executor::execute", "file": "src/executor.rs", "line": 42}
+    ],
+    "context": {
+        "node_name": "process_data",
+        "action_type": "llm.call",
+        "checkpoint_id": "cp_12345"
+    }
+}

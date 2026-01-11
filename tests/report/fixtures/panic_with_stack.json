@@ -1,0 +1,12 @@
+{
+    "version": "0.9.34",
+    "platform": "darwin-aarch64",
+    "runtime": "python",
+    "error_type": "Panic",
+    "message": "KeyError: 'missing_key'",
+    "stack": [
+        {"addr": 12345, "symbol": "yaml_engine.run", "file": "yaml_engine.py", "line": 456},
+        {"addr": 12300, "symbol": "executor.execute", "file": "executor.py", "line": 123},
+        {"addr": 12200, "symbol": "cli.main", "file": "cli.py", "line": 45}
+    ]
+}
