@@ -102,6 +102,7 @@
 pub mod actions;
 pub mod engine;
 mod error;
+pub mod report;
 
 // Re-exports
 pub use engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};

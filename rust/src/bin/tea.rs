@@ -25,6 +25,7 @@ use the_edge_agent::actions;
 use the_edge_agent::engine::checkpoint::{Checkpointer, FileCheckpointer};
 use the_edge_agent::engine::executor::{ExecutionOptions, Executor};
 use the_edge_agent::engine::yaml::YamlEngine;
+use the_edge_agent::report::install_panic_hook;
 use the_edge_agent::{TeaError, YamlConfig};
 
 /// Implementation identifier for CLI parity (TEA-CLI-004)
@@ -164,6 +165,22 @@ enum Commands {
         /// Overrides YAML settings.llm.backend.
         #[arg(long)]
         backend: Option<String>,
+
+        /// TEA-REPORT-001d: Generate bug report URL on errors (default: enabled)
+        #[arg(long, default_value = "true")]
+        report_bugs: bool,
+
+        /// TEA-REPORT-001d: Disable bug report URL generation
+        #[arg(long)]
+        no_report_bugs: bool,
+
+        /// TEA-REPORT-001d: Auto-include extended context in bug reports
+        #[arg(long)]
+        report_extended: bool,
+
+        /// TEA-REPORT-001d: Skip extended context prompt (minimal report only)
+        #[arg(long)]
+        report_minimal: bool,
     },
 
     /// Resume execution from a checkpoint
@@ -264,6 +281,9 @@ enum FromSource {
 }
 
 fn main() -> Result<()> {
+    // TEA-REPORT-001a: Install panic hook for error capture
+    install_panic_hook();
+
     let cli = Cli::parse();
 
     // Handle --impl flag (TEA-CLI-004)
@@ -326,6 +346,10 @@ fn main() -> Result<()> {
             dump_merged,
             gguf,
             backend,
+            report_bugs,
+            no_report_bugs,
+            report_extended,
+            report_minimal,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -338,6 +362,16 @@ fn main() -> Result<()> {
                 eprintln!("Hint: Use the Python implementation for action plugins");
                 std::process::exit(1);
             }
+
+            // TEA-REPORT-001d: Validate mutually exclusive report flags
+            if report_extended && report_minimal {
+                eprintln!("Error: --report-extended and --report-minimal are mutually exclusive");
+                std::process::exit(1);
+            }
+
+            // TEA-REPORT-001d: Configure bug report options
+            let report_enabled = report_bugs && !no_report_bugs;
+            the_edge_agent::report::cli::configure(report_enabled, report_extended, report_minimal);
 
             // TEA-CLI-001: Validate and process --backend parameter
             let cli_backend: Option<String> = if let Some(ref b) = backend {

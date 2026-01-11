@@ -229,4 +229,9 @@ examples/dot/rx18-analyst-system-development.yaml
 examples/dot/rx18-analyst-system-validation.dot
 examples/dot/rx18-analyst-system-validation.yaml
 descricao
+examples/dot/tea-report-001-implementation.dot
+examples/dot/tea-report-001-implementation.yaml
+examples/dot/
+rust/src/report/
+tests/report/
 

@@ -86,6 +86,9 @@ try:
 except ImportError:
     OpikExporter = None  # type: ignore
 
+# Bug Reporting (TEA-REPORT-001d)
+from . import report_cli
+
 __all__ = [
     "StateGraph",
     "START",

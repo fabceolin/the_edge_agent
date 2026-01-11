@@ -509,6 +509,24 @@ def run(
         "--backend",
         help="LLM backend selection: local, api, or auto. Overrides YAML settings.llm.backend.",
     ),
+    # TEA-REPORT-001d: Bug Report CLI flags
+    report_bugs: bool = typer.Option(
+        True,
+        "--report-bugs/--no-report-bugs",
+        envvar="TEA_REPORT_BUGS",
+        help="Generate bug report URL on errors (default: enabled)",
+    ),
+    report_extended: bool = typer.Option(
+        False,
+        "--report-extended",
+        envvar="TEA_REPORT_EXTENDED",
+        help="Auto-include extended context in bug reports (skip prompt)",
+    ),
+    report_minimal: bool = typer.Option(
+        False,
+        "--report-minimal",
+        help="Skip extended context prompt (minimal report only)",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -517,6 +535,23 @@ def run(
     if interactive and stream:
         typer.echo("Error: --interactive and --stream are mutually exclusive", err=True)
         raise typer.Exit(1)
+
+    # TEA-REPORT-001d: Validate mutually exclusive report flags
+    if report_extended and report_minimal:
+        typer.echo(
+            "Error: --report-extended and --report-minimal are mutually exclusive",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # TEA-REPORT-001d: Store report options in module-level for error handler
+    from .report_cli import configure as configure_report_cli
+
+    configure_report_cli(
+        enabled=report_bugs,
+        extended=report_extended,
+        minimal=report_minimal,
+    )
 
     # TEA-CLI-001: Process --gguf and --backend parameters
     cli_model_path: Optional[str] = None
@@ -1580,6 +1615,16 @@ def main_callback(
 
 def main():
     """Entry point for the tea CLI."""
+    # TEA-REPORT-001a: Install excepthook for error capture
+    from the_edge_agent.report import install_excepthook
+
+    install_excepthook()
+
+    # TEA-REPORT-001d: Install CLI excepthook for bug report URL display
+    from .report_cli import install_cli_excepthook
+
+    install_cli_excepthook()
+
     app()
 
 

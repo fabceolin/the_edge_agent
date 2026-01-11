@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="TEA Bug Report Viewer - View and file issues for The Edge Agent errors">
+    <meta name="robots" content="noindex, nofollow">
+    <title>TEA Bug Report</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Inline critical CSS for faster first paint -->
+    <style>
+        body { margin: 0; padding: 0; }
+        #loading { text-align: center; padding: 3rem; }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>TEA Bug Report</h1>
+            <p class="privacy-notice">
+                This report contains only technical information (version, platform, stack trace).
+                No personal data, file contents, or environment variables are included.
+            </p>
+        </header>
+
+        <main>
+            <!-- Loading State -->
+            <div id="loading">Decoding report...</div>
+
+            <!-- Error State -->
+            <div id="error" hidden></div>
+
+            <!-- Report Display -->
+            <div id="report" hidden>
+                <!-- Badges Section -->
+                <section id="badges">
+                    <!-- Version, platform, runtime, error type badges -->
+                </section>
+
+                <!-- Error Message Section -->
+                <section id="error-message">
+                    <h2>Error</h2>
+                    <pre><code id="message"></code></pre>
+                </section>
+
+                <!-- Stack Trace Section -->
+                <section id="stack-trace">
+                    <h2>Stack Trace</h2>
+                    <ul id="stack"></ul>
+                </section>
+
+                <!-- Extended Context Section (hidden if not present) -->
+                <section id="extended" hidden>
+                    <h2>Workflow Context</h2>
+                    <!-- Extended context rendered here -->
+                </section>
+
+                <!-- Actions Section -->
+                <section id="actions">
+                    <!-- Similar Issues (populated dynamically) -->
+                    <div id="similar-issues" hidden>
+                        <h3>Similar Issues</h3>
+                        <ul id="issues-list"></ul>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <button id="file-issue" class="primary">File Issue on GitHub</button>
+                    <button id="copy-report" class="secondary">Copy Report</button>
+                </section>
+            </div>
+        </main>
+
+        <footer>
+            <p>
+                Powered by <a href="https://github.com/fabceolin/the_edge_agent" target="_blank" rel="noopener">The Edge Agent</a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="pako.min.js"></script>
+    <script src="decoder.js"></script>
+    <script src="github.js"></script>
+    <script src="ui.js"></script>
+    <script>
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get the full path for decoding
+            var path = window.location.pathname;
+
+            // Check if we have a valid report URL pattern
+            if (path.match(/\/report\/[^/]+\/\w+_.+$/)) {
+                initReportViewer(path);
+            } else {
+                // Show landing page or error
+                showLandingPage();
+            }
+        });
+
+        // Landing page for when accessed without a report URL
+        function showLandingPage() {
+            var loading = document.getElementById('loading');
+            var error = document.getElementById('error');
+
+            if (loading) loading.hidden = true;
+            if (error) {
+                error.hidden = false;
+                error.innerHTML =
+                    '<h2>TEA Bug Report Viewer</h2>' +
+                    '<p>This page decodes and displays TEA bug reports.</p>' +
+                    '<p class="help-text">' +
+                    'To view a report, use the full URL provided in your error message.<br>' +
+                    'Format: <code>/report/{version}/{runtime}_{encoded_data}</code>' +
+                    '</p>';
+                error.style.background = 'var(--bg-secondary)';
+                error.style.color = 'var(--text-color)';
+            }
+        }
+    </script>
+</body>
+</html>

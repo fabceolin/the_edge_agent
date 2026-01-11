@@ -4113,10 +4113,12 @@ dependencies = [
 
 [[package]]
 name = "the_edge_agent"
-version = "0.9.33"
+version = "0.9.34"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "backtrace",
+ "base64 0.22.1",
  "bincode",
  "chrono",
  "clap",
@@ -4128,6 +4130,7 @@ dependencies = [
  "dashmap 6.1.0",
  "dirs",
  "duckdb",
+ "flate2",
  "jmespath",
  "jsonschema",
  "llama-cpp-2",
