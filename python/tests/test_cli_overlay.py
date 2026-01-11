@@ -6,11 +6,11 @@ for the `tea run` command.
 """
 
 import os
-import subprocess
-import sys
+import re
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+
 import yaml
 
 from typer.testing import CliRunner
@@ -23,6 +23,17 @@ from the_edge_agent.schema.deep_merge import deep_merge, merge_all
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "tests" / "fixtures" / "overlay"
 
 runner = CliRunner()
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text.
+
+    Rich/Typer adds escape codes around option names which can break
+    string matching in tests (e.g., '--dump-merged' becomes
+    '\\x1b[1m-\\x1b[0m\\x1b[1m-dump\\x1b[0m\\x1b[1m-merged\\x1b[0m').
+    """
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
 
 
 class TestDeepMergeAlgorithm(unittest.TestCase):
@@ -41,6 +52,7 @@ class TestDeepMergeAlgorithm(unittest.TestCase):
         base = {"items": [1, 2, 3]}
         overlay = {"items": [4, 5]}
         result = deep_merge(base, overlay)
+        assert result is not None
         self.assertEqual(result["items"], [4, 5])
 
     def test_scalar_override(self):
@@ -48,6 +60,7 @@ class TestDeepMergeAlgorithm(unittest.TestCase):
         base = {"count": 10, "name": "base"}
         overlay = {"count": 20}
         result = deep_merge(base, overlay)
+        assert result is not None
         self.assertEqual(result["count"], 20)
         self.assertEqual(result["name"], "base")
 
@@ -56,6 +69,7 @@ class TestDeepMergeAlgorithm(unittest.TestCase):
         base = {"enabled": True, "value": 42}
         overlay = {"enabled": None}
         result = deep_merge(base, overlay)
+        assert result is not None
         self.assertIsNone(result["enabled"])
         self.assertEqual(result["value"], 42)
 
@@ -64,14 +78,16 @@ class TestDeepMergeAlgorithm(unittest.TestCase):
         base = {"a": {"b": {"c": {"d": 1}}}}
         overlay = {"a": {"b": {"c": {"e": 2}}}}
         result = deep_merge(base, overlay)
-        self.assertEqual(result["a"]["b"]["c"]["d"], 1)
-        self.assertEqual(result["a"]["b"]["c"]["e"], 2)
+        assert result is not None
+        self.assertEqual(result["a"]["b"]["c"]["d"], 1)  # type: ignore[index]
+        self.assertEqual(result["a"]["b"]["c"]["e"], 2)  # type: ignore[index]
 
     def test_type_mismatch_overlay_wins(self):
         """When types mismatch, overlay wins."""
         base = {"value": {"nested": True}}
         overlay = {"value": "string"}
         result = deep_merge(base, overlay)
+        assert result is not None
         self.assertEqual(result["value"], "string")
 
 
@@ -80,7 +96,7 @@ class TestMergeAll(unittest.TestCase):
 
     def test_multiple_overlays_in_order(self):
         """Later overlays override earlier ones."""
-        schemas = [
+        schemas: list[dict[str, Any] | None] = [
             {"a": 1, "b": 2},
             {"b": 3, "c": 4},
             {"c": 5, "d": 6},
@@ -108,13 +124,15 @@ class TestCLIOverlayOptions(unittest.TestCase):
     def test_help_shows_overlay_option(self):
         """--help shows the --overlay option."""
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--overlay", result.output)
-        self.assertIn("-f", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--overlay", output)
+        self.assertIn("-f", output)
 
     def test_help_shows_dump_merged_option(self):
         """--help shows the --dump-merged option."""
         result = runner.invoke(app, ["run", "--help"])
-        self.assertIn("--dump-merged", result.output)
+        output = strip_ansi(result.output)
+        self.assertIn("--dump-merged", output)
 
     def test_overlay_flag_short_form(self):
         """Short form -f works."""
