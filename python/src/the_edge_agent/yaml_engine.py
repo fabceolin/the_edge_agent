@@ -58,6 +58,7 @@ from .memory import (
     DUCKDB_VSS_AVAILABLE,
     # TEA-BUILTIN-001.6.4: LTM Backend Configuration
     expand_env_vars,
+    expand_ltm_config,
     create_ltm_backend,
     parse_backend_config,
 )
@@ -1035,14 +1036,21 @@ class YAMLEngine:
                     # Close existing backend if different type requested
                     if self._ltm_backend is not None:
                         self._ltm_backend.close()
+                    # TEA-LTM-010: Expand ducklake alias before creating backend
+                    expanded_config = expand_ltm_config({"ltm": ltm_settings})
+                    actual_backend_type = expanded_config.get("backend", backend_type)
                     # Parse config using standard config parser
                     _, kwargs = parse_backend_config(
-                        {"ltm_backend": backend_type, **ltm_settings}
+                        {"ltm_backend": actual_backend_type, **expanded_config}
                     )
                     # Create new backend from parsed YAML settings
-                    self._ltm_backend = create_ltm_backend(backend_type, **kwargs)
-                    self._ltm_backend_type = backend_type
-                    logger.debug(f"Configured LTM backend from YAML: {backend_type}")
+                    self._ltm_backend = create_ltm_backend(
+                        actual_backend_type, **kwargs
+                    )
+                    self._ltm_backend_type = actual_backend_type
+                    logger.debug(
+                        f"Configured LTM backend from YAML: {actual_backend_type}"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to configure LTM backend from YAML: {e}")
 
