@@ -259,16 +259,13 @@ pub fn display_error_report(
     base_url: Option<&str>,
     options: Option<&ReportOptions>,
 ) -> Option<String> {
-    let opts = options.map(|o| o.clone()).unwrap_or_else(get_options);
+    let opts = options.cloned().unwrap_or_else(get_options);
 
     if !opts.enabled {
         return None;
     }
 
-    let url_base = base_url.unwrap_or_else(|| {
-        // Can't use get_report_base_url directly due to lifetime
-        DEFAULT_BASE_URL
-    });
+    let url_base = base_url.unwrap_or(DEFAULT_BASE_URL);
 
     let url = match encode_error_report(report, url_base) {
         Ok(u) => u,
@@ -517,16 +514,15 @@ pub fn handle_error(
 /// This enhances the basic panic hook from report.rs to show
 /// the formatted bug report URL.
 pub fn install_cli_panic_hook() {
+    // Check if already installed - if so, do nothing
     if ORIGINAL_HOOK_SET
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
+        .is_ok()
     {
-        return; // Already installed
+        // The basic panic hook in capture.rs already captures reports
+        // We just need to ensure display_error_report is called after
+        // This is done through the enhanced panic hook in capture.rs
     }
-
-    // The basic panic hook in capture.rs already captures reports
-    // We just need to ensure display_error_report is called after
-    // This is done through the enhanced panic hook in capture.rs
 }
 
 #[cfg(test)]
