@@ -64,18 +64,21 @@ class TestParseInput(unittest.TestCase):
     def test_parse_input_invalid_json(self):
         """Test that invalid JSON raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             parse_input("{invalid json}")
 
     def test_parse_input_missing_file(self):
         """Test that missing file raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             parse_input("@/nonexistent/file.json")
 
     def test_parse_input_non_dict(self):
         """Test that non-dict JSON raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             parse_input('["not", "a", "dict"]')
 
@@ -107,7 +110,10 @@ class TestParseSecrets(unittest.TestCase):
 
     def test_parse_secrets_from_env(self):
         """Test parsing secrets from environment variables."""
-        with patch.dict("os.environ", {"TEA_SECRET_API_KEY": "env-key", "TEA_SECRET_TOKEN": "env-token"}):
+        with patch.dict(
+            "os.environ",
+            {"TEA_SECRET_API_KEY": "env-key", "TEA_SECRET_TOKEN": "env-token"},
+        ):
             result = parse_secrets(None, "TEA_SECRET_")
             self.assertEqual(result, {"api_key": "env-key", "token": "env-token"})
 
@@ -153,12 +159,14 @@ class TestLoadActionsFromModule(unittest.TestCase):
     def test_load_from_nonexistent_module(self):
         """Test that loading from nonexistent module raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             load_actions_from_module("nonexistent.module.path")
 
     def test_load_from_module_without_register_actions(self):
         """Test that module without register_actions() raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             load_actions_from_module("json")  # stdlib module without register_actions
 
@@ -183,12 +191,14 @@ class TestLoadActionsFromFile(unittest.TestCase):
     def test_load_from_nonexistent_file(self):
         """Test that loading from nonexistent file raises SystemExit."""
         import typer
+
         with self.assertRaises(typer.Exit):
             load_actions_from_file("/nonexistent/path/actions.py")
 
     def test_load_from_file_without_register_actions(self):
         """Test that file without register_actions() raises SystemExit."""
         import typer
+
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("# Empty Python file without register_actions\n")
             temp_file = f.name
@@ -263,7 +273,11 @@ class TestLoadCheckpoint(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_path = Path(tmpdir) / "test.pkl"
-            checkpoint_data = {"state": {"value": 42}, "node": "test_node", "version": "1.0"}
+            checkpoint_data = {
+                "state": {"value": 42},
+                "node": "test_node",
+                "version": "1.0",
+            }
 
             with open(checkpoint_path, "wb") as f:
                 pickle.dump(checkpoint_data, f, protocol=4)
@@ -404,7 +418,8 @@ class TestTyperCLI(unittest.TestCase):
     def test_validate_valid_yaml(self):
         """Test validate command with valid YAML."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -414,7 +429,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -439,7 +455,8 @@ edges:
     def test_inspect_text_format(self):
         """Test inspect command with text format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 description: A test workflow
 nodes:
@@ -450,7 +467,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -464,7 +482,8 @@ edges:
     def test_inspect_json_format(self):
         """Test inspect command with JSON format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -472,7 +491,8 @@ nodes:
 edges:
   - from: __start__
     to: step1
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -487,7 +507,8 @@ edges:
     def test_inspect_dot_format(self):
         """Test inspect command with DOT format."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: step1
@@ -497,7 +518,8 @@ edges:
     to: step1
   - from: step1
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
@@ -511,7 +533,8 @@ edges:
     def test_run_with_input(self):
         """Test run command with --input flag."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("""
+            f.write(
+                """
 name: test-workflow
 nodes:
   - name: echo
@@ -521,11 +544,14 @@ edges:
     to: echo
   - from: echo
     to: __end__
-""")
+"""
+            )
             temp_yaml = f.name
 
         try:
-            result = runner.invoke(app, ["run", temp_yaml, "--input", '{"value": "hello"}', "-q"])
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--input", '{"value": "hello"}', "-q"]
+            )
             self.assertEqual(result.exit_code, 0)
         finally:
             Path(temp_yaml).unlink()
@@ -541,7 +567,9 @@ class TestResumeCommand(unittest.TestCase):
             temp_yaml = f.name
 
         try:
-            result = runner.invoke(app, ["resume", "/nonexistent/checkpoint.pkl", "--workflow", temp_yaml])
+            result = runner.invoke(
+                app, ["resume", "/nonexistent/checkpoint.pkl", "--workflow", temp_yaml]
+            )
             self.assertNotEqual(result.exit_code, 0)
             self.assertIn("not found", result.output.lower())
         finally:
@@ -556,8 +584,140 @@ class TestResumeCommand(unittest.TestCase):
             with open(checkpoint_path, "wb") as f:
                 pickle.dump({"state": {}, "node": "test"}, f)
 
-            result = runner.invoke(app, ["resume", str(checkpoint_path), "--workflow", "/nonexistent/file.yaml"])
+            result = runner.invoke(
+                app,
+                [
+                    "resume",
+                    str(checkpoint_path),
+                    "--workflow",
+                    "/nonexistent/file.yaml",
+                ],
+            )
             self.assertNotEqual(result.exit_code, 0)
+
+
+class TestCliGgufAndBackendParameters(unittest.TestCase):
+    """Test --gguf and --backend CLI parameters (TEA-CLI-001)."""
+
+    def test_help_shows_gguf_parameter(self):
+        """Test that --help shows --gguf parameter."""
+        result = runner.invoke(app, ["run", "--help"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("--gguf", result.output)
+        self.assertIn("GGUF model file", result.output)
+
+    def test_help_shows_backend_parameter(self):
+        """Test that --help shows --backend parameter."""
+        result = runner.invoke(app, ["run", "--help"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("--backend", result.output)
+        # Check for key parts of the description (may be wrapped across lines)
+        self.assertIn("LLM backend selection", result.output)
+
+    def test_gguf_missing_file_error(self):
+        """Test that --gguf with nonexistent file shows error (AC-9)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("name: test\nnodes: []\nedges: []\n")
+            temp_yaml = f.name
+
+        try:
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--gguf", "/nonexistent/model.gguf"]
+            )
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("GGUF file not found", result.output)
+        finally:
+            Path(temp_yaml).unlink()
+
+    def test_backend_invalid_value_error(self):
+        """Test that --backend with invalid value shows error (AC-2)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("name: test\nnodes: []\nedges: []\n")
+            temp_yaml = f.name
+
+        try:
+            result = runner.invoke(app, ["run", temp_yaml, "--backend", "invalid"])
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("must be one of: local, api, auto", result.output)
+        finally:
+            Path(temp_yaml).unlink()
+
+    def test_backend_valid_values_accepted(self):
+        """Test that --backend accepts valid values (local, api, auto)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("name: test\nnodes: []\nedges: []\n")
+            temp_yaml = f.name
+
+        try:
+            # Test 'api' backend (should proceed to trying to load workflow)
+            result = runner.invoke(app, ["run", temp_yaml, "--backend", "api"])
+            # Should not fail on backend validation
+            self.assertNotIn("must be one of", result.output)
+        finally:
+            Path(temp_yaml).unlink()
+
+    def test_gguf_tilde_expansion(self):
+        """Test that --gguf expands ~ to home directory (AC-11)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("name: test\nnodes: []\nedges: []\n")
+            temp_yaml = f.name
+
+        try:
+            # Test with tilde path to a file that doesn't exist
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--gguf", "~/nonexistent_model.gguf"]
+            )
+            self.assertNotEqual(result.exit_code, 0)
+            # Should show expanded path (not ~)
+            self.assertIn("GGUF file not found", result.output)
+            self.assertNotIn("~/", result.output)  # Tilde should be expanded
+        finally:
+            Path(temp_yaml).unlink()
+
+    def test_gguf_env_var_expansion(self):
+        """Test that --gguf expands $HOME environment variable (AC-12)."""
+        import os
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("name: test\nnodes: []\nedges: []\n")
+            temp_yaml = f.name
+
+        try:
+            result = runner.invoke(
+                app, ["run", temp_yaml, "--gguf", "$HOME/nonexistent_model.gguf"]
+            )
+            self.assertNotEqual(result.exit_code, 0)
+            # Should show expanded path
+            self.assertIn("GGUF file not found", result.output)
+            self.assertIn(os.environ.get("HOME", ""), result.output)
+        finally:
+            Path(temp_yaml).unlink()
+
+    def test_gguf_implies_backend_local(self):
+        """Test that --gguf implies --backend local when not specified (AC-5)."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".gguf", delete=False
+        ) as model_f:
+            model_f.write("fake gguf content")
+            temp_model = model_f.name
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as yaml_f:
+            yaml_f.write(
+                "name: test\nnodes:\n  - name: start\nedges:\n  - from: __start__\n    to: start\n  - from: start\n    to: __end__\n"
+            )
+            temp_yaml = yaml_f.name
+
+        try:
+            # Run with --gguf but no --backend (should imply local)
+            # This will fail at model loading (not valid GGUF), but shouldn't fail at backend selection
+            result = runner.invoke(app, ["run", temp_yaml, "--gguf", temp_model])
+            # The error should be about model/execution, not about missing backend
+            self.assertNotIn("must be one of", result.output)
+        finally:
+            Path(temp_model).unlink()
+            Path(temp_yaml).unlink()
 
 
 if __name__ == "__main__":

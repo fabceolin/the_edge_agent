@@ -498,6 +498,17 @@ def run(
         "--dump-merged",
         help="Output merged YAML to stdout without executing.",
     ),
+    # TEA-CLI-001: LLM Model CLI Parameters
+    gguf: Optional[Path] = typer.Option(
+        None,
+        "--gguf",
+        help="Path to GGUF model file for local LLM inference. Overrides TEA_MODEL_PATH and YAML settings.llm.model_path.",
+    ),
+    backend: Optional[str] = typer.Option(
+        None,
+        "--backend",
+        help="LLM backend selection: local, api, or auto. Overrides YAML settings.llm.backend.",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -506,6 +517,41 @@ def run(
     if interactive and stream:
         typer.echo("Error: --interactive and --stream are mutually exclusive", err=True)
         raise typer.Exit(1)
+
+    # TEA-CLI-001: Process --gguf and --backend parameters
+    cli_model_path: Optional[str] = None
+    cli_backend: Optional[str] = None
+
+    # Validate --backend values (AC-2)
+    if backend is not None:
+        valid_backends = ("local", "api", "auto")
+        if backend.lower() not in valid_backends:
+            typer.echo(
+                f"Error: --backend must be one of: {', '.join(valid_backends)}. Got: {backend}",
+                err=True,
+            )
+            raise typer.Exit(1)
+        cli_backend = backend.lower()
+
+    # Process --gguf parameter (AC-1, AC-3, AC-11, AC-12)
+    if gguf is not None:
+        # Expand tilde (~) and environment variables ($VAR)
+        expanded_path = os.path.expandvars(os.path.expanduser(str(gguf)))
+        gguf_path = Path(expanded_path)
+
+        # Validate file exists (AC-9)
+        if not gguf_path.exists():
+            typer.echo(
+                f"Error: GGUF file not found: {gguf_path}",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        cli_model_path = str(gguf_path.resolve())
+
+        # AC-5: --gguf implies --backend local unless explicitly specified
+        if cli_backend is None:
+            cli_backend = "local"
 
     # Handle deprecated flags
     if state:
@@ -594,6 +640,13 @@ def run(
 
     # Create engine
     engine = YAMLEngine(actions_registry=cli_actions or {})
+
+    # TEA-CLI-001: Apply CLI overrides for --gguf and --backend
+    if cli_model_path or cli_backend:
+        engine.cli_overrides = {
+            "model_path": cli_model_path,
+            "backend": cli_backend,
+        }
 
     # TEA-BUILTIN-012.3: Configure secrets backend from CLI flags
     if secrets_backend:

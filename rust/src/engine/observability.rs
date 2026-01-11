@@ -156,7 +156,7 @@ pub struct OpikConfig {
     /// Optional workspace name
     #[serde(default)]
     pub workspace: Option<String>,
-    /// Override the Opik API URL (defaults to "https://www.comet.com/opik/api")
+    /// Override the Opik API URL (defaults to `https://www.comet.com/opik/api`)
     #[serde(default)]
     pub url_override: Option<String>,
     /// Number of events to buffer before sending (defaults to 10)

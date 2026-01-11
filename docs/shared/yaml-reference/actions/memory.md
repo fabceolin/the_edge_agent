@@ -422,8 +422,53 @@ settings:
 |---------|-------------|----------|
 | `sqlite` | Local SQLite with FTS5 | Development, single-node |
 | `duckdb` | DuckDB + catalog + cloud storage | Analytics, cloud storage, caching |
+| `ducklake` | Alias for DuckDB with sensible defaults (TEA-LTM-010) | Quick setup, DuckDB with catalog |
 | `litestream` | SQLite with S3 replication | Disaster recovery, edge sync |
 | `blob-sqlite` | SQLite on blob storage | Distributed, multi-node |
+
+### Ducklake Backend (TEA-LTM-010)
+
+The `ducklake` backend is an alias that expands to DuckDB with sensible defaults, providing a simplified configuration for DuckDB storage with pluggable catalog backends.
+
+**Defaults applied when using `backend: ducklake`:**
+- `catalog.type: sqlite` (default catalog)
+- `catalog.path: ./ltm_catalog.db`
+- `storage.uri: ./ltm_data/`
+- `lazy: true`
+- `inline_threshold: 4096`
+
+**Minimal configuration:**
+```yaml
+settings:
+  ltm:
+    backend: ducklake    # Expands to duckdb with all defaults
+```
+
+**With custom catalog:**
+```yaml
+settings:
+  ltm:
+    backend: ducklake
+    catalog:
+      type: duckdb
+      shared: true       # Single file for storage and catalog
+    storage:
+      uri: ./my_data/
+```
+
+**With cloud storage:**
+```yaml
+settings:
+  ltm:
+    backend: ducklake
+    catalog:
+      type: firestore
+      project_id: my-project
+    storage:
+      uri: gs://my-bucket/ltm/
+```
+
+All catalog types are supported: `sqlite` (default), `duckdb`, `firestore`, `postgres`, `supabase`.
 
 ### Catalog Types
 

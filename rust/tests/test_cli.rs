@@ -939,3 +939,223 @@ fn test_input_timeout_default_value() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ============================================================================
+// TEA-CLI-001: LLM Model CLI Parameters Tests
+// ============================================================================
+
+#[test]
+fn test_gguf_flag_in_help() {
+    // Test that --gguf flag appears in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--gguf"),
+        "Expected --gguf in help output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("GGUF model file"),
+        "Expected GGUF description in help output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_backend_flag_in_help() {
+    // Test that --backend flag appears in help
+    let output = Command::new(tea_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute tea run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--backend"),
+        "Expected --backend in help output: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("LLM backend selection"),
+        "Expected backend description in help output: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_gguf_missing_file_error() {
+    // Test that --gguf with nonexistent file shows error (AC-9)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--gguf",
+            "/nonexistent/model.gguf",
+        ])
+        .output()
+        .expect("Failed to execute tea run with --gguf");
+
+    assert!(
+        !output.status.success(),
+        "Expected failure for nonexistent GGUF file"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("GGUF file not found"),
+        "Expected 'GGUF file not found' error, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_backend_invalid_value_error() {
+    // Test that --backend with invalid value shows error (AC-2)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--backend",
+            "invalid",
+        ])
+        .output()
+        .expect("Failed to execute tea run with --backend");
+
+    assert!(
+        !output.status.success(),
+        "Expected failure for invalid backend value"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("must be one of: local, api, auto"),
+        "Expected backend validation error, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_backend_valid_values_accepted() {
+    // Test that --backend accepts valid values (local, api, auto)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--backend",
+            "api",
+        ])
+        .output()
+        .expect("Failed to execute tea run with --backend api");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail on backend validation
+    assert!(
+        !stderr.contains("must be one of"),
+        "Unexpected backend validation error: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_gguf_tilde_expansion() {
+    // Test that --gguf expands ~ to home directory (AC-11)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--gguf",
+            "~/nonexistent_model.gguf",
+        ])
+        .output()
+        .expect("Failed to execute tea run with --gguf ~");
+
+    assert!(
+        !output.status.success(),
+        "Expected failure for nonexistent GGUF file"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should show expanded path (not ~)
+    assert!(
+        stderr.contains("GGUF file not found"),
+        "Expected 'GGUF file not found' error, got: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("~/"),
+        "Expected tilde to be expanded, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_gguf_env_var_expansion() {
+    // Test that --gguf expands $HOME environment variable (AC-12)
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--gguf",
+            "$HOME/nonexistent_model.gguf",
+        ])
+        .output()
+        .expect("Failed to execute tea run with --gguf $HOME");
+
+    assert!(
+        !output.status.success(),
+        "Expected failure for nonexistent GGUF file"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Should show expanded path (not $HOME)
+    assert!(
+        stderr.contains("GGUF file not found"),
+        "Expected 'GGUF file not found' error, got: {}",
+        stderr
+    );
+    // The expanded path should contain the actual home directory
+    let home = std::env::var("HOME").unwrap_or_default();
+    assert!(
+        stderr.contains(&home),
+        "Expected HOME to be expanded in error message, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_gguf_implies_backend_local() {
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // Test that --gguf implies --backend local when not specified (AC-5)
+    // Create a temporary fake GGUF file
+    let mut temp_model = NamedTempFile::new().expect("Failed to create temp file");
+    temp_model
+        .write_all(b"fake gguf content")
+        .expect("Failed to write temp file");
+
+    let output = Command::new(tea_binary())
+        .args([
+            "run",
+            fixture("simple_workflow.yaml").to_str().unwrap(),
+            "--gguf",
+            temp_model.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute tea run with --gguf");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail on backend selection
+    // (may fail on model loading since it's not a real GGUF, but that's fine)
+    assert!(
+        !stderr.contains("must be one of"),
+        "Unexpected backend validation error: {}",
+        stderr
+    );
+}

@@ -292,6 +292,10 @@ class YAMLEngine:
         # Auto-trace flag (can be enabled via YAML settings)
         self._auto_trace = False
 
+        # TEA-CLI-001: CLI overrides for --gguf and --backend
+        # Set via cli.py after engine creation
+        self.cli_overrides: Dict[str, Any] = {}
+
         # Initialize memory backend (TEA-BUILTIN-001.1)
         self._memory_backend: Any = (
             memory_backend if memory_backend is not None else InMemoryBackend()

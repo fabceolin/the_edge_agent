@@ -161,6 +161,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 |---------|----------|---------|
 | **sqlite** (default) | Local development, single-node | Built-in |
 | **duckdb** | Analytics-heavy, catalog-aware, cloud storage | `pip install duckdb fsspec` |
+| **ducklake** | DuckDB with sensible defaults (TEA-LTM-010) | `pip install duckdb fsspec` |
 | **litestream** | SQLite with S3 replication | `pip install litestream` |
 | **blob-sqlite** | Distributed with blob storage | `pip install fsspec` |
 
@@ -169,6 +170,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 | Catalog | Use Case | Install |
 |---------|----------|---------|
 | **sqlite** (default) | Local, development | Built-in |
+| **duckdb** | Single-file, shared connection | `pip install duckdb` |
 | **firestore** | Serverless, Firebase ecosystem | `pip install firebase-admin` |
 | **postgres** | Self-hosted, SQL compatibility | `pip install psycopg2` |
 | **supabase** | Edge, REST API, managed Postgres | `pip install requests` |
@@ -188,6 +190,51 @@ settings:
     lazy: true
 ```
 
+#### Ducklake Backend (TEA-LTM-010)
+
+The `ducklake` backend is an alias that expands to DuckDB with sensible defaults:
+
+```yaml
+settings:
+  ltm:
+    backend: ducklake  # Expands to duckdb with defaults below
+    # Defaults applied:
+    # catalog.type: sqlite
+    # catalog.path: ./ltm_catalog.db
+    # storage.uri: ./ltm_data/
+    # lazy: true
+    # inline_threshold: 4096
+```
+
+Override any default by specifying it explicitly:
+
+```yaml
+settings:
+  ltm:
+    backend: ducklake
+    catalog:
+      type: firestore
+      project_id: my-project
+    storage:
+      uri: gs://my-bucket/ltm/
+```
+
+#### Shared DuckDB Catalog (TEA-LTM-011)
+
+For a fully self-contained single-file solution, use the DuckDB catalog with shared mode:
+
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: duckdb
+      shared: true  # Uses same DB as storage
+    storage:
+      uri: "./ltm.duckdb"  # Single DuckDB file
+    inline_threshold: 1024
+```
+
 ### Factory Functions
 
 ```python
@@ -195,6 +242,7 @@ from the_edge_agent.memory import (
     create_ltm_backend,
     create_catalog_backend,
     expand_env_vars,
+    expand_ltm_config,
 )
 
 # Create DuckDB backend with SQLite catalog
@@ -207,4 +255,12 @@ backend = create_ltm_backend(
 
 # Create catalog directly
 catalog = create_catalog_backend("sqlite", path="./catalog.db")
+
+# Create DuckDB catalog (TEA-LTM-011)
+duckdb_catalog = create_catalog_backend("duckdb", path="./catalog.duckdb")
+
+# Expand ducklake config without creating backend (TEA-LTM-010)
+config = expand_ltm_config({"ltm": {"backend": "ducklake"}})
+# config["backend"] == "duckdb"
+# config["catalog"]["type"] == "sqlite"
 ```

@@ -676,12 +676,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 if engine and hasattr(engine, "settings"):
                     settings = engine.settings or {}
 
-                # Resolve model path - check explicit model param, then settings, then env vars
+                # TEA-CLI-001: Get CLI overrides if available
+                cli_model_path = None
+                if engine and hasattr(engine, "cli_overrides"):
+                    cli_model_path = engine.cli_overrides.get("model_path")
+
+                # Resolve model path - check explicit model param, then CLI, then settings, then env vars
                 model_path = None
                 if model and (model.endswith(".gguf") or os.path.exists(model)):
                     model_path = model
                 else:
-                    model_path = resolve_model_path(settings)
+                    model_path = resolve_model_path(
+                        settings, cli_model_path=cli_model_path
+                    )
 
                 if not model_path:
                     return {

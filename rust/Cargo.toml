@@ -59,6 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Utilities
 parking_lot = "0.12"
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
+shellexpand = "3.1"  # TEA-CLI-001: Path expansion for --gguf
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 regex = "1"

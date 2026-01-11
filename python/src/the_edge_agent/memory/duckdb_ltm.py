@@ -136,6 +136,9 @@ class DuckDBLTMBackend:
         self._fallback_cache: Dict[str, Dict[str, Any]] = {}
         self._catalog_available = True  # Track catalog health
 
+        # Shared DuckDB connection for catalog (TEA-LTM-011)
+        self._shared_duckdb_conn: Optional[Any] = None
+
         # Initialize catalog (lazy or immediate)
         if catalog is not None:
             # Validate provided catalog
@@ -810,9 +813,19 @@ class DuckDBLTMBackend:
                 raise ValueError(
                     "Catalog not initialized and no catalog_config provided"
                 )
-            from .catalog import parse_catalog_config
 
-            self._catalog = parse_catalog_config(self._catalog_config)
+            # Check for shared DuckDB mode (TEA-LTM-011)
+            catalog_type = self._catalog_config.get("type", "sqlite")
+            shared_mode = self._catalog_config.get("shared", False)
+
+            if catalog_type == "duckdb" and shared_mode:
+                # Create shared DuckDB connection from storage_uri
+                self._catalog = self._create_shared_duckdb_catalog()
+            else:
+                from .catalog import parse_catalog_config
+
+                self._catalog = parse_catalog_config(self._catalog_config)
+
             logger.debug(f"Lazily initialized catalog: {type(self._catalog).__name__}")
 
             # Ensure local storage directory exists (deferred from __init__ in lazy mode)
@@ -820,6 +833,42 @@ class DuckDBLTMBackend:
                 os.makedirs(self._storage_uri, exist_ok=True)
 
         return self._catalog
+
+    def _create_shared_duckdb_catalog(self) -> CatalogBackend:
+        """
+        Create DuckDBCatalog with shared connection (TEA-LTM-011).
+
+        When shared mode is enabled, the catalog uses the same DuckDB database
+        as specified in storage_uri. This allows a single-file LTM solution.
+
+        Returns:
+            DuckDBCatalog instance with shared connection
+        """
+        try:
+            import duckdb
+        except ImportError:
+            raise ImportError(
+                "Shared DuckDB catalog requires duckdb. Install with: pip install duckdb"
+            )
+
+        # Determine the DuckDB file path from storage_uri
+        storage_uri = self._storage_uri.rstrip("/")
+
+        if storage_uri.endswith(".duckdb") or storage_uri.endswith(".db"):
+            # storage_uri is a DuckDB file path
+            db_path = storage_uri
+        else:
+            # Use a default DuckDB file in the storage directory
+            db_path = f"{storage_uri}/ltm.duckdb"
+
+        # Create shared connection
+        self._shared_duckdb_conn = duckdb.connect(db_path)
+        logger.debug(f"Created shared DuckDB connection: {db_path}")
+
+        # Create catalog with shared connection
+        from .catalog_duckdb import DuckDBCatalog
+
+        return DuckDBCatalog(connection=self._shared_duckdb_conn)
 
     def get_circuit_state(self) -> Dict[str, Any]:
         """Get circuit breaker state from query engine."""
@@ -1070,6 +1119,12 @@ class DuckDBLTMBackend:
         """Close the backend and release resources."""
         if self._owns_engine and self._engine is not None:
             self._engine.close()
+
+        # Close shared DuckDB connection if we created it (TEA-LTM-011)
+        if self._shared_duckdb_conn is not None:
+            self._shared_duckdb_conn.close()
+            self._shared_duckdb_conn = None
+
         logger.debug("DuckDBLTMBackend closed")
 
     def __enter__(self) -> "DuckDBLTMBackend":

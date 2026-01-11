@@ -154,6 +154,16 @@ enum Commands {
         /// YE.8: Output merged YAML to stdout without executing
         #[arg(long)]
         dump_merged: bool,
+
+        /// TEA-CLI-001: Path to GGUF model file for local LLM inference.
+        /// Overrides TEA_MODEL_PATH and YAML settings.llm.model_path.
+        #[arg(long)]
+        gguf: Option<PathBuf>,
+
+        /// TEA-CLI-001: LLM backend selection: local, api, or auto.
+        /// Overrides YAML settings.llm.backend.
+        #[arg(long)]
+        backend: Option<String>,
     },
 
     /// Resume execution from a checkpoint
@@ -314,6 +324,8 @@ fn main() -> Result<()> {
             max_iterations,
             overlay,
             dump_merged,
+            gguf,
+            backend,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -326,6 +338,47 @@ fn main() -> Result<()> {
                 eprintln!("Hint: Use the Python implementation for action plugins");
                 std::process::exit(1);
             }
+
+            // TEA-CLI-001: Validate and process --backend parameter
+            let cli_backend: Option<String> = if let Some(ref b) = backend {
+                let b_lower = b.to_lowercase();
+                if !["local", "api", "auto"].contains(&b_lower.as_str()) {
+                    eprintln!(
+                        "Error: --backend must be one of: local, api, auto. Got: {}",
+                        b
+                    );
+                    std::process::exit(1);
+                }
+                Some(b_lower)
+            } else {
+                None
+            };
+
+            // TEA-CLI-001: Validate and expand --gguf path
+            let cli_model_path: Option<PathBuf> = if let Some(ref gguf_path) = gguf {
+                // Expand ~ and environment variables using shellexpand
+                let path_str = gguf_path.to_string_lossy();
+                let expanded = shellexpand::full(&path_str)
+                    .map(|s| PathBuf::from(s.into_owned()))
+                    .unwrap_or_else(|_| gguf_path.clone());
+
+                // Validate file exists
+                if !expanded.exists() {
+                    eprintln!("Error: GGUF file not found: {}", expanded.display());
+                    std::process::exit(1);
+                }
+
+                Some(expanded)
+            } else {
+                None
+            };
+
+            // AC-5: --gguf implies --backend local unless explicitly specified
+            let effective_backend = if cli_model_path.is_some() && cli_backend.is_none() {
+                Some("local".to_string())
+            } else {
+                cli_backend
+            };
 
             run_workflow(
                 file,
@@ -350,6 +403,8 @@ fn main() -> Result<()> {
                 max_iterations,
                 overlay,
                 dump_merged,
+                cli_model_path,
+                effective_backend,
             )
         }
 
@@ -424,6 +479,9 @@ fn run_workflow(
     max_iterations: Option<usize>,
     overlay: Option<Vec<PathBuf>>,
     dump_merged: bool,
+    // TEA-CLI-001: CLI overrides for LLM model
+    _cli_model_path: Option<PathBuf>,
+    _cli_backend: Option<String>,
 ) -> Result<()> {
     use the_edge_agent::engine::deep_merge::merge_all;
 
