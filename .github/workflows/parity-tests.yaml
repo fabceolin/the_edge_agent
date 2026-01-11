@@ -48,7 +48,7 @@ jobs:
     - name: Install Python package
       run: |
         python -m pip install --upgrade pip
-        cd python && pip install -e .
+        cd python && pip install -e .[dev]
 
     - name: Build Rust release
       run: |
@@ -83,7 +83,7 @@ jobs:
     - name: Install Python package
       run: |
         python -m pip install --upgrade pip
-        cd python && pip install -e .
+        cd python && pip install -e .[dev]
 
     - name: Install pako (JS inflate)
       run: npm install pako

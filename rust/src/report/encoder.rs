@@ -200,7 +200,7 @@ fn truncate_report(report: &ErrorReport, level: u8) -> ErrorReport {
 /// # Arguments
 ///
 /// * `report` - The ErrorReport to encode
-/// * `base_url` - Base URL for the report viewer (e.g., "https://example.github.io/the_edge_agent/report")
+/// * `base_url` - Base URL for the report viewer (e.g., `https://example.github.io/the_edge_agent/report`)
 ///
 /// # Returns
 ///

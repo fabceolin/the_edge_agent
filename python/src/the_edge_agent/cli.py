@@ -545,7 +545,7 @@ def run(
         raise typer.Exit(1)
 
     # TEA-REPORT-001d: Store report options in module-level for error handler
-    from .report_cli import configure as configure_report_cli
+    from the_edge_agent.report_cli import configure as configure_report_cli
 
     configure_report_cli(
         enabled=report_bugs,
