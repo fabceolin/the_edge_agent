@@ -14,23 +14,71 @@ When you need to:
 
 ## File Location
 
-**Standard location for DOT files:** `examples/dot/`
+**Standard location for DOT files:** `examples/dot/` (relative to TEA repository root)
 
-All DOT workflow files should be saved in the `examples/dot/` directory. This keeps workflow orchestration files organized and separate from documentation and source code.
+All DOT workflow files should be saved in the `examples/dot/` directory within the TEA repository. This keeps workflow orchestration files organized and separate from documentation and source code.
+
+### Repository Structure (Relative Paths)
 
 ```
-examples/
-├── dot/                          # DOT workflow files (save here)
-│   ├── linear.dot
-│   ├── parallel-phases.dot
-│   ├── tea-release-004-validation.dot
-│   └── ...
-├── workflows/                    # YAML workflow agents
-│   ├── bmad-story-development.yaml
-│   ├── bmad-story-validation.yaml
-│   └── ...
-└── yaml/                         # YAML examples
+<tea-repo-root>/
+├── examples/
+│   ├── dot/                          # DOT workflow files (save here)
+│   │   ├── linear.dot
+│   │   ├── parallel-phases.dot
+│   │   └── ...
+│   └── workflows/                    # YAML workflow agents
+│       ├── bmad-story-development.yaml
+│       ├── bmad-story-validation.yaml
+│       └── ...
+└── docs/
+    └── stories/                      # Story files
+        └── ...
 ```
+
+### Key File Paths (Relative to TEA Root)
+
+| File | Relative Path |
+|------|---------------|
+| BMAD Story Development | `examples/workflows/bmad-story-development.yaml` |
+| BMAD Story Validation | `examples/workflows/bmad-story-validation.yaml` |
+| DOT Files Directory | `examples/dot/` |
+| Stories Directory | `docs/stories/` |
+
+### Runtime Path Discovery (IMPORTANT)
+
+**Before generating a DOT file, the LLM MUST use tools to discover actual paths:**
+
+The project root (`PROJECT_ROOT`) can be:
+- The `the_edge_agent` repository (when working on TEA itself)
+- Any other project that uses TEA workflows (e.g., `spa-base`, custom projects)
+
+1. **Find BMAD workflow files:**
+   ```bash
+   # Glob pattern to find BMAD workflows in any project
+   **/bmad-story-development.yaml
+   **/bmad-story-validation.yaml
+   ```
+
+2. **Extract PROJECT_ROOT from discovered path:**
+   ```bash
+   # If found: /home/user/myproject/the_edge_agent/examples/workflows/bmad-story-development.yaml
+   # PROJECT_ROOT could be: /home/user/myproject/the_edge_agent
+   # OR if the project has its own workflows:
+   # /home/user/myproject/workflows/bmad-story-development.yaml
+   # PROJECT_ROOT = /home/user/myproject
+   ```
+
+3. **Find story files in the project:**
+   ```bash
+   # Glob pattern to find stories (may be in different locations)
+   **/docs/stories/*.md
+   **/stories/*.md
+   ```
+
+4. **Use discovered absolute paths in DOT commands**
+
+**Note:** Different projects may have different directory structures. Always discover paths dynamically.
 
 **Naming convention:**
 - Use lowercase with hyphens: `epic-name-workflow.dot`
@@ -125,17 +173,17 @@ digraph sequential_stories {
 
     subgraph cluster_phase1 {
         label="1. Foundation";
-        story_1 [label="STORY-001\nSetup", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-001.md\"}'"];
+        story_1 [label="<STORY-ID-1>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-1-FILE>.md\"}'"];
     }
 
     subgraph cluster_phase2 {
         label="2. Core Features";
-        story_2 [label="STORY-002\nCore Logic", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-002.md\"}'"];
+        story_2 [label="<STORY-ID-2>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-2-FILE>.md\"}'"];
     }
 
     subgraph cluster_phase3 {
         label="3. Integration";
-        story_3 [label="STORY-003\nIntegration", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-003.md\"}'"];
+        story_3 [label="<STORY-ID-3>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-3-FILE>.md\"}'"];
     }
 
     Start -> story_1;
@@ -144,6 +192,8 @@ digraph sequential_stories {
     story_3 -> End;
 }
 ```
+
+**Note:** Replace `<WORKFLOW_PATH>` and `<STORIES_PATH>` with actual paths discovered at runtime using Glob tools.
 
 ### Pattern 2: Parallel Stories Within Phases
 
@@ -157,29 +207,29 @@ digraph parallel_phases {
     Start [label="Start", shape=ellipse];
     End [label="End", shape=ellipse];
 
-    subgraph cluster_backend {
-        label="1. Backend Stories";
-        api [label="API Layer", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/API-001.md\"}'"];
-        db [label="Database", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/DB-001.md\"}'"];
+    subgraph cluster_phase1 {
+        label="1. Phase 1 Stories";
+        story_a [label="<STORY-A>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-A-FILE>.md\"}'"];
+        story_b [label="<STORY-B>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-B-FILE>.md\"}'"];
     }
 
-    subgraph cluster_frontend {
-        label="2. Frontend Stories";
-        ui [label="UI Components", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/UI-001.md\"}'"];
-        state [label="State Mgmt", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STATE-001.md\"}'"];
+    subgraph cluster_phase2 {
+        label="2. Phase 2 Stories";
+        story_c [label="<STORY-C>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-C-FILE>.md\"}'"];
+        story_d [label="<STORY-D>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-D-FILE>.md\"}'"];
     }
 
-    // Phase 1: api and db run in parallel
-    Start -> api;
-    Start -> db;
+    // Phase 1: story_a and story_b run in parallel
+    Start -> story_a;
+    Start -> story_b;
 
-    // Phase 2: ui and state run in parallel (after phase 1)
-    api -> ui;
-    db -> state;
+    // Phase 2: story_c and story_d run in parallel (after phase 1)
+    story_a -> story_c;
+    story_b -> story_d;
 
     // End after phase 2
-    ui -> End;
-    state -> End;
+    story_c -> End;
+    story_d -> End;
 }
 ```
 
@@ -197,19 +247,19 @@ digraph mixed_deps {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        core [label="Core Module", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/CORE-001.md\"}'"];
+        core [label="<CORE-STORY>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<CORE-STORY-FILE>.md\"}'"];
     }
 
     subgraph cluster_features {
         label="2. Features";
-        feature_a [label="Feature A", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-A.md\"}'"];
-        feature_b [label="Feature B", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-B.md\"}'"];
-        feature_c [label="Feature C", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/FEAT-C.md\"}'"];
+        feature_a [label="<FEATURE-A>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-A-FILE>.md\"}'"];
+        feature_b [label="<FEATURE-B>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-B-FILE>.md\"}'"];
+        feature_c [label="<FEATURE-C>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-C-FILE>.md\"}'"];
     }
 
     subgraph cluster_integration {
         label="3. Integration";
-        integration [label="Integration", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/INT-001.md\"}'"];
+        integration [label="<INTEGRATION>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<INTEGRATION-FILE>.md\"}'"];
     }
 
     // Core is prerequisite for all features
@@ -235,13 +285,13 @@ digraph mixed_deps {
 Use JSON input format with `arg` key:
 
 ```dot
-command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
 
 ### Story Validation Workflow
 
 ```dot
-command="tea-python run examples/workflows/bmad-story-validation.yaml --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+command="tea-python run <VALIDATION_WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
 
 ### With Extended Timeout
@@ -249,8 +299,14 @@ command="tea-python run examples/workflows/bmad-story-validation.yaml --input '{
 For long-running workflows, add `--input-timeout` (in seconds). Default is 300s (5 minutes):
 
 ```dot
-command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/<STORY-ID>.md\"}'"
+command="tea-python run <VALIDATION_WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
+
+**Placeholder Reference:**
+- `<WORKFLOW_PATH>` - Absolute path to bmad-story-development.yaml (discovered at runtime)
+- `<VALIDATION_WORKFLOW_PATH>` - Absolute path to bmad-story-validation.yaml (discovered at runtime)
+- `<STORIES_PATH>` - Absolute path to stories directory (discovered at runtime)
+- `<STORY-FILE>` - Story filename without extension (e.g., `TEA-RELEASE-004.1-rust-llm-appimage`)
 
 **Common timeout values:**
 - `--input-timeout 600` - 10 minutes
@@ -313,12 +369,20 @@ tea-python run workflow.yaml
 # With extended timeout (900 minutes = 54000 seconds)
 tea-python run workflow.yaml --input-timeout 54000
 
-# With streaming output
+# With visual graph progress (shows ASCII workflow diagram with running/completed states)
+tea-python run workflow.yaml --show-graph
+
+# Graph visualization only (no other output)
+tea-python run workflow.yaml --show-graph --quiet
+
+# With streaming output (NDJSON mode - mutually exclusive with --show-graph)
 tea-python run workflow.yaml --stream
 
 # With verbose logging
 tea-python run workflow.yaml -vv
 ```
+
+**Note:** The `--show-graph` flag displays an ASCII visualization of the workflow structure, highlighting the currently executing node and marking completed nodes with ✓. This is especially useful for complex parallel workflows where you want to see progress at a glance.
 
 ### Alternative Tea Implementations
 
@@ -338,11 +402,38 @@ tea-rust run workflow.yaml
 
 When asked to create a workflow orchestration DOT file:
 
+### 0. Discover Paths (CRITICAL - Do This First!)
+
+**Before generating any DOT file, use tools to discover actual paths:**
+
+```bash
+# Step 1: Find BMAD workflow files in the project
+glob_pattern: "**/bmad-story-development.yaml"
+
+# Step 2: Extract PROJECT_ROOT and WORKFLOW_PATH from the found path
+# Example A (TEA repo): /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml
+#   WORKFLOW_PATH = /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml
+#
+# Example B (Other project): /home/user/myapp/workflows/bmad-story-development.yaml
+#   WORKFLOW_PATH = /home/user/myapp/workflows/bmad-story-development.yaml
+
+# Step 3: Find story files in the project
+glob_pattern: "**/docs/stories/*.md"
+# OR
+glob_pattern: "**/stories/*.md"
+
+# Step 4: Store discovered paths for use in DOT commands
+# WORKFLOW_PATH = <discovered workflow path>
+# STORIES_PATH = <discovered stories directory>
+```
+
+**Store discovered WORKFLOW_PATH and STORIES_PATH for use in all commands.**
+
 ### 1. Identify Stories/Tasks
 
 Extract the list of items to orchestrate:
 - Story IDs (e.g., `TEA-PARALLEL-001.1`)
-- File paths (e.g., `docs/stories/TEA-PARALLEL-001.1-executor-abstraction.md`)
+- File paths discovered in Step 0 (e.g., `<STORIES_PATH>/TEA-PARALLEL-001.1-executor-abstraction.md`)
 - Dependencies between items
 
 ### 2. Determine Phase Structure
@@ -385,12 +476,35 @@ Save the DOT file to the standard location:
 examples/dot/<workflow-name>.dot
 ```
 
-### 5. Output Generation Command
+### 5. Output Commands (REQUIRED)
 
-Always include the command to generate the YAML:
+**After generating the DOT file, ALWAYS output these commands with full discovered paths:**
 
+#### Convert DOT to YAML:
 ```bash
-tea-python from dot examples/dot/<filename>.dot --use-node-commands -o examples/dot/<filename>.yaml
+tea-python from dot <DOT_OUTPUT>/<filename>.dot --use-node-commands -o <DOT_OUTPUT>/<filename>.yaml
+```
+
+#### Execute the Workflow:
+```bash
+tea-python run <DOT_OUTPUT>/<filename>.yaml --input-timeout 54000
+```
+
+#### With Visual Progress (recommended for multi-story workflows):
+```bash
+tea-python run <DOT_OUTPUT>/<filename>.yaml --input-timeout 54000 --show-graph
+```
+
+**Example with discovered paths:**
+```bash
+# Convert DOT to YAML
+tea-python from dot /home/user/project/docs/workflows/my-workflow.dot --use-node-commands -o /home/user/project/docs/workflows/my-workflow.yaml
+
+# Execute workflow
+tea-python run /home/user/project/docs/workflows/my-workflow.yaml --input-timeout 54000
+
+# Or with visual graph progress
+tea-python run /home/user/project/docs/workflows/my-workflow.yaml --input-timeout 54000 --show-graph
 ```
 
 ---
@@ -404,7 +518,28 @@ Given an epic with 5 stories and this dependency structure:
 - 001.4 depends on 001.3
 - 001.5 depends on 001.4
 
-### DOT File
+### Step 1: Discover Paths
+
+```bash
+# LLM discovers workflow paths using Glob tool
+Glob pattern: "**/bmad-story-development.yaml"
+Result: /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml
+
+# Store discovered paths
+WORKFLOW_PATH = /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml
+
+# Find stories directory
+Glob pattern: "**/docs/stories/*.md"
+Result: /home/user/project/the_edge_agent/docs/stories/...
+
+# Store stories path
+STORIES_PATH = /home/user/project/the_edge_agent/docs/stories
+
+# DOT output directory (sibling to workflows or in examples/dot)
+DOT_OUTPUT = /home/user/project/the_edge_agent/examples/dot
+```
+
+### Step 2: Generate DOT File
 
 ```dot
 digraph epic_implementation {
@@ -416,23 +551,23 @@ digraph epic_implementation {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        story_1_1 [label="EPIC-001.1\nCore Setup", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.1-core-setup.md\"}'"];
+        story_1_1 [label="EPIC-001.1", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.1-core-setup.md\"}'"];
     }
 
     subgraph cluster_core {
         label="2. Core Implementation";
-        story_1_2 [label="EPIC-001.2\nMain Feature", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.2-main-feature.md\"}'"];
+        story_1_2 [label="EPIC-001.2", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.2-main-feature.md\"}'"];
     }
 
     subgraph cluster_extensions {
         label="3. Extensions";
-        story_1_3 [label="EPIC-001.3\nExtension A", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.3-extension-a.md\"}'"];
-        story_1_4 [label="EPIC-001.4\nExtension B", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.4-extension-b.md\"}'"];
+        story_1_3 [label="EPIC-001.3", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.3-extension-a.md\"}'"];
+        story_1_4 [label="EPIC-001.4", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.4-extension-b.md\"}'"];
     }
 
     subgraph cluster_docs {
         label="4. Documentation";
-        story_1_5 [label="EPIC-001.5\nDocumentation", command="tea-python run examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/EPIC-001.5-documentation.md\"}'"];
+        story_1_5 [label="EPIC-001.5", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.5-documentation.md\"}'"];
     }
 
     Start -> story_1_1;
@@ -445,26 +580,41 @@ digraph epic_implementation {
 }
 ```
 
-### Generation Command
+**Note:** The paths `/home/user/project/the_edge_agent/` are examples. The LLM MUST discover the actual path at runtime using tools.
+
+### Step 3: Save DOT File
 
 ```bash
-# Save DOT to standard location, then generate YAML
-tea-python from dot examples/dot/epic-implementation.dot --use-node-commands -o examples/dot/epic-implementation.yaml
+# Save DOT to discovered output directory (using discovered DOT_OUTPUT path)
+Write to: /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot
 ```
 
-### Execution
+### Step 4: Output Commands (with discovered paths)
+
+**After saving the DOT file, output these executable commands:**
 
 ```bash
-# Execute workflow
-tea-python run examples/dot/epic-implementation.yaml
+# Convert DOT to YAML (tea-python from command)
+tea-python from dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot --use-node-commands -o /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml
 
-# With extended timeout
-tea-python run examples/dot/epic-implementation.yaml --input-timeout 54000
+# Execute workflow (tea-python run command)
+tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --input-timeout 54000
+
+# Or with visual graph progress (recommended for monitoring multi-story workflows)
+tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --input-timeout 54000 --show-graph
 ```
+
+**Note:** All paths in the output commands MUST be the actual discovered absolute paths, not placeholders.
 
 ---
 
 ## Best Practices
+
+### Path Discovery (CRITICAL)
+- **ALWAYS discover paths at runtime** using Glob or Bash tools
+- **NEVER hardcode paths** like `/home/fabricio/...` in templates
+- **Verify files exist** before including them in the DOT file
+- **Store PROJECT_ROOT** (derived from discovered workflow path) and reuse it for all command paths
 
 ### Labels
 - **Keep labels simple**: Use short IDs like `TEA-PARALLEL-001.1` instead of multi-line labels
@@ -472,18 +622,19 @@ tea-python run examples/dot/epic-implementation.yaml --input-timeout 54000
 - Labels are used as dict keys and tmux window names
 
 ### Commands
-- **Use JSON input format**: `--input '{\"arg\": \"path/to/file.md\"}'` with proper escaping
+- **Use absolute paths**: Discovered at runtime via `<WORKFLOW_PATH>` and `<STORIES_PATH>`
+- **Use JSON input format**: `--input '{\"arg\": \"<path>\"}'` with proper escaping
 - **Escape double quotes**: Use `\"` for quotes inside the command string
 - **Test commands independently**: Run the command in a shell before embedding in DOT
 
 ### Example: Good vs Bad
 
 ```dot
-// GOOD - simple label, JSON input format with timeout
-story_1 [label="STORY-001", command="tea-python run workflow.yaml --input-timeout 54000 --input '{\"arg\": \"docs/story.md\"}'"];
+// GOOD - absolute path discovered at runtime, simple label, with timeout
+story_1 [label="STORY-001", command="tea-python run /discovered/path/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/discovered/path/the_edge_agent/docs/stories/STORY-001.md\"}'"];
 
-// BAD - multi-line label, no timeout
-story_1 [label="STORY-001\nDescription", command="tea-python run workflow.yaml --input '{\"arg\": \"docs/story.md\"}'"];
+// BAD - relative path (may not resolve correctly), multi-line label, no timeout
+story_1 [label="STORY-001\nDescription", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-001.md\"}'"];
 ```
 
 ---
