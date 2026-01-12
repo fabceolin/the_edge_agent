@@ -188,6 +188,34 @@ Based on the Opik SDK analysis, there are two integration strategies:
 
 ---
 
+### Story 5: Opik Agent Graph Visualization (TEA-BUILTIN-005.5)
+
+**Title:** Agent Graph Visualization in Opik Dashboard
+
+**Description:** Add Mermaid graph export to StateGraph and integrate with experiment runner so that TEA agent graph structure appears in Opik's "Show Agent Graph" UI during experiment traces.
+
+**Scope:**
+- Add `to_mermaid()` method to `VisualizationMixin`
+- Add `get_mermaid_graph()` to YAMLEngine
+- Integrate with experiment runner via `_opik_graph_definition` metadata
+- Handle conditional edges, parallel flows, and special nodes
+
+**Acceptance Criteria:**
+1. StateGraph provides `to_mermaid()` returning valid Mermaid syntax
+2. Conditional and parallel edges rendered with appropriate labels
+3. `run_tea_experiment()` includes graph automatically (`include_graph=True` by default)
+4. Graph uses Opik's `_opik_graph_definition` metadata format
+5. Graceful degradation if graph generation fails
+6. YAMLEngine exposes `get_mermaid_graph()` for declarative agents
+7. No new dependencies - Mermaid is string output only
+8. Unit tests verify Mermaid output validity
+
+**Estimated Complexity:** Low-Medium (1-2 days)
+
+**Dependencies:** Story 4 (experiment framework)
+
+---
+
 ## Compatibility Requirements
 
 - [x] Existing `TraceContext` API remains unchanged
@@ -234,7 +262,8 @@ pip install opik
 ## Definition of Done
 
 - [x] Stories 1-3 completed with acceptance criteria met
-- [ ] Story 4 (Experiment Framework) completed with acceptance criteria met
+- [x] Story 4 (Experiment Framework) completed with acceptance criteria met
+- [ ] Story 5 (Agent Graph Visualization) completed with acceptance criteria met
 - [ ] Existing tracing functionality verified through regression tests
 - [ ] Integration with Opik dashboard demonstrated
 - [ ] Documentation updated (CLAUDE.md, YAML_REFERENCE.md)
@@ -308,3 +337,4 @@ The epic should maintain system integrity while delivering comprehensive Opik ob
 | 2025-12-18 | 1.0 | All 3 substories (005.1, 005.2, 005.3) completed and marked Done | James (Dev Agent) |
 | 2026-01-07 | 1.1 | Status updated from "Draft" to "Complete" - epic implementation verified | Sarah (PO) |
 | 2026-01-12 | 1.2 | Added Story 4 (TEA-BUILTIN-005.4) - Experiment Framework for agent evaluation. Status back to "In Progress" | Sarah (PO) |
+| 2026-01-12 | 1.3 | Added Story 5 (TEA-BUILTIN-005.5) - Opik Agent Graph Visualization for Mermaid export and dashboard integration | Sarah (PO) |
