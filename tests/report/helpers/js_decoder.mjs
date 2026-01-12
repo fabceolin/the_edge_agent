@@ -21,7 +21,9 @@ function base64urlDecode(str) {
 // Decode a bug report URL to JSON
 function decodeUrl(url) {
     // Parse URL: .../version/runtime_encoded
-    const match = url.match(/\/([^/]+)\/(\w+)_(.+)$/);
+    // Runtime is alphanumeric only (no underscores) - e.g., "rust", "python"
+    // Encoded data uses base64url which includes underscores
+    const match = url.match(/\/([^/]+)\/([a-zA-Z0-9]+)_([^/]+)$/);
     if (!match) {
         throw new Error('Invalid URL format');
     }
