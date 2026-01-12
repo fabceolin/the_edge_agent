@@ -64,6 +64,11 @@ This reference is organized into focused modules for easier navigation:
 | Integrations | [yaml-reference/actions/integrations.md](./yaml-reference/actions/integrations.md) |
 | Specialized (incl. Secrets) | [yaml-reference/actions/specialized.md](./yaml-reference/actions/specialized.md) |
 
+### Python Tools
+| Tool | Document |
+|------|----------|
+| Experiment Framework (Opik) | [python/experiments-guide.md](../python/experiments-guide.md) |
+
 ---
 
 ## Overview

@@ -21,109 +21,115 @@ class TestCreateDatasetFromList(unittest.TestCase):
 
     def setUp(self):
         """Set up mock Opik for each test."""
-        self.mock_opik = MagicMock()
+        # Create patches for datasets module
+        self.opik_available_patch = patch(
+            "the_edge_agent.experiments.datasets.OPIK_AVAILABLE", True
+        )
+        self.opik_patch = patch("the_edge_agent.experiments.datasets.opik")
+
+        self.opik_available_patch.start()
+        self.mock_opik = self.opik_patch.start()
+
         self.mock_client = MagicMock()
         self.mock_dataset = MagicMock()
         self.mock_opik.Opik.return_value = self.mock_client
         self.mock_client.get_or_create_dataset.return_value = self.mock_dataset
 
+    def tearDown(self):
+        """Stop patches."""
+        self.opik_patch.stop()
+        self.opik_available_patch.stop()
+
     def test_creates_dataset_with_name(self):
         """P0: Creates dataset with correct name."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [{"input": {"text": "hello"}}]
-            create_dataset_from_list("test_dataset", items)
+        items = [{"input": {"text": "hello"}}]
+        create_dataset_from_list("test_dataset", items)
 
-            self.mock_client.get_or_create_dataset.assert_called_with(
-                name="test_dataset", description=None
-            )
+        self.mock_client.get_or_create_dataset.assert_called_with(
+            name="test_dataset", description=None
+        )
 
     def test_inserts_items_into_dataset(self):
         """P0: Items are inserted into dataset."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [
-                {"input": {"text": "hello"}, "expected_output": {"response": "hi"}},
-                {"input": {"text": "bye"}, "expected_output": {"response": "goodbye"}},
-            ]
-            create_dataset_from_list("test_dataset", items)
+        items = [
+            {"input": {"text": "hello"}, "expected_output": {"response": "hi"}},
+            {"input": {"text": "bye"}, "expected_output": {"response": "goodbye"}},
+        ]
+        create_dataset_from_list("test_dataset", items)
 
-            # Verify insert was called with transformed items
-            self.mock_dataset.insert.assert_called_once()
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            self.assertEqual(len(inserted_items), 2)
+        # Verify insert was called with transformed items
+        self.mock_dataset.insert.assert_called_once()
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        self.assertEqual(len(inserted_items), 2)
 
     def test_transforms_items_correctly(self):
         """P0: Items are transformed to Opik format."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [
-                {
-                    "input": {"query": "test"},
-                    "expected_output": {"answer": "result"},
-                    "metadata": {"source": "unit_test"},
-                }
-            ]
-            create_dataset_from_list("test_dataset", items)
+        items = [
+            {
+                "input": {"query": "test"},
+                "expected_output": {"answer": "result"},
+                "metadata": {"source": "unit_test"},
+            }
+        ]
+        create_dataset_from_list("test_dataset", items)
 
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            item = inserted_items[0]
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        item = inserted_items[0]
 
-            self.assertIn("input", item)
-            self.assertIn("expected_output", item)
-            self.assertIn("metadata", item)
-            self.assertEqual(item["input"]["query"], "test")
-            self.assertEqual(item["expected_output"]["answer"], "result")
-            self.assertEqual(item["metadata"]["source"], "unit_test")
+        self.assertIn("input", item)
+        self.assertIn("expected_output", item)
+        self.assertIn("metadata", item)
+        self.assertEqual(item["input"]["query"], "test")
+        self.assertEqual(item["expected_output"]["answer"], "result")
+        self.assertEqual(item["metadata"]["source"], "unit_test")
 
     def test_handles_items_without_expected_output(self):
         """P1: Items without expected_output are handled."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [{"input": {"text": "hello"}}]  # No expected_output
-            create_dataset_from_list("test_dataset", items)
+        items = [{"input": {"text": "hello"}}]  # No expected_output
+        create_dataset_from_list("test_dataset", items)
 
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            item = inserted_items[0]
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        item = inserted_items[0]
 
-            self.assertIn("input", item)
-            self.assertNotIn("expected_output", item)
+        self.assertIn("input", item)
+        self.assertNotIn("expected_output", item)
 
     def test_empty_items_raises_error(self):
         """P0: Empty items list raises ValueError."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            with self.assertRaises(ValueError) as ctx:
-                create_dataset_from_list("test_dataset", [])
+        with self.assertRaises(ValueError) as ctx:
+            create_dataset_from_list("test_dataset", [])
 
-            self.assertIn("empty", str(ctx.exception).lower())
+        self.assertIn("empty", str(ctx.exception).lower())
 
     def test_with_description(self):
         """P1: Description is passed to get_or_create_dataset."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [{"input": {"text": "hello"}}]
-            create_dataset_from_list("test_dataset", items, description="Test cases")
+        items = [{"input": {"text": "hello"}}]
+        create_dataset_from_list("test_dataset", items, description="Test cases")
 
-            self.mock_client.get_or_create_dataset.assert_called_with(
-                name="test_dataset", description="Test cases"
-            )
+        self.mock_client.get_or_create_dataset.assert_called_with(
+            name="test_dataset", description="Test cases"
+        )
 
     def test_with_project_name(self):
         """P1: Project name is passed to Opik client."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import create_dataset_from_list
+        from the_edge_agent.experiments.datasets import create_dataset_from_list
 
-            items = [{"input": {"text": "hello"}}]
-            create_dataset_from_list("test_dataset", items, project_name="my-project")
+        items = [{"input": {"text": "hello"}}]
+        create_dataset_from_list("test_dataset", items, project_name="my-project")
 
-            self.mock_opik.Opik.assert_called_with(project_name="my-project")
+        self.mock_opik.Opik.assert_called_with(project_name="my-project")
 
 
 class TestCreateDatasetFromFixtures(unittest.TestCase):
@@ -131,7 +137,15 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
 
     def setUp(self):
         """Set up mock Opik and temp directory for each test."""
-        self.mock_opik = MagicMock()
+        # Create patches for datasets module
+        self.opik_available_patch = patch(
+            "the_edge_agent.experiments.datasets.OPIK_AVAILABLE", True
+        )
+        self.opik_patch = patch("the_edge_agent.experiments.datasets.opik")
+
+        self.opik_available_patch.start()
+        self.mock_opik = self.opik_patch.start()
+
         self.mock_client = MagicMock()
         self.mock_dataset = MagicMock()
         self.mock_opik.Opik.return_value = self.mock_client
@@ -141,10 +155,13 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
-        """Clean up temp directory."""
+        """Clean up temp directory and stop patches."""
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+        self.opik_patch.stop()
+        self.opik_available_patch.stop()
 
     def _create_fixture(self, filename: str, content: dict) -> Path:
         """Helper to create a fixture file."""
@@ -158,25 +175,23 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
         self._create_fixture("case_001.json", {"input": {"text": "hello"}})
         self._create_fixture("case_002.json", {"input": {"text": "world"}})
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            create_dataset_from_fixtures("test_fixtures", self.temp_dir)
+        create_dataset_from_fixtures("test_fixtures", self.temp_dir)
 
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            self.assertEqual(len(inserted_items), 2)
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        self.assertEqual(len(inserted_items), 2)
 
     def test_nonexistent_path_raises_error(self):
         """P0: FileNotFoundError for nonexistent path."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            with self.assertRaises(FileNotFoundError):
-                create_dataset_from_fixtures("test", "/nonexistent/path")
+        with self.assertRaises(FileNotFoundError):
+            create_dataset_from_fixtures("test", "/nonexistent/path")
 
     def test_no_json_files_raises_error(self):
         """P0: ValueError when no JSON files found."""
@@ -184,29 +199,27 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
         txt_file = Path(self.temp_dir) / "readme.txt"
         txt_file.write_text("Not JSON")
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            with self.assertRaises(ValueError) as ctx:
-                create_dataset_from_fixtures("test", self.temp_dir)
+        with self.assertRaises(ValueError) as ctx:
+            create_dataset_from_fixtures("test", self.temp_dir)
 
-            self.assertIn("No JSON files", str(ctx.exception))
+        self.assertIn("No JSON files", str(ctx.exception))
 
     def test_file_path_raises_error(self):
         """P1: ValueError when path is a file, not directory."""
         json_file = self._create_fixture("test.json", {"input": "data"})
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            with self.assertRaises(ValueError) as ctx:
-                create_dataset_from_fixtures("test", str(json_file))
+        with self.assertRaises(ValueError) as ctx:
+            create_dataset_from_fixtures("test", str(json_file))
 
-            self.assertIn("directory", str(ctx.exception).lower())
+        self.assertIn("directory", str(ctx.exception).lower())
 
     def test_input_transform_applied(self):
         """P1: Input transform function is applied."""
@@ -215,32 +228,30 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
         def transform(data):
             return {"input": {"text": data["raw_text"].upper()}}
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            create_dataset_from_fixtures(
-                "test_fixtures", self.temp_dir, input_transform=transform
-            )
+        create_dataset_from_fixtures(
+            "test_fixtures", self.temp_dir, input_transform=transform
+        )
 
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            self.assertEqual(inserted_items[0]["input"]["text"], "HELLO")
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        self.assertEqual(inserted_items[0]["input"]["text"], "HELLO")
 
     def test_wraps_data_without_input_key(self):
         """P1: Data without 'input' key is wrapped."""
         self._create_fixture("case.json", {"text": "hello", "value": 42})
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            create_dataset_from_fixtures("test_fixtures", self.temp_dir)
+        create_dataset_from_fixtures("test_fixtures", self.temp_dir)
 
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            # The whole dict should be wrapped under "input"
-            self.assertIn("text", inserted_items[0]["input"])
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        # The whole dict should be wrapped under "input"
+        self.assertIn("text", inserted_items[0]["input"])
 
     def test_invalid_json_skipped(self):
         """P2: Invalid JSON files are skipped with warning."""
@@ -250,16 +261,15 @@ class TestCreateDatasetFromFixtures(unittest.TestCase):
         invalid_file = Path(self.temp_dir) / "invalid.json"
         invalid_file.write_text("{ not valid json }")
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            from the_edge_agent.experiments.datasets import (
-                create_dataset_from_fixtures,
-            )
+        from the_edge_agent.experiments.datasets import (
+            create_dataset_from_fixtures,
+        )
 
-            create_dataset_from_fixtures("test_fixtures", self.temp_dir)
+        create_dataset_from_fixtures("test_fixtures", self.temp_dir)
 
-            # Only valid file should be loaded
-            inserted_items = self.mock_dataset.insert.call_args[0][0]
-            self.assertEqual(len(inserted_items), 1)
+        # Only valid file should be loaded
+        inserted_items = self.mock_dataset.insert.call_args[0][0]
+        self.assertEqual(len(inserted_items), 1)
 
 
 class TestDatasetsMissingOpik(unittest.TestCase):

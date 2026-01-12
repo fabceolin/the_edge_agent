@@ -115,65 +115,69 @@ edges:
 
     def test_output_saves_to_json(self):
         """P1: --output saves results to JSON file."""
-        mock_opik = MagicMock()
-        mock_client = MagicMock()
-        mock_dataset = MagicMock()
-        mock_opik.Opik.return_value = mock_client
-        mock_client.get_dataset.return_value = mock_dataset
-
         output_file = Path(self.temp_dir) / "results.json"
 
-        with patch.dict("sys.modules", {"opik": mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.cli import main
+        with patch("the_edge_agent.experiments.runner.OPIK_AVAILABLE", True):
+            with patch("the_edge_agent.experiments.runner.opik") as mock_opik:
+                with patch(
+                    "the_edge_agent.experiments.runner.evaluate"
+                ) as mock_evaluate:
+                    mock_client = MagicMock()
+                    mock_dataset = MagicMock()
+                    mock_opik.Opik.return_value = mock_client
+                    mock_client.get_dataset.return_value = mock_dataset
 
-                exit_code = main(
-                    [
-                        "--agent",
-                        str(self.agent_yaml),
-                        "--dataset",
-                        "test",
-                        "--output",
-                        str(output_file),
-                    ]
-                )
+                    from the_edge_agent.experiments.cli import main
 
-                self.assertEqual(exit_code, 0)
-                self.assertTrue(output_file.exists())
+                    exit_code = main(
+                        [
+                            "--agent",
+                            str(self.agent_yaml),
+                            "--dataset",
+                            "test",
+                            "--output",
+                            str(output_file),
+                        ]
+                    )
 
-                # Verify JSON content
-                with open(output_file) as f:
-                    result = json.load(f)
-                    self.assertIn("status", result)
+                    self.assertEqual(exit_code, 0)
+                    self.assertTrue(output_file.exists())
+
+                    # Verify JSON content
+                    with open(output_file) as f:
+                        result = json.load(f)
+                        self.assertIn("status", result)
 
     def test_version_flag_in_experiment_name(self):
         """P1: --version is included in experiment name."""
-        mock_opik = MagicMock()
-        mock_client = MagicMock()
-        mock_dataset = MagicMock()
-        mock_opik.Opik.return_value = mock_client
-        mock_client.get_dataset.return_value = mock_dataset
+        with patch("the_edge_agent.experiments.runner.OPIK_AVAILABLE", True):
+            with patch("the_edge_agent.experiments.runner.opik") as mock_opik:
+                with patch(
+                    "the_edge_agent.experiments.runner.evaluate"
+                ) as mock_evaluate:
+                    mock_client = MagicMock()
+                    mock_dataset = MagicMock()
+                    mock_opik.Opik.return_value = mock_client
+                    mock_client.get_dataset.return_value = mock_dataset
 
-        with patch.dict("sys.modules", {"opik": mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.cli import main
+                    from the_edge_agent.experiments.cli import main
 
-                exit_code = main(
-                    [
-                        "--agent",
-                        str(self.agent_yaml),
-                        "--dataset",
-                        "test",
-                        "--version",
-                        "2.5",
-                    ]
-                )
+                    exit_code = main(
+                        [
+                            "--agent",
+                            str(self.agent_yaml),
+                            "--dataset",
+                            "test",
+                            "--version",
+                            "2.5",
+                        ]
+                    )
 
-                self.assertEqual(exit_code, 0)
+                    self.assertEqual(exit_code, 0)
 
-                # Check experiment name includes version
-                call_kwargs = mock_evaluate.call_args[1]
-                self.assertIn("v2.5", call_kwargs["experiment_name"])
+                    # Check experiment name includes version
+                    call_kwargs = mock_evaluate.call_args[1]
+                    self.assertIn("v2.5", call_kwargs["experiment_name"])
 
     def test_required_args_missing(self):
         """P0: Missing required args returns error."""

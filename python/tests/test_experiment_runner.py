@@ -21,7 +21,17 @@ class TestRunTeaExperiment(unittest.TestCase):
 
     def setUp(self):
         """Set up mock Opik for each test."""
-        self.mock_opik = MagicMock()
+        # Create patches for runner module
+        self.opik_available_patch = patch(
+            "the_edge_agent.experiments.runner.OPIK_AVAILABLE", True
+        )
+        self.opik_patch = patch("the_edge_agent.experiments.runner.opik")
+        self.evaluate_patch = patch("the_edge_agent.experiments.runner.evaluate")
+
+        self.opik_available_patch.start()
+        self.mock_opik = self.opik_patch.start()
+        self.mock_evaluate = self.evaluate_patch.start()
+
         self.mock_client = MagicMock()
         self.mock_dataset = MagicMock()
         self.mock_opik.Opik.return_value = self.mock_client
@@ -51,147 +61,134 @@ edges:
         )
 
     def tearDown(self):
-        """Clean up temp files."""
+        """Clean up temp files and stop patches."""
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+        self.evaluate_patch.stop()
+        self.opik_patch.stop()
+        self.opik_available_patch.stop()
+
     def test_agent_not_found_raises_error(self):
         """P0: FileNotFoundError for nonexistent agent."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            # Patch evaluate to avoid actual execution
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                with self.assertRaises(FileNotFoundError):
-                    run_tea_experiment(
-                        agent_yaml="/nonexistent/agent.yaml",
-                        dataset_name="test",
-                        metrics=[],
-                        experiment_name="test_exp",
-                    )
+        with self.assertRaises(FileNotFoundError):
+            run_tea_experiment(
+                agent_yaml="/nonexistent/agent.yaml",
+                dataset_name="test",
+                metrics=[],
+                experiment_name="test_exp",
+            )
 
     def test_uses_default_project_name(self):
         """P1: Default project name is 'the-edge-agent'."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                run_tea_experiment(
-                    agent_yaml=str(self.agent_yaml),
-                    dataset_name="test",
-                    metrics=[],
-                    experiment_name="test_exp",
-                )
+        run_tea_experiment(
+            agent_yaml=str(self.agent_yaml),
+            dataset_name="test",
+            metrics=[],
+            experiment_name="test_exp",
+        )
 
-                # Verify Opik was called with default project name
-                self.mock_opik.Opik.assert_called_with(project_name="the-edge-agent")
+        # Verify Opik was called with default project name
+        self.mock_opik.Opik.assert_called_with(project_name="the-edge-agent")
 
     def test_explicit_project_name_overrides_default(self):
         """P1: Explicit project_name overrides default."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                run_tea_experiment(
-                    agent_yaml=str(self.agent_yaml),
-                    dataset_name="test",
-                    metrics=[],
-                    experiment_name="test_exp",
-                    project_name="my-custom-project",
-                )
+        run_tea_experiment(
+            agent_yaml=str(self.agent_yaml),
+            dataset_name="test",
+            metrics=[],
+            experiment_name="test_exp",
+            project_name="my-custom-project",
+        )
 
-                self.mock_opik.Opik.assert_called_with(project_name="my-custom-project")
+        self.mock_opik.Opik.assert_called_with(project_name="my-custom-project")
 
     def test_env_var_project_name(self):
         """P1: OPIK_PROJECT_NAME env var is used."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                with patch.dict(
-                    os.environ, {"OPIK_PROJECT_NAME": "env-project"}, clear=False
-                ):
-                    from the_edge_agent.experiments.runner import run_tea_experiment
+        with patch.dict(
+            os.environ, {"OPIK_PROJECT_NAME": "env-project"}, clear=False
+        ):
+            from the_edge_agent.experiments.runner import run_tea_experiment
 
-                    run_tea_experiment(
-                        agent_yaml=str(self.agent_yaml),
-                        dataset_name="test",
-                        metrics=[],
-                        experiment_name="test_exp",
-                    )
+            run_tea_experiment(
+                agent_yaml=str(self.agent_yaml),
+                dataset_name="test",
+                metrics=[],
+                experiment_name="test_exp",
+            )
 
-                    self.mock_opik.Opik.assert_called_with(project_name="env-project")
+            self.mock_opik.Opik.assert_called_with(project_name="env-project")
 
     def test_returns_success_result(self):
         """P0: Returns success result on completion."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                result = run_tea_experiment(
-                    agent_yaml=str(self.agent_yaml),
-                    dataset_name="test",
-                    metrics=[],
-                    experiment_name="test_exp",
-                )
+        result = run_tea_experiment(
+            agent_yaml=str(self.agent_yaml),
+            dataset_name="test",
+            metrics=[],
+            experiment_name="test_exp",
+        )
 
-                self.assertEqual(result["status"], "complete")
-                self.assertEqual(result["experiment_name"], "test_exp")
-                self.assertEqual(result["dataset_name"], "test")
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["experiment_name"], "test_exp")
+        self.assertEqual(result["dataset_name"], "test")
 
     def test_returns_error_result_on_failure(self):
         """P0: Returns error result on experiment failure."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                mock_evaluate.side_effect = Exception("Experiment failed!")
+        self.mock_evaluate.side_effect = Exception("Experiment failed!")
 
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                result = run_tea_experiment(
-                    agent_yaml=str(self.agent_yaml),
-                    dataset_name="test",
-                    metrics=[],
-                    experiment_name="test_exp",
-                )
+        result = run_tea_experiment(
+            agent_yaml=str(self.agent_yaml),
+            dataset_name="test",
+            metrics=[],
+            experiment_name="test_exp",
+        )
 
-                self.assertEqual(result["status"], "error")
-                self.assertIn("error", result)
-                self.assertIn("Experiment failed!", result["error"])
+        self.assertEqual(result["status"], "error")
+        self.assertIn("error", result)
+        self.assertIn("Experiment failed!", result["error"])
 
     def test_dataset_not_found_raises_error(self):
         """P0: ValueError for nonexistent dataset."""
         self.mock_client.get_dataset.side_effect = Exception("Dataset not found")
 
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                with self.assertRaises(ValueError) as ctx:
-                    run_tea_experiment(
-                        agent_yaml=str(self.agent_yaml),
-                        dataset_name="nonexistent",
-                        metrics=[],
-                        experiment_name="test_exp",
-                    )
+        with self.assertRaises(ValueError) as ctx:
+            run_tea_experiment(
+                agent_yaml=str(self.agent_yaml),
+                dataset_name="nonexistent",
+                metrics=[],
+                experiment_name="test_exp",
+            )
 
-                self.assertIn("not found", str(ctx.exception).lower())
+        self.assertIn("not found", str(ctx.exception).lower())
 
     def test_experiment_config_passed(self):
         """P1: Experiment config is passed to evaluate."""
-        with patch.dict("sys.modules", {"opik": self.mock_opik}):
-            with patch("the_edge_agent.experiments.runner.evaluate") as mock_evaluate:
-                from the_edge_agent.experiments.runner import run_tea_experiment
+        from the_edge_agent.experiments.runner import run_tea_experiment
 
-                run_tea_experiment(
-                    agent_yaml=str(self.agent_yaml),
-                    dataset_name="test",
-                    metrics=[],
-                    experiment_name="test_exp",
-                    experiment_config={"model": "gpt-4", "temperature": 0.7},
-                )
+        run_tea_experiment(
+            agent_yaml=str(self.agent_yaml),
+            dataset_name="test",
+            metrics=[],
+            experiment_name="test_exp",
+            experiment_config={"model": "gpt-4", "temperature": 0.7},
+        )
 
-                call_kwargs = mock_evaluate.call_args[1]
-                self.assertIn("experiment_config", call_kwargs)
-                self.assertEqual(call_kwargs["experiment_config"]["model"], "gpt-4")
+        call_kwargs = self.mock_evaluate.call_args[1]
+        self.assertIn("experiment_config", call_kwargs)
+        self.assertEqual(call_kwargs["experiment_config"]["model"], "gpt-4")
 
 
 class TestConfigResolution(unittest.TestCase):
