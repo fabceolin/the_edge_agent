@@ -325,6 +325,103 @@ result = compare_strategies(
 # Results appear in Opik with shared comparison_id for filtering
 ```
 
+## Agent Graph Visualization
+
+TEA automatically exports your agent's graph structure to Opik for visualization in the "Show Agent Graph" UI. This makes it easier to debug and understand agent execution flow.
+
+### Automatic Graph Export
+
+By default, `run_tea_experiment()` includes the agent's graph structure as a Mermaid diagram:
+
+```python
+result = run_tea_experiment(
+    agent_yaml="my_agent.yaml",
+    dataset_name="test_cases",
+    metrics=[MyMetric()],
+    experiment_name="agent_v1.0",
+    # include_graph=True is the default
+)
+```
+
+The graph appears in Opik's UI when viewing individual traces.
+
+### Disabling Graph Export
+
+If you don't need the graph visualization (e.g., for very large agents or performance-sensitive scenarios):
+
+```python
+result = run_tea_experiment(
+    agent_yaml="my_agent.yaml",
+    dataset_name="test_cases",
+    metrics=[MyMetric()],
+    experiment_name="agent_v1.0",
+    include_graph=False,  # Disable graph export
+)
+```
+
+### Direct Mermaid Generation
+
+You can also generate Mermaid graphs directly from your agents:
+
+```python
+from the_edge_agent import StateGraph, YAMLEngine
+
+# From StateGraph
+graph = StateGraph({"value": int})
+graph.add_node("process", run=lambda state: state)
+graph.set_entry_point("process")
+graph.set_finish_point("process")
+graph.compile()
+
+mermaid = graph.to_mermaid()
+print(mermaid)
+# Output:
+# graph TD
+#     __start__((Start))
+#     process[process]
+#     __end__((End))
+#     __start__-->process
+#     process-->__end__
+
+# From YAMLEngine
+engine = YAMLEngine()
+engine.load_from_file("my_agent.yaml")
+mermaid = engine.get_mermaid_graph()
+```
+
+### Mermaid Syntax
+
+The generated Mermaid diagrams use:
+
+- `((Start))` and `((End))` circles for start/end nodes
+- `[node_name]` rectangles for regular nodes
+- `-->` for simple edges
+- `-->|label|` for conditional edges with labels
+- `-->|parallel→fan_in|` for parallel execution edges
+
+Example output:
+
+```mermaid
+graph TD
+    __start__((Start))
+    router[router]
+    approved[approved]
+    rejected[rejected]
+    __end__((End))
+    __start__-->router
+    router-->|approved|approved
+    router-->|rejected|rejected
+    approved-->__end__
+    rejected-->__end__
+```
+
+### Special Character Handling
+
+Node names with special characters are automatically escaped:
+- Spaces, hyphens, dots → underscores in node IDs
+- Brackets, parentheses → underscores in node IDs
+- Original names preserved in display labels
+
 ## Graceful Degradation
 
 When Opik is not installed, the module provides stub classes for type hints but raises `ImportError` when attempting to run experiments:

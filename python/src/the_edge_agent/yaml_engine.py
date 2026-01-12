@@ -1977,3 +1977,35 @@ class YAMLEngine:
 
         # Load subgraph using same engine settings
         return self.load_from_dict(config, yaml_dir=subgraph_dir)
+
+    def get_mermaid_graph(self) -> Optional[str]:
+        """
+        Get Mermaid graph representation for Opik visualization.
+
+        Returns the Mermaid syntax string representing the compiled StateGraph.
+        This is used by the experiment runner to attach graph visualizations
+        to Opik traces.
+
+        Returns:
+            str: Mermaid graph definition string, or None if graph not compiled.
+
+        Example:
+            >>> engine = YAMLEngine()
+            >>> graph = engine.load_from_file("agent.yaml")
+            >>> mermaid = engine.get_mermaid_graph()
+            >>> print(mermaid)
+            graph TD
+                __start__((Start))
+                process[process]
+                __end__((End))
+                __start__-->process
+                process-->__end__
+        """
+        if self._current_graph is None:
+            return None
+
+        try:
+            return self._current_graph.to_mermaid()
+        except Exception as e:
+            logger.warning(f"Failed to generate Mermaid graph: {e}")
+            return None

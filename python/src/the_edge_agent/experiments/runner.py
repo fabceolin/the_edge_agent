@@ -149,6 +149,7 @@ def run_tea_experiment(
     variables: Optional[Dict[str, Any]] = None,
     capture_output: bool = True,
     capture_duration: bool = True,
+    include_graph: bool = True,
 ) -> Dict[str, Any]:
     """
     Run an Opik experiment for a TEA YAML agent.
@@ -174,6 +175,10 @@ def run_tea_experiment(
         variables: Optional variables to pass to YAMLEngine.
         capture_output: Whether to capture output in results (default: True).
         capture_duration: Whether to capture duration metrics (default: True).
+        include_graph: Whether to include agent graph visualization in Opik
+            (default: True). When True, the agent's Mermaid graph is
+            automatically attached to the trace metadata for visualization
+            in Opik's "Show Agent Graph" UI.
 
     Returns:
         Dictionary with experiment results:
@@ -235,6 +240,31 @@ def run_tea_experiment(
     # Import YAMLEngine here to avoid circular imports
     from the_edge_agent import YAMLEngine
 
+    # Import opik_context for trace metadata (TEA-BUILTIN-005.5)
+    try:
+        from opik import opik_context
+
+        OPIK_CONTEXT_AVAILABLE = True
+    except ImportError:
+        opik_context = None
+        OPIK_CONTEXT_AVAILABLE = False
+
+    # Pre-generate Mermaid graph for the agent (TEA-BUILTIN-005.5)
+    # This is done once, not per-item, for efficiency
+    mermaid_graph = None
+    if include_graph:
+        try:
+            # Create a temporary engine to generate the graph
+            temp_engine = YAMLEngine()
+            temp_engine.load_from_file(str(agent_path))
+            mermaid_graph = temp_engine.get_mermaid_graph()
+            if mermaid_graph:
+                logger.debug(f"Generated Mermaid graph for {agent_path}")
+        except Exception as e:
+            # Graceful degradation - experiment continues without graph
+            logger.warning(f"Failed to generate Mermaid graph: {e}")
+            mermaid_graph = None
+
     # Create task function factory
     def create_task() -> callable:
         """Create the task function that runs the TEA agent."""
@@ -249,15 +279,27 @@ def run_tea_experiment(
             Returns:
                 Dict with 'output' key containing agent results.
             """
+            # Attach graph metadata to trace (TEA-BUILTIN-005.5)
+            if mermaid_graph and OPIK_CONTEXT_AVAILABLE and opik_context:
+                try:
+                    opik_context.update_current_trace(
+                        metadata={
+                            "_opik_graph_definition": {
+                                "format": "mermaid",
+                                "data": mermaid_graph,
+                            }
+                        }
+                    )
+                except Exception as e:
+                    # Graceful degradation - don't fail the experiment
+                    logger.debug(f"Could not attach graph to trace: {e}")
+
             # Extract input from dataset item
             input_data = dataset_item.get("input", dataset_item)
 
             # Create engine for this task
-            engine = YAMLEngine(
-                str(agent_path),
-                settings=settings,
-                variables=variables,
-            )
+            engine = YAMLEngine()
+            graph = engine.load_from_file(str(agent_path))
 
             # Track timing
             start_time = time.time()
@@ -265,7 +307,7 @@ def run_tea_experiment(
             # Run agent and collect results
             result = {}
             try:
-                for event in engine.run(input_data):
+                for event in graph.invoke(input_data):
                     if isinstance(event, dict):
                         result.update(event)
             except Exception as e:
