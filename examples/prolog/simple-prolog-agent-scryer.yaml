@@ -1,0 +1,35 @@
+# Simple Prolog Agent Example (Scryer Prolog)
+#
+# TEA-RELEASE-005.1: Scryer Prolog Spike
+#
+# This example demonstrates basic Prolog scripting with Scryer Prolog backend.
+# Scryer is a pure-Rust Prolog implementation - no external dependencies needed!
+#
+# LIMITATIONS (Spike Findings):
+# - No inline rule definitions (would require module loading)
+# - No dynamic assertz/retract in queries
+# - Simple state access and arithmetic works great
+#
+# Run with: cargo run --features scryer -- run examples/prolog/simple-prolog-agent-scryer.yaml --input '{"value": 21}'
+#
+# NOTE: Currently requires backend selection at compile time.
+# Future work will add runtime backend switching.
+
+name: simple-prolog-agent-scryer
+description: Basic example of Prolog scripting with Scryer backend
+
+state_schema:
+  value: int
+  doubled: int
+
+nodes:
+  # Node 1: Double the input value
+  # Uses simple arithmetic - works with Scryer!
+  - name: double_value
+    language: prolog
+    run: |
+      state(value, V),
+      D is V * 2,
+      return(doubled, D).
+
+# Implicit flow: double_value -> __end__

@@ -48,6 +48,7 @@ the_edge_agent/
 | **Python Getting Started** | [`docs/python/getting-started.md`](docs/python/getting-started.md) |
 | **Python Dev Guide** | [`docs/python/development-guide.md`](docs/python/development-guide.md) |
 | **Python Actions** | [`docs/python/actions-reference.md`](docs/python/actions-reference.md) |
+| **Experiments Guide** | [`docs/python/experiments-guide.md`](docs/python/experiments-guide.md) |
 | **Rust Getting Started** | [`docs/rust/getting-started.md`](docs/rust/getting-started.md) |
 | **Rust Dev Guide** | [`docs/rust/development-guide.md`](docs/rust/development-guide.md) |
 | **Rust Actions** | [`docs/rust/actions-reference.md`](docs/rust/actions-reference.md) |
@@ -264,3 +265,61 @@ config = expand_ltm_config({"ltm": {"backend": "ducklake"}})
 # config["backend"] == "duckdb"
 # config["catalog"]["type"] == "sqlite"
 ```
+
+## Experiment Framework (TEA-BUILTIN-005.4)
+
+TEA provides an experiment framework for systematically evaluating agents using [Comet Opik](https://www.comet.com/docs/opik/).
+
+### Installation
+
+```bash
+pip install the-edge-agent[experiments]
+```
+
+### Quick Example
+
+```python
+from the_edge_agent.experiments import (
+    run_tea_experiment,
+    create_dataset_from_list,
+    BaseTeaMetric,
+    f1_score,
+)
+
+# Create dataset
+create_dataset_from_list("test_cases", [
+    {"input": {"text": "..."}, "expected_output": {"result": "..."}},
+])
+
+# Define metric
+class AccuracyMetric(BaseTeaMetric):
+    name = "accuracy"
+    def score(self, output, expected_output=None, **kwargs):
+        match = output.get("result") == expected_output.get("result")
+        return self.make_result(1.0 if match else 0.0)
+
+# Run experiment
+run_tea_experiment(
+    agent_yaml="agent.yaml",
+    dataset_name="test_cases",
+    metrics=[AccuracyMetric()],
+    experiment_name="agent_v1.0",
+)
+```
+
+### Scoring Helpers
+
+| Function | Description |
+|----------|-------------|
+| `jaccard_similarity(set_a, set_b)` | Intersection over union (0.0-1.0) |
+| `f1_score(actual, expected)` | Harmonic mean of precision/recall |
+| `completeness_score(filled, total)` | Ratio of filled to total |
+
+### CLI Usage
+
+```bash
+tea-experiments --agent agent.yaml --dataset test_cases --version 1.0
+tea-experiments --agent agent.yaml --dataset test_cases --dry-run
+```
+
+For full documentation, see [`docs/python/experiments-guide.md`](docs/python/experiments-guide.md).

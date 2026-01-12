@@ -138,6 +138,8 @@ parts:
         title: Browser-Based LLM Inference with TEA WASM
       - file: articles/writing-tea-with-tea
         title: Writing TEA Features with TEA
+      - file: articles/devops-yaml-overlay-agents
+        title: DevOps-Friendly AI Agents with YAML Overlays
 
   - caption: Contributing
     chapters:

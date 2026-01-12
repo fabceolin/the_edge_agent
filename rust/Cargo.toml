@@ -103,6 +103,7 @@ reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, 
 planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
 a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
 prolog = ["dep:swipl"]
+scryer = ["dep:scryer-prolog"]  # Pure Rust Prolog (TEA-RELEASE-005.1)
 ltm-duckdb = ["dep:duckdb"]
 graph = ["dep:cozo"]
 llm-local = ["llm", "dep:llama-cpp-2"]  # Local LLM via llama.cpp (TEA-RELEASE-004.4) - dirs is now always available
@@ -124,6 +125,11 @@ optional = true
 version = "0.3"
 optional = true
 
+# Scryer Prolog - Pure Rust Prolog implementation (TEA-RELEASE-005.1)
+[dependencies.scryer-prolog]
+version = "0.10"
+optional = true
+
 # Local LLM via llama.cpp (TEA-RELEASE-004.4)
 [dependencies.llama-cpp-2]
 version = "0.1"
@@ -134,6 +140,11 @@ optional = true
 [[bench]]
 name = "graph_benchmarks"
 harness = false
+
+[[bench]]
+name = "scryer_benchmarks"
+harness = false
+required-features = ["scryer"]
 
 [profile.release]
 lto = true
