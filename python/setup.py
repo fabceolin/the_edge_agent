@@ -45,6 +45,8 @@ setup(
             "tea=the_edge_agent.cli:main",
             # Legacy alias (deprecated, will be removed in v1.0)
             "tea-agent=the_edge_agent.cli:main",
+            # TEA-BUILTIN-005.4: Experiment framework CLI
+            "tea-experiments=the_edge_agent.experiments.cli:main",
         ],
     },
     extras_require={
@@ -104,6 +106,9 @@ setup(
         ],
         "lua": ["lupa>=2.0"],
         "prolog": ["janus-swi>=0.1.0"],  # Requires SWI-Prolog 9.1+
+        # TEA-BUILTIN-005.4: Opik experiment framework
+        "opik": ["opik>=1.9.0"],
+        "experiments": ["opik>=1.9.0"],  # Alias for opik
         "storage-s3": ["s3fs"],
         "storage-gcs": ["gcsfs"],
         "storage-azure": ["adlfs"],

@@ -1384,10 +1384,10 @@ def from_dot(
         "Replaces 'tea' at start of command with the specified executable name.",
     ),
     timeout: int = typer.Option(
-        900,
+        1800,
         "--timeout",
         "-t",
-        help="Subprocess timeout in seconds (default: 900 = 15 minutes)",
+        help="Subprocess timeout in seconds (default: 1800 = 30 minutes)",
     ),
 ):
     """
