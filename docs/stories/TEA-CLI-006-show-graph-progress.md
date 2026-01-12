@@ -1,7 +1,7 @@
 # TEA-CLI-006: Show Graph Progress During Execution
 
 ## Status
-Approved
+Ready for Review
 
 ## Story
 
@@ -32,36 +32,36 @@ Approved
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Add CLI flag** (AC: 1, 8, 9)
-  - [ ] Add `--show-graph` / `-g` boolean option to `run` command in `cli.py`
-  - [ ] Validate mutual exclusivity with `--stream`
-  - [ ] When combined with `--quiet`, suppress node completion messages but show graph
+- [x] **Task 1: Add CLI flag** (AC: 1, 8, 9)
+  - [x] Add `--show-graph` / `-g` boolean option to `run` command in `cli.py`
+  - [x] Validate mutual exclusivity with `--stream`
+  - [x] When combined with `--quiet`, suppress node completion messages but show graph
 
-- [ ] **Task 2: Implement ASCII graph renderer** (AC: 2, 6, 7, 10, 11)
-  - [ ] Create `graph_renderer.py` module in `python/src/the_edge_agent/`
-  - [ ] Parse compiled graph structure (nodes, edges) into renderable format
-  - [ ] Generate ASCII layout with vertical flow, horizontal parallel branches
-  - [ ] Handle `__start__` and `__end__` special nodes
-  - [ ] Handle `dynamic_parallel` nodes with fan-in visualization
+- [x] **Task 2: Implement ASCII graph renderer** (AC: 2, 6, 7, 10, 11)
+  - [x] Create `graph_renderer.py` module in `python/src/the_edge_agent/`
+  - [x] Parse compiled graph structure (nodes, edges) into renderable format
+  - [x] Generate ASCII layout with vertical flow, horizontal parallel branches
+  - [x] Handle `__start__` and `__end__` special nodes
+  - [x] Handle `dynamic_parallel` nodes with fan-in visualization
 
-- [ ] **Task 3: Implement progress state tracking** (AC: 3, 4, 5)
-  - [ ] Create `GraphProgressTracker` class to manage node states
-  - [ ] States: `pending`, `running`, `completed`
-  - [ ] Method to render current state as ASCII string
+- [x] **Task 3: Implement progress state tracking** (AC: 3, 4, 5)
+  - [x] Create `GraphProgressTracker` class to manage node states
+  - [x] States: `pending`, `running`, `completed`
+  - [x] Method to render current state as ASCII string
 
-- [ ] **Task 4: Integrate with CLI execution loop** (AC: 3, 4, 5)
-  - [ ] Hook into `stream()` event loop in `cli.py`
-  - [ ] On `state` event: mark previous node complete, mark current node running
-  - [ ] Clear and redraw graph on each state change (using ANSI escape codes)
-  - [ ] On `final` event: mark all nodes complete
+- [x] **Task 4: Integrate with CLI execution loop** (AC: 3, 4, 5)
+  - [x] Hook into `stream()` event loop in `cli.py`
+  - [x] On `state` event: mark previous node complete, mark current node running
+  - [x] Clear and redraw graph on each state change (using ANSI escape codes)
+  - [x] On `final` event: mark all nodes complete
 
-- [ ] **Task 5: Testing** (AC: all)
-  - [ ] Unit tests for graph renderer with linear topology
-  - [ ] Unit tests for parallel branch rendering
-  - [ ] Unit tests for progress state transitions
-  - [ ] Test `--show-graph --quiet` combination shows only graph output
-  - [ ] Test non-TTY fallback produces simple text output
-  - [ ] Integration test with example workflow file
+- [x] **Task 5: Testing** (AC: all)
+  - [x] Unit tests for graph renderer with linear topology
+  - [x] Unit tests for parallel branch rendering
+  - [x] Unit tests for progress state transitions
+  - [x] Test `--show-graph --quiet` combination shows only graph output
+  - [x] Test non-TTY fallback produces simple text output
+  - [x] Integration test with example workflow file
 
 ## Dev Notes
 
@@ -187,3 +187,30 @@ tea-python run workflow.yaml --show-graph --input '{"key": "value"}'
 | 2026-01-11 | 0.2 | Added user decisions: completed markers, standard width, horizontal parallel | PO (Sarah) |
 | 2026-01-11 | 0.3 | Validation fixes: non-TTY fallback detail, test coverage, graph data source | PO (Sarah) |
 | 2026-01-11 | 1.0 | **Approved** - Ready for implementation | PO (Sarah) |
+| 2026-01-12 | 1.1 | **Implementation complete** - All tasks done, tests passing | Dev (James) |
+
+---
+
+## Dev Agent Record
+
+### Agent Model Used
+Claude Opus 4.5 (claude-opus-4-5-20251101)
+
+### File List
+
+| File | Action | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/cli.py` | Modified | Added `--show-graph`/`-g` flag, mutual exclusivity check with `--stream`, integrated `GraphProgressTracker` into execution loop |
+| `python/src/the_edge_agent/graph_renderer.py` | Created | ASCII graph rendering module with `NodeState` enum, `RenderedNode`, `GraphLayout`, `GraphProgressTracker` class, and `render_simple_progress` helper |
+| `python/tests/test_graph_renderer.py` | Created | 20 unit tests covering linear topology, parallel branches, state transitions, edge cases, CLI integration |
+
+### Debug Log References
+- None (no blockers encountered)
+
+### Completion Notes
+- All 5 tasks completed successfully
+- 20 unit tests pass (test_graph_renderer.py)
+- CLI flag `--show-graph`/`-g` added with mutual exclusivity validation against `--stream`
+- `GraphProgressTracker` class handles graph parsing, state management, ASCII rendering with ANSI escape codes for TTY, and simple text fallback for non-TTY
+- Integration with CLI execution loop: displays initial graph, updates on each `state` event, marks all complete on `final` event
+- Existing test failures in test suite are due to missing `pydantic` dependency in test environment, not related to this story's changes

@@ -527,6 +527,13 @@ def run(
         "--report-minimal",
         help="Skip extended context prompt (minimal report only)",
     ),
+    # TEA-CLI-006: Show graph progress during execution
+    show_graph: bool = typer.Option(
+        False,
+        "--show-graph",
+        "-g",
+        help="Show ASCII graph visualization with progress during execution",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -534,6 +541,11 @@ def run(
     # Check mutual exclusivity of --interactive and --stream (AC-2, AC-13)
     if interactive and stream:
         typer.echo("Error: --interactive and --stream are mutually exclusive", err=True)
+        raise typer.Exit(1)
+
+    # TEA-CLI-006: Check mutual exclusivity of --show-graph and --stream (AC-8)
+    if show_graph and stream:
+        typer.echo("Error: --show-graph and --stream are mutually exclusive", err=True)
         raise typer.Exit(1)
 
     # TEA-REPORT-001d: Validate mutually exclusive report flags
@@ -855,7 +867,28 @@ def run(
 
         return  # Exit after scoped execution
 
-    if not quiet and not stream:
+    # TEA-CLI-006: Initialize graph progress tracker if --show-graph is enabled
+    graph_tracker = None
+    use_ansi_updates = False
+    if show_graph:
+        from the_edge_agent.graph_renderer import (
+            GraphProgressTracker,
+            NodeState,
+            render_simple_progress,
+        )
+
+        engine_config = getattr(engine, "_config", {})
+        graph_tracker = GraphProgressTracker(compiled, engine_config)
+        use_ansi_updates = is_interactive_terminal()
+
+        # AC-2: Display initial graph before execution starts
+        if use_ansi_updates:
+            typer.echo(graph_tracker.render())
+        else:
+            # Non-TTY: just show initial header
+            typer.echo("[Graph Progress - Non-TTY mode]")
+
+    if not quiet and not stream and not show_graph:
         typer.echo("=" * 80)
         typer.echo(f"Running agent from: {file}")
         typer.echo("=" * 80)
@@ -868,6 +901,7 @@ def run(
     # Execute
     current_state = initial_state
     checkpoint_path = None
+    previous_node = None  # Track for --show-graph state transitions
 
     try:
         while True:
@@ -905,6 +939,115 @@ def run(
                             "error", node=node, error=str(event.get("error", ""))
                         )
                         raise typer.Exit(1)
+                elif show_graph:
+                    # TEA-CLI-006: Graph progress display mode
+                    if event_type == "state":
+                        # AC-3, AC-4: Mark previous node complete, mark current running
+                        if previous_node and previous_node not in (
+                            "__start__",
+                            "__end__",
+                        ):
+                            graph_tracker.mark_completed(previous_node)
+                        if node and node not in ("__start__", "__end__"):
+                            graph_tracker.mark_running(node)
+
+                        # AC-5: Refresh graph display
+                        if use_ansi_updates:
+                            # Use ANSI escape to update in place
+                            typer.echo(graph_tracker.render_with_update())
+                        else:
+                            # Non-TTY fallback (AC-11 from dev notes)
+                            if previous_node:
+                                typer.echo(
+                                    render_simple_progress(
+                                        previous_node, NodeState.COMPLETED
+                                    )
+                                )
+                            if node:
+                                typer.echo(
+                                    render_simple_progress(node, NodeState.RUNNING)
+                                )
+
+                        previous_node = node
+
+                    elif event_type in [
+                        "interrupt_before",
+                        "interrupt_after",
+                        "interrupt",
+                    ]:
+                        state = event.get("state", {})
+                        # Show interrupt info even in graph mode
+                        if not quiet:
+                            typer.echo(f"\n⏸  Interrupt at: {node}")
+                            typer.echo(
+                                f"   State: {json.dumps(state, indent=2, cls=TeaJSONEncoder)}"
+                            )
+
+                        checkpoint_path = event.get("checkpoint_path")
+
+                        if auto_continue:
+                            if not quiet:
+                                typer.echo("   (auto-continuing...)")
+                            current_state = state
+                            break
+
+                        if not is_interactive_terminal():
+                            typer.echo(
+                                "   (non-TTY detected, auto-continuing...)", err=True
+                            )
+                            current_state = state
+                            break
+
+                        updated_state = handle_interrupt_interactive(event, cp_dir)
+                        if updated_state is None:
+                            raise typer.Exit(1)
+
+                        current_state = updated_state
+                        break
+
+                    elif event_type == "error":
+                        if not quiet:
+                            typer.echo(f"\n✗ Error at {node}: {event.get('error')}")
+                        raise typer.Exit(1)
+
+                    elif event_type == "final":
+                        # AC-4, AC-5: Mark all nodes complete and show final graph
+                        if previous_node and previous_node not in (
+                            "__start__",
+                            "__end__",
+                        ):
+                            graph_tracker.mark_completed(previous_node)
+                        graph_tracker.mark_all_completed()
+
+                        if use_ansi_updates:
+                            typer.echo(graph_tracker.render_with_update())
+                        else:
+                            if previous_node:
+                                typer.echo(
+                                    render_simple_progress(
+                                        previous_node, NodeState.COMPLETED
+                                    )
+                                )
+                            typer.echo("[Execution Complete]")
+
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                            if not quiet:
+                                typer.echo(f"\nOutput written to: {output_file}")
+
+                        # AC-9: With --quiet, suppress final state output but graph was shown
+                        if not quiet:
+                            typer.echo("\n" + "=" * 80)
+                            typer.echo("✓ Completed")
+                            typer.echo("=" * 80)
+                            typer.echo(
+                                f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
+                            )
+                        completed = True
+                        break
                 else:
                     # Standard output
                     if event_type == "state":
