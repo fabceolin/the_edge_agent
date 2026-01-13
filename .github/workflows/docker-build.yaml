@@ -66,12 +66,14 @@ jobs:
           - variant: full
             dockerfile: docker/Dockerfile.full
             suffix: ''
-    # Skip if workflow_dispatch with specific non-matching variant
+    # Always run on push/tag events; for workflow_dispatch, run when base,full or all is selected
+    # Note: Cannot use matrix.variant in job-level if, so we run both variants together
     if: |
       github.event_name != 'workflow_dispatch' ||
-      contains(inputs.variants, matrix.variant) ||
       inputs.variants == 'all' ||
-      inputs.variants == 'base,full'
+      inputs.variants == 'base,full' ||
+      inputs.variants == 'base' ||
+      inputs.variants == 'full'
 
     steps:
       - name: Checkout repository
@@ -162,12 +164,15 @@ jobs:
           - variant: phi4-mini
             dockerfile: docker/Dockerfile.phi4-mini
             model_size: '5GB'
-    # Only run on release tags or manual dispatch with matching variant
+    # Only run on release tags or manual dispatch with LLM variant selected
+    # Note: Cannot use matrix.variant in job-level if, so all LLM variants run together
     if: |
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && (
-        contains(inputs.variants, matrix.variant) ||
-        inputs.variants == 'all'
+        inputs.variants == 'all' ||
+        inputs.variants == 'gemma3-1b' ||
+        inputs.variants == 'gemma3-4b' ||
+        inputs.variants == 'phi4-mini'
       ))
 
     steps:
