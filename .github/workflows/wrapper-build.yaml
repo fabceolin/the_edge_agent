@@ -1,0 +1,151 @@
+# TEA-DIST-001: Cross-Platform Wrapper Build
+#
+# This workflow builds the tea.com APE (Actually Portable Executable) wrapper
+# using Cosmopolitan Libc, tests it on multiple platforms, and attaches it
+# to GitHub releases.
+#
+# The wrapper is a single binary that runs on Linux, macOS, Windows, and BSDs.
+
+name: Wrapper Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'wrapper/**'
+      - '.github/workflows/wrapper-build.yaml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'wrapper/**'
+      - '.github/workflows/wrapper-build.yaml'
+  workflow_dispatch:
+
+env:
+  COSMO_VERSION: 4.0.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Cosmopolitan toolchain
+        id: cache-cosmo
+        uses: actions/cache@v4
+        with:
+          path: wrapper/cosmo-c/cosmocc
+          key: cosmocc-${{ env.COSMO_VERSION }}
+
+      - name: Download Cosmopolitan toolchain
+        if: steps.cache-cosmo.outputs.cache-hit != 'true'
+        working-directory: wrapper/cosmo-c
+        run: |
+          curl -fsSL -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc-${{ env.COSMO_VERSION }}.zip
+          unzip -oq cosmocc.zip -d cosmocc
+          rm cosmocc.zip
+
+      - name: Build wrapper
+        working-directory: wrapper/cosmo-c
+        run: |
+          ./cosmocc/bin/cosmocc -Os -Wall -Wextra -std=c11 -o tea.com tea.c
+          ls -la tea.com
+          file tea.com
+
+      - name: Test wrapper (Linux)
+        working-directory: wrapper/cosmo-c
+        run: |
+          ./tea.com --wrapper-version
+          ./tea.com --docker-image
+          ./tea.com --wrapper-help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tea-wrapper
+          path: wrapper/cosmo-c/tea.com
+          retention-days: 30
+
+  test-macos:
+    needs: build
+    runs-on: macos-latest
+
+    steps:
+      - name: Download wrapper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tea-wrapper
+
+      - name: Test wrapper (macOS)
+        run: |
+          chmod +x tea.com
+          ./tea.com --wrapper-version
+          ./tea.com --docker-image
+
+  test-windows:
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - name: Download wrapper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tea-wrapper
+
+      - name: Test wrapper (Windows)
+        shell: cmd
+        run: |
+          ren tea.com tea.exe
+          tea.exe --wrapper-version
+          tea.exe --docker-image
+
+  release:
+    needs: [build, test-macos, test-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download wrapper artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tea-wrapper
+
+      - name: Get wrapper size
+        id: size
+        run: |
+          SIZE=$(du -h tea.com | cut -f1)
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: tea.com
+          body: |
+            ## Tea Wrapper Binary
+
+            The `tea.com` file is a cross-platform wrapper binary that runs on:
+            - Linux (x86_64, aarch64)
+            - macOS (x86_64, arm64)
+            - Windows (x86_64) - rename to `tea.exe`
+            - FreeBSD, NetBSD, OpenBSD
+
+            **Binary size:** ${{ steps.size.outputs.size }}
+
+            ### Usage
+            ```bash
+            # Linux/macOS
+            chmod +x tea.com
+            ./tea.com run agent.yaml
+
+            # Windows (Command Prompt)
+            ren tea.com tea.exe
+            tea run agent.yaml
+            ```
+
+            See the [installation guide](https://github.com/${{ github.repository }}/blob/main/docs/shared/installation.md) for more details.

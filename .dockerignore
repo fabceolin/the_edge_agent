@@ -1,0 +1,81 @@
+# TEA-DIST-001: Docker build context exclusions
+# This file is copied to project root during build
+
+# Git
+.git
+.gitignore
+
+# IDE and editors
+.vscode
+.idea
+.cursor
+*.swp
+*.swo
+
+# Python caches
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+*.egg
+.eggs
+dist
+build
+*.whl
+
+# Virtual environments
+.venv
+venv
+env
+.env
+
+# Testing
+.pytest_cache
+.hypothesis
+.coverage
+htmlcov
+.tox
+.nox
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Examples and tests (not needed in image)
+examples
+tests
+research
+workflows
+
+# Local development files
+*.log
+*.jsonl
+*.mp4
+*.png
+*.dot
+*.yaml
+!docker-compose.yaml
+
+# Rust (separate build)
+rust
+
+# Claude/AI files
+.claude
+.gemini
+.qwen
+CLAUDE.md
+
+# BMAD core (development only)
+.bmad-core
+
+# Site and web bundles
+site
+web-bundles
+
+# Local data
+local
+output
+reports

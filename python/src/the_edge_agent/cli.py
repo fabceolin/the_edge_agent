@@ -903,37 +903,61 @@ def run(
     checkpoint_path = None
     previous_node = None  # Track for --show-graph state transitions
 
-    # TEA-BUILTIN-005.5: Generate and attach Opik agent graph
+    # TEA-BUILTIN-005.5: Generate Mermaid graph for Opik visualization
+    # Graph is attached to the Opik trace if enabled in YAML settings
+    # Using start_as_current_trace() so LLM calls become child spans
+    from contextlib import nullcontext
+
     mermaid_graph = None
+    opik_context_manager = nullcontext()  # Default: no-op context
+    opik_enabled = False
+
     try:
         mermaid_graph = engine.get_mermaid_graph()
         if mermaid_graph:
             logging.getLogger(__name__).debug(
                 "Generated Mermaid graph for Opik visualization"
             )
+            # Check if Opik is configured in YAML settings
+            engine_config = getattr(engine, "_config", {})
+            opik_settings = engine_config.get("settings", {}).get("opik", {})
+            if opik_settings.get("enabled", False):
+                try:
+                    import opik
+
+                    # Use start_as_current_trace so all LLM calls become children
+                    project_name = opik_settings.get("project_name", "default")
+                    trace_name = engine_config.get("name", str(file))
+                    opik_context_manager = opik.start_as_current_trace(
+                        name=trace_name,
+                        project_name=project_name,
+                        metadata={
+                            "_opik_graph_definition": {
+                                "format": "mermaid",
+                                "data": mermaid_graph,
+                            }
+                        },
+                    )
+                    opik_enabled = True
+                    logging.getLogger(__name__).debug(
+                        f"Opik tracing enabled for project: {project_name}"
+                    )
+                except ImportError:
+                    pass  # Opik not installed
+                except Exception as e:
+                    logging.getLogger(__name__).debug(
+                        f"Could not create Opik trace context: {e}"
+                    )
     except Exception as e:
         logging.getLogger(__name__).debug(f"Could not generate Mermaid graph: {e}")
 
-    # Attach graph to Opik trace if available
-    if mermaid_graph:
+    # TEA-BUILTIN-005.5: Enter opik context if enabled (exit in finally block)
+    opik_trace = None
+    if opik_enabled:
         try:
-            from opik import opik_context
-
-            opik_context.update_current_trace(
-                metadata={
-                    "_opik_graph_definition": {
-                        "format": "mermaid",
-                        "data": mermaid_graph,
-                    }
-                }
-            )
-            logging.getLogger(__name__).debug("Attached Mermaid graph to Opik trace")
-        except ImportError:
-            pass  # Opik not installed, skip gracefully
+            opik_trace = opik_context_manager.__enter__()
         except Exception as e:
-            logging.getLogger(__name__).debug(
-                f"Could not attach graph to Opik trace: {e}"
-            )
+            logging.getLogger(__name__).debug(f"Could not enter Opik context: {e}")
 
     try:
         while True:
@@ -1152,6 +1176,26 @@ def run(
     except KeyboardInterrupt:
         typer.echo("\n\nExecution interrupted by user (Ctrl+C)", err=True)
         raise typer.Exit(130)
+    finally:
+        # TEA-BUILTIN-005.5: Exit Opik context if we entered one
+        if opik_enabled and opik_context_manager is not None:
+            try:
+                # Flush Opik to ensure all spans are uploaded before trace ends
+                try:
+                    import opik
+
+                    opik.flush()
+                    logging.getLogger(__name__).debug("Flushed Opik spans")
+                except Exception as flush_err:
+                    logging.getLogger(__name__).debug(
+                        f"Could not flush Opik: {flush_err}"
+                    )
+
+                exc_info = sys.exc_info()
+                opik_context_manager.__exit__(*exc_info)
+                logging.getLogger(__name__).debug("Exited Opik trace context")
+            except Exception as e:
+                logging.getLogger(__name__).debug(f"Could not exit Opik context: {e}")
 
 
 @app.command()

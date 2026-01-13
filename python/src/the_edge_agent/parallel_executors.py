@@ -15,6 +15,7 @@ Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
 """
 
 import asyncio
+import contextvars
 import copy
 import json
 import os
@@ -199,10 +200,17 @@ class ParallelExecutor(Protocol):
 
 class ThreadExecutor:
     """
-    Thread-based parallel executor.
+    Thread-based parallel executor with context propagation.
 
     This executor uses Python's ThreadPoolExecutor for parallel execution.
     It's suitable for I/O-bound tasks and is the default execution strategy.
+
+    Context Propagation (TEA-BUILTIN-005.6):
+        This executor propagates Python's contextvars from the submitting
+        thread to worker threads. This ensures that observability contexts
+        (like Opik trace spans) are correctly nested when executing parallel
+        flows. Without this propagation, worker threads would start with
+        blank context, causing orphaned traces.
 
     Thread Safety:
         State is passed directly to threads (with deep copy handled by caller).
@@ -258,7 +266,15 @@ class ThreadExecutor:
         **kwargs: Any,
     ) -> Future:
         """
-        Submit a single task for execution.
+        Submit a single task for execution with context propagation.
+
+        This method captures the current thread's contextvars context and
+        runs the function within that context in the worker thread. This
+        ensures observability contexts (like Opik traces) are preserved.
+
+        TEA-BUILTIN-005.6: Without context propagation, ThreadPoolExecutor
+        workers start with blank contextvars, causing orphaned traces where
+        LLM calls appear as separate root traces instead of nested spans.
 
         Args:
             fn: The function to execute
@@ -273,7 +289,17 @@ class ThreadExecutor:
         """
         if self._executor is None:
             raise RuntimeError("ThreadExecutor must be used as a context manager")
-        return self._executor.submit(fn, *args, **kwargs)
+
+        # TEA-BUILTIN-005.6: Capture current context for propagation
+        # This ensures Opik trace context and other contextvars are inherited
+        # by the worker thread, preventing orphaned traces.
+        context = contextvars.copy_context()
+
+        def context_wrapper() -> Any:
+            """Run the function within the captured context."""
+            return context.run(fn, *args, **kwargs)
+
+        return self._executor.submit(context_wrapper)
 
     def submit_flow(
         self,
