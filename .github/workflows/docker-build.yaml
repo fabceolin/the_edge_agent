@@ -238,7 +238,8 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          # arm64 disabled until SWI-Prolog PPA supports it (requires 9.1.12+)
+          platforms: linux/amd64
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
