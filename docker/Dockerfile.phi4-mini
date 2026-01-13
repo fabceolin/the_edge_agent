@@ -13,8 +13,8 @@
 #   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
 #   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
 #
-# Model: microsoft/Phi-4-mini-instruct (Q8_0 quantization)
-# Source: https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF
+# Model: microsoft/Phi-4-mini-instruct
+# Source: Ollama Registry (https://ollama.com/library/phi4-mini)
 
 # =============================================================================
 # Stage 1: Model Downloader
@@ -22,18 +22,18 @@
 FROM ubuntu:24.04 AS model-downloader
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
+    curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Phi-4 mini Q8_0 model (~4GB)
+# Download Phi-4 mini model from Ollama registry (~2.5GB)
 RUN mkdir -p /models && \
-    wget -q --show-progress -O /models/Phi-4-mini-instruct.Q8_0.gguf \
-    "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct.Q8_0.gguf"
+    curl -L -o /models/phi4-mini.gguf \
+    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db"
 
 # Verify model was downloaded
 RUN ls -lh /models/ && \
-    test -f /models/Phi-4-mini-instruct.Q8_0.gguf
+    test -f /models/phi4-mini.gguf
 
 # =============================================================================
 # Stage 2: Builder - Install build dependencies and compile packages
@@ -123,8 +123,8 @@ COPY --from=model-downloader /models /opt/tea-models
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV TEA_MODEL_PATH="/opt/tea-models/Phi-4-mini-instruct.Q8_0.gguf"
-ENV TEA_MODEL_NAME="phi-4-mini-instruct"
+ENV TEA_MODEL_PATH="/opt/tea-models/phi4-mini.gguf"
+ENV TEA_MODEL_NAME="phi4-mini"
 
 # Create non-root user for security
 RUN useradd -m -s /bin/bash tea \
@@ -142,8 +142,9 @@ LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_age
 LABEL org.opencontainers.image.description="TEA Phi4-Mini - Full features with bundled Phi-4 mini model"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL tea.variant="phi4-mini"
-LABEL tea.model="Phi-4-mini-instruct.Q8_0"
-LABEL tea.model.size="4GB"
+LABEL tea.model="phi4-mini"
+LABEL tea.model.size="2.5GB"
+LABEL tea.model.source="ollama"
 
 # Entrypoint is the tea CLI
 ENTRYPOINT ["tea"]

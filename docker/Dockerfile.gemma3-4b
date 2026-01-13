@@ -13,8 +13,8 @@
 #   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
 #   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
 #
-# Model: google/gemma-3-4b-it (Q8_0 quantization)
-# Source: https://huggingface.co/unsloth/gemma-3-4b-it-GGUF
+# Model: google/gemma-3-4b-it
+# Source: Ollama Registry (https://ollama.com/library/gemma3)
 
 # =============================================================================
 # Stage 1: Model Downloader
@@ -22,18 +22,18 @@
 FROM ubuntu:24.04 AS model-downloader
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
+    curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Gemma 3 4B Q8_0 model (~4GB)
+# Download Gemma 3 4B model from Ollama registry (~3.3GB)
 RUN mkdir -p /models && \
-    wget -q --show-progress -O /models/gemma-3-4b-it-Q8_0.gguf \
-    "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q8_0.gguf"
+    curl -L -o /models/gemma3-4b.gguf \
+    "https://registry.ollama.ai/v2/library/gemma3/blobs/sha256:aeda25e63ebd698fab8638ffb778e68bed908b960d39d0becc650fa981609d25"
 
 # Verify model was downloaded
 RUN ls -lh /models/ && \
-    test -f /models/gemma-3-4b-it-Q8_0.gguf
+    test -f /models/gemma3-4b.gguf
 
 # =============================================================================
 # Stage 2: Builder - Install build dependencies and compile packages
@@ -123,8 +123,8 @@ COPY --from=model-downloader /models /opt/tea-models
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV TEA_MODEL_PATH="/opt/tea-models/gemma-3-4b-it-Q8_0.gguf"
-ENV TEA_MODEL_NAME="gemma-3-4b-it"
+ENV TEA_MODEL_PATH="/opt/tea-models/gemma3-4b.gguf"
+ENV TEA_MODEL_NAME="gemma3-4b"
 
 # Create non-root user for security
 RUN useradd -m -s /bin/bash tea \
@@ -142,8 +142,9 @@ LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_age
 LABEL org.opencontainers.image.description="TEA Gemma3-4B - Full features with bundled Gemma 3 4B model"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL tea.variant="gemma3-4b"
-LABEL tea.model="gemma-3-4b-it-Q8_0"
-LABEL tea.model.size="4GB"
+LABEL tea.model="gemma3-4b"
+LABEL tea.model.size="3.3GB"
+LABEL tea.model.source="ollama"
 
 # Entrypoint is the tea CLI
 ENTRYPOINT ["tea"]

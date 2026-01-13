@@ -1,20 +1,21 @@
-# TEA-DIST-001: Docker LLM Image - Gemma 3 1B
+# TEA-DIST-001: Docker LLM Image - Gemma 3n E4B
 #
-# Full TEA image with bundled Gemma 3 1B Q8_0 GGUF model (~1.07GB).
+# Full TEA image with bundled Gemma 3n E4B GGUF model (~7.5GB).
 # Self-contained for offline LLM inference without external model downloads.
 #
-# Build: docker build -t tea:gemma3-1b -f docker/Dockerfile.gemma3-1b .
-# Size: ~2GB
+# Build: docker build -t tea:gemma3n-e4b -f docker/Dockerfile.gemma3n-e4b .
+# Size: ~8GB
 #
 # Variants:
 #   - tea:base (~400MB) - Minimal core dependencies only
 #   - tea:full (~772MB) - All features (Prolog, Lua, Opik)
-#   - tea:gemma3-1b (~2GB) - Full + bundled Gemma 3 1B model
-#   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
-#   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
+#   - tea:gemma3-1b (~1.5GB) - Full + bundled Gemma 3 1B model
+#   - tea:gemma3-4b (~4GB) - Full + bundled Gemma 3 4B model
+#   - tea:gemma3n-e4b (~8GB) - Full + bundled Gemma 3n E4B model
+#   - tea:phi4-mini (~3GB) - Full + bundled Phi-4 mini model
 #
-# Model: google/gemma-3-1b-it
-# Source: Ollama Registry (https://ollama.com/library/gemma3)
+# Model: google/gemma-3n-e4b
+# Source: Ollama Registry (https://ollama.com/library/gemma3n)
 
 # =============================================================================
 # Stage 1: Model Downloader
@@ -26,14 +27,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download Gemma 3 1B model from Ollama registry (~815MB)
+# Download Gemma 3n E4B model from Ollama registry (~7.5GB)
 RUN mkdir -p /models && \
-    curl -L -o /models/gemma3-1b.gguf \
-    "https://registry.ollama.ai/v2/library/gemma3/blobs/sha256:7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01"
+    curl -L -o /models/gemma3n-e4b.gguf \
+    "https://registry.ollama.ai/v2/library/gemma3n/blobs/sha256:38e8dcc30df4eb0e29eaf5c74ba6ce3f2cd66badad50768fc14362acfb8b8cb6"
 
 # Verify model was downloaded
 RUN ls -lh /models/ && \
-    test -f /models/gemma3-1b.gguf
+    test -f /models/gemma3n-e4b.gguf
 
 # =============================================================================
 # Stage 2: Builder - Install build dependencies and compile packages
@@ -123,8 +124,8 @@ COPY --from=model-downloader /models /opt/tea-models
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV TEA_MODEL_PATH="/opt/tea-models/gemma3-1b.gguf"
-ENV TEA_MODEL_NAME="gemma3-1b"
+ENV TEA_MODEL_PATH="/opt/tea-models/gemma3n-e4b.gguf"
+ENV TEA_MODEL_NAME="gemma3n-e4b"
 
 # Create non-root user for security
 RUN useradd -m -s /bin/bash tea \
@@ -139,11 +140,11 @@ WORKDIR /work
 
 # Labels for container registry
 LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
-LABEL org.opencontainers.image.description="TEA Gemma3-1B - Full features with bundled Gemma 3 1B model"
+LABEL org.opencontainers.image.description="TEA Gemma3n-E4B - Full features with bundled Gemma 3n E4B model"
 LABEL org.opencontainers.image.licenses="MIT"
-LABEL tea.variant="gemma3-1b"
-LABEL tea.model="gemma3-1b"
-LABEL tea.model.size="815MB"
+LABEL tea.variant="gemma3n-e4b"
+LABEL tea.model="gemma3n-e4b"
+LABEL tea.model.size="7.5GB"
 LABEL tea.model.source="ollama"
 
 # Entrypoint is the tea CLI

@@ -41,6 +41,7 @@ on:
           - 'full'
           - 'gemma3-1b'
           - 'gemma3-4b'
+          - 'gemma3n-e4b'
           - 'phi4-mini'
         default: 'base,full'
 
@@ -170,13 +171,16 @@ jobs:
         include:
           - variant: gemma3-1b
             dockerfile: docker/Dockerfile.gemma3-1b
-            model_size: '2GB'
+            model_size: '1.5GB'
           - variant: gemma3-4b
             dockerfile: docker/Dockerfile.gemma3-4b
-            model_size: '5GB'
+            model_size: '4GB'
+          - variant: gemma3n-e4b
+            dockerfile: docker/Dockerfile.gemma3n-e4b
+            model_size: '8GB'
           - variant: phi4-mini
             dockerfile: docker/Dockerfile.phi4-mini
-            model_size: '5GB'
+            model_size: '3GB'
     # Only run on release tags or manual dispatch with LLM variant selected
     # Note: Cannot use matrix.variant in job-level if, so all LLM variants run together
     if: |
@@ -185,6 +189,7 @@ jobs:
         inputs.variants == 'all' ||
         inputs.variants == 'gemma3-1b' ||
         inputs.variants == 'gemma3-4b' ||
+        inputs.variants == 'gemma3n-e4b' ||
         inputs.variants == 'phi4-mini'
       ))
 
