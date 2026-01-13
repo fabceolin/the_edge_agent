@@ -952,10 +952,37 @@ def run(
         logging.getLogger(__name__).debug(f"Could not generate Mermaid graph: {e}")
 
     # TEA-BUILTIN-005.5: Enter opik context if enabled (exit in finally block)
+    # TEA-BUILTIN-005.6: Also create a wrapper span to keep span stack non-empty
+    # This prevents the trace from being popped when individual LLM spans end
     opik_trace = None
+    opik_wrapper_span = None
     if opik_enabled:
         try:
             opik_trace = opik_context_manager.__enter__()
+            # TEA-BUILTIN-005.6: Create wrapper span to prevent trace context loss
+            # When track_openai spans end, they check if span stack is empty.
+            # If empty, the trace is popped (Opik SDK behavior).
+            # By keeping a wrapper span active, the stack is never empty.
+            from opik import context_storage
+            from opik.api_objects import span as opik_span
+            from opik import datetime_helpers
+            from opik.api_objects import helpers as opik_helpers
+
+            wrapper_span_data = opik_span.SpanData(
+                id=opik_helpers.generate_id(),
+                trace_id=opik_trace.id,
+                parent_span_id=None,
+                start_time=datetime_helpers.local_timestamp(),
+                name=f"{trace_name}_execution",
+                type="general",
+                metadata={"_tea_wrapper_span": True},
+                project_name=project_name,
+            )
+            context_storage.add_span_data(wrapper_span_data)
+            opik_wrapper_span = wrapper_span_data
+            logging.getLogger(__name__).debug(
+                f"Created Opik wrapper span to preserve trace context: {wrapper_span_data.id}"
+            )
         except Exception as e:
             logging.getLogger(__name__).debug(f"Could not enter Opik context: {e}")
 
@@ -1180,6 +1207,27 @@ def run(
         # TEA-BUILTIN-005.5: Exit Opik context if we entered one
         if opik_enabled and opik_context_manager is not None:
             try:
+                # TEA-BUILTIN-005.6: End and log wrapper span before exiting trace
+                if opik_wrapper_span is not None:
+                    try:
+                        from opik import context_storage, datetime_helpers
+                        from opik.api_objects import opik_client
+
+                        # Pop wrapper span from context stack
+                        context_storage.pop_span_data(ensure_id=opik_wrapper_span.id)
+
+                        # Set end time and log span to Opik
+                        opik_wrapper_span.init_end_time()
+                        client = opik_client.get_client_cached()
+                        client.span(**opik_wrapper_span.as_parameters)
+                        logging.getLogger(__name__).debug(
+                            f"Ended Opik wrapper span: {opik_wrapper_span.id}"
+                        )
+                    except Exception as span_err:
+                        logging.getLogger(__name__).debug(
+                            f"Could not end Opik wrapper span: {span_err}"
+                        )
+
                 # Flush Opik to ensure all spans are uploaded before trace ends
                 try:
                     import opik

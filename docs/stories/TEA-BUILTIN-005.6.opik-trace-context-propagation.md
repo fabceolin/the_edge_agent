@@ -4,6 +4,9 @@
 
 Done
 
+- ✅ Parallel execution context loss: Fixed (ThreadExecutor.submit with context propagation)
+- ✅ Sequential execution context loss: Fixed (wrapper span in CLI keeps span stack non-empty)
+
 ## Agent Model Used
 
 Claude Opus 4.5 (claude-opus-4-5-20251101)
@@ -316,9 +319,9 @@ Trace: orphan-trace-id (SEPARATE!)
 - [TEA-BUILTIN-005.5 Story](./TEA-BUILTIN-005.5.opik-agent-graph-visualization.md)
 - [TEA-BUILTIN-005 Epic](./TEA-BUILTIN-005.opik-integration-epic.md)
 
-## Solution Implemented
+## Solution Implemented (Partial)
 
-### Root Cause
+### Root Cause 1: Parallel Execution Context Loss (FIXED ✅)
 
 The `ThreadExecutor.submit()` method in `parallel_executors.py` was directly calling `ThreadPoolExecutor.submit()` without propagating Python's `contextvars` context. When parallel flows were executed:
 
@@ -327,7 +330,65 @@ The `ThreadExecutor.submit()` method in `parallel_executors.py` was directly cal
 3. Worker threads started with **blank context** (Python default behavior)
 4. LLM calls in worker threads had no trace context → orphaned traces
 
-### Fix Applied
+### Root Cause 2: Sequential Execution Context Loss (UNDER INVESTIGATION ⚠️)
+
+Manual testing with the Alignment Check agent revealed that context is also lost for **sequential** LLM calls within the same node (no threading involved).
+
+**Debug output from manual test (2026-01-12):**
+```
+# First LLM call - context present ✅
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=019bb548-55f6-76b1-9dc7-e0c1f8873188, span=None
+DEBUG: [OPIK DEBUG llm_call] After track_openai: trace=019bb548-55f6-76b1-9dc7-e0c1f8873188
+
+# Second LLM call - context LOST ❌
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=None, span=None
+DEBUG: [OPIK DEBUG llm_call] After track_openai: trace=None
+```
+
+**Observations:**
+- The "Mother Pattern" alignment check makes O(N) sequential LLM calls within a single node
+- First call has trace context, second call shows `trace=None` BEFORE `track_openai` is called
+- No threading is involved in sequential execution path
+- LiteLLM debug shows it uses `AiohttpTransport` (async HTTP client internally)
+
+**ROOT CAUSE FOUND (2026-01-12):**
+
+The bug is in Opik SDK's interaction between `start_as_current_trace()` and `track_openai`:
+
+1. `start_as_current_trace()` creates trace and adds its ID to `TRACES_CREATED_BY_DECORATOR` set
+2. `track_openai` wraps LLM calls with spans
+3. When first LLM call's span ends, Opik checks if span stack is empty
+4. If empty AND trace is in `TRACES_CREATED_BY_DECORATOR`, it **pops the trace** (`pop_trace_data()` → sets to None)
+5. Second LLM call sees `trace=None`
+
+**Evidence from Opik SDK source code:**
+
+File: `opik/decorator/base_track_decorator.py` (lines 604-610):
+```python
+if (
+    context_storage.span_data_stack_empty()  # TRUE after first span ends
+    and possible_trace_data_to_end is not None
+    and possible_trace_data_to_end.id in TRACES_CREATED_BY_DECORATOR  # TRUE!
+):
+    trace_data_to_end = context_storage.pop_trace_data()  # BUG: Pops trace!
+```
+
+File: `opik/decorator/context_manager/trace_context_manager.py` (line 57-61):
+```python
+# start_as_current_trace() adds to this set:
+base_track_decorator.add_start_trace_candidate(...)
+# Which calls: TRACES_CREATED_BY_DECORATOR.add(trace_data.id)
+```
+
+**This is an Opik SDK bug** - traces created by `start_as_current_trace()` should NOT be popped when decorator spans end.
+
+**Workaround Implemented (2026-01-12):**
+
+Created a wrapper span in `cli.py` that stays active throughout agent execution. This keeps the span stack non-empty so the trace is never popped.
+
+### Fix Applied (Both Parallel and Sequential)
+
+#### Fix 1: Parallel Execution (ThreadExecutor)
 
 Modified `ThreadExecutor.submit()` to capture and propagate context:
 
@@ -349,6 +410,31 @@ This ensures:
 3. Opik trace context propagates to all parallel flows
 4. No orphaned traces
 
+#### Fix 2: Sequential Execution (CLI Wrapper Span)
+
+Added wrapper span creation in `cli.py` to prevent trace from being popped:
+
+```python
+# TEA-BUILTIN-005.6: Create wrapper span to prevent trace context loss
+wrapper_span_data = opik_span.SpanData(
+    id=opik_helpers.generate_id(),
+    trace_id=opik_trace.id,
+    parent_span_id=None,
+    start_time=datetime_helpers.local_timestamp(),
+    name=f"{trace_name}_execution",
+    type="general",
+    metadata={"_tea_wrapper_span": True},
+    project_name=project_name,
+)
+context_storage.add_span_data(wrapper_span_data)
+```
+
+This ensures:
+1. Span stack is never empty during agent execution
+2. `track_openai` spans end without triggering trace pop
+3. All LLM calls remain children of the parent trace
+4. Wrapper span is properly ended and logged when agent completes
+
 ### Verification
 
 - **33 existing tests** for `parallel_executors.py` pass
@@ -356,6 +442,19 @@ This ensures:
   - `test_contextvars_propagation_through_thread_executor`
   - `test_opik_trace_context_through_thread_executor`
   - `test_context_propagation_does_not_leak_between_submits`
+- **Manual test** with alignment check agent shows both LLM calls with same trace ID
+
+**Before fix:**
+```
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=019bb548-55f6... ✅
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=None ❌
+```
+
+**After fix:**
+```
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=019bb54f-a19a... ✅
+DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=019bb54f-a19a... ✅
+```
 
 ## Change Log
 
@@ -363,13 +462,15 @@ This ensures:
 |------|---------|-------------|--------|
 | 2026-01-12 | 0.1 | Initial story with debugging attempts documented | Claude Opus 4.5 |
 | 2026-01-12 | 0.2 | Added debug logging to llm_actions.py, restored track_openai, created unit tests | Claude Opus 4.5 |
-| 2026-01-12 | 1.0 | **FIXED**: Modified ThreadExecutor.submit() to propagate contextvars | Claude Opus 4.5 |
+| 2026-01-12 | 1.0 | **FIXED**: Modified ThreadExecutor.submit() to propagate contextvars (parallel flows) | Claude Opus 4.5 |
+| 2026-01-12 | 1.1 | **FIXED**: Added wrapper span in cli.py to preserve trace context (sequential flows) | Claude Opus 4.5 |
 
 ## Files Created/Modified
 
 | File | Action | Description |
 |------|--------|-------------|
 | `python/src/the_edge_agent/parallel_executors.py` | Modified | Added `contextvars` import, updated `ThreadExecutor.submit()` to propagate context |
+| `python/src/the_edge_agent/cli.py` | Modified | Added wrapper span creation to prevent trace from being popped during sequential execution |
 | `python/src/the_edge_agent/actions/llm_actions.py` | Modified | Restored `track_openai` wrapper, added debug logging |
 | `python/tests/test_opik_trace_propagation.py` | Modified | Added 3 new tests for `TestThreadExecutorContextPropagation` |
 | `firebase/functions-agents/scripts/test_opik_trace_context.py` | Created | Manual test script for trace context with YAMLEngine |

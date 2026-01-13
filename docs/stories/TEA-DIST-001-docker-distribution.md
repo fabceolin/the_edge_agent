@@ -758,7 +758,12 @@ No debug log entries required - implementation proceeded without blockers.
 ### File List
 
 **New Files:**
-- `docker/Dockerfile` - Multi-stage Docker build configuration
+- `docker/Dockerfile` - Default Dockerfile (same as full)
+- `docker/Dockerfile.base` - Base variant (~400MB) - minimal core
+- `docker/Dockerfile.full` - Full variant (~772MB) - all features
+- `docker/Dockerfile.gemma3-1b` - LLM variant (~2GB) with Gemma 3 1B
+- `docker/Dockerfile.gemma3-4b` - LLM variant (~5GB) with Gemma 3 4B
+- `docker/Dockerfile.phi4-mini` - LLM variant (~5GB) with Phi-4 mini
 - `docker/.dockerignore` - Docker build context exclusions
 - `docker/BUILD.md` - Docker build documentation
 - `wrapper/cosmo-c/tea.c` - C wrapper source code
