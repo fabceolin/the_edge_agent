@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | Medium |
 | **Estimated Effort** | 3 points |
-| **Status** | Draft |
+| **Status** | Ready for Development |
 | **Parent Epic** | TEA-RELEASE-005 |
 | **Depends On** | TEA-RELEASE-005.1 (syntax differences known) |
 | **Files to Create** | `docs/shared/scryer-migration.md`, `docs/shared/ape-platform-notes.md` |
@@ -301,9 +301,86 @@ flowchart TD
 | Commands | Execute on fresh system |
 | Examples | Run with both backends |
 
+## QA Notes
+
+**Test Design Assessment Date**: 2026-01-12
+**Test Architect**: Quinn (QA Agent)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| Total Test Scenarios | 20 |
+| Manual Validation Tests | 20 (100%) |
+| Unit/Integration/E2E Tests | 0 (Documentation story) |
+| P0 (Critical) | 4 |
+| P1 (High) | 8 |
+| P2 (Medium) | 6 |
+| P3 (Low) | 2 |
+
+**Coverage Assessment**: All 8 acceptance criteria have explicit test coverage. This is a documentation-only story with no code deliverables, so all tests are manual validation.
+
+### Risk Areas Identified
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **Windows users blocked by Defender** | High | Explicit troubleshooting section required (AC-7) |
+| **macOS users blocked by Gatekeeper** | High | xattr workaround must be documented (AC-2, AC-7) |
+| **Users choose wrong distribution** | Medium | Decision flowchart required (AC-5) |
+| **Migration guide unusable** | Medium | Structured content with before/after examples (AC-3, AC-4) |
+| **Examples fail with APE** | Medium | Prolog examples must be reviewed for Scryer compatibility (AC-8) |
+| **Broken install commands** | High | All documented commands must be tested on fresh systems |
+
+### Recommended Test Scenarios
+
+**P0 - Must Execute Before Story Approval:**
+1. `005.5-MAN-001`: Verify APE section exists in installation.md
+2. `005.5-MAN-004`: Verify Windows installation steps documented
+3. `005.5-MAN-005`: Verify Linux installation steps documented
+4. `005.5-MAN-015`: Verify README.md includes Universal Binary section
+
+**P1 - Execute Commands on Target Platforms:**
+1. `005.5-MAN-002`: Execute curl command on Linux/macOS - verify binary runs
+2. `005.5-MAN-003`: Execute PowerShell command on Windows - verify binary runs
+3. `005.5-MAN-006`: Verify macOS xattr workaround documented
+4. `005.5-MAN-017/018`: Windows Defender and Gatekeeper troubleshooting sections
+
+**Key Validation Points:**
+- Download URLs point to valid GitHub release assets
+- All shell/PowerShell commands are copy-paste ready
+- Mermaid flowchart renders on GitHub web UI
+- Predicate compatibility table is technically accurate
+
+### Concerns / Blockers
+
+| Concern | Impact | Recommendation |
+|---------|--------|----------------|
+| **No automated link checking** | Links may break post-release | Consider adding link-checker to CI |
+| **Commands not tested in CI** | Install commands may drift | Extract and test commands in CI pipeline |
+| **Mermaid rendering** | Diagram may not render | Verify on GitHub before merge |
+
+### Test Artifacts Location
+
+- Full test design: `docs/qa/assessments/TEA-RELEASE-005.5-test-design-20260112.md`
+- Gate file (when created): `docs/qa/gates/TEA-RELEASE-005.TEA-RELEASE-005.5-documentation-migration-guide.yml`
+
+### Quality Gate Readiness
+
+**Current Status**: READY (Story approved for development)
+
+**Before Development Complete:**
+- [ ] All P0 tests must pass
+- [ ] All P1 tests must pass (platform commands verified)
+- [ ] No broken links in documentation
+- [ ] Mermaid diagrams render on GitHub
+
+---
+
 ## Change Log
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-01-12 | 1.2 | Status updated to Ready for Development - QA checklist passed | Bob (SM Agent) |
+| 2026-01-12 | 1.1 | Added QA Notes section | Quinn (QA Agent) |
 | 2026-01-11 | 1.0 | Initial story creation | Sarah (PO Agent) |
 

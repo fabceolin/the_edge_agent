@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | High |
 | **Estimated Effort** | 5 points |
-| **Status** | Draft |
+| **Status** | Ready for Development |
 | **Parent Epic** | TEA-RELEASE-005 |
 | **Depends On** | TEA-RELEASE-005.2 (Cosmopolitan build pipeline) |
 | **Files to Create** | `scripts/bundle-model.sh`, `rust/src/model_loader.rs` |
@@ -302,9 +302,67 @@ Bundling avoids the extraction overhead entirely.
 | Integration | CI workflow | Model loading from /zip/ |
 | E2E | Manual | Full LLM inference test |
 
+## QA Notes
+
+**Assessment Date:** 2026-01-12
+**Reviewer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total test scenarios** | 24 |
+| **Unit tests** | 10 (42%) |
+| **Integration tests** | 9 (37%) |
+| **E2E tests** | 5 (21%) |
+| **P0 (Critical)** | 8 scenarios |
+| **P1 (High)** | 10 scenarios |
+| **P2/P3 (Medium/Low)** | 6 scenarios |
+
+All 9 acceptance criteria have corresponding test coverage. No coverage gaps identified.
+
+### Risk Areas Identified
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| ZIP append corrupts binary | Low | Critical | INT-001, INT-002 validate ZIP structure integrity |
+| /zip/ filesystem unavailable | Low | Critical | INT-004, INT-005 test Cosmopolitan VFS access |
+| Model checksum mismatch | Medium | High | INT-006 validates data integrity post-bundling |
+| Startup performance regression | Medium | High | E2E-003 enforces <3s startup requirement |
+| Cross-platform incompatibility | Medium | Critical | E2E-005/006/007 test Linux/Windows/macOS |
+| Fallback path broken | Low | Medium | INT-009, UNIT-010 verify cache fallback |
+
+### Recommended Test Scenarios
+
+**Critical Path (P0 - Must pass before release):**
+1. **005.3-INT-001**: ZIP-appended binary produces valid executable
+2. **005.3-INT-004**: `/zip/models/` virtual filesystem resolves correctly
+3. **005.3-INT-006**: Model bytes checksum matches original file
+4. **005.3-E2E-001**: Complete LLM inference on bundled `tea-llm.com`
+5. **005.3-E2E-003**: Startup time <3 seconds verified
+6. **005.3-E2E-005/006/007**: Cross-platform validation (Linux, Windows, macOS)
+
+**High Priority (P1 - Core functionality):**
+- Script parameter handling (UNIT-002, UNIT-003, UNIT-004)
+- Model auto-detection in `llm.call` action (UNIT-008, INT-007)
+- CI artifact production (INT-008)
+- Fallback path expansion (UNIT-010, INT-009)
+
+### Concerns and Recommendations
+
+1. **Cross-platform E2E tests** should run in CI matrix to catch platform-specific issues early
+2. **Performance baseline** should be established before implementation to validate <3s requirement
+3. **Consider adding** a test for truncated/corrupted GGUF file handling (graceful error)
+4. **Memory behavior test** (E2E-004) is P3 but valuable for validating mmap vs extraction
+
+### Test Design Reference
+
+Full test design document: `docs/qa/assessments/TEA-RELEASE-005.3-test-design-20260112.md`
+
 ## Change Log
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-01-12 | 1.1 | Added QA Notes section | Quinn (QA Agent) |
 | 2026-01-11 | 1.0 | Initial story creation | Sarah (PO Agent) |
 

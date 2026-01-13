@@ -173,17 +173,17 @@ digraph sequential_stories {
 
     subgraph cluster_phase1 {
         label="1. Foundation";
-        story_1 [label="<STORY-ID-1>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-1-FILE>.md\"}'"];
+        story_1 [label="<STORY-ID-1>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-1-FILE>.md\"}'"];
     }
 
     subgraph cluster_phase2 {
         label="2. Core Features";
-        story_2 [label="<STORY-ID-2>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-2-FILE>.md\"}'"];
+        story_2 [label="<STORY-ID-2>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-2-FILE>.md\"}'"];
     }
 
     subgraph cluster_phase3 {
         label="3. Integration";
-        story_3 [label="<STORY-ID-3>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-3-FILE>.md\"}'"];
+        story_3 [label="<STORY-ID-3>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-3-FILE>.md\"}'"];
     }
 
     Start -> story_1;
@@ -209,14 +209,14 @@ digraph parallel_phases {
 
     subgraph cluster_phase1 {
         label="1. Phase 1 Stories";
-        story_a [label="<STORY-A>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-A-FILE>.md\"}'"];
-        story_b [label="<STORY-B>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-B-FILE>.md\"}'"];
+        story_a [label="<STORY-A>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-A-FILE>.md\"}'"];
+        story_b [label="<STORY-B>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-B-FILE>.md\"}'"];
     }
 
     subgraph cluster_phase2 {
         label="2. Phase 2 Stories";
-        story_c [label="<STORY-C>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-C-FILE>.md\"}'"];
-        story_d [label="<STORY-D>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-D-FILE>.md\"}'"];
+        story_c [label="<STORY-C>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-C-FILE>.md\"}'"];
+        story_d [label="<STORY-D>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-D-FILE>.md\"}'"];
     }
 
     // Phase 1: story_a and story_b run in parallel
@@ -247,19 +247,19 @@ digraph mixed_deps {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        core [label="<CORE-STORY>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<CORE-STORY-FILE>.md\"}'"];
+        core [label="<CORE-STORY>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<CORE-STORY-FILE>.md\"}'"];
     }
 
     subgraph cluster_features {
         label="2. Features";
-        feature_a [label="<FEATURE-A>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-A-FILE>.md\"}'"];
-        feature_b [label="<FEATURE-B>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-B-FILE>.md\"}'"];
-        feature_c [label="<FEATURE-C>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-C-FILE>.md\"}'"];
+        feature_a [label="<FEATURE-A>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-A-FILE>.md\"}'"];
+        feature_b [label="<FEATURE-B>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-B-FILE>.md\"}'"];
+        feature_c [label="<FEATURE-C>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<FEATURE-C-FILE>.md\"}'"];
     }
 
     subgraph cluster_integration {
         label="3. Integration";
-        integration [label="<INTEGRATION>", command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<INTEGRATION-FILE>.md\"}'"];
+        integration [label="<INTEGRATION>", command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<INTEGRATION-FILE>.md\"}'"];
     }
 
     // Core is prerequisite for all features
@@ -285,21 +285,21 @@ digraph mixed_deps {
 Use JSON input format with `arg` key:
 
 ```dot
-command="tea-python run <WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
+command="tea-python run <WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
 
 ### Story Validation Workflow
 
 ```dot
-command="tea-python run <VALIDATION_WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
+command="tea-python run <VALIDATION_WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
 
 ### With Extended Timeout
 
-For long-running workflows, add `--input-timeout` (in seconds). Default is 300s (5 minutes):
+For long-running workflows, add `--timeout` (in seconds). Default is 300s (5 minutes):
 
 ```dot
-command="tea-python run <VALIDATION_WORKFLOW_PATH> --input-timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
+command="tea-python run <VALIDATION_WORKFLOW_PATH> --timeout 54000 --input '{\"arg\": \"<STORIES_PATH>/<STORY-FILE>.md\"}'"
 ```
 
 **Placeholder Reference:**
@@ -309,10 +309,10 @@ command="tea-python run <VALIDATION_WORKFLOW_PATH> --input-timeout 54000 --input
 - `<STORY-FILE>` - Story filename without extension (e.g., `TEA-RELEASE-004.1-rust-llm-appimage`)
 
 **Common timeout values:**
-- `--input-timeout 600` - 10 minutes
-- `--input-timeout 1800` - 30 minutes
-- `--input-timeout 3600` - 1 hour
-- `--input-timeout 54000` - 15 hours (900 minutes) - recommended for complex workflows
+- `--timeout 600` - 10 minutes
+- `--timeout 1800` - 30 minutes
+- `--timeout 3600` - 1 hour
+- `--timeout 54000` - 15 hours (900 minutes) - recommended for complex workflows
 
 ### Custom Workflow with JSON Inputs
 
@@ -367,22 +367,22 @@ tea-python from dot workflow.dot --use-node-commands --validate -o workflow.yaml
 tea-python run workflow.yaml
 
 # With extended timeout (900 minutes = 54000 seconds)
-tea-python run workflow.yaml --input-timeout 54000
+tea-python run workflow.yaml --timeout 54000
 
 # With visual graph progress (shows ASCII workflow diagram with running/completed states)
-tea-python run workflow.yaml --show-graph
+tea-python run workflow.yaml --timeout 54000 --show-graph
 
 # Graph visualization only (no other output)
-tea-python run workflow.yaml --show-graph --quiet
+tea-python run workflow.yaml --timeout 54000 --show-graph --quiet
 
 # With streaming output (NDJSON mode - mutually exclusive with --show-graph)
-tea-python run workflow.yaml --stream
+tea-python run workflow.yaml --timeout 54000 --stream
 
 # With verbose logging
-tea-python run workflow.yaml -vv
+tea-python run workflow.yaml --timeout 54000 -vv
 ```
 
-**Note:** The `--show-graph` flag displays an ASCII visualization of the workflow structure, highlighting the currently executing node and marking completed nodes with ✓. This is especially useful for complex parallel workflows where you want to see progress at a glance.
+**Note:** The `--show-graph` flag displays an ASCII visualization of the workflow structure, highlighting the currently executing node and marking completed nodes with ✓. This is especially useful for complex parallel workflows where you want to see progress at a glance. **Always combine with `--timeout 54000` for long-running story workflows.**
 
 ### Alternative Tea Implementations
 
@@ -457,7 +457,7 @@ digraph <workflow_name> {
     subgraph cluster_<phase_name> {
         label="<N>. <Phase Label>";
         // For each item in phase:
-        <item_id> [label="<Display Name>", command="tea-python run <workflow> --input-timeout 54000 --input '{\"arg\": \"<path>\"}'"];
+        <item_id> [label="<Display Name>", command="tea-python run <workflow> --timeout 54000 --input '{\"arg\": \"<path>\"}'"];
     }
 
     // Define edges based on dependencies
@@ -487,12 +487,12 @@ tea-python from dot <DOT_OUTPUT>/<filename>.dot --use-node-commands -o <DOT_OUTP
 
 #### Execute the Workflow:
 ```bash
-tea-python run <DOT_OUTPUT>/<filename>.yaml --input-timeout 54000
+tea-python run <DOT_OUTPUT>/<filename>.yaml --timeout 54000
 ```
 
 #### With Visual Progress (recommended for multi-story workflows):
 ```bash
-tea-python run <DOT_OUTPUT>/<filename>.yaml --input-timeout 54000 --show-graph
+tea-python run <DOT_OUTPUT>/<filename>.yaml --timeout 54000 --show-graph
 ```
 
 **Example with discovered paths:**
@@ -501,10 +501,10 @@ tea-python run <DOT_OUTPUT>/<filename>.yaml --input-timeout 54000 --show-graph
 tea-python from dot /home/user/project/docs/workflows/my-workflow.dot --use-node-commands -o /home/user/project/docs/workflows/my-workflow.yaml
 
 # Execute workflow
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml --input-timeout 54000
+tea-python run /home/user/project/docs/workflows/my-workflow.yaml --timeout 54000
 
-# Or with visual graph progress
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml --input-timeout 54000 --show-graph
+# Or with visual graph progress (RECOMMENDED)
+tea-python run /home/user/project/docs/workflows/my-workflow.yaml --timeout 54000 --show-graph
 ```
 
 ---
@@ -551,23 +551,23 @@ digraph epic_implementation {
 
     subgraph cluster_foundation {
         label="1. Foundation";
-        story_1_1 [label="EPIC-001.1", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.1-core-setup.md\"}'"];
+        story_1_1 [label="EPIC-001.1", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.1-core-setup.md\"}'"];
     }
 
     subgraph cluster_core {
         label="2. Core Implementation";
-        story_1_2 [label="EPIC-001.2", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.2-main-feature.md\"}'"];
+        story_1_2 [label="EPIC-001.2", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.2-main-feature.md\"}'"];
     }
 
     subgraph cluster_extensions {
         label="3. Extensions";
-        story_1_3 [label="EPIC-001.3", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.3-extension-a.md\"}'"];
-        story_1_4 [label="EPIC-001.4", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.4-extension-b.md\"}'"];
+        story_1_3 [label="EPIC-001.3", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.3-extension-a.md\"}'"];
+        story_1_4 [label="EPIC-001.4", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.4-extension-b.md\"}'"];
     }
 
     subgraph cluster_docs {
         label="4. Documentation";
-        story_1_5 [label="EPIC-001.5", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.5-documentation.md\"}'"];
+        story_1_5 [label="EPIC-001.5", command="tea-python run /home/user/project/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/home/user/project/the_edge_agent/docs/stories/EPIC-001.5-documentation.md\"}'"];
     }
 
     Start -> story_1_1;
@@ -598,10 +598,10 @@ Write to: /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot
 tea-python from dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot --use-node-commands -o /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml
 
 # Execute workflow (tea-python run command)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --input-timeout 54000
+tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --timeout 54000
 
-# Or with visual graph progress (recommended for monitoring multi-story workflows)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --input-timeout 54000 --show-graph
+# Or with visual graph progress (RECOMMENDED for monitoring multi-story workflows)
+tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml --timeout 54000 --show-graph
 ```
 
 **Note:** All paths in the output commands MUST be the actual discovered absolute paths, not placeholders.
@@ -631,7 +631,7 @@ tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementatio
 
 ```dot
 // GOOD - absolute path discovered at runtime, simple label, with timeout
-story_1 [label="STORY-001", command="tea-python run /discovered/path/the_edge_agent/examples/workflows/bmad-story-development.yaml --input-timeout 54000 --input '{\"arg\": \"/discovered/path/the_edge_agent/docs/stories/STORY-001.md\"}'"];
+story_1 [label="STORY-001", command="tea-python run /discovered/path/the_edge_agent/examples/workflows/bmad-story-development.yaml --timeout 54000 --input '{\"arg\": \"/discovered/path/the_edge_agent/docs/stories/STORY-001.md\"}'"];
 
 // BAD - relative path (may not resolve correctly), multi-line label, no timeout
 story_1 [label="STORY-001\nDescription", command="tea-python run examples/workflows/bmad-story-development.yaml --input '{\"arg\": \"docs/stories/STORY-001.md\"}'"];

@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | High |
 | **Estimated Effort** | 8 points |
-| **Status** | Draft |
+| **Status** | Ready for Development (Blocked on TEA-RELEASE-005.1) |
 | **Parent Epic** | TEA-RELEASE-005 |
 | **Depends On** | TEA-RELEASE-005.1 (Scryer spike must pass) |
 | **Files to Create** | `.github/workflows/build-ape.yaml`, `rust/cosmo-config.toml` |
@@ -292,9 +292,69 @@ cd the_edge_agent
 | Integration | Manual | Run example YAML agents |
 | Cross-platform | CI matrix | Ubuntu, Windows, macOS |
 
+## QA Notes
+
+**Assessment Date:** 2026-01-12
+**Assessor:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| **Total test scenarios** | 28 |
+| **Unit tests** | 4 (14%) |
+| **Integration tests** | 10 (36%) |
+| **E2E tests** | 14 (50%) |
+| **Priority distribution** | P0: 8, P1: 12, P2: 6, P3: 2 |
+
+All 11 acceptance criteria have test coverage. The heavy E2E distribution (50%) is appropriate given the story's focus on cross-platform binary distribution.
+
+### Risk Areas Identified
+
+| Risk ID | Description | Probability | Impact | Mitigation |
+|---------|-------------|-------------|--------|------------|
+| RISK-001 | Cosmopolitan toolchain unavailable/broken | Low | Critical | Pin version, cache in CI |
+| RISK-002 | Rust crates incompatible with cosmocc | Medium | High | TEA-RELEASE-005.1 spike validates |
+| RISK-003 | Binary fails on specific platform | Medium | High | Multi-runner CI matrix |
+| RISK-004 | Scryer/Lua runtime broken in APE | Medium | High | Cross-platform E2E tests |
+| RISK-005 | Binary size exceeds 25MB limit | Low | Medium | LTO + strip, size assertion |
+| RISK-006 | Release workflow missing APE artifact | Low | Medium | E2E-015 validates |
+
+### Recommended Test Scenarios (P0 Critical Path)
+
+1. **TEA-RELEASE-005.2-INT-003**: Cosmocc downloads and extracts successfully
+2. **TEA-RELEASE-005.2-INT-006**: `cargo build --release` with cosmocc succeeds
+3. **TEA-RELEASE-005.2-INT-008**: `--features scryer` compiles with cosmocc
+4. **TEA-RELEASE-005.2-E2E-007**: Run `tea.com` on clean Ubuntu 22.04 container
+5. **TEA-RELEASE-005.2-E2E-009**: Run `tea.com` on clean Windows 11 runner
+6. **TEA-RELEASE-005.2-E2E-011**: Run `tea.com` on macOS 13 runner
+7. **TEA-RELEASE-005.2-E2E-001/002/003**: Execute Prolog query on all platforms
+
+### Concerns and Blockers
+
+| Type | Description | Severity |
+|------|-------------|----------|
+| **Dependency** | Story blocked until TEA-RELEASE-005.1 (Scryer spike) passes | Blocker |
+| **Technical Risk** | Cosmopolitan Rust target is experimental; C linker wrapper approach may have edge cases | Medium |
+| **CI Complexity** | Multi-platform matrix requires Ubuntu, Windows, macOS runners | Low |
+| **Testing Gap** | ARM64 testing limited to macOS; no Linux ARM64 runner in standard GHA | Advisory |
+
+### Special Considerations
+
+- Cross-platform testing requires multi-runner CI matrix
+- Scryer Prolog tests require valid Prolog query syntax
+- Binary size monitoring should be automated in CI
+- Clean container tests validate no hidden system dependencies
+- Consider caching Cosmopolitan toolchain between runs for performance
+
+### Test Design Reference
+
+Full test design matrix: `docs/qa/assessments/TEA-RELEASE-005.2-test-design-20260112.md`
+
 ## Change Log
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-01-12 | 1.1 | Added QA Notes section | Quinn (QA Agent) |
 | 2026-01-11 | 1.0 | Initial story creation | Sarah (PO Agent) |
 

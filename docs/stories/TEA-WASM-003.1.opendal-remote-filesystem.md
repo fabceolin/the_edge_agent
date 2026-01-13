@@ -2,7 +2,9 @@
 
 ## Status
 
-**Draft**
+**Ready for Development**
+
+_Status updated: 2026-01-12 | All checklist criteria passed_
 
 ## Story
 
@@ -834,9 +836,81 @@ rust/
 - [Origin Private File System - MDN](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system)
 - [OPFS Caching with DuckDB-WASM](https://medium.com/@hadiyolworld007/opfs-caching-ftw-react-duckdb-wasm-blazing-parquet-0442ff695db5)
 
+## QA Notes
+
+**Test Design Assessment:** 2026-01-12 | Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| Total test scenarios | 58 |
+| Unit tests | 22 (38%) |
+| Integration tests | 24 (41%) |
+| E2E tests | 12 (21%) |
+| P0 (Critical) | 18 |
+| P1 (High) | 22 |
+| P2 (Medium) | 14 |
+| P3 (Low) | 4 |
+
+All 24 acceptance criteria have test coverage with appropriate test levels.
+
+### Risk Areas Identified
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| **OPFS browser compatibility** | Medium | High | Cross-browser E2E tests (Chrome, Edge, Firefox, Safari), memory fallback |
+| **OpenDAL OPFS newness** | Medium | Medium | Feature flag isolation, OPFS state detection tests |
+| **CORS misconfiguration** | High | Medium | Helpful error messages, origin info in errors |
+| **Credential leakage** | Low | Critical | 3 dedicated unit tests for isolation (state, checkpoint, logs) |
+| **WASM bundle size** | Medium | Medium | Bundle size constraint tests (<1MB default, <500KB per backend) |
+
+### Recommended Test Scenarios
+
+**Critical Path (P0 - Must Pass):**
+1. URI parsing for all 6 schemes (s3, gs, az, http/https, opfs, memory)
+2. Credential isolation - NOT in state_json, checkpoints, or error logs
+3. OPFS persistence after page reload (Chrome/Edge)
+4. DuckDB reads parquet files written via OPFS
+5. Cross-provider copy (S3 ↔ OPFS)
+6. WASM compilation to wasm32-unknown-unknown
+7. Clear error messages for missing credentials, permissions, not found
+
+**High Value Integration Tests:**
+- Memory backend round-trip (testing foundation)
+- S3 read/write with credentials
+- Binary file support (parquet via OPFS)
+- OPFS fallback to memory when unavailable
+
+**Browser E2E Tests:**
+- OPFS in Chrome 102+ (full support)
+- OPFS in Edge 102+ (Chromium-based)
+- OPFS in Firefox 111+ (partial support validation)
+- DuckDB WASM + OPFS bidirectional integration
+
+### Concerns and Blockers
+
+**Concerns:**
+1. **Browser compatibility variance** - Firefox/Safari have limited OPFS support; tests should validate graceful degradation
+2. **OpenDAL OPFS is relatively new** (PR #5758) - may encounter edge cases; monitor OpenDAL GitHub for issues
+3. **CORS complexity** - High probability of misconfiguration in production; ensure error messages guide users to solutions
+
+**No blockers identified** - Story is well-defined with clear rollback strategy (feature flag isolation).
+
+### Test Environment Requirements
+
+- **Unit tests:** Rust test harness, no external deps
+- **Integration tests:** MinIO container for S3, wasm-pack for WASM validation
+- **E2E tests:** Playwright with Chrome 102+, Edge 102+, Firefox 111+, Safari 16.4+; DuckDB WASM loaded
+
+### Test Design Reference
+
+Full test design matrix: `docs/qa/assessments/TEA-WASM-003.1-test-design-20260112.md`
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-10 | 0.1.0 | Initial story creation | Sarah (PO) |
 | 2026-01-10 | 0.2.0 | Added OPFS support, DuckDB integration, browser compatibility, updated AC 12-16 | Sarah (PO) |
+| 2026-01-12 | 0.2.1 | Added QA Notes section with test design assessment | Quinn (QA) |

@@ -8,7 +8,7 @@
 | **Type** | Story |
 | **Priority** | High |
 | **Estimated Effort** | 5 points |
-| **Status** | Draft |
+| **Status** | Ready for Development |
 | **Parent Epic** | TEA-RELEASE-005 |
 | **Depends On** | TEA-RELEASE-005.2, TEA-RELEASE-005.3 |
 | **Files to Create** | `tests/ape/`, `.github/workflows/test-ape-matrix.yaml` |
@@ -323,9 +323,72 @@ For consistent cross-platform LLM results:
 | Functional | `tests/ape/*.yaml` | Prolog, Lua, LLM tests |
 | Integration | Manual | Full agent workflows |
 
+## QA Notes
+
+**Test Design Reference:** `docs/qa/assessments/TEA-RELEASE-005.4-test-design-20260112.md`
+**Assessment Date:** 2026-01-12
+**Reviewer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Scenarios** | 34 |
+| **Unit Tests** | 6 (18%) |
+| **Integration Tests** | 16 (47%) |
+| **E2E Tests** | 12 (35%) |
+| **P0 (Critical)** | 14 |
+| **P1 (High)** | 12 |
+| **P2 (Medium)** | 6 |
+| **P3 (Low)** | 2 |
+| **AC Coverage** | 100% (all 10 ACs have tests) |
+
+### Risk Areas Identified
+
+| Risk | Probability | Impact | Status |
+|------|-------------|--------|--------|
+| Windows Defender blocks execution | **High** | **High** | Tests 005.4-E2E-005, 006 cover this with workaround documentation |
+| macOS Gatekeeper quarantine | **High** | **High** | Tests 005.4-E2E-007, 008 cover with `xattr -d` workaround |
+| Binary incompatible with older Ubuntu | Medium | High | Platform matrix tests 005.4-INT-001 through 003 validate |
+| CI workflow misconfigured | Medium | High | Tests 005.4-INT-016, E2E-013, E2E-014 validate workflow |
+| Prolog/Lua output varies by platform | Low | **Critical** | Hash verification across platforms (E2E-001, E2E-002) |
+| LLM non-deterministic despite seed | Medium | Medium | Determinism tests with fixed seed verify consistency |
+
+### Recommended Test Scenarios (Priority Order)
+
+**P0 - Must Pass for Release:**
+1. TEA binary executes on Ubuntu 20.04, 22.04, 24.04 (INT-001, 002, 003)
+2. TEA binary executes on Windows 10, 11 (INT-005, 006)
+3. TEA binary executes on macOS 12, 13, 14 (INT-008, 009, 010)
+4. Prolog factorial(5)=120 on all platforms (UNIT-001, 002, 003)
+5. Lua fibonacci(10)=55 on all platforms (UNIT-004, 005, 006)
+6. Cross-platform output hash match (E2E-001, E2E-002)
+7. Windows execution without manual intervention (E2E-005)
+8. macOS execution after quarantine removal (E2E-007)
+9. Workflow file valid and triggers correctly (INT-016, E2E-013)
+
+**P1 - Should Pass:**
+- Multi-version Prolog tests, PowerShell execution, LLM determinism
+- Documentation accessibility, workflow automation
+
+### Concerns / Blockers
+
+| Type | Description | Recommendation |
+|------|-------------|----------------|
+| **High Risk** | Security software (Defender/Gatekeeper) may block on fresh VMs | Ensure workaround documentation is created before release |
+| **Testing Gap** | ARM64 macOS (M1/M2) not explicitly differentiated from Intel | macOS 14 runner uses ARM64, but cross-architecture verification should be explicit |
+| **Dependency** | Story depends on TEA-RELEASE-005.2 and 005.3 completion | Validate dependencies are complete before running matrix tests |
+| **Flakiness Risk** | LLM determinism tests may have variance | Use short prompts, verify seed works as expected |
+
+### Quality Gate Recommendation
+
+**CONCERNS** - Story is well-designed but has high-probability security software risks that require documented workarounds. Proceed with development, ensure platform documentation (AC-9) is complete before final validation.
+
 ## Change Log
 
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
+| 2026-01-12 | 1.2 | Status updated to Ready for Development after QA checklist validation | SM Agent |
+| 2026-01-12 | 1.1 | Added QA Notes section with test design assessment | Quinn (Test Architect) |
 | 2026-01-11 | 1.0 | Initial story creation | Sarah (PO Agent) |
 

@@ -2,7 +2,11 @@
 
 ## Status
 
-Draft
+Ready for Development
+
+**Status Updated:** 2026-01-12
+**Updated By:** Bob (SM Agent)
+**Validation:** All QA checklist criteria passed - test design complete with 87 scenarios covering 100% of stories and ACs
 
 ## Epic Goal
 
@@ -515,9 +519,78 @@ CREATE TABLE user_confusions (
 
 ---
 
+## QA Notes
+
+**Assessment Date:** 2026-01-12
+**Test Architect:** Quinn (QA Agent)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Scenarios** | 87 |
+| **Unit Tests** | 42 (48%) |
+| **Integration Tests** | 31 (36%) |
+| **E2E Tests** | 14 (16%) |
+| **P0 (Critical)** | 23 |
+| **P1 (High)** | 34 |
+| **Stories Covered** | 8/8 (100%) |
+| **AC Coverage** | All ACs mapped |
+
+### Risk Areas Identified
+
+| Risk | Severity | Mitigation Tests |
+|------|----------|------------------|
+| Score calculation errors | High | 5 P0 unit tests (GAME-001.1-UNIT-010-014) |
+| Leaderboard data loss | High | 3 P0 integration tests (GAME-001.2-INT-009-011) |
+| LLM phrase inconsistency | High | 5 P0 unit tests with retry logic |
+| Browser storage limits | High | 1 P0 E2E test (GAME-001.6-E2E-001) |
+| Context window overflow | Medium | 2 P1 unit tests (GAME-001.4-UNIT-039/040) |
+| OOV word handling | Medium | 1 P1 integration test (GAME-001.3-INT-019) |
+| Difficulty bounds clamping | Medium | 2 P0 unit tests (GAME-001.1-UNIT-019/020) |
+
+### Recommended Test Scenarios (Priority Order)
+
+**Phase 1 - Fail Fast (P0 Unit + Integration):**
+1. All score/difficulty unit tests (Story 1)
+2. DuckDB schema and UPSERT tests (Story 2)
+3. Similarity algorithm tests (Story 3)
+4. JSON parsing and retry logic tests (Story 4)
+5. GameEngine orchestration tests (Story 5)
+6. WASM export verification (Story 6)
+
+**Phase 2 - Core E2E:**
+1. Browser persistence with IndexedDB/OPFS
+2. LLM callback bridge validation
+3. Core user journey: Welcome → Game → Leaderboard
+
+**Phase 3 - P1 Regression:**
+- Rolling window difficulty adjustment
+- Visual feedback (green/red flash)
+- Give Up flow and Play Again loop
+
+### Concerns and Recommendations
+
+1. **WASM Bundle Size** - DuckDB WASM may add significant bloat. Recommend lazy loading and bundle size monitoring in CI.
+
+2. **Flaky E2E Risk** - LLM-dependent tests may be flaky. Use mock LLM responses for deterministic unit tests; real LLM only for integration smoke tests.
+
+3. **Graph Extension (DuckPGQ)** - Marked P2 since analytics features are secondary. Consider deferring to post-MVP if timeline is tight.
+
+4. **Mobile Viewport** - P3 priority for responsive design test. Recommend manual exploratory testing on actual devices.
+
+5. **Opik Dependency** - TEA-OBS-002 must be complete before Story 8 integration tests can run.
+
+### Test Design Document
+
+Full test matrix available at: `docs/qa/assessments/TEA-GAME-001-test-design-20260112.md`
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-10 | 0.1 | Initial epic draft | Sarah (PO Agent) |
 | 2026-01-10 | 0.2 | Removed phrases database, added LLM context window generation | Sarah (PO Agent) |
+| 2026-01-12 | 0.3 | Added QA Notes with test coverage analysis | Quinn (QA Agent) |

@@ -903,6 +903,38 @@ def run(
     checkpoint_path = None
     previous_node = None  # Track for --show-graph state transitions
 
+    # TEA-BUILTIN-005.5: Generate and attach Opik agent graph
+    mermaid_graph = None
+    try:
+        mermaid_graph = engine.get_mermaid_graph()
+        if mermaid_graph:
+            logging.getLogger(__name__).debug(
+                "Generated Mermaid graph for Opik visualization"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"Could not generate Mermaid graph: {e}")
+
+    # Attach graph to Opik trace if available
+    if mermaid_graph:
+        try:
+            from opik import opik_context
+
+            opik_context.update_current_trace(
+                metadata={
+                    "_opik_graph_definition": {
+                        "format": "mermaid",
+                        "data": mermaid_graph,
+                    }
+                }
+            )
+            logging.getLogger(__name__).debug("Attached Mermaid graph to Opik trace")
+        except ImportError:
+            pass  # Opik not installed, skip gracefully
+        except Exception as e:
+            logging.getLogger(__name__).debug(
+                f"Could not attach graph to Opik trace: {e}"
+            )
+
     try:
         while True:
             completed = False

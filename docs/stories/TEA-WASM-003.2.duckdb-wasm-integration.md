@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft**
+**Ready for Development**
 
 ## Story
 
@@ -511,8 +511,76 @@ await db.open({
 
 **Rollback:** DuckDB module is isolated; can be removed without affecting other functionality.
 
+## QA Notes
+
+**Date:** 2026-01-12
+**Reviewer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Count |
+|--------|-------|
+| **Total scenarios** | 52 |
+| **Unit tests** | 18 (35%) |
+| **Integration tests** | 22 (42%) |
+| **E2E tests** | 12 (23%) |
+| **P0 (Critical)** | 16 |
+| **P1 (High)** | 20 |
+| **P2 (Medium)** | 12 |
+| **P3 (Low)** | 4 |
+
+All 20 Acceptance Criteria have test coverage. Test design follows risk-based approach with emphasis on the Rust↔JavaScript bridge pattern complexity.
+
+### Risk Areas Identified
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **SQL injection via params** | High | Prepared statement tests (UNIT-004, UNIT-005) |
+| **Rust↔JS bridge data corruption** | High | Type coercion tests (INT-001, INT-002, INT-005) |
+| **Transaction data loss** | High | BEGIN/COMMIT/ROLLBACK tests (INT-007, INT-008) |
+| **VSS returns wrong results** | High | Cosine distance validation (INT-016, E2E-003) |
+| **Bundle size (~10MB) impacts load** | Medium | Lazy loading tests (E2E-009) |
+| **Memory exhaustion in browser** | Medium | Memory limit tests (INT-031, E2E-010) |
+| **CORS misconfiguration blocks users** | Medium | CORS guidance tests (E2E-005, E2E-006, E2E-011) |
+
+### Recommended Test Scenarios
+
+**Priority 0 (Must Have):**
+1. Handler registration and initialization guard
+2. Query/execute via Rust↔JS bridge with correct type handling
+3. Prepared statement parameter substitution (security-critical)
+4. Transaction integrity (BEGIN/COMMIT/ROLLBACK)
+5. Parquet read/write cycle
+6. VSS extension load + HNSW index + cosine distance
+7. YAML action registration (duckdb.query, duckdb.execute)
+8. SQL syntax error messaging
+
+**Key E2E Scenarios:**
+- Full browser initialization sequence
+- Parquet read/write workflow
+- Vector similarity search with embeddings
+- CORS error with actionable guidance
+
+### Concerns and Blockers
+
+**Concerns:**
+1. **SharedArrayBuffer requirement** - DuckDB WASM multi-threading requires SharedArrayBuffer, which needs specific HTTP headers (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`). E2E tests must validate this works in CI.
+
+2. **Extension size impact** - Total bundle with VSS, FTS, and Parquet extensions could exceed 10MB. Lazy loading is designed but needs performance validation.
+
+3. **CORS testing complexity** - E2E tests for httpfs require a test server with proper CORS headers. CI environment setup needed.
+
+**No blockers identified.** Story is ready for development with test design complete.
+
+### Test Design Reference
+
+Full test design matrix: `docs/qa/assessments/TEA-WASM-003.2-test-design-20260112.md`
+
+---
+
 ## Change Log
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2026-01-10 | 0.1.0 | Initial story creation | Sarah (PO) |
+| 2026-01-12 | 0.1.1 | QA notes added | Quinn (QA) |

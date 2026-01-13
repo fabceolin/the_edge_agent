@@ -2,7 +2,7 @@
 
 ## Status
 
-**Draft**
+**Ready for Development**
 
 ## Substories
 
@@ -202,7 +202,7 @@ Enable Rust/WASM agents to access remote storage (S3, GCS, Azure, HTTP) and anal
 
 ## Story Manager Handoff
 
-"Please develop detailed user stories for this brownfield epic. Key considerations:
+""Please develop detailed user stories for this brownfield epic. Key considerations:
 
 - This is an enhancement to an existing system running Rust with WASM compilation
 - Integration points: `rust/tea-wasm-llm/` (WASM crate), `rust/src/actions/file.rs` (file actions)
@@ -211,3 +211,85 @@ Enable Rust/WASM agents to access remote storage (S3, GCS, Azure, HTTP) and anal
 - Each story must include verification that existing functionality remains intact
 
 The epic should maintain system integrity while delivering fsspec-like storage parity for browser-based agents."
+
+---
+
+## QA Notes
+
+**Test Design Assessment Date:** 2026-01-12
+**Designer:** Quinn (Test Architect)
+
+### Test Coverage Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total Test Scenarios** | 127 |
+| **Unit Tests** | 38 (30%) |
+| **Integration Tests** | 54 (42%) |
+| **E2E Tests** | 35 (28%) |
+| **P0 Critical Tests** | 42 |
+| **P1 High Tests** | 51 |
+| **P2/P3 Lower Priority** | 34 |
+
+**Coverage by Substory:**
+- TEA-WASM-003.1 (OpenDAL): 48 scenarios
+- TEA-WASM-003.2 (DuckDB WASM): 43 scenarios
+- TEA-WASM-003.3 (LTM Backend): 36 scenarios
+
+### Risk Areas Identified
+
+| Risk | Severity | Mitigation Strategy |
+|------|----------|---------------------|
+| **OPFS API browser differences** | High | Cross-browser integration tests (Chrome/Firefox/Safari), graceful degradation tests |
+| **DuckDB WASM bundle size (~10MB)** | Medium | Lazy loading tests, bundle size constraints (<1MB default) |
+| **CORS restrictions on remote files** | Medium | Error handling E2E tests with actionable guidance |
+| **IndexedDB quota limits** | Medium | Inlining logic tests, cloud sync fallback tests |
+| **Cold start latency** | Medium | Connection pooling tests, lazy extension loading |
+| **Credential leakage in checkpoints** | High | Security tests ensuring credentials NOT serialized |
+| **OpenDAL OPFS support maturity** | Medium | Targeted OPFS CRUD tests, fallback to memory backend |
+| **Offline sync conflicts** | Medium | Content hash deduplication tests, conflict resolution E2E |
+
+### Recommended Test Scenarios
+
+**P0 Critical Path (Must Pass for Release):**
+1. URI parsing for all schemes (s3://, gs://, az://, http://, opfs://, memory://)
+2. OPFS read/write/persistence across browser reload
+3. DuckDB WASM query execution and parquet integration
+4. LTM store/retrieve/delete cycle in browser
+5. Credential injection via JavaScript (no leakage to state)
+6. WASM module compilation to `wasm32-unknown-unknown`
+7. Offline storage functionality without network
+
+**Cross-Browser Matrix:**
+| Feature | Chrome 102+ | Firefox 111+ | Safari 16.4+ |
+|---------|-------------|--------------|--------------|
+| OPFS CRUD | Full | Partial | Partial |
+| IndexedDB | Full | Full | Full |
+| WASM Execution | Full | Full | Full |
+
+### Concerns and Blockers
+
+1. **Browser Support Variance:** Firefox and Safari have limited OPFS API support. Tests must verify graceful degradation to memory backend.
+
+2. **Security Critical:** Credential handling tests (3.1-UNIT-013, 3.1-E2E-006) are mandatory before release. Credentials must NEVER appear in checkpoint serialization.
+
+3. **Integration Complexity:** Three-way integration (OpenDAL ↔ DuckDB WASM ↔ LTM) requires careful E2E test orchestration. Recommend running integration tests in sequence.
+
+4. **CI/CD Requirements:** Browser tests require Playwright with Chrome/Chromium 102+ and MinIO for S3 mock. Native Rust tests should run separately with feature flag testing.
+
+### Quality Gate Criteria
+
+```yaml
+gate_criteria:
+  p0_pass_rate: 100%
+  p1_pass_rate: 95%
+  security_tests: all_pass
+  cross_browser: chrome_full, firefox_degradation_only
+  bundle_size: <1MB_default_features
+```
+
+### Test Artifacts Reference
+
+- Full test design: `docs/qa/assessments/TEA-WASM-003-test-design-20260112.md`
+- Test matrix includes 127 scenarios with complete AC traceability
+- Risk coverage matrix maps all 8 identified risks to specific tests"
