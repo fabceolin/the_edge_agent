@@ -1,0 +1,153 @@
+# TEA-DIST-001: Docker LLM Image - Phi-4 Mini
+#
+# Full TEA image with bundled Microsoft Phi-4 mini Q8_0 GGUF model (~4GB).
+# Self-contained for offline LLM inference without external model downloads.
+#
+# Build: docker build -t tea:phi4-mini -f docker/Dockerfile.phi4-mini .
+# Size: ~5GB
+#
+# Variants:
+#   - tea:base (~400MB) - Minimal core dependencies only
+#   - tea:full (~772MB) - All features (Prolog, Lua, Opik)
+#   - tea:gemma3-1b (~2GB) - Full + bundled Gemma 3 1B model
+#   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
+#   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
+#
+# Model: microsoft/Phi-4-mini-instruct
+# Source: Ollama Registry (https://ollama.com/library/phi4-mini)
+
+# =============================================================================
+# Stage 1: Model Downloader
+# =============================================================================
+FROM ubuntu:24.04 AS model-downloader
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download Phi-4 mini model from Ollama registry (~2.5GB)
+RUN mkdir -p /models && \
+    curl -L -o /models/phi4-mini.gguf \
+    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db"
+
+# Verify model was downloaded
+RUN ls -lh /models/ && \
+    test -f /models/phi4-mini.gguf
+
+# =============================================================================
+# Stage 2: Builder - Install build dependencies and compile packages
+# =============================================================================
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    software-properties-common \
+    build-essential \
+    git \
+    curl \
+    ca-certificates \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SWI-Prolog 9.3+ from PPA
+RUN add-apt-repository ppa:swi-prolog/stable -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    swi-prolog \
+    swi-prolog-nox \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.12 -m venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools
+
+# Copy Python source for installation
+COPY python/ /src/python/
+WORKDIR /src/python
+
+# Install TEA with all extras including llm support
+RUN pip install --no-cache-dir ".[all,prolog,lua,opik,llm]"
+
+# Clean up the venv to reduce size
+RUN find /opt/tea-venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && find /opt/tea-venv -type f -name "*.pyc" -delete 2>/dev/null || true \
+    && find /opt/tea-venv -type f -name "*.pyo" -delete 2>/dev/null || true \
+    && rm -rf /opt/tea-venv/share/doc 2>/dev/null || true \
+    && rm -rf /opt/tea-venv/share/man 2>/dev/null || true
+
+# Verify installations
+RUN python -c "import the_edge_agent; print(f'TEA version: {the_edge_agent.__version__}')"
+RUN python -c "import llama_cpp; print('llama-cpp-python: OK')" || echo "llama-cpp will be verified at runtime"
+
+# =============================================================================
+# Stage 3: Runtime - Image with bundled model
+# =============================================================================
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    software-properties-common \
+    ca-certificates \
+    && add-apt-repository ppa:swi-prolog/stable -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    swi-prolog-nox \
+    && apt-get purge -y software-properties-common \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/* \
+    && rm -rf /usr/share/doc/* \
+    && rm -rf /usr/share/man/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/tea-venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+# Copy bundled model
+COPY --from=model-downloader /models /opt/tea-models
+
+# Set Python and model environment
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV TEA_MODEL_PATH="/opt/tea-models/phi4-mini.gguf"
+ENV TEA_MODEL_NAME="phi4-mini"
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+# Switch to non-root user
+USER tea
+
+# Set working directory for mounted volumes
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Phi4-Mini - Full features with bundled Phi-4 mini model"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="phi4-mini"
+LABEL tea.model="phi4-mini"
+LABEL tea.model.size="2.5GB"
+LABEL tea.model.source="ollama"
+
+# Entrypoint is the tea CLI
+ENTRYPOINT ["tea"]
+
+# Default command shows help
+CMD ["--help"]

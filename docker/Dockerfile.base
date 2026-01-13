@@ -1,0 +1,81 @@
+# TEA-DIST-001: Docker Base Image - Minimal Dependencies
+#
+# Minimal TEA image with only core dependencies (Python 3.12).
+# Use this when you don't need Prolog, Lua, or local LLM support.
+#
+# Build: docker build -t tea:base -f docker/Dockerfile.base .
+# Size: ~400MB
+#
+# Variants:
+#   - tea:base (~400MB) - Minimal core dependencies only
+#   - tea:full (~772MB) - All features (Prolog, Lua, Opik)
+#   - tea:gemma3-1b (~2GB) - Full + bundled Gemma 3 1B model
+#   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
+#   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
+
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.12 -m venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools
+
+# Copy Python source
+COPY python/ /src/python/
+WORKDIR /src/python
+
+# Install TEA with minimal dependencies (no extras)
+RUN pip install --no-cache-dir .
+
+# Clean up
+RUN find /opt/tea-venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && find /opt/tea-venv -type f -name "*.pyc" -delete 2>/dev/null || true
+
+# Verify
+RUN python -c "import the_edge_agent; print(f'TEA version: {the_edge_agent.__version__}')"
+
+# =============================================================================
+# Runtime Stage
+# =============================================================================
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/tea-venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+USER tea
+WORKDIR /work
+
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Base - Minimal core dependencies"
+LABEL tea.variant="base"
+
+ENTRYPOINT ["tea"]
+CMD ["--help"]

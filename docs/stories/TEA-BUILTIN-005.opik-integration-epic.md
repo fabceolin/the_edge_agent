@@ -216,6 +216,35 @@ Based on the Opik SDK analysis, there are two integration strategies:
 
 ---
 
+### Story 6: Opik Trace Context Propagation (TEA-BUILTIN-005.6)
+
+**Title:** Fix Multi-LLM Call Trace Context Propagation
+
+**Description:** Investigate and fix the issue where only the first LLM call within a TEA YAML agent execution is correctly nested under the parent Opik trace. Subsequent LLM calls lose trace context and create orphan traces.
+
+**Scope:**
+- Investigate TEA execution loop for context loss points
+- Review Opik SDK contextvar behavior
+- Create minimal reproduction test case
+- Implement fix for trace context persistence
+- Add regression tests for multi-LLM scenarios
+
+**Acceptance Criteria:**
+1. All LLM calls within single agent execution nested under parent trace
+2. No orphan traces created for secondary LLM calls
+3. Correct project used for all spans (YAML settings priority)
+4. Trace context verified via `opik_context.get_current_trace_data()` between calls
+5. Fix backward compatible with single-LLM-call agents
+6. Regression tests for 2+ LLM call scenarios
+
+**Estimated Complexity:** Medium-High (2-4 days)
+
+**Dependencies:** Story 5 (implements initial CLI trace context)
+
+**Status:** In Progress - Debug findings documented, root cause investigation needed
+
+---
+
 ## Compatibility Requirements
 
 - [x] Existing `TraceContext` API remains unchanged
@@ -338,3 +367,4 @@ The epic should maintain system integrity while delivering comprehensive Opik ob
 | 2026-01-07 | 1.1 | Status updated from "Draft" to "Complete" - epic implementation verified | Sarah (PO) |
 | 2026-01-12 | 1.2 | Added Story 4 (TEA-BUILTIN-005.4) - Experiment Framework for agent evaluation. Status back to "In Progress" | Sarah (PO) |
 | 2026-01-12 | 1.3 | Added Story 5 (TEA-BUILTIN-005.5) - Opik Agent Graph Visualization for Mermaid export and dashboard integration | Sarah (PO) |
+| 2026-01-12 | 1.4 | Added Story 6 (TEA-BUILTIN-005.6) - Fix multi-LLM trace context propagation issue with documented debug attempts | Claude Opus 4.5 |

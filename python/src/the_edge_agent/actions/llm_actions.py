@@ -59,6 +59,32 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     # Track wrapped clients to prevent double-wrapping
     _opik_wrapped_clients = set()
 
+    def _deep_serialize(obj):
+        """
+        Recursively serialize Pydantic objects and nested structures to plain dicts.
+
+        This prevents PydanticSerializationUnexpectedValue warnings when LiteLLM
+        returns simplified Pydantic models that don't match the full OpenAI schema.
+        """
+        if obj is None:
+            return None
+        if hasattr(obj, "model_dump"):
+            # Pydantic v2 model - serialize and recurse
+            return _deep_serialize(obj.model_dump())
+        if hasattr(obj, "dict") and callable(obj.dict):
+            # Pydantic v1 model - serialize and recurse
+            return _deep_serialize(obj.dict())
+        if isinstance(obj, dict):
+            return {k: _deep_serialize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_deep_serialize(item) for item in obj]
+        # Primitive types (str, int, float, bool, None)
+        return obj
+
+    # Cache wrapped clients by (provider, api_base, project_name) to reuse across calls
+    # This ensures only one track_openai wrapper is created per configuration
+    _opik_client_cache: Dict[tuple, Any] = {}
+
     # Model pricing (per 1K tokens) - as of Dec 2024
     # Used for cost estimation when opik_trace=True
     MODEL_PRICING = {
@@ -536,6 +562,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         base_delay=1.0,
         max_delay=60.0,
         opik_trace=False,
+        opik_project_name=None,
         provider="auto",
         api_base=None,
         timeout=300,
@@ -748,6 +775,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "LiteLLM library not installed. Install with: pip install litellm"
                 )
 
+            # Suppress Pydantic serialization warnings from LiteLLM's internal logging
+            # This is a known issue where LiteLLM's response models don't match OpenAI's
+            # full schema when using providers like Bedrock (TEA-BUILTIN-001.2)
+            import warnings
+
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+
             # Set up Opik callback if requested
             if opik_trace:
                 try:
@@ -779,6 +817,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "base_delay",
                     "max_delay",
                     "opik_trace",
+                    "opik_project_name",
                     "provider",
                     "api_base",
                 )
@@ -787,6 +826,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             # Add api_base if provided
             if api_base:
                 filtered_kwargs["api_base"] = api_base
+
+            # TEA-BUILTIN-005.5: Add opik project_name in metadata for LiteLLM
+            if opik_trace and opik_project_name:
+                existing_metadata = filtered_kwargs.get("metadata", {})
+                if isinstance(existing_metadata, dict):
+                    existing_metadata["opik"] = {"project_name": opik_project_name}
+                    filtered_kwargs["metadata"] = existing_metadata
+                else:
+                    filtered_kwargs["metadata"] = {
+                        "opik": {"project_name": opik_project_name}
+                    }
 
             # Helper to make LiteLLM API call
             def make_litellm_call():
@@ -801,11 +851,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             def build_litellm_result(response, extra_fields=None):
                 usage = {}
                 if hasattr(response, "usage") and response.usage:
-                    usage = (
-                        response.usage.model_dump()
-                        if hasattr(response.usage, "model_dump")
-                        else dict(response.usage)
-                    )
+                    # Deep serialize to avoid Pydantic warnings from nested objects
+                    usage = _deep_serialize(response.usage)
 
                 result = {
                     "content": response.choices[0].message.content,
@@ -930,16 +977,35 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 client = OpenAI(timeout=timeout)
             deployment = model
 
-        # Apply Opik tracing wrapper if requested
+        # TEA-BUILTIN-005.6: Wrap client with track_openai for Opik tracing
+        # This provides rich LLM telemetry (model, tokens, latency) in Opik dashboard
         if opik_trace:
             try:
                 from opik.integrations.openai import track_openai
+                from opik import opik_context
+                import logging
 
-                # Check if client is already wrapped (prevent double-wrapping)
-                client_id = id(client)
-                if client_id not in _opik_wrapped_clients:
-                    client = track_openai(client)
-                    _opik_wrapped_clients.add(id(client))
+                _logger = logging.getLogger(__name__)
+
+                # Debug: Check trace context before wrapping
+                trace_data = opik_context.get_current_trace_data()
+                span_data = opik_context.get_current_span_data()
+                _logger.debug(
+                    f"[OPIK DEBUG llm_call] Before track_openai: "
+                    f"trace={trace_data.id if trace_data else None}, "
+                    f"span={span_data.id if span_data else None}, "
+                    f"project={opik_project_name}"
+                )
+
+                # Wrap client with track_openai
+                client = track_openai(client, project_name=opik_project_name)
+
+                # Debug: Check trace context after wrapping
+                trace_data = opik_context.get_current_trace_data()
+                _logger.debug(
+                    f"[OPIK DEBUG llm_call] After track_openai: "
+                    f"trace={trace_data.id if trace_data else None}"
+                )
             except ImportError:
                 import warnings
 
@@ -964,6 +1030,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "base_delay",
                 "max_delay",
                 "opik_trace",
+                "opik_project_name",
                 "provider",
                 "api_base",
             )
@@ -983,8 +1050,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             return retry_after
 
         # Helper function to make API call
+        # TEA-BUILTIN-005.6: track_openai wrapper handles span creation automatically
         def make_api_call():
-            """Make the actual OpenAI API call."""
+            """Make the OpenAI API call (wrapped by track_openai if opik_trace=True)."""
             return client.chat.completions.create(
                 model=deployment,
                 messages=messages,
@@ -995,11 +1063,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Helper function to build result with optional cost
         def build_result(response, extra_fields=None):
             """Build result dict with optional cost calculation."""
-            usage = (
-                response.usage.model_dump()
-                if hasattr(response.usage, "model_dump")
-                else {}
-            )
+            # Deep serialize to avoid Pydantic warnings from nested objects
+            usage = _deep_serialize(response.usage) if response.usage else {}
             result = {"content": response.choices[0].message.content, "usage": usage}
             # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
             if opik_trace and usage and not is_ollama:
@@ -1121,6 +1186,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         messages,
         temperature=0.7,
         opik_trace=False,
+        opik_project_name=None,
         provider="auto",
         api_base=None,
         timeout=300,
@@ -1242,6 +1308,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         "graph",
                         "parallel_results",
                         "opik_trace",
+                        "opik_project_name",
                         "provider",
                         "api_base",
                     )
@@ -1249,6 +1316,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
                 if api_base:
                     filtered_kwargs["api_base"] = api_base
+
+                # TEA-BUILTIN-005.5: Add opik project_name in metadata for LiteLLM
+                if opik_trace and opik_project_name:
+                    existing_metadata = filtered_kwargs.get("metadata", {})
+                    if isinstance(existing_metadata, dict):
+                        existing_metadata["opik"] = {"project_name": opik_project_name}
+                        filtered_kwargs["metadata"] = existing_metadata
+                    else:
+                        filtered_kwargs["metadata"] = {
+                            "opik": {"project_name": opik_project_name}
+                        }
 
                 # Use LiteLLM streaming
                 stream = litellm.completion(
@@ -1269,13 +1347,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         full_content.append(content)
                         chunk_index += 1
 
-                    # Capture usage if available
+                    # Capture usage if available (deep serialize to avoid Pydantic warnings)
                     if hasattr(chunk, "usage") and chunk.usage is not None:
-                        usage_data = (
-                            chunk.usage.model_dump()
-                            if hasattr(chunk.usage, "model_dump")
-                            else dict(chunk.usage)
-                        )
+                        usage_data = _deep_serialize(chunk.usage)
 
                 result = {
                     "content": "".join(full_content),
@@ -1342,10 +1416,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 try:
                     from opik.integrations.openai import track_openai
 
-                    client_id = id(client)
-                    if client_id not in _opik_wrapped_clients:
-                        client = track_openai(client)
-                        _opik_wrapped_clients.add(id(client))
+                    # TEA-BUILTIN-005.5: Always wrap with track_openai for each call
+                    client = track_openai(client, project_name=opik_project_name)
                 except ImportError:
                     import warnings
 
@@ -1392,13 +1464,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     full_content.append(content)
                     chunk_index += 1
 
-                # Capture usage if available (usually in final chunk)
+                # Capture usage if available (deep serialize to avoid Pydantic warnings)
                 if hasattr(chunk, "usage") and chunk.usage is not None:
-                    usage_data = (
-                        chunk.usage.model_dump()
-                        if hasattr(chunk.usage, "model_dump")
-                        else {}
-                    )
+                    usage_data = _deep_serialize(chunk.usage)
 
             result = {
                 "content": "".join(full_content),
@@ -1491,6 +1559,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         max_tool_rounds=10,
         temperature=0.7,
         opik_trace=False,
+        opik_project_name=None,
         provider="auto",
         api_base=None,
         **kwargs,
@@ -1700,6 +1769,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "tool_choice",
                     "max_tool_rounds",
                     "opik_trace",
+                    "opik_project_name",
                     "provider",
                     "api_base",
                 )
@@ -1707,6 +1777,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             if api_base:
                 filtered_kwargs["api_base"] = api_base
+
+            # TEA-BUILTIN-005.5: Add opik project_name in metadata for LiteLLM
+            if opik_trace and opik_project_name:
+                existing_metadata = filtered_kwargs.get("metadata", {})
+                if isinstance(existing_metadata, dict):
+                    existing_metadata["opik"] = {"project_name": opik_project_name}
+                    filtered_kwargs["metadata"] = existing_metadata
+                else:
+                    filtered_kwargs["metadata"] = {
+                        "opik": {"project_name": opik_project_name}
+                    }
 
             current_messages = list(messages)
             all_tool_calls = []
@@ -1838,10 +1919,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             try:
                 from opik.integrations.openai import track_openai
 
-                client_id = id(client)
-                if client_id not in _opik_wrapped_clients:
-                    client = track_openai(client)
-                    _opik_wrapped_clients.add(id(client))
+                # TEA-BUILTIN-005.5: Always wrap with track_openai for each call
+                client = track_openai(client, project_name=opik_project_name)
             except ImportError:
                 import warnings
 

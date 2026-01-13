@@ -812,6 +812,18 @@ class NodeFactory:
             ):
                 if "opik_trace" not in processed_params and engine_opik_llm_tracing:
                     processed_params["opik_trace"] = True
+                    # TEA-BUILTIN-005.5: Inject project_name for trace context inheritance
+                    # Use raw YAML settings (not resolved config) to match CLI behavior
+                    # This ensures LLM spans use the same project as the parent trace
+                    if "opik_project_name" not in processed_params:
+                        engine_config = getattr(engine, "_config", {})
+                        project_name = (
+                            engine_config.get("settings", {})
+                            .get("opik", {})
+                            .get("project_name")
+                        )
+                        if project_name:
+                            processed_params["opik_project_name"] = project_name
 
                 # Inject default LLM settings from settings.llm section
                 # Only inject if not explicitly provided in node's with: block

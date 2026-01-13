@@ -311,6 +311,79 @@ None - no refactoring needed.
 
 All acceptance criteria met, comprehensive test coverage, clean implementation following existing patterns.
 
+## Post-Release Fixes
+
+### Fix: CLI Trace Context for Nested LLM Spans (2026-01-12)
+
+**Issue:** When using `tea run` CLI with Opik enabled, the agent graph was displayed correctly but LLM calls were not nested as child spans under the parent trace. They appeared in a separate project instead.
+
+**Root Cause:** The original implementation used `opik_context.update_current_trace()` which requires an active trace context. However, the trace was created with `client.trace()` which doesn't establish a context for child spans.
+
+**Solution:** Changed to use `opik.start_as_current_trace()` as a context manager:
+- Enter the context with `__enter__()` before agent execution
+- Exit the context in `finally` block with `__exit__(*exc_info)`
+- This ensures all LLM calls made during agent execution become child spans
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `python/src/the_edge_agent/cli.py` | Use `start_as_current_trace()` context manager pattern |
+
+**Verification:**
+- LLM calls now appear nested under parent trace in Opik UI
+- "Show Agent Graph" button works correctly
+- All traces appear in the configured project
+
+### Fix: LLM Trace Project Name Inheritance (2026-01-12)
+
+**Issue:** LLM calls were going to a different Opik project (e.g., "firm_research" from OPIK_PROJECT_NAME env var) instead of the project configured in the YAML agent's `settings.opik.project_name`. This caused traces to be split across projects.
+
+**Root Cause:** The `track_openai` wrapper and LiteLLM `OpikLogger` callback weren't receiving the project name from the YAML agent settings. They were falling back to environment variables.
+
+**Solution:** Pass `opik_project_name` from engine settings to LLM actions:
+1. `yaml_nodes.py`: When injecting `opik_trace=True`, also inject `opik_project_name` from raw YAML settings
+2. `llm_actions.py`: Accept `opik_project_name` parameter in `llm_call`, `llm_stream`, `llm_tools`
+3. Pass `project_name` to `track_openai(client, project_name=opik_project_name)`
+4. For LiteLLM, add `metadata={"opik": {"project_name": opik_project_name}}` to completion calls
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `python/src/the_edge_agent/yaml_nodes.py` | Inject `opik_project_name` when enabling opik_trace |
+| `python/src/the_edge_agent/actions/llm_actions.py` | Add `opik_project_name` parameter, pass to track_openai and LiteLLM metadata |
+
+**Verification:**
+- All LLM calls appear nested under the parent trace in Opik UI
+- No warnings about project name mismatch
+- Trace hierarchy is correctly maintained
+
+### Fix: Project Name Precedence for LLM Tracing (2026-01-12)
+
+**Issue:** When `OPIK_PROJECT_NAME` env var was set (e.g., "firm_research"), LLM calls would still attempt to use that project instead of the YAML-configured project, causing the second LLM call to create a new trace instead of nesting.
+
+**Root Cause:** The `yaml_nodes.py` injection used `engine._opik_config` which resolves with env var priority (env var > YAML settings). This meant LLM spans used "firm_research" (env var) while the CLI parent trace used "rankellix-analyst-system" (raw YAML).
+
+**Solution:** Changed `yaml_nodes.py` to use raw YAML settings like the CLI does:
+```python
+# Before (resolved config with env var priority):
+opik_config = getattr(engine, "_opik_config", {})
+project_name = opik_config.get("project_name")
+
+# After (raw YAML settings like CLI):
+engine_config = getattr(engine, "_config", {})
+project_name = engine_config.get("settings", {}).get("opik", {}).get("project_name")
+```
+
+**Files Modified:**
+| File | Change |
+|------|--------|
+| `python/src/the_edge_agent/yaml_nodes.py` | Use raw YAML settings instead of resolved `_opik_config` |
+
+**Verification:**
+- Multiple LLM calls now properly nest under parent trace
+- No "Started logging traces" for subsequent LLM calls
+- Single trace with all LLM calls as child spans
+
 ## Change Log
 
 | Date | Version | Description | Author |
@@ -320,3 +393,6 @@ All acceptance criteria met, comprehensive test coverage, clean implementation f
 | 2026-01-12 | 0.3 | Implementation complete, ready for review | James (Dev Agent) |
 | 2026-01-12 | 0.4 | QA review complete - PASS | Quinn (QA Agent) |
 | 2026-01-12 | 0.5 | Story status updated to Done | Bob (SM Agent) |
+| 2026-01-12 | 0.6 | Post-release fix: CLI trace context for nested LLM spans | Claude Opus 4.5 |
+| 2026-01-12 | 0.7 | Post-release fix: LLM trace project name inheritance | Claude Opus 4.5 |
+| 2026-01-12 | 0.8 | Post-release fix: Project name precedence for LLM tracing (use raw YAML settings) | Claude Opus 4.5 |

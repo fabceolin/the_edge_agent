@@ -903,37 +903,88 @@ def run(
     checkpoint_path = None
     previous_node = None  # Track for --show-graph state transitions
 
-    # TEA-BUILTIN-005.5: Generate and attach Opik agent graph
+    # TEA-BUILTIN-005.5: Generate Mermaid graph for Opik visualization
+    # Graph is attached to the Opik trace if enabled in YAML settings
+    # Using start_as_current_trace() so LLM calls become child spans
+    from contextlib import nullcontext
+
     mermaid_graph = None
+    opik_context_manager = nullcontext()  # Default: no-op context
+    opik_enabled = False
+
     try:
         mermaid_graph = engine.get_mermaid_graph()
         if mermaid_graph:
             logging.getLogger(__name__).debug(
                 "Generated Mermaid graph for Opik visualization"
             )
+            # Check if Opik is configured in YAML settings
+            engine_config = getattr(engine, "_config", {})
+            opik_settings = engine_config.get("settings", {}).get("opik", {})
+            if opik_settings.get("enabled", False):
+                try:
+                    import opik
+
+                    # Use start_as_current_trace so all LLM calls become children
+                    project_name = opik_settings.get("project_name", "default")
+                    trace_name = engine_config.get("name", str(file))
+                    opik_context_manager = opik.start_as_current_trace(
+                        name=trace_name,
+                        project_name=project_name,
+                        metadata={
+                            "_opik_graph_definition": {
+                                "format": "mermaid",
+                                "data": mermaid_graph,
+                            }
+                        },
+                    )
+                    opik_enabled = True
+                    logging.getLogger(__name__).debug(
+                        f"Opik tracing enabled for project: {project_name}"
+                    )
+                except ImportError:
+                    pass  # Opik not installed
+                except Exception as e:
+                    logging.getLogger(__name__).debug(
+                        f"Could not create Opik trace context: {e}"
+                    )
     except Exception as e:
         logging.getLogger(__name__).debug(f"Could not generate Mermaid graph: {e}")
 
-    # Attach graph to Opik trace if available
-    if mermaid_graph:
+    # TEA-BUILTIN-005.5: Enter opik context if enabled (exit in finally block)
+    # TEA-BUILTIN-005.6: Also create a wrapper span to keep span stack non-empty
+    # This prevents the trace from being popped when individual LLM spans end
+    opik_trace = None
+    opik_wrapper_span = None
+    if opik_enabled:
         try:
-            from opik import opik_context
+            opik_trace = opik_context_manager.__enter__()
+            # TEA-BUILTIN-005.6: Create wrapper span to prevent trace context loss
+            # When track_openai spans end, they check if span stack is empty.
+            # If empty, the trace is popped (Opik SDK behavior).
+            # By keeping a wrapper span active, the stack is never empty.
+            from opik import context_storage
+            from opik.api_objects import span as opik_span
+            from opik import datetime_helpers
+            from opik.api_objects import helpers as opik_helpers
 
-            opik_context.update_current_trace(
-                metadata={
-                    "_opik_graph_definition": {
-                        "format": "mermaid",
-                        "data": mermaid_graph,
-                    }
-                }
+            wrapper_span_data = opik_span.SpanData(
+                id=opik_helpers.generate_id(),
+                trace_id=opik_trace.id,
+                parent_span_id=None,
+                start_time=datetime_helpers.local_timestamp(),
+                name=f"{trace_name}_execution",
+                type="general",
+                metadata={"_tea_wrapper_span": True},
+                project_name=project_name,
             )
-            logging.getLogger(__name__).debug("Attached Mermaid graph to Opik trace")
-        except ImportError:
-            pass  # Opik not installed, skip gracefully
-        except Exception as e:
+            context_storage.add_span_data(wrapper_span_data)
+            opik_wrapper_span = wrapper_span_data
             logging.getLogger(__name__).debug(
-                f"Could not attach graph to Opik trace: {e}"
+                f"Created Opik wrapper span to preserve trace context: {wrapper_span_data.id}"
             )
+        except Exception as e:
+            logging.getLogger(__name__).debug(f"Could not enter Opik context: {e}")
 
     try:
         while True:
@@ -1152,6 +1203,47 @@ def run(
     except KeyboardInterrupt:
         typer.echo("\n\nExecution interrupted by user (Ctrl+C)", err=True)
         raise typer.Exit(130)
+    finally:
+        # TEA-BUILTIN-005.5: Exit Opik context if we entered one
+        if opik_enabled and opik_context_manager is not None:
+            try:
+                # TEA-BUILTIN-005.6: End and log wrapper span before exiting trace
+                if opik_wrapper_span is not None:
+                    try:
+                        from opik import context_storage, datetime_helpers
+                        from opik.api_objects import opik_client
+
+                        # Pop wrapper span from context stack
+                        context_storage.pop_span_data(ensure_id=opik_wrapper_span.id)
+
+                        # Set end time and log span to Opik
+                        opik_wrapper_span.init_end_time()
+                        client = opik_client.get_client_cached()
+                        client.span(**opik_wrapper_span.as_parameters)
+                        logging.getLogger(__name__).debug(
+                            f"Ended Opik wrapper span: {opik_wrapper_span.id}"
+                        )
+                    except Exception as span_err:
+                        logging.getLogger(__name__).debug(
+                            f"Could not end Opik wrapper span: {span_err}"
+                        )
+
+                # Flush Opik to ensure all spans are uploaded before trace ends
+                try:
+                    import opik
+
+                    opik.flush()
+                    logging.getLogger(__name__).debug("Flushed Opik spans")
+                except Exception as flush_err:
+                    logging.getLogger(__name__).debug(
+                        f"Could not flush Opik: {flush_err}"
+                    )
+
+                exc_info = sys.exc_info()
+                opik_context_manager.__exit__(*exc_info)
+                logging.getLogger(__name__).debug("Exited Opik trace context")
+            except Exception as e:
+                logging.getLogger(__name__).debug(f"Could not exit Opik context: {e}")
 
 
 @app.command()

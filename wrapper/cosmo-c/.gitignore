@@ -1,0 +1,19 @@
+# Cosmopolitan toolchain (downloaded during build)
+cosmocc/
+cosmocc.zip
+
+# Build artifacts
+tea.com
+tea.exe
+tea.aarch64.elf
+*.dbg
+*.o
+
+# Platform-specific directories from cosmocc extraction
+aarch64-linux-cosmo/
+x86_64-linux-cosmo/
+bin/
+include/
+lib/
+libexec/
+LICENSE.*
