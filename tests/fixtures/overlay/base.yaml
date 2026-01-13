@@ -1,0 +1,23 @@
+name: test-agent
+description: Base agent for overlay testing
+
+settings:
+  ltm:
+    backend: sqlite
+    path: /tmp/tea_memory/
+  model: gpt-4o-mini
+  temperature: 0.7
+
+variables:
+  greeting: hello
+
+nodes:
+  - name: process
+    run: |
+      return {"result": state.get("input", "").upper()}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

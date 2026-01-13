@@ -1,0 +1,9 @@
+# Overlay that changes settings only
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: firestore
+    storage:
+      uri: gs://my-bucket/ltm/
+  model: gpt-4o

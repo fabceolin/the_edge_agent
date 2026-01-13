@@ -25,6 +25,7 @@ use the_edge_agent::actions;
 use the_edge_agent::engine::checkpoint::{Checkpointer, FileCheckpointer};
 use the_edge_agent::engine::executor::{ExecutionOptions, Executor};
 use the_edge_agent::engine::yaml::YamlEngine;
+use the_edge_agent::report::install_panic_hook;
 use the_edge_agent::{TeaError, YamlConfig};
 
 /// Implementation identifier for CLI parity (TEA-CLI-004)
@@ -146,6 +147,40 @@ enum Commands {
         /// Overrides YAML settings.max_iterations
         #[arg(long)]
         max_iterations: Option<usize>,
+
+        /// YE.8: Overlay YAML file(s) to merge with base. Applied in order (last wins).
+        #[arg(short = 'f', long = "overlay")]
+        overlay: Option<Vec<PathBuf>>,
+
+        /// YE.8: Output merged YAML to stdout without executing
+        #[arg(long)]
+        dump_merged: bool,
+
+        /// TEA-CLI-001: Path to GGUF model file for local LLM inference.
+        /// Overrides TEA_MODEL_PATH and YAML settings.llm.model_path.
+        #[arg(long)]
+        gguf: Option<PathBuf>,
+
+        /// TEA-CLI-001: LLM backend selection: local, api, or auto.
+        /// Overrides YAML settings.llm.backend.
+        #[arg(long)]
+        backend: Option<String>,
+
+        /// TEA-REPORT-001d: Generate bug report URL on errors (default: enabled)
+        #[arg(long, default_value = "true")]
+        report_bugs: bool,
+
+        /// TEA-REPORT-001d: Disable bug report URL generation
+        #[arg(long)]
+        no_report_bugs: bool,
+
+        /// TEA-REPORT-001d: Auto-include extended context in bug reports
+        #[arg(long)]
+        report_extended: bool,
+
+        /// TEA-REPORT-001d: Skip extended context prompt (minimal report only)
+        #[arg(long)]
+        report_minimal: bool,
     },
 
     /// Resume execution from a checkpoint
@@ -246,6 +281,9 @@ enum FromSource {
 }
 
 fn main() -> Result<()> {
+    // TEA-REPORT-001a: Install panic hook for error capture
+    install_panic_hook();
+
     let cli = Cli::parse();
 
     // Handle --impl flag (TEA-CLI-004)
@@ -304,6 +342,14 @@ fn main() -> Result<()> {
             input_timeout,
             allow_cycles,
             max_iterations,
+            overlay,
+            dump_merged,
+            gguf,
+            backend,
+            report_bugs,
+            no_report_bugs,
+            report_extended,
+            report_minimal,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -316,6 +362,57 @@ fn main() -> Result<()> {
                 eprintln!("Hint: Use the Python implementation for action plugins");
                 std::process::exit(1);
             }
+
+            // TEA-REPORT-001d: Validate mutually exclusive report flags
+            if report_extended && report_minimal {
+                eprintln!("Error: --report-extended and --report-minimal are mutually exclusive");
+                std::process::exit(1);
+            }
+
+            // TEA-REPORT-001d: Configure bug report options
+            let report_enabled = report_bugs && !no_report_bugs;
+            the_edge_agent::report::cli::configure(report_enabled, report_extended, report_minimal);
+
+            // TEA-CLI-001: Validate and process --backend parameter
+            let cli_backend: Option<String> = if let Some(ref b) = backend {
+                let b_lower = b.to_lowercase();
+                if !["local", "api", "auto"].contains(&b_lower.as_str()) {
+                    eprintln!(
+                        "Error: --backend must be one of: local, api, auto. Got: {}",
+                        b
+                    );
+                    std::process::exit(1);
+                }
+                Some(b_lower)
+            } else {
+                None
+            };
+
+            // TEA-CLI-001: Validate and expand --gguf path
+            let cli_model_path: Option<PathBuf> = if let Some(ref gguf_path) = gguf {
+                // Expand ~ and environment variables using shellexpand
+                let path_str = gguf_path.to_string_lossy();
+                let expanded = shellexpand::full(&path_str)
+                    .map(|s| PathBuf::from(s.into_owned()))
+                    .unwrap_or_else(|_| gguf_path.clone());
+
+                // Validate file exists
+                if !expanded.exists() {
+                    eprintln!("Error: GGUF file not found: {}", expanded.display());
+                    std::process::exit(1);
+                }
+
+                Some(expanded)
+            } else {
+                None
+            };
+
+            // AC-5: --gguf implies --backend local unless explicitly specified
+            let effective_backend = if cli_model_path.is_some() && cli_backend.is_none() {
+                Some("local".to_string())
+            } else {
+                cli_backend
+            };
 
             run_workflow(
                 file,
@@ -338,6 +435,10 @@ fn main() -> Result<()> {
                 input_timeout,
                 allow_cycles,
                 max_iterations,
+                overlay,
+                dump_merged,
+                cli_model_path,
+                effective_backend,
             )
         }
 
@@ -410,7 +511,69 @@ fn run_workflow(
     input_timeout: Option<u64>,
     allow_cycles: bool,
     max_iterations: Option<usize>,
+    overlay: Option<Vec<PathBuf>>,
+    dump_merged: bool,
+    // TEA-CLI-001: CLI overrides for LLM model
+    _cli_model_path: Option<PathBuf>,
+    _cli_backend: Option<String>,
 ) -> Result<()> {
+    use the_edge_agent::engine::deep_merge::merge_all;
+
+    // YE.8: Handle overlay merging and --dump-merged
+    // Compute the YAML content to use (merged or original file)
+    let yaml_content: Option<String> = if overlay.is_some() || dump_merged {
+        // Load base YAML
+        let base_content =
+            fs::read_to_string(&file).context(format!("Failed to read base file {:?}", file))?;
+        let base_value: serde_yaml::Value = serde_yaml::from_str(&base_content)
+            .context(format!("Invalid YAML in base file {:?}", file))?;
+
+        // Collect configs to merge
+        let mut configs = vec![base_value];
+
+        // Load overlay files
+        if let Some(overlay_paths) = &overlay {
+            for overlay_path in overlay_paths {
+                if !overlay_path.exists() {
+                    eprintln!(
+                        "Error: Overlay file not found: {:?}",
+                        overlay_path.canonicalize().unwrap_or(overlay_path.clone())
+                    );
+                    std::process::exit(1);
+                }
+                let overlay_content = fs::read_to_string(overlay_path)
+                    .context(format!("Failed to read overlay file {:?}", overlay_path))?;
+                let overlay_value: serde_yaml::Value = serde_yaml::from_str(&overlay_content)
+                    .context(format!("Invalid YAML in overlay file {:?}", overlay_path))?;
+
+                // Handle empty YAML files (null) as empty mapping
+                let overlay_value = if overlay_value.is_null() {
+                    serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+                } else {
+                    overlay_value
+                };
+
+                configs.push(overlay_value);
+            }
+        }
+
+        // Merge all configs
+        let merged = merge_all(configs);
+
+        // Handle --dump-merged: output and exit
+        if dump_merged {
+            let yaml_output =
+                serde_yaml::to_string(&merged).context("Failed to serialize merged YAML")?;
+            print!("{}", yaml_output);
+            return Ok(());
+        }
+
+        // Return merged YAML string
+        Some(serde_yaml::to_string(&merged)?)
+    } else {
+        None
+    };
+
     // Load workflow
     let mut engine = YamlEngine::new();
 
@@ -421,9 +584,16 @@ fn run_workflow(
         tracing::debug!("Loaded {} secrets", engine.secrets().len());
     }
 
-    let mut graph = engine
-        .load_from_file(&file)
-        .context(format!("Failed to load workflow from {:?}", file))?;
+    // Load graph from merged content or file
+    let mut graph = if let Some(content) = yaml_content {
+        engine
+            .load_from_string(&content)
+            .context("Failed to load merged workflow")?
+    } else {
+        engine
+            .load_from_file(&file)
+            .context(format!("Failed to load workflow from {:?}", file))?
+    };
 
     // TEA-RUST-044: Apply CLI cycle overrides (CLI takes precedence over YAML settings)
     if allow_cycles {

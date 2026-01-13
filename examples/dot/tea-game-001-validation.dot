@@ -1,0 +1,78 @@
+// TEA-GAME-001: Know Your Model - Story Validation Workflow
+// Maximized parallelization based on story dependencies
+// Uses: bmad-story-validation.yaml
+
+digraph tea_game_001_validation {
+    rankdir=TB;
+    node [shape=box];
+
+    Start [label="Start", shape=ellipse];
+    End [label="End", shape=ellipse];
+
+    // Phase 1: Foundation - Story 1 has no dependencies
+    subgraph cluster_phase1 {
+        label="1. Foundation";
+        story_1 [label="TEA-GAME-001.1", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.1-rust-game-engine-core.md\"}'"];
+    }
+
+    // Phase 2: Parallel Track A - Stories 2, 4, 8 depend only on Story 1
+    subgraph cluster_phase2 {
+        label="2. Parallel Track A";
+        story_2 [label="TEA-GAME-001.2", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.2-duckdb-schema-persistence.md\"}'"];
+        story_4 [label="TEA-GAME-001.4", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.4-llm-phrase-generation.md\"}'"];
+        story_8 [label="TEA-GAME-001.8", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.8-opik-integration.md\"}'"];
+    }
+
+    // Phase 3: Embeddings - Story 3 depends on Story 2
+    subgraph cluster_phase3 {
+        label="3. Embeddings";
+        story_3 [label="TEA-GAME-001.3", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.3-word-embedding-similarity.md\"}'"];
+    }
+
+    // Phase 4: Orchestration - Story 5 depends on Stories 1, 2, 3, 4
+    subgraph cluster_phase4 {
+        label="4. Orchestration";
+        story_5 [label="TEA-GAME-001.5", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.5-game-round-orchestration.md\"}'"];
+    }
+
+    // Phase 5: WASM Port - Story 6 depends on Story 5
+    subgraph cluster_phase5 {
+        label="5. WASM Port";
+        story_6 [label="TEA-GAME-001.6", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.6-wasm-port-js-bridge.md\"}'"];
+    }
+
+    // Phase 6: Browser UI - Story 7 depends on Story 6
+    subgraph cluster_phase6 {
+        label="6. Browser UI";
+        story_7 [label="TEA-GAME-001.7", command="tea-python run examples/workflows/bmad-story-validation.yaml --input-timeout 54000 --input '{\"arg\": \"docs/stories/TEA-GAME-001.7-browser-ui.md\"}'"];
+    }
+
+    // Edge definitions - execution order based on dependencies
+
+    // Phase 1 starts from Start
+    Start -> story_1;
+
+    // Phase 2: Stories 2, 4, 8 run in parallel after Story 1
+    story_1 -> story_2;
+    story_1 -> story_4;
+    story_1 -> story_8;
+
+    // Phase 3: Story 3 depends on Story 2
+    story_2 -> story_3;
+
+    // Phase 4: Story 5 depends on Stories 3 and 4 (and transitively 1, 2)
+    story_3 -> story_5;
+    story_4 -> story_5;
+
+    // Story 8 completes independently, joins at End
+    story_8 -> End;
+
+    // Phase 5: Story 6 depends on Story 5
+    story_5 -> story_6;
+
+    // Phase 6: Story 7 depends on Story 6
+    story_6 -> story_7;
+
+    // Final convergence
+    story_7 -> End;
+}

@@ -102,6 +102,9 @@
 pub mod actions;
 pub mod engine;
 mod error;
+#[cfg(feature = "scryer")]
+pub mod prolog;
+pub mod report;
 
 // Re-exports
 pub use engine::checkpoint::{Checkpoint, Checkpointer, FileCheckpointer};
@@ -112,6 +115,10 @@ pub use engine::executor::{
 pub use engine::graph::{CompiledGraph, Edge, EdgeType, Node, NodeType, StateGraph};
 pub use engine::yaml::{RateLimiterConfig, SettingsConfig, YamlConfig, YamlEngine};
 pub use error::{TeaError, TeaResult};
+
+// Scryer Prolog runtime (TEA-RELEASE-005.1)
+#[cfg(feature = "scryer")]
+pub use prolog::ScryerRuntime;
 
 /// Special constant for the END node
 pub const END: &str = "__end__";

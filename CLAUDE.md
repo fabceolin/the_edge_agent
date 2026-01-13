@@ -48,6 +48,7 @@ the_edge_agent/
 | **Python Getting Started** | [`docs/python/getting-started.md`](docs/python/getting-started.md) |
 | **Python Dev Guide** | [`docs/python/development-guide.md`](docs/python/development-guide.md) |
 | **Python Actions** | [`docs/python/actions-reference.md`](docs/python/actions-reference.md) |
+| **Experiments Guide** | [`docs/python/experiments-guide.md`](docs/python/experiments-guide.md) |
 | **Rust Getting Started** | [`docs/rust/getting-started.md`](docs/rust/getting-started.md) |
 | **Rust Dev Guide** | [`docs/rust/development-guide.md`](docs/rust/development-guide.md) |
 | **Rust Actions** | [`docs/rust/actions-reference.md`](docs/rust/actions-reference.md) |
@@ -161,6 +162,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 |---------|----------|---------|
 | **sqlite** (default) | Local development, single-node | Built-in |
 | **duckdb** | Analytics-heavy, catalog-aware, cloud storage | `pip install duckdb fsspec` |
+| **ducklake** | DuckDB with sensible defaults (TEA-LTM-010) | `pip install duckdb fsspec` |
 | **litestream** | SQLite with S3 replication | `pip install litestream` |
 | **blob-sqlite** | Distributed with blob storage | `pip install fsspec` |
 
@@ -169,6 +171,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 | Catalog | Use Case | Install |
 |---------|----------|---------|
 | **sqlite** (default) | Local, development | Built-in |
+| **duckdb** | Single-file, shared connection | `pip install duckdb` |
 | **firestore** | Serverless, Firebase ecosystem | `pip install firebase-admin` |
 | **postgres** | Self-hosted, SQL compatibility | `pip install psycopg2` |
 | **supabase** | Edge, REST API, managed Postgres | `pip install requests` |
@@ -188,6 +191,51 @@ settings:
     lazy: true
 ```
 
+#### Ducklake Backend (TEA-LTM-010)
+
+The `ducklake` backend is an alias that expands to DuckDB with sensible defaults:
+
+```yaml
+settings:
+  ltm:
+    backend: ducklake  # Expands to duckdb with defaults below
+    # Defaults applied:
+    # catalog.type: sqlite
+    # catalog.path: ./ltm_catalog.db
+    # storage.uri: ./ltm_data/
+    # lazy: true
+    # inline_threshold: 4096
+```
+
+Override any default by specifying it explicitly:
+
+```yaml
+settings:
+  ltm:
+    backend: ducklake
+    catalog:
+      type: firestore
+      project_id: my-project
+    storage:
+      uri: gs://my-bucket/ltm/
+```
+
+#### Shared DuckDB Catalog (TEA-LTM-011)
+
+For a fully self-contained single-file solution, use the DuckDB catalog with shared mode:
+
+```yaml
+settings:
+  ltm:
+    backend: duckdb
+    catalog:
+      type: duckdb
+      shared: true  # Uses same DB as storage
+    storage:
+      uri: "./ltm.duckdb"  # Single DuckDB file
+    inline_threshold: 1024
+```
+
 ### Factory Functions
 
 ```python
@@ -195,6 +243,7 @@ from the_edge_agent.memory import (
     create_ltm_backend,
     create_catalog_backend,
     expand_env_vars,
+    expand_ltm_config,
 )
 
 # Create DuckDB backend with SQLite catalog
@@ -207,4 +256,70 @@ backend = create_ltm_backend(
 
 # Create catalog directly
 catalog = create_catalog_backend("sqlite", path="./catalog.db")
+
+# Create DuckDB catalog (TEA-LTM-011)
+duckdb_catalog = create_catalog_backend("duckdb", path="./catalog.duckdb")
+
+# Expand ducklake config without creating backend (TEA-LTM-010)
+config = expand_ltm_config({"ltm": {"backend": "ducklake"}})
+# config["backend"] == "duckdb"
+# config["catalog"]["type"] == "sqlite"
 ```
+
+## Experiment Framework (TEA-BUILTIN-005.4)
+
+TEA provides an experiment framework for systematically evaluating agents using [Comet Opik](https://www.comet.com/docs/opik/).
+
+### Installation
+
+```bash
+pip install the-edge-agent[experiments]
+```
+
+### Quick Example
+
+```python
+from the_edge_agent.experiments import (
+    run_tea_experiment,
+    create_dataset_from_list,
+    BaseTeaMetric,
+    f1_score,
+)
+
+# Create dataset
+create_dataset_from_list("test_cases", [
+    {"input": {"text": "..."}, "expected_output": {"result": "..."}},
+])
+
+# Define metric
+class AccuracyMetric(BaseTeaMetric):
+    name = "accuracy"
+    def score(self, output, expected_output=None, **kwargs):
+        match = output.get("result") == expected_output.get("result")
+        return self.make_result(1.0 if match else 0.0)
+
+# Run experiment
+run_tea_experiment(
+    agent_yaml="agent.yaml",
+    dataset_name="test_cases",
+    metrics=[AccuracyMetric()],
+    experiment_name="agent_v1.0",
+)
+```
+
+### Scoring Helpers
+
+| Function | Description |
+|----------|-------------|
+| `jaccard_similarity(set_a, set_b)` | Intersection over union (0.0-1.0) |
+| `f1_score(actual, expected)` | Harmonic mean of precision/recall |
+| `completeness_score(filled, total)` | Ratio of filled to total |
+
+### CLI Usage
+
+```bash
+tea-experiments --agent agent.yaml --dataset test_cases --version 1.0
+tea-experiments --agent agent.yaml --dataset test_cases --dry-run
+```
+
+For full documentation, see [`docs/python/experiments-guide.md`](docs/python/experiments-guide.md).

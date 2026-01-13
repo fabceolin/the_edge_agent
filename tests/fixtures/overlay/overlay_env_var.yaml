@@ -1,0 +1,4 @@
+# Overlay with environment variable substitution
+settings:
+  api_key: ${TEST_API_KEY:-default_key}
+  endpoint: ${TEST_ENDPOINT}

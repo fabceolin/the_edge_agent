@@ -1,0 +1,14 @@
+{
+    "version": "0.9.34",
+    "platform": "linux-x86_64",
+    "runtime": "rust",
+    "error_type": "YamlError",
+    "message": "YAML parse error at line 15: expected ':' after key",
+    "stack": [
+        {"addr": 8888, "symbol": "yaml::parse", "file": "src/yaml.rs", "line": 200}
+    ],
+    "context": {
+        "node_name": "parse_config",
+        "action_type": "file.read"
+    }
+}

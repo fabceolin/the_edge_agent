@@ -29,7 +29,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 use crate::engine::graph::RetryConfig;
-use crate::engine::observability::ObsConfig;
+use crate::engine::observability::{ObsConfig, OpikConfig};
 
 /// YAML configuration for a workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +117,21 @@ pub struct SettingsConfig {
     /// ```
     #[serde(default)]
     pub llm: Option<LlmConfig>,
+
+    /// Opik observability configuration (TEA-OBS-002)
+    ///
+    /// Configure Opik tracing for LLM calls:
+    /// ```yaml
+    /// settings:
+    ///   opik:
+    ///     project_name: my-agent
+    ///     workspace: my-workspace
+    /// ```
+    ///
+    /// Note: Requires OPIK_API_KEY environment variable to be set.
+    /// If present with env var, auto-registers OpikHandler.
+    #[serde(default)]
+    pub opik: Option<OpikConfig>,
 }
 
 /// LLM backend configuration (TEA-RELEASE-004.4)
@@ -551,5 +566,39 @@ mod tests {
         assert!(config.backend.is_none());
         assert!(config.model_path.is_none());
         assert!(config.n_ctx.is_none());
+    }
+
+    #[test]
+    fn test_opik_config_in_settings() {
+        let yaml = r#"
+            opik:
+              project_name: my-agent
+              workspace: my-workspace
+              batch_size: 5
+        "#;
+
+        let config: SettingsConfig = serde_yaml::from_str(yaml).unwrap();
+        let opik = config.opik.unwrap();
+        assert_eq!(opik.project_name, Some("my-agent".to_string()));
+        assert_eq!(opik.workspace, Some("my-workspace".to_string()));
+        assert_eq!(opik.batch_size, Some(5));
+    }
+
+    #[test]
+    fn test_full_workflow_with_opik() {
+        let yaml = r#"
+            name: test-workflow
+            settings:
+              opik:
+                project_name: test-project
+            nodes:
+              - name: step1
+                run: return {}
+        "#;
+
+        let config: YamlConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.name, "test-workflow");
+        let opik = config.settings.unwrap().opik.unwrap();
+        assert_eq!(opik.project_name, Some("test-project".to_string()));
     }
 }

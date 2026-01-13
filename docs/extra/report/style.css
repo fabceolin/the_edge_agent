@@ -1,0 +1,699 @@
+/**
+ * TEA Report Viewer Styles - TEA-REPORT-001c
+ *
+ * Responsive, mobile-friendly design with dark mode support.
+ */
+
+/* ============================================================================
+   CSS Variables - Light Mode (Default)
+   ============================================================================ */
+
+:root {
+    /* Colors */
+    --bg-color: #ffffff;
+    --bg-secondary: #f8f9fa;
+    --text-color: #1a1a1a;
+    --text-secondary: #6c757d;
+    --code-bg: #f5f5f5;
+    --border-color: #dee2e6;
+
+    /* Brand Colors */
+    --primary-color: #0066cc;
+    --primary-hover: #0052a3;
+    --success-color: #28a745;
+    --error-color: #dc3545;
+    --warning-color: #ffc107;
+
+    /* Badge Colors */
+    --badge-bg: #e9ecef;
+    --badge-text: #495057;
+    --badge-version-bg: #cfe2ff;
+    --badge-version-text: #084298;
+    --badge-platform-bg: #d1e7dd;
+    --badge-platform-text: #0f5132;
+    --badge-runtime-bg: #fff3cd;
+    --badge-runtime-text: #664d03;
+    --badge-error-bg: #f8d7da;
+    --badge-error-text: #842029;
+
+    /* Stack Trace */
+    --stack-highlight: #fffbeb;
+    --stack-border: #e5e7eb;
+
+    /* Issue States */
+    --issue-open-bg: #d1e7dd;
+    --issue-open-text: #0f5132;
+    --issue-closed-bg: #e9ecef;
+    --issue-closed-text: #6c757d;
+
+    /* Spacing */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+
+    /* Typography */
+    --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.5rem;
+
+    /* Borders */
+    --border-radius-sm: 0.25rem;
+    --border-radius: 0.5rem;
+    --border-radius-lg: 1rem;
+    --border-radius-full: 9999px;
+}
+
+/* ============================================================================
+   Dark Mode
+   ============================================================================ */
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-color: #1a1a1a;
+        --bg-secondary: #2d2d2d;
+        --text-color: #e0e0e0;
+        --text-secondary: #a0a0a0;
+        --code-bg: #2d2d2d;
+        --border-color: #404040;
+
+        --primary-color: #58a6ff;
+        --primary-hover: #79b8ff;
+
+        --badge-bg: #404040;
+        --badge-text: #c0c0c0;
+        --badge-version-bg: #1e3a5f;
+        --badge-version-text: #79b8ff;
+        --badge-platform-bg: #1a3d2e;
+        --badge-platform-text: #3fb950;
+        --badge-runtime-bg: #3d3414;
+        --badge-runtime-text: #f0c674;
+        --badge-error-bg: #4d1f24;
+        --badge-error-text: #f85149;
+
+        --stack-highlight: #2d2a1a;
+        --stack-border: #404040;
+
+        --issue-open-bg: #1a3d2e;
+        --issue-open-text: #3fb950;
+        --issue-closed-bg: #343a40;
+        --issue-closed-text: #8b949e;
+    }
+}
+
+/* ============================================================================
+   Base Styles
+   ============================================================================ */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-base);
+    line-height: 1.6;
+    color: var(--text-color);
+    background-color: var(--bg-color);
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+}
+
+/* ============================================================================
+   Layout
+   ============================================================================ */
+
+#app {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: var(--spacing-md);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+}
+
+header h1 {
+    margin: 0 0 var(--spacing-sm) 0;
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+}
+
+main {
+    flex: 1;
+}
+
+footer {
+    margin-top: var(--spacing-xl);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-color);
+    text-align: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+footer a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+footer a:hover {
+    text-decoration: underline;
+}
+
+/* ============================================================================
+   Privacy Notice
+   ============================================================================ */
+
+.privacy-notice {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--border-radius);
+    margin: 0;
+}
+
+/* ============================================================================
+   Loading & Error States
+   ============================================================================ */
+
+#loading,
+#error {
+    text-align: center;
+    padding: var(--spacing-xl);
+}
+
+#loading {
+    color: var(--text-secondary);
+}
+
+#loading::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 40px;
+    margin: 0 auto var(--spacing-md);
+    border: 3px solid var(--border-color);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#error {
+    background: var(--badge-error-bg);
+    color: var(--badge-error-text);
+    border-radius: var(--border-radius);
+}
+
+#error h2 {
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+#error .help-text {
+    font-size: var(--font-size-sm);
+    opacity: 0.8;
+}
+
+/* ============================================================================
+   Badges
+   ============================================================================ */
+
+#badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.badge {
+    display: inline-block;
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--border-radius-full);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    background: var(--badge-bg);
+    color: var(--badge-text);
+}
+
+.badge-version {
+    background: var(--badge-version-bg);
+    color: var(--badge-version-text);
+}
+
+.badge-platform {
+    background: var(--badge-platform-bg);
+    color: var(--badge-platform-text);
+}
+
+.badge-runtime {
+    background: var(--badge-runtime-bg);
+    color: var(--badge-runtime-text);
+}
+
+.badge-error-type {
+    background: var(--badge-error-bg);
+    color: var(--badge-error-text);
+}
+
+/* ============================================================================
+   Sections
+   ============================================================================ */
+
+section {
+    margin-bottom: var(--spacing-lg);
+}
+
+section h2 {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0 0 var(--spacing-md) 0;
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 2px solid var(--border-color);
+}
+
+/* ============================================================================
+   Error Message
+   ============================================================================ */
+
+#error-message pre {
+    background: var(--code-bg);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    overflow-x: auto;
+    margin: 0;
+}
+
+#error-message code {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ============================================================================
+   Stack Trace
+   ============================================================================ */
+
+#stack {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+}
+
+.stack-frame {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--stack-border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    align-items: baseline;
+}
+
+.stack-frame:last-child {
+    border-bottom: none;
+}
+
+.stack-frame.relevant {
+    background: var(--stack-highlight);
+}
+
+.stack-frame.empty {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.frame-index {
+    color: var(--text-secondary);
+    min-width: 2ch;
+}
+
+.frame-index::after {
+    content: ':';
+}
+
+.symbol {
+    font-weight: 500;
+    color: var(--primary-color);
+}
+
+.at {
+    color: var(--text-secondary);
+}
+
+.location,
+.source-link {
+    color: var(--text-secondary);
+}
+
+.source-link {
+    text-decoration: none;
+}
+
+.source-link:hover {
+    text-decoration: underline;
+    color: var(--primary-color);
+}
+
+/* ============================================================================
+   Extended Context
+   ============================================================================ */
+
+#extended {
+    background: var(--bg-secondary);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+}
+
+#extended h2 {
+    border-bottom-color: var(--border-color);
+}
+
+.context-item {
+    margin-bottom: var(--spacing-sm);
+}
+
+.context-item:last-child {
+    margin-bottom: 0;
+}
+
+.node-list {
+    list-style: none;
+    padding: 0;
+    margin: var(--spacing-xs) 0 0 var(--spacing-md);
+}
+
+.node-list li {
+    margin-bottom: var(--spacing-xs);
+}
+
+.node-name {
+    font-family: var(--font-mono);
+}
+
+.node-action {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.schema-fields {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+}
+
+/* ============================================================================
+   Similar Issues
+   ============================================================================ */
+
+#similar-issues {
+    background: var(--bg-secondary);
+    padding: var(--spacing-md);
+    border-radius: var(--border-radius);
+    margin-bottom: var(--spacing-md);
+}
+
+#similar-issues h3 {
+    margin: 0 0 var(--spacing-sm) 0;
+    font-size: var(--font-size-base);
+    font-weight: 600;
+}
+
+#issues-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.issue-item {
+    margin-bottom: var(--spacing-xs);
+}
+
+.issue-item:last-child {
+    margin-bottom: 0;
+}
+
+.issue-item a {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius-sm);
+    text-decoration: none;
+    color: var(--text-color);
+    transition: background-color 0.15s;
+}
+
+.issue-item a:hover {
+    background: var(--bg-color);
+}
+
+.issue-number {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    min-width: 4ch;
+}
+
+.issue-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.issue-state {
+    font-size: var(--font-size-sm);
+    padding: 2px 8px;
+    border-radius: var(--border-radius-full);
+    text-transform: capitalize;
+}
+
+.issue-state.open {
+    background: var(--issue-open-bg);
+    color: var(--issue-open-text);
+}
+
+.issue-state.closed {
+    background: var(--issue-closed-bg);
+    color: var(--issue-closed-text);
+}
+
+.loading-issues {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* ============================================================================
+   Action Buttons
+   ============================================================================ */
+
+#actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-radius: var(--border-radius);
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+}
+
+button:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
+button.primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+button.primary:hover {
+    background: var(--primary-hover);
+}
+
+button.secondary {
+    background: transparent;
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+button.secondary:hover {
+    background: var(--bg-secondary);
+}
+
+button.success {
+    background: var(--success-color) !important;
+    color: white !important;
+}
+
+/* ============================================================================
+   Responsive Design - Tablet
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    #app {
+        padding: var(--spacing-sm);
+    }
+
+    header h1 {
+        font-size: 1.25rem;
+    }
+
+    #badges {
+        gap: var(--spacing-xs);
+    }
+
+    .badge {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+    }
+
+    .stack-frame {
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+}
+
+/* ============================================================================
+   Responsive Design - Mobile
+   ============================================================================ */
+
+@media (max-width: 480px) {
+    html {
+        font-size: 14px;
+    }
+
+    #app {
+        padding: var(--spacing-xs);
+    }
+
+    header h1 {
+        font-size: 1.125rem;
+    }
+
+    .privacy-notice {
+        font-size: 0.75rem;
+    }
+
+    #badges {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .badge {
+        width: 100%;
+        text-align: center;
+    }
+
+    #actions {
+        flex-direction: column;
+    }
+
+    button {
+        width: 100%;
+        padding: var(--spacing-md);
+    }
+
+    .stack-frame {
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .frame-index {
+        display: none;
+    }
+
+    #similar-issues {
+        padding: var(--spacing-sm);
+    }
+
+    .issue-item a {
+        flex-wrap: wrap;
+    }
+
+    .issue-title {
+        width: 100%;
+        order: -1;
+    }
+}
+
+/* ============================================================================
+   Print Styles
+   ============================================================================ */
+
+@media print {
+    body {
+        background: white;
+        color: black;
+    }
+
+    #app {
+        max-width: none;
+        padding: 0;
+    }
+
+    button,
+    #similar-issues {
+        display: none;
+    }
+
+    .stack-frame.relevant {
+        background: #f5f5f5;
+    }
+
+    a {
+        color: black;
+        text-decoration: underline;
+    }
+}
+
+/* ============================================================================
+   Accessibility
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+/* High contrast mode support */
+@media (forced-colors: active) {
+    .badge,
+    .issue-state,
+    button {
+        border: 1px solid currentColor;
+    }
+}

@@ -1,0 +1,10 @@
+{
+    "version": "0.9.34",
+    "platform": "linux-x86_64",
+    "runtime": "rust",
+    "error_type": "Panic",
+    "message": "called `Option::unwrap()` on a `None` value",
+    "stack": [
+        {"addr": 4195432, "symbol": "tea::executor::run", "file": "src/executor.rs", "line": 142}
+    ]
+}

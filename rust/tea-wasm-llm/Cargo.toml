@@ -1,8 +1,8 @@
 [package]
 name = "tea-wasm-llm"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
-description = "WASM LLM package for The Edge Agent with wllama integration"
+description = "WASM LLM package for The Edge Agent with wllama integration and Opik tracing"
 license = "MIT"
 publish = false
 
@@ -28,6 +28,9 @@ regex-lite = "0.1"
 
 # WASM-compatible random generation
 getrandom = { version = "0.2", features = ["js"] }
+
+# UUID for trace IDs (WASM-compatible)
+uuid = { version = "1.11", features = ["v4", "js"] }
 
 # Panic hook for better error messages
 console_error_panic_hook = "0.1.7"

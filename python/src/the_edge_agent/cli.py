@@ -486,6 +486,54 @@ def run(
         "-o",
         help="Write final state to JSON file (useful with --entry-point/--exit-point)",
     ),
+    # YE.8: YAML Overlay Merge Support
+    overlay: Optional[List[Path]] = typer.Option(
+        None,
+        "-f",
+        "--overlay",
+        help="Overlay YAML file(s) to merge with base. Applied in order (last wins).",
+    ),
+    dump_merged: bool = typer.Option(
+        False,
+        "--dump-merged",
+        help="Output merged YAML to stdout without executing.",
+    ),
+    # TEA-CLI-001: LLM Model CLI Parameters
+    gguf: Optional[Path] = typer.Option(
+        None,
+        "--gguf",
+        help="Path to GGUF model file for local LLM inference. Overrides TEA_MODEL_PATH and YAML settings.llm.model_path.",
+    ),
+    backend: Optional[str] = typer.Option(
+        None,
+        "--backend",
+        help="LLM backend selection: local, api, or auto. Overrides YAML settings.llm.backend.",
+    ),
+    # TEA-REPORT-001d: Bug Report CLI flags
+    report_bugs: bool = typer.Option(
+        True,
+        "--report-bugs/--no-report-bugs",
+        envvar="TEA_REPORT_BUGS",
+        help="Generate bug report URL on errors (default: enabled)",
+    ),
+    report_extended: bool = typer.Option(
+        False,
+        "--report-extended",
+        envvar="TEA_REPORT_EXTENDED",
+        help="Auto-include extended context in bug reports (skip prompt)",
+    ),
+    report_minimal: bool = typer.Option(
+        False,
+        "--report-minimal",
+        help="Skip extended context prompt (minimal report only)",
+    ),
+    # TEA-CLI-006: Show graph progress during execution
+    show_graph: bool = typer.Option(
+        False,
+        "--show-graph",
+        "-g",
+        help="Show ASCII graph visualization with progress during execution",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -494,6 +542,63 @@ def run(
     if interactive and stream:
         typer.echo("Error: --interactive and --stream are mutually exclusive", err=True)
         raise typer.Exit(1)
+
+    # TEA-CLI-006: Check mutual exclusivity of --show-graph and --stream (AC-8)
+    if show_graph and stream:
+        typer.echo("Error: --show-graph and --stream are mutually exclusive", err=True)
+        raise typer.Exit(1)
+
+    # TEA-REPORT-001d: Validate mutually exclusive report flags
+    if report_extended and report_minimal:
+        typer.echo(
+            "Error: --report-extended and --report-minimal are mutually exclusive",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # TEA-REPORT-001d: Store report options in module-level for error handler
+    from the_edge_agent.report_cli import configure as configure_report_cli
+
+    configure_report_cli(
+        enabled=report_bugs,
+        extended=report_extended,
+        minimal=report_minimal,
+    )
+
+    # TEA-CLI-001: Process --gguf and --backend parameters
+    cli_model_path: Optional[str] = None
+    cli_backend: Optional[str] = None
+
+    # Validate --backend values (AC-2)
+    if backend is not None:
+        valid_backends = ("local", "api", "auto")
+        if backend.lower() not in valid_backends:
+            typer.echo(
+                f"Error: --backend must be one of: {', '.join(valid_backends)}. Got: {backend}",
+                err=True,
+            )
+            raise typer.Exit(1)
+        cli_backend = backend.lower()
+
+    # Process --gguf parameter (AC-1, AC-3, AC-11, AC-12)
+    if gguf is not None:
+        # Expand tilde (~) and environment variables ($VAR)
+        expanded_path = os.path.expandvars(os.path.expanduser(str(gguf)))
+        gguf_path = Path(expanded_path)
+
+        # Validate file exists (AC-9)
+        if not gguf_path.exists():
+            typer.echo(
+                f"Error: GGUF file not found: {gguf_path}",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        cli_model_path = str(gguf_path.resolve())
+
+        # AC-5: --gguf implies --backend local unless explicitly specified
+        if cli_backend is None:
+            cli_backend = "local"
 
     # Handle deprecated flags
     if state:
@@ -510,6 +615,67 @@ def run(
         typer.echo(f"Error: Workflow file not found: {file}", err=True)
         raise typer.Exit(1)
 
+    # YE.8: YAML Overlay Merge Support
+    # Load base YAML and apply overlays if specified
+    merged_config = None
+    if overlay or dump_merged:
+        from the_edge_agent.schema.deep_merge import merge_all
+
+        # Load base YAML
+        try:
+            with open(file) as f:
+                base_config = yaml.safe_load(f)
+            if not isinstance(base_config, dict):
+                typer.echo(
+                    f"Error: Base YAML must be a mapping, got {type(base_config).__name__}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        except yaml.YAMLError as e:
+            typer.echo(f"Error: Invalid YAML in base file {file}: {e}", err=True)
+            raise typer.Exit(1)
+
+        # Load and validate overlay files
+        configs = [base_config]
+        if overlay:
+            for overlay_path in overlay:
+                if not overlay_path.exists():
+                    typer.echo(
+                        f"Error: Overlay file not found: {overlay_path.resolve()}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                try:
+                    with open(overlay_path) as f:
+                        overlay_config = yaml.safe_load(f)
+                    if overlay_config is None:
+                        # Empty YAML file - treat as empty dict
+                        overlay_config = {}
+                    if not isinstance(overlay_config, dict):
+                        typer.echo(
+                            f"Error: Overlay YAML must be a mapping, got {type(overlay_config).__name__} in {overlay_path}",
+                            err=True,
+                        )
+                        raise typer.Exit(1)
+                    configs.append(overlay_config)
+                except yaml.YAMLError as e:
+                    typer.echo(
+                        f"Error: Invalid YAML in overlay file {overlay_path}: {e}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+        # Merge all configs (base + overlays in order, last wins)
+        merged_config = merge_all(configs)
+
+        # Handle --dump-merged: output and exit without executing
+        if dump_merged:
+            yaml_output = yaml.dump(
+                merged_config, default_flow_style=False, sort_keys=False
+            )
+            typer.echo(yaml_output, nl=False)
+            raise typer.Exit(0)
+
     # Parse inputs
     initial_state = parse_input(input)
     secrets_dict = parse_secrets(secrets, secrets_env)
@@ -521,6 +687,13 @@ def run(
 
     # Create engine
     engine = YAMLEngine(actions_registry=cli_actions or {})
+
+    # TEA-CLI-001: Apply CLI overrides for --gguf and --backend
+    if cli_model_path or cli_backend:
+        engine.cli_overrides = {
+            "model_path": cli_model_path,
+            "backend": cli_backend,
+        }
 
     # TEA-BUILTIN-012.3: Configure secrets backend from CLI flags
     if secrets_backend:
@@ -550,7 +723,11 @@ def run(
         engine.secrets = secrets_dict
 
     try:
-        graph = engine.load_from_file(str(file))
+        # YE.8: Use merged config if overlays were applied, otherwise load from file
+        if merged_config is not None:
+            graph = engine.load_from_dict(merged_config)
+        else:
+            graph = engine.load_from_file(str(file))
     except Exception as e:
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)
@@ -690,7 +867,28 @@ def run(
 
         return  # Exit after scoped execution
 
-    if not quiet and not stream:
+    # TEA-CLI-006: Initialize graph progress tracker if --show-graph is enabled
+    graph_tracker = None
+    use_ansi_updates = False
+    if show_graph:
+        from the_edge_agent.graph_renderer import (
+            GraphProgressTracker,
+            NodeState,
+            render_simple_progress,
+        )
+
+        engine_config = getattr(engine, "_config", {})
+        graph_tracker = GraphProgressTracker(compiled, engine_config)
+        use_ansi_updates = is_interactive_terminal()
+
+        # AC-2: Display initial graph before execution starts
+        if use_ansi_updates:
+            typer.echo(graph_tracker.render())
+        else:
+            # Non-TTY: just show initial header
+            typer.echo("[Graph Progress - Non-TTY mode]")
+
+    if not quiet and not stream and not show_graph:
         typer.echo("=" * 80)
         typer.echo(f"Running agent from: {file}")
         typer.echo("=" * 80)
@@ -703,6 +901,39 @@ def run(
     # Execute
     current_state = initial_state
     checkpoint_path = None
+    previous_node = None  # Track for --show-graph state transitions
+
+    # TEA-BUILTIN-005.5: Generate and attach Opik agent graph
+    mermaid_graph = None
+    try:
+        mermaid_graph = engine.get_mermaid_graph()
+        if mermaid_graph:
+            logging.getLogger(__name__).debug(
+                "Generated Mermaid graph for Opik visualization"
+            )
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"Could not generate Mermaid graph: {e}")
+
+    # Attach graph to Opik trace if available
+    if mermaid_graph:
+        try:
+            from opik import opik_context
+
+            opik_context.update_current_trace(
+                metadata={
+                    "_opik_graph_definition": {
+                        "format": "mermaid",
+                        "data": mermaid_graph,
+                    }
+                }
+            )
+            logging.getLogger(__name__).debug("Attached Mermaid graph to Opik trace")
+        except ImportError:
+            pass  # Opik not installed, skip gracefully
+        except Exception as e:
+            logging.getLogger(__name__).debug(
+                f"Could not attach graph to Opik trace: {e}"
+            )
 
     try:
         while True:
@@ -740,6 +971,115 @@ def run(
                             "error", node=node, error=str(event.get("error", ""))
                         )
                         raise typer.Exit(1)
+                elif show_graph:
+                    # TEA-CLI-006: Graph progress display mode
+                    if event_type == "state":
+                        # AC-3, AC-4: Mark previous node complete, mark current running
+                        if previous_node and previous_node not in (
+                            "__start__",
+                            "__end__",
+                        ):
+                            graph_tracker.mark_completed(previous_node)
+                        if node and node not in ("__start__", "__end__"):
+                            graph_tracker.mark_running(node)
+
+                        # AC-5: Refresh graph display
+                        if use_ansi_updates:
+                            # Use ANSI escape to update in place
+                            typer.echo(graph_tracker.render_with_update())
+                        else:
+                            # Non-TTY fallback (AC-11 from dev notes)
+                            if previous_node:
+                                typer.echo(
+                                    render_simple_progress(
+                                        previous_node, NodeState.COMPLETED
+                                    )
+                                )
+                            if node:
+                                typer.echo(
+                                    render_simple_progress(node, NodeState.RUNNING)
+                                )
+
+                        previous_node = node
+
+                    elif event_type in [
+                        "interrupt_before",
+                        "interrupt_after",
+                        "interrupt",
+                    ]:
+                        state = event.get("state", {})
+                        # Show interrupt info even in graph mode
+                        if not quiet:
+                            typer.echo(f"\n⏸  Interrupt at: {node}")
+                            typer.echo(
+                                f"   State: {json.dumps(state, indent=2, cls=TeaJSONEncoder)}"
+                            )
+
+                        checkpoint_path = event.get("checkpoint_path")
+
+                        if auto_continue:
+                            if not quiet:
+                                typer.echo("   (auto-continuing...)")
+                            current_state = state
+                            break
+
+                        if not is_interactive_terminal():
+                            typer.echo(
+                                "   (non-TTY detected, auto-continuing...)", err=True
+                            )
+                            current_state = state
+                            break
+
+                        updated_state = handle_interrupt_interactive(event, cp_dir)
+                        if updated_state is None:
+                            raise typer.Exit(1)
+
+                        current_state = updated_state
+                        break
+
+                    elif event_type == "error":
+                        if not quiet:
+                            typer.echo(f"\n✗ Error at {node}: {event.get('error')}")
+                        raise typer.Exit(1)
+
+                    elif event_type == "final":
+                        # AC-4, AC-5: Mark all nodes complete and show final graph
+                        if previous_node and previous_node not in (
+                            "__start__",
+                            "__end__",
+                        ):
+                            graph_tracker.mark_completed(previous_node)
+                        graph_tracker.mark_all_completed()
+
+                        if use_ansi_updates:
+                            typer.echo(graph_tracker.render_with_update())
+                        else:
+                            if previous_node:
+                                typer.echo(
+                                    render_simple_progress(
+                                        previous_node, NodeState.COMPLETED
+                                    )
+                                )
+                            typer.echo("[Execution Complete]")
+
+                        final_state = event.get("state", {})
+                        # TEA-PARALLEL-001.2: Write output to file if requested
+                        if output_file:
+                            with open(output_file, "w") as f:
+                                json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
+                            if not quiet:
+                                typer.echo(f"\nOutput written to: {output_file}")
+
+                        # AC-9: With --quiet, suppress final state output but graph was shown
+                        if not quiet:
+                            typer.echo("\n" + "=" * 80)
+                            typer.echo("✓ Completed")
+                            typer.echo("=" * 80)
+                            typer.echo(
+                                f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
+                            )
+                        completed = True
+                        break
                 else:
                     # Standard output
                     if event_type == "state":
@@ -1219,10 +1559,10 @@ def from_dot(
         "Replaces 'tea' at start of command with the specified executable name.",
     ),
     timeout: int = typer.Option(
-        900,
+        1800,
         "--timeout",
         "-t",
-        help="Subprocess timeout in seconds (default: 900 = 15 minutes)",
+        help="Subprocess timeout in seconds (default: 1800 = 30 minutes)",
     ),
 ):
     """
@@ -1450,6 +1790,16 @@ def main_callback(
 
 def main():
     """Entry point for the tea CLI."""
+    # TEA-REPORT-001a: Install excepthook for error capture
+    from the_edge_agent.report import install_excepthook
+
+    install_excepthook()
+
+    # TEA-REPORT-001d: Install CLI excepthook for bug report URL display
+    from the_edge_agent.report_cli import install_cli_excepthook
+
+    install_cli_excepthook()
+
     app()
 
 

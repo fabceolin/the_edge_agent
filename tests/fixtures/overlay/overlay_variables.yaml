@@ -1,0 +1,4 @@
+# Overlay that adds/overrides variables
+variables:
+  greeting: bonjour
+  new_var: added_by_overlay

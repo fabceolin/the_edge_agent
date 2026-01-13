@@ -411,6 +411,17 @@ def create_llm_backend(
     llm_settings = settings.get("llm", {})
     backend_type = llm_settings.get("backend", "api")
 
+    # TEA-CLI-001: CLI overrides have highest priority
+    cli_model_path: Optional[str] = None
+    if engine is not None and hasattr(engine, "cli_overrides"):
+        cli_overrides = engine.cli_overrides
+        # --backend CLI override
+        if cli_overrides.get("backend"):
+            backend_type = cli_overrides["backend"]
+        # --gguf CLI override (stored for resolve_model_path)
+        if cli_overrides.get("model_path"):
+            cli_model_path = cli_overrides["model_path"]
+
     if backend_type == "local":
         # Try to create local backend
         try:
@@ -430,7 +441,8 @@ def create_llm_backend(
                 )
                 return ApiLlmBackend(settings, engine)
 
-            model_path = resolve_model_path(settings)
+            # TEA-CLI-001: Pass CLI model path override
+            model_path = resolve_model_path(settings, cli_model_path=cli_model_path)
 
             if not model_path:
                 logger.warning(

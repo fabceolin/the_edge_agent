@@ -1,6 +1,6 @@
 [package]
 name = "the_edge_agent"
-version = "0.9.31"
+version = "0.9.41"
 edition = "2021"
 authors = ["The Edge Agent Contributors"]
 description = "Lightweight state graph workflow engine for edge computing"
@@ -59,9 +59,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Utilities
 parking_lot = "0.12"
 uuid = { version = "1.11", features = ["v4", "v7", "serde"] }
+shellexpand = "3.1"  # TEA-CLI-001: Path expansion for --gguf
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
 regex = "1"
+backtrace = "0.3"  # TEA-REPORT-001a: Stack trace capture for error reports
+dirs = "5.0"  # TEA-REPORT-001a: Home directory detection for path sanitization
+flate2 = "1.0"  # TEA-REPORT-001b: Deflate compression for URL encoding
+base64 = "0.22"  # TEA-REPORT-001b: Base64url encoding for URL encoding
 
 # A2A Inter-Agent Communication (optional)
 dashmap = { version = "6.1", optional = true }
@@ -98,9 +103,10 @@ reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, 
 planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
 a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
 prolog = ["dep:swipl"]
+scryer = ["dep:scryer-prolog"]  # Pure Rust Prolog (TEA-RELEASE-005.1)
 ltm-duckdb = ["dep:duckdb"]
 graph = ["dep:cozo"]
-llm-local = ["llm", "dep:llama-cpp-2", "dep:dirs"]  # Local LLM via llama.cpp (TEA-RELEASE-004.4)
+llm-local = ["llm", "dep:llama-cpp-2"]  # Local LLM via llama.cpp (TEA-RELEASE-004.4) - dirs is now always available
 llm-local-cuda = ["llm-local", "llama-cpp-2/cuda"]  # Local LLM with CUDA GPU support
 llm-local-metal = ["llm-local", "llama-cpp-2/metal"]  # Local LLM with Metal GPU support (macOS)
 llm-local-vulkan = ["llm-local", "llama-cpp-2/vulkan"]  # Local LLM with Vulkan GPU support
@@ -119,19 +125,26 @@ optional = true
 version = "0.3"
 optional = true
 
+# Scryer Prolog - Pure Rust Prolog implementation (TEA-RELEASE-005.1)
+[dependencies.scryer-prolog]
+version = "0.10"
+optional = true
+
 # Local LLM via llama.cpp (TEA-RELEASE-004.4)
 [dependencies.llama-cpp-2]
 version = "0.1"
 optional = true
 
-# Home directory resolution for model path
-[dependencies.dirs]
-version = "5.0"
-optional = true
+# Home directory resolution for model path (no longer optional - used by report module)
 
 [[bench]]
 name = "graph_benchmarks"
 harness = false
+
+[[bench]]
+name = "scryer_benchmarks"
+harness = false
+required-features = ["scryer"]
 
 [profile.release]
 lto = true

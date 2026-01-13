@@ -1,0 +1,26 @@
+markdownExploder: true
+qa:
+  qaLocation: docs/qa
+prd:
+  prdFile: docs/prd.md
+  prdVersion: v4
+  prdSharded: true
+  prdShardedLocation: docs/prd
+  epicFilePattern: epic-{n}*.md
+architecture:
+  architectureFile: docs/architecture.md
+  architectureVersion: v4
+  architectureSharded: true
+  architectureShardedLocation: docs/architecture
+customTechnicalDocuments: null
+devLoadAlwaysFiles:
+  # Rust development files
+  - docs/rust/development-guide.md
+  - docs/rust/source-tree.md
+  # Python development files (for cross-runtime parity context)
+  - docs/python/development-guide.md
+  - docs/python/source-tree.md
+  - docs/python/tech-stack.md
+devDebugLog: .ai/debug-log.md
+devStoryLocation: docs/stories
+slashPrefix: BMad

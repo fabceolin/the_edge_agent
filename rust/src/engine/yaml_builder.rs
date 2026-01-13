@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use crate::engine::graph::StateGraph;
-use crate::engine::observability::ObsConfig;
+use crate::engine::observability::{HandlerConfig, ObsConfig};
 use crate::engine::yaml_config::{RateLimiterConfig, YamlConfig};
 use crate::engine::yaml_edges::EdgeFactory;
 use crate::engine::yaml_nodes::NodeFactory;
@@ -115,6 +115,9 @@ impl GraphBuilder {
 
         // TEA-RUST-RL-001: Initialize rate limiters from settings
         // TEA-RUST-044: Apply cycle settings
+        // TEA-OBS-002: Auto-register OpikHandler when settings.opik is present
+        let mut obs_config = config.observability.clone();
+
         if let Some(settings) = &config.settings {
             Self::initialize_rate_limiters(&settings.rate_limiters);
 
@@ -130,9 +133,19 @@ impl GraphBuilder {
             if let Some(llm_config) = &settings.llm {
                 graph = graph.with_llm_config(serde_json::to_value(llm_config).unwrap_or_default());
             }
+
+            // TEA-OBS-002: Auto-add OpikHandler when settings.opik is configured
+            // The handler will gracefully skip if OPIK_API_KEY env var is not set
+            if let Some(opik_config) = &settings.opik {
+                obs_config
+                    .handlers
+                    .push(HandlerConfig::Opik(opik_config.clone()));
+                // Enable observability if not already enabled
+                obs_config.enabled = true;
+            }
         }
 
-        Ok((graph, config.observability.clone()))
+        Ok((graph, obs_config))
     }
 
     /// TEA-RUST-RL-001: Initialize rate limiters from settings configuration.

@@ -1,9 +1,22 @@
 #!/bin/bash
-# Usage: ./scripts/release.sh 0.7.0 "Release message"
+# Usage: ./scripts/release.sh <version|increment> [message]
+#
+# Version can be:
+#   - Explicit: 0.7.0, 1.2.3
+#   - Increment: major, minor, patch (or X.0.0, 0.X.0, 0.0.X)
+#
+# Examples:
+#   ./scripts/release.sh 0.7.0 "Release message"
+#   ./scripts/release.sh patch              # 0.9.33 -> 0.9.34
+#   ./scripts/release.sh minor              # 0.9.33 -> 0.10.0
+#   ./scripts/release.sh major              # 0.9.33 -> 1.0.0
+#
 # Creates a git tag and updates version in all files:
 #   - python/setup.py
 #   - rust/Cargo.toml
 #   - docs/shared/YAML_REFERENCE.md
+#   - python/src/the_edge_agent/__init__.py
+#   - firebase/functions-agents/requirements.txt
 
 set -e
 
@@ -11,20 +24,63 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-VERSION="${1:-}"
-MESSAGE="${2:-Release v$VERSION}"
+VERSION_ARG="${1:-}"
+MESSAGE="${2:-}"
 
-if [ -z "$VERSION" ]; then
-    echo "Usage: $0 <version> [message]"
-    echo "Example: $0 0.7.0 'Add new features'"
+if [ -z "$VERSION_ARG" ]; then
+    echo "Usage: $0 <version|increment> [message]"
+    echo ""
+    echo "Version can be:"
+    echo "  Explicit:  0.7.0, 1.2.3"
+    echo "  Increment: major (X.0.0), minor (0.X.0), patch (0.0.X)"
+    echo ""
+    echo "Examples:"
+    echo "  $0 0.7.0 'Add new features'"
+    echo "  $0 patch                      # Increment patch version"
+    echo "  $0 minor 'New feature release'"
     exit 1
 fi
 
-# Validate version format (semver-like)
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Version must be in format X.Y.Z (e.g., 0.7.0)"
+# Get current version from __init__.py
+INIT_PY="$PROJECT_ROOT/python/src/the_edge_agent/__init__.py"
+if [ -f "$INIT_PY" ]; then
+    CURRENT_VERSION=$(grep -oP '__version__ = "\K[^"]+' "$INIT_PY")
+else
+    echo "Error: Cannot find $INIT_PY to read current version"
     exit 1
 fi
+
+# Parse current version into components
+IFS='.' read -r CURRENT_MAJOR CURRENT_MINOR CURRENT_PATCH <<< "$CURRENT_VERSION"
+
+# Handle semver increment arguments
+case "$VERSION_ARG" in
+    major|X.0.0)
+        VERSION="$((CURRENT_MAJOR + 1)).0.0"
+        echo "Incrementing major: $CURRENT_VERSION -> $VERSION"
+        ;;
+    minor|0.X.0)
+        VERSION="$CURRENT_MAJOR.$((CURRENT_MINOR + 1)).0"
+        echo "Incrementing minor: $CURRENT_VERSION -> $VERSION"
+        ;;
+    patch|0.0.X)
+        VERSION="$CURRENT_MAJOR.$CURRENT_MINOR.$((CURRENT_PATCH + 1))"
+        echo "Incrementing patch: $CURRENT_VERSION -> $VERSION"
+        ;;
+    *)
+        # Assume it's an explicit version
+        VERSION="$VERSION_ARG"
+        # Validate version format (semver-like)
+        if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format X.Y.Z (e.g., 0.7.0)"
+            echo "       Or use: major, minor, patch (or X.0.0, 0.X.0, 0.0.X)"
+            exit 1
+        fi
+        ;;
+esac
+
+# Set default message if not provided
+MESSAGE="${MESSAGE:-Release v$VERSION}"
 
 echo "Updating version to $VERSION in all files..."
 echo ""
@@ -82,6 +138,21 @@ if [ -f "$CONF_PY" ]; then
     fi
 else
     echo "Warning: $CONF_PY not found"
+fi
+
+# Update firebase/functions-agents/requirements.txt (external consumer)
+FUNCTIONS_AGENTS_REQ="$(dirname "$PROJECT_ROOT")/firebase/functions-agents/requirements.txt"
+if [ -f "$FUNCTIONS_AGENTS_REQ" ]; then
+    CURRENT_WHL_VERSION=$(grep -oP 'the_edge_agent-\K[0-9]+\.[0-9]+\.[0-9]+' "$FUNCTIONS_AGENTS_REQ")
+    if [ -n "$CURRENT_WHL_VERSION" ]; then
+        echo "functions-agents/requirements.txt: $CURRENT_WHL_VERSION -> $VERSION"
+        sed -i "s|the_edge_agent-$CURRENT_WHL_VERSION|the_edge_agent-$VERSION|g" "$FUNCTIONS_AGENTS_REQ"
+        sed -i "s|/v$CURRENT_WHL_VERSION/|/v$VERSION/|g" "$FUNCTIONS_AGENTS_REQ"
+    else
+        echo "Warning: Could not find the_edge_agent wheel version in $FUNCTIONS_AGENTS_REQ"
+    fi
+else
+    echo "Info: $FUNCTIONS_AGENTS_REQ not found (optional)"
 fi
 
 echo ""

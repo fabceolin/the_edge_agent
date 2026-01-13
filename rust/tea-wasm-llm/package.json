@@ -1,7 +1,7 @@
 {
   "name": "tea-wasm-llm",
-  "version": "0.2.0",
-  "description": "TEA WASM LLM - Batteries-included browser LLM with bundled wllama engine and model caching",
+  "version": "0.2.1",
+  "description": "TEA WASM LLM - Batteries-included browser LLM with bundled wllama engine, model caching, and Opik observability tracing",
   "main": "./dist/js/index.js",
   "module": "./dist/js/index.js",
   "types": "./dist/js/index.d.ts",
@@ -67,7 +67,10 @@
     "offline-ai",
     "the-edge-agent",
     "indexeddb",
-    "model-caching"
+    "model-caching",
+    "opik",
+    "observability",
+    "tracing"
   ],
   "repository": {
     "type": "git",

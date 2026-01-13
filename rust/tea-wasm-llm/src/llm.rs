@@ -44,6 +44,8 @@ use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
+use crate::opik::{is_opik_enabled, send_trace, OpikTrace, OpikUsage, OPIK_CONFIG};
+
 /// LLM request parameters (compatible with OpenAI-style API)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmParams {
@@ -182,6 +184,9 @@ pub async fn llm_call_async(params_json: &str, state_json: &str) -> Result<Strin
         .into(),
     );
 
+    // TEA-OBS-002: Capture start time for Opik tracing
+    let start_time = js_sys::Date::now();
+
     // Get the handler
     let handler = LLM_HANDLER.with(|h| h.borrow().clone()).ok_or_else(|| {
         JsValue::from_str(
@@ -197,6 +202,9 @@ pub async fn llm_call_async(params_json: &str, state_json: &str) -> Result<Strin
     // Handle Promise result
     let promise = js_sys::Promise::from(result);
     let response_js = wasm_bindgen_futures::JsFuture::from(promise).await?;
+
+    // TEA-OBS-002: Capture end time for Opik tracing
+    let end_time = js_sys::Date::now();
 
     // Parse response
     let response_str = response_js
@@ -214,6 +222,56 @@ pub async fn llm_call_async(params_json: &str, state_json: &str) -> Result<Strin
         .into(),
     );
 
+    // TEA-OBS-002: Send Opik trace if enabled
+    if is_opik_enabled() {
+        let project_name = OPIK_CONFIG.with(|c| {
+            c.borrow()
+                .project_name
+                .clone()
+                .unwrap_or_else(|| "tea-wasm".to_string())
+        });
+
+        // Convert milliseconds to ISO 8601 timestamps
+        let start_iso = js_timestamp_to_iso(start_time);
+        let end_iso = js_timestamp_to_iso(end_time);
+
+        // Build usage info from response
+        let usage = response.usage.as_ref().map(|u| OpikUsage {
+            prompt_tokens: Some(u.prompt_tokens),
+            completion_tokens: Some(u.completion_tokens),
+            total_tokens: Some(u.total_tokens),
+        });
+
+        let trace = OpikTrace {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "llm.call".to_string(),
+            project_name,
+            start_time: start_iso,
+            end_time: end_iso,
+            input: serde_json::json!({
+                "prompt": params.prompt,
+                "system": params.system,
+                "max_tokens": params.max_tokens,
+                "temperature": params.temperature,
+                "model": params.model,
+            }),
+            output: serde_json::json!({
+                "content": response.content,
+                "model": response.model,
+            }),
+            usage,
+            metadata: serde_json::json!({
+                "runtime": "tea-wasm",
+                "duration_ms": end_time - start_time,
+            }),
+        };
+
+        // Fire-and-forget trace sending (don't block on it)
+        if let Err(e) = send_trace(&trace) {
+            web_sys::console::warn_1(&format!("[TEA-WASM-LLM] Opik trace error: {}", e).into());
+        }
+    }
+
     // Add response to state
     if let Some(obj) = state.as_object_mut() {
         obj.insert(
@@ -228,6 +286,24 @@ pub async fn llm_call_async(params_json: &str, state_json: &str) -> Result<Strin
 
     serde_json::to_string(&state)
         .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+/// Convert JavaScript timestamp (ms since epoch) to ISO 8601 string
+fn js_timestamp_to_iso(timestamp_ms: f64) -> String {
+    let date = js_sys::Date::new(&JsValue::from_f64(timestamp_ms));
+    date.to_iso_string().as_string().unwrap_or_else(|| {
+        // Fallback: format manually
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            date.get_utc_full_year(),
+            date.get_utc_month() + 1,
+            date.get_utc_date(),
+            date.get_utc_hours(),
+            date.get_utc_minutes(),
+            date.get_utc_seconds(),
+            date.get_utc_milliseconds()
+        )
+    })
 }
 
 /// Get embeddings from the LLM

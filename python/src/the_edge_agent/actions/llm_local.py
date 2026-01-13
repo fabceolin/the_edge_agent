@@ -126,18 +126,22 @@ def get_model_info(model_path: str) -> Dict[str, Any]:
         }
 
 
-def resolve_model_path(settings: Dict[str, Any]) -> Optional[str]:
+def resolve_model_path(
+    settings: Dict[str, Any], cli_model_path: Optional[str] = None
+) -> Optional[str]:
     """
     Resolve model path using priority order.
 
-    Search order:
-    1. TEA_MODEL_PATH environment variable (explicit override)
-    2. YAML settings llm.model_path
-    3. AppImage bundled model ($APPDIR/usr/share/models/)
-    4. Default cache location (~/.cache/tea/models/)
+    Search order (TEA-CLI-001):
+    1. CLI --gguf parameter (highest priority)
+    2. TEA_MODEL_PATH environment variable (explicit override)
+    3. YAML settings llm.model_path
+    4. AppImage bundled model ($APPDIR/usr/share/models/)
+    5. Default cache location (~/.cache/tea/models/)
 
     Args:
         settings: YAML settings dictionary with optional 'llm' section.
+        cli_model_path: Optional path from --gguf CLI parameter.
 
     Returns:
         Path to found model file, or None if no model found.
@@ -146,7 +150,13 @@ def resolve_model_path(settings: Dict[str, Any]) -> Optional[str]:
         >>> path = resolve_model_path({"llm": {"model_path": "./my-model.gguf"}})
         >>> print(path)  # "./my-model.gguf"
     """
-    # 1. Explicit environment variable
+    # 1. CLI --gguf parameter (TEA-CLI-001: highest priority)
+    if cli_model_path:
+        # CLI validation already verified the file exists
+        logger.info(f"Using model from --gguf CLI parameter: {cli_model_path}")
+        return cli_model_path
+
+    # 2. Explicit environment variable
     if env_path := os.environ.get("TEA_MODEL_PATH"):
         if os.path.exists(env_path):
             logger.info(f"Using model from TEA_MODEL_PATH: {env_path}")

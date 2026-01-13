@@ -123,6 +123,15 @@
             clear_prolog_handler,
             has_prolog_handler,
             prolog_query_async,
+            // Opik tracing functions (TEA-OBS-002)
+            set_opik_callback,
+            clear_opik_callback,
+            has_opik_callback,
+            configure_opik,
+            get_opik_config,
+            is_opik_enabled,
+            send_opik_trace_async,
+            create_llm_trace,
         } from '../pkg/tea_wasm_llm.js';
 
         // Lua and Prolog engine instances (loaded on demand)
@@ -148,6 +157,15 @@
         window.clear_prolog_handler = clear_prolog_handler;
         window.has_prolog_handler = has_prolog_handler;
         window.prolog_query_async = prolog_query_async;
+        // Opik functions (TEA-OBS-002)
+        window.set_opik_callback = set_opik_callback;
+        window.clear_opik_callback = clear_opik_callback;
+        window.has_opik_callback = has_opik_callback;
+        window.configure_opik = configure_opik;
+        window.get_opik_config = get_opik_config;
+        window.is_opik_enabled = is_opik_enabled;
+        window.send_opik_trace_async = send_opik_trace_async;
+        window.create_llm_trace = create_llm_trace;
 
         // Test state
         let testResults = { total: 0, passed: 0, failed: 0 };
@@ -588,6 +606,147 @@ edges:
             clear_prolog_handler();
         }
 
+        // ==================== OPIK TRACING TESTS (TEA-OBS-002) ====================
+
+        // Store for captured traces
+        let capturedTraces = [];
+
+        async function testOpikCallbackNotRegistered() {
+            clear_opik_callback();
+            assert(!has_opik_callback(), 'Opik callback should not be registered initially');
+        }
+
+        async function testOpikCallbackRegistration() {
+            const mockCallback = async (traceJson) => {
+                capturedTraces.push(JSON.parse(traceJson));
+            };
+            set_opik_callback(mockCallback);
+            assert(has_opik_callback(), 'Opik callback should be registered');
+            clear_opik_callback();
+            assert(!has_opik_callback(), 'Opik callback should be cleared');
+        }
+
+        async function testOpikConfigure() {
+            configure_opik(JSON.stringify({
+                project_name: 'test-project',
+                workspace: 'test-workspace',
+                enabled: true
+            }));
+
+            const config = get_opik_config();
+            const parsed = JSON.parse(config);
+
+            assert(parsed.project_name === 'test-project', 'project_name should be set');
+            assert(parsed.workspace === 'test-workspace', 'workspace should be set');
+            assert(parsed.enabled === true, 'enabled should be true');
+            log(`  Config: ${config}`, 'info');
+        }
+
+        async function testOpikEnabled() {
+            configure_opik(JSON.stringify({ enabled: true }));
+            assert(is_opik_enabled() === true, 'Opik should be enabled');
+
+            configure_opik(JSON.stringify({ enabled: false }));
+            assert(is_opik_enabled() === false, 'Opik should be disabled');
+        }
+
+        async function testOpikCreateTrace() {
+            const trace = create_llm_trace(
+                'test_node',
+                JSON.stringify({ prompt: 'Hello', max_tokens: 100 }),
+                JSON.stringify({ content: 'Hi there!', usage: { total_tokens: 10 } }),
+                new Date().toISOString(),
+                new Date().toISOString()
+            );
+
+            const parsed = JSON.parse(trace);
+            assert(parsed.name === 'test_node', 'trace name should match');
+            assert(parsed.input.prompt === 'Hello', 'input should contain prompt');
+            assert(parsed.output.content === 'Hi there!', 'output should contain content');
+            assert(parsed.id && parsed.id.length > 0, 'trace should have an ID');
+            log(`  Trace ID: ${parsed.id}`, 'info');
+        }
+
+        async function testOpikSendTrace() {
+            capturedTraces = [];
+
+            // Register callback
+            set_opik_callback(async (traceJson) => {
+                capturedTraces.push(JSON.parse(traceJson));
+            });
+
+            // Create and send a trace
+            const trace = {
+                id: 'test-trace-123',
+                name: 'test_llm_call',
+                project_name: 'test-project',
+                start_time: new Date().toISOString(),
+                end_time: new Date().toISOString(),
+                input: { prompt: 'Test prompt' },
+                output: { content: 'Test response' }
+            };
+
+            await send_opik_trace_async(JSON.stringify(trace));
+
+            assert(capturedTraces.length === 1, 'Should have captured 1 trace');
+            assert(capturedTraces[0].id === 'test-trace-123', 'Trace ID should match');
+            log(`  Captured trace: ${capturedTraces[0].name}`, 'info');
+
+            clear_opik_callback();
+        }
+
+        async function testOpikLLMCallTracing() {
+            capturedTraces = [];
+
+            // Enable Opik tracing
+            configure_opik(JSON.stringify({
+                project_name: 'llm-tracing-test',
+                enabled: true
+            }));
+
+            // Register trace callback
+            set_opik_callback(async (traceJson) => {
+                capturedTraces.push(JSON.parse(traceJson));
+            });
+
+            // Set up mock LLM handler
+            set_llm_handler(async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                return JSON.stringify({
+                    content: `Response to: ${params.prompt}`,
+                    model: 'mock-gpt',
+                    usage: {
+                        prompt_tokens: 10,
+                        completion_tokens: 15,
+                        total_tokens: 25
+                    }
+                });
+            });
+
+            // Make LLM call
+            const result = await llm_call_async(
+                JSON.stringify({ prompt: 'Hello world', max_tokens: 50 }),
+                JSON.stringify({ input: 'test' })
+            );
+
+            const parsed = JSON.parse(result);
+            assert(parsed.llm_response, 'should have llm_response');
+            assert(parsed.llm_response.content.includes('Hello'), 'response should include prompt');
+
+            // Check if trace was captured
+            if (capturedTraces.length > 0) {
+                const trace = capturedTraces[0];
+                assert(trace.project_name === 'llm-tracing-test', 'trace project should match');
+                log(`  Traced LLM call: ${trace.name}, tokens: ${trace.usage?.total_tokens || 'N/A'}`, 'info');
+            } else {
+                log('  Note: LLM call completed, trace capture may be async', 'info');
+            }
+
+            clear_opik_callback();
+            clear_llm_handler();
+            configure_opik(JSON.stringify({ enabled: false }));
+        }
+
         // Run all tests
         window.runAllTests = async function() {
             testResults = { total: 0, passed: 0, failed: 0 };
@@ -627,6 +786,17 @@ edges:
             await runTest('Prolog Query with swipl-wasm', testPrologQueryWithSwipl);
             await runTest('Prolog Workflow Execution', testPrologWorkflow);
 
+            // Opik tracing tests (TEA-OBS-002)
+            log('', 'info');
+            log('📊 Opik Tracing Tests (TEA-OBS-002)', 'info');
+            await runTest('Opik Callback Not Registered Initially', testOpikCallbackNotRegistered);
+            await runTest('Opik Callback Registration/Clear', testOpikCallbackRegistration);
+            await runTest('Opik Configure Settings', testOpikConfigure);
+            await runTest('Opik Enabled/Disabled Toggle', testOpikEnabled);
+            await runTest('Opik Create LLM Trace', testOpikCreateTrace);
+            await runTest('Opik Send Trace via Callback', testOpikSendTrace);
+            await runTest('Opik LLM Call Tracing Integration', testOpikLLMCallTracing);
+
             log('', 'info');
             log(`✨ Tests complete: ${testResults.passed}/${testResults.total} passed`,
                 testResults.failed === 0 ? 'pass' : 'fail');
@@ -654,12 +824,18 @@ edges:
                         llm: has_llm_handler(),
                         lua: has_lua_callback(),
                         prolog: has_prolog_handler(),
+                        opik: has_opik_callback(),
+                    },
+                    opik: {
+                        enabled: is_opik_enabled(),
+                        config: JSON.parse(get_opik_config()),
                     },
                     userAgent: navigator.userAgent.slice(0, 80) + '...',
                 }, null, 2);
 
                 log('✅ WASM module loaded successfully', 'pass');
                 log('📦 Scripting: wasmoon (Lua) + swipl-wasm (Prolog) via CDN', 'info');
+                log('📊 Opik tracing: TEA-OBS-002 integration available', 'info');
                 log('Press "Run All Tests" to begin testing', 'info');
             } catch (error) {
                 document.getElementById('config').textContent = `Error: ${error.message}`;

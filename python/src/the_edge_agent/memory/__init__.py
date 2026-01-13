@@ -69,7 +69,7 @@ from .short_term import (
     InMemoryBackend,
 )
 
-# LTM base class and factory (TEA-BUILTIN-001.5, 001.6.4)
+# LTM base class and factory (TEA-BUILTIN-001.5, 001.6.4, TEA-LTM-010)
 from .base import (
     LTMBackend,
     LTMTransaction,
@@ -78,6 +78,7 @@ from .base import (
     create_ltm_backend,
     parse_backend_config,
     expand_env_vars,
+    expand_ltm_config,
     parse_ltm_config,
 )
 
@@ -281,6 +282,12 @@ try:
 except ImportError:
     SupabaseCatalog = None  # type: ignore
 
+try:
+    from .catalog_duckdb import DuckDBCatalog, DUCKDB_CATALOG_AVAILABLE
+except ImportError:
+    DuckDBCatalog = None  # type: ignore
+    DUCKDB_CATALOG_AVAILABLE = False
+
 # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
 try:
     from .duckdb_ltm import DuckDBLTMBackend
@@ -300,6 +307,7 @@ __all__ = [
     "create_ltm_backend",
     "parse_backend_config",
     "expand_env_vars",
+    "expand_ltm_config",
     "parse_ltm_config",
     # SQLite backend
     "SQLiteBackend",
@@ -389,6 +397,8 @@ __all__ = [
     "FirestoreCatalog",
     "PostgresCatalog",
     "SupabaseCatalog",
+    "DuckDBCatalog",
+    "DUCKDB_CATALOG_AVAILABLE",
     # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
     "DuckDBLTMBackend",
 ]

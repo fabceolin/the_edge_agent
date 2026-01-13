@@ -29,6 +29,7 @@
 
 mod llm;
 mod lua;
+mod opik;
 mod prolog;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,11 @@ pub use lua::{
 pub use prolog::{
     clear_prolog_handler, has_prolog_handler, prolog_query_async, set_prolog_handler,
     PrologParams, PrologResponse,
+};
+
+pub use opik::{
+    clear_opik_callback, configure_opik, create_llm_trace, get_opik_config, has_opik_callback,
+    is_opik_enabled, send_opik_trace_async, set_opik_callback, OpikConfig, OpikTrace, OpikUsage,
 };
 
 /// Error types for TEA WASM LLM operations

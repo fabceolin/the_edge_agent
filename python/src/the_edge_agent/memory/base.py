@@ -538,6 +538,61 @@ def expand_env_vars(config: Any) -> Any:
     return config
 
 
+def expand_ltm_config(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Expand LTM configuration including ducklake alias (TEA-LTM-010).
+
+    This function expands environment variables and the "ducklake" alias
+    without creating the backend. Useful for testing and debugging.
+
+    Args:
+        settings: Dict with 'ltm' key containing LTM configuration
+
+    Returns:
+        Expanded configuration dict with backend type and all options
+
+    Example:
+        >>> settings = {"ltm": {"backend": "ducklake"}}
+        >>> config = expand_ltm_config(settings)
+        >>> config["backend"]
+        'duckdb'
+        >>> config["catalog"]["type"]
+        'sqlite'
+    """
+    ltm_config = settings.get("ltm", {}).copy()
+
+    # Expand environment variables
+    ltm_config = expand_env_vars(ltm_config)
+
+    # Extract backend type
+    backend_type = ltm_config.get("backend", "sqlite")
+
+    # Ducklake alias expansion (TEA-LTM-010)
+    if backend_type.lower() == "ducklake":
+        backend_type = "duckdb"
+
+        # Catalog configuration (pluggable, default: sqlite)
+        if "catalog" not in ltm_config:
+            ltm_config["catalog"] = {}
+        ltm_config["catalog"].setdefault("type", "sqlite")
+        ltm_config["catalog"].setdefault("path", "./ltm_catalog.db")
+
+        # Storage configuration
+        if "storage" not in ltm_config:
+            ltm_config["storage"] = {}
+        if isinstance(ltm_config["storage"], dict):
+            ltm_config["storage"].setdefault("uri", "./ltm_data/")
+        elif not ltm_config["storage"]:
+            ltm_config["storage"] = {"uri": "./ltm_data/"}
+
+        # LTM options with sensible defaults
+        ltm_config.setdefault("lazy", True)
+        ltm_config.setdefault("inline_threshold", 4096)
+
+    ltm_config["backend"] = backend_type
+    return ltm_config
+
+
 def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
     """
     Parse LTM configuration from YAML settings and create backend.
@@ -560,11 +615,13 @@ def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
         ...     }
         ... }
         >>> backend = parse_ltm_config(settings)
-    """
-    ltm_config = settings.get("ltm", {})
 
-    # Expand environment variables
-    ltm_config = expand_env_vars(ltm_config)
+        # Ducklake alias (TEA-LTM-010):
+        >>> settings = {"ltm": {"backend": "ducklake"}}
+        >>> backend = parse_ltm_config(settings)  # Expands to duckdb + defaults
+    """
+    # Expand config including ducklake alias (TEA-LTM-010)
+    ltm_config = expand_ltm_config(settings)
 
     # Extract backend type
     backend_type = ltm_config.pop("backend", "sqlite")

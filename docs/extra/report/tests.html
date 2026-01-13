@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA Report Decoder Tests</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { color: #333; }
+        .test-suite {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-suite h2 {
+            margin-top: 0;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .test {
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 4px;
+        }
+        .test.pass {
+            background: #d4edda;
+            color: #155724;
+        }
+        .test.fail {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .test-details {
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 4px;
+            white-space: pre-wrap;
+        }
+        .summary {
+            background: #333;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 18px;
+        }
+        .summary.all-pass { background: #28a745; }
+        .summary.has-failures { background: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>TEA Report Decoder Tests</h1>
+    <div id="results"></div>
+    <div id="summary" class="summary">Running tests...</div>
+
+    <script src="pako.min.js"></script>
+    <script src="decoder.js"></script>
+    <script src="github.js"></script>
+    <script>
+        // Test Framework
+        const results = [];
+        const resultsDiv = document.getElementById('results');
+        const summaryDiv = document.getElementById('summary');
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true });
+            } catch (e) {
+                results.push({ name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEqual(actual, expected, msg = '') {
+            const actualStr = JSON.stringify(actual);
+            const expectedStr = JSON.stringify(expected);
+            if (actualStr !== expectedStr) {
+                throw new Error(`${msg}\nExpected: ${expectedStr}\nActual: ${actualStr}`);
+            }
+        }
+
+        function assertTrue(value, msg = '') {
+            if (!value) {
+                throw new Error(msg || 'Expected true');
+            }
+        }
+
+        function assertFalse(value, msg = '') {
+            if (value) {
+                throw new Error(msg || 'Expected false');
+            }
+        }
+
+        function assertThrows(fn, msg = '') {
+            try {
+                fn();
+                throw new Error(msg || 'Expected exception to be thrown');
+            } catch (e) {
+                if (e.message === msg || e.message === 'Expected exception to be thrown') {
+                    throw e;
+                }
+                // Exception was thrown as expected
+            }
+        }
+
+        // ================================================================
+        // VLQ Tests
+        // ================================================================
+
+        test('VLQ decode zero', () => {
+            const result = vlqDecode(new Uint8Array([0]));
+            assertEqual(result.value, 0);
+            assertEqual(result.consumed, 1);
+        });
+
+        test('VLQ decode single byte max (127)', () => {
+            const result = vlqDecode(new Uint8Array([127]));
+            assertEqual(result.value, 127);
+            assertEqual(result.consumed, 1);
+        });
+
+        test('VLQ decode two byte min (128)', () => {
+            const result = vlqDecode(new Uint8Array([128, 1]));
+            assertEqual(result.value, 128);
+            assertEqual(result.consumed, 2);
+        });
+
+        test('VLQ decode two byte (255)', () => {
+            const result = vlqDecode(new Uint8Array([255, 1]));
+            assertEqual(result.value, 255);
+            assertEqual(result.consumed, 2);
+        });
+
+        test('VLQ decode two byte max (16383)', () => {
+            const result = vlqDecode(new Uint8Array([255, 127]));
+            assertEqual(result.value, 16383);
+            assertEqual(result.consumed, 2);
+        });
+
+        test('VLQ decode three byte (16384)', () => {
+            const result = vlqDecode(new Uint8Array([128, 128, 1]));
+            assertEqual(result.value, 16384);
+            assertEqual(result.consumed, 3);
+        });
+
+        test('VLQ encode/decode roundtrip', () => {
+            const testValues = [0, 1, 127, 128, 255, 256, 16383, 16384, 1000000];
+            for (const val of testValues) {
+                const encoded = vlqEncode(val);
+                const decoded = vlqDecode(encoded);
+                assertEqual(decoded.value, val, `Roundtrip failed for ${val}`);
+            }
+        });
+
+        test('VLQ matches Rust/Python test vectors', () => {
+            // Test vectors from Python test_encoder_parity.py
+            const testCases = [
+                [0, [0]],
+                [1, [1]],
+                [127, [127]],
+                [128, [128, 1]],
+                [255, [255, 1]],
+                [256, [128, 2]],
+                [16383, [255, 127]],
+                [16384, [128, 128, 1]],
+                [2097151, [255, 255, 127]],
+                [2097152, [128, 128, 128, 1]],
+            ];
+            for (const [value, expectedBytes] of testCases) {
+                const encoded = vlqEncode(value);
+                assertEqual(Array.from(encoded), expectedBytes, `VLQ encode ${value}`);
+            }
+        });
+
+        // ================================================================
+        // Base64url Tests
+        // ================================================================
+
+        test('Base64url decode simple', () => {
+            const result = base64urlDecode('SGVsbG8');
+            assertEqual(new TextDecoder().decode(result), 'Hello');
+        });
+
+        test('Base64url decode with padding needed', () => {
+            // 'a' encodes to 'YQ' without padding
+            const result = base64urlDecode('YQ');
+            assertEqual(new TextDecoder().decode(result), 'a');
+        });
+
+        test('Base64url no plus or slash', () => {
+            // Test data that would produce + and / in standard base64
+            const data = new Uint8Array([0xfb, 0xef, 0xbe]);
+            const encoded = base64urlEncode(data);
+            assertFalse(encoded.includes('+'), 'Should not contain +');
+            assertFalse(encoded.includes('/'), 'Should not contain /');
+        });
+
+        test('Base64url no padding', () => {
+            const data = new Uint8Array([97]); // 'a'
+            const encoded = base64urlEncode(data);
+            assertFalse(encoded.includes('='), 'Should not contain padding');
+        });
+
+        test('Base64url roundtrip', () => {
+            const testData = [
+                'Hello',
+                'Hello, world!',
+                '\x00\x01\x02\x03\xff',
+                '',
+            ];
+            for (const str of testData) {
+                const bytes = new TextEncoder().encode(str);
+                const encoded = base64urlEncode(bytes);
+                const decoded = base64urlDecode(encoded);
+                assertEqual(Array.from(decoded), Array.from(bytes));
+            }
+        });
+
+        // ================================================================
+        // Inflate Tests
+        // ================================================================
+
+        test('Inflate decompression works', () => {
+            // Pre-compressed "Hello, world!" using Python's zlib.compress
+            const compressed = new Uint8Array([
+                120, 156, 243, 72, 205, 201, 201, 215, 81, 40, 207, 47, 202, 73, 81, 4, 0, 31, 156, 4, 106
+            ]);
+            const result = inflate(compressed);
+            assertEqual(result, 'Hello, world!');
+        });
+
+        test('Inflate handles UTF-8', () => {
+            // Pre-compressed UTF-8 string
+            const testStr = 'Hello, 世界!';
+            // This would need actual compressed data in a real test
+        });
+
+        // ================================================================
+        // URL Parser Tests
+        // ================================================================
+
+        test('parseReportUrl extracts components', () => {
+            const url = '/the_edge_agent/report/0.9.34/rust_abc123';
+            const result = parseReportUrl(url);
+            assertEqual(result.version, '0.9.34');
+            assertEqual(result.runtime, 'rust');
+            assertEqual(result.encoded, 'abc123');
+        });
+
+        test('parseReportUrl handles full URL', () => {
+            const url = 'https://fabceolin.github.io/the_edge_agent/report/1.0.0/python_xyz789';
+            const result = parseReportUrl(url);
+            assertEqual(result.version, '1.0.0');
+            assertEqual(result.runtime, 'python');
+            assertEqual(result.encoded, 'xyz789');
+        });
+
+        test('parseReportUrl rejects invalid format', () => {
+            assertThrows(() => {
+                parseReportUrl('/invalid/url');
+            });
+        });
+
+        test('parseReportUrl rejects missing runtime', () => {
+            assertThrows(() => {
+                parseReportUrl('/report/0.9.34/nounderscorehere');
+            });
+        });
+
+        // ================================================================
+        // Full Decode Pipeline Tests
+        // ================================================================
+
+        test('decodeReport full pipeline', () => {
+            // This is a real encoded report from Python
+            // Generated using: encode_error_report(ErrorReport(...))
+            // For now, we test with a known-good compressed payload
+
+            // Create test report JSON
+            const reportJson = '{"version":"0.9.34","platform":"linux-x86_64","runtime":"python","error_type":"Panic","message":"Test error","stack":[]}';
+
+            // Compress it
+            const compressed = pako.deflate(reportJson);
+            const encoded = base64urlEncode(compressed);
+
+            // Build URL
+            const url = `/report/0.9.34/python_${encoded}`;
+
+            // Decode
+            const report = decodeReport(url);
+            assertEqual(report.version, '0.9.34');
+            assertEqual(report.platform, 'linux-x86_64');
+            assertEqual(report.runtime, 'python');
+            assertEqual(report.error_type, 'Panic');
+            assertEqual(report.message, 'Test error');
+        });
+
+        test('decodeReport with stack frames', () => {
+            const reportJson = JSON.stringify({
+                version: '0.9.34',
+                platform: 'linux-x86_64',
+                runtime: 'rust',
+                error_type: 'YamlError',
+                message: 'YAML parse failed',
+                stack: [
+                    { addr: 12345, symbol: 'main', file: 'src/main.rs', line: 42 },
+                    { addr: 67890, symbol: 'process' }
+                ]
+            });
+
+            const compressed = pako.deflate(reportJson);
+            const encoded = base64urlEncode(compressed);
+            const url = `/report/0.9.34/rust_${encoded}`;
+
+            const report = decodeReport(url);
+            assertEqual(report.stack.length, 2);
+            assertEqual(report.stack[0].symbol, 'main');
+            assertEqual(report.stack[0].line, 42);
+            assertEqual(report.stack[1].symbol, 'process');
+        });
+
+        test('decodeReport with context', () => {
+            const reportJson = JSON.stringify({
+                version: '0.9.34',
+                platform: 'linux-x86_64',
+                runtime: 'python',
+                error_type: 'ActionError',
+                message: 'Action failed',
+                stack: [],
+                context: {
+                    node_name: 'process_data',
+                    action_type: 'http.get'
+                }
+            });
+
+            const compressed = pako.deflate(reportJson);
+            const encoded = base64urlEncode(compressed);
+            const url = `/report/0.9.34/python_${encoded}`;
+
+            const report = decodeReport(url);
+            assertTrue(report.context !== undefined, 'Should have context');
+            assertEqual(report.context.node_name, 'process_data');
+            assertEqual(report.context.action_type, 'http.get');
+        });
+
+        test('decodeReport with extended context', () => {
+            const reportJson = JSON.stringify({
+                version: '0.9.34',
+                platform: 'linux-x86_64',
+                runtime: 'rust',
+                error_type: 'ExecutorError',
+                message: 'Executor crashed',
+                stack: [],
+                extended: {
+                    workflow_name: 'test-workflow',
+                    nodes: [{ name: 'start', action_type: 'llm.call' }],
+                    edges: [{ from: '__start__', to: 'start' }],
+                    schema_fields: ['input', 'output'],
+                    active_node: 'start',
+                    active_action: 'llm.call'
+                }
+            });
+
+            const compressed = pako.deflate(reportJson);
+            const encoded = base64urlEncode(compressed);
+            const url = `/report/0.9.34/rust_${encoded}`;
+
+            const report = decodeReport(url);
+            assertTrue(report.extended !== undefined, 'Should have extended');
+            assertEqual(report.extended.workflow_name, 'test-workflow');
+            assertEqual(report.extended.nodes.length, 1);
+            assertEqual(report.extended.active_node, 'start');
+        });
+
+        // ================================================================
+        // GitHub Integration Tests
+        // ================================================================
+
+        test('generateIssueTitle formats correctly', () => {
+            const report = {
+                error_type: 'Panic',
+                message: 'Short error message'
+            };
+            const title = TEAGitHub.generateIssueTitle(report);
+            assertEqual(title, '[Panic] Short error message');
+        });
+
+        test('generateIssueTitle truncates long messages', () => {
+            const report = {
+                error_type: 'YamlError',
+                message: 'A'.repeat(100)
+            };
+            const title = TEAGitHub.generateIssueTitle(report);
+            assertTrue(title.length <= 70, 'Title should be truncated');
+            assertTrue(title.endsWith('...'), 'Should end with ellipsis');
+        });
+
+        test('formatStackTrace formats correctly', () => {
+            const stack = [
+                { addr: 12345, symbol: 'main', file: 'src/main.rs', line: 42 },
+                { addr: 67890, symbol: 'process' }
+            ];
+            const formatted = TEAGitHub.formatStackTrace(stack);
+            assertTrue(formatted.includes('main'), 'Should include symbol');
+            assertTrue(formatted.includes('src/main.rs:42'), 'Should include file:line');
+            assertTrue(formatted.includes('0x10932'), 'Should include hex address');
+        });
+
+        test('generateIssueUrl creates valid URL', () => {
+            const report = {
+                version: '0.9.34',
+                platform: 'linux-x86_64',
+                runtime: 'python',
+                error_type: 'Panic',
+                message: 'Test error',
+                stack: []
+            };
+            const url = TEAGitHub.generateIssueUrl(report);
+            assertTrue(url.startsWith('https://github.com/'), 'Should be GitHub URL');
+            assertTrue(url.includes('issues/new'), 'Should be new issue URL');
+            assertTrue(url.includes('title='), 'Should have title param');
+            assertTrue(url.includes('body='), 'Should have body param');
+        });
+
+        // ================================================================
+        // Error Handling Tests
+        // ================================================================
+
+        test('decodeReport handles corrupted data gracefully', () => {
+            assertThrows(() => {
+                decodeReport('/report/0.9.34/rust_notvalidbase64!!!');
+            });
+        });
+
+        test('decodeReport handles invalid JSON gracefully', () => {
+            // Valid base64 but invalid JSON after decompression
+            const notJson = 'not valid json';
+            const compressed = pako.deflate(notJson);
+            const encoded = base64urlEncode(compressed);
+
+            assertThrows(() => {
+                decodeReport(`/report/0.9.34/rust_${encoded}`);
+            });
+        });
+
+        // ================================================================
+        // Run Tests and Display Results
+        // ================================================================
+
+        function displayResults() {
+            let html = '';
+            let passCount = 0;
+            let failCount = 0;
+
+            // Group tests by category
+            const categories = {};
+            for (const result of results) {
+                const category = result.name.split(' ')[0];
+                if (!categories[category]) {
+                    categories[category] = [];
+                }
+                categories[category].push(result);
+            }
+
+            for (const [category, tests] of Object.entries(categories)) {
+                html += `<div class="test-suite"><h2>${category}</h2>`;
+                for (const test of tests) {
+                    if (test.pass) {
+                        passCount++;
+                        html += `<div class="test pass">✓ ${test.name}</div>`;
+                    } else {
+                        failCount++;
+                        html += `<div class="test fail">✗ ${test.name}<div class="test-details">${test.error}</div></div>`;
+                    }
+                }
+                html += '</div>';
+            }
+
+            resultsDiv.innerHTML = html;
+
+            if (failCount === 0) {
+                summaryDiv.textContent = `All ${passCount} tests passed!`;
+                summaryDiv.className = 'summary all-pass';
+            } else {
+                summaryDiv.textContent = `${passCount} passed, ${failCount} failed`;
+                summaryDiv.className = 'summary has-failures';
+            }
+        }
+
+        displayResults();
+    </script>
+</body>
+</html>

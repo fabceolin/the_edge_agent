@@ -132,8 +132,38 @@ TEA includes 20+ built-in actions. Full documentation in [docs/capabilities/](do
 |----------------|--------|----------|
 | **[Python](docs/python/getting-started.md)** | Production-ready | Online edge, full features, 20+ actions |
 | **[Rust](docs/rust/getting-started.md)** | Active development | Embedded, offline, resource-constrained |
+| **[WASM](docs/wasm/llm-deployment.md)** | Prototype | Browser-based, client-side LLM, zero-server |
 
-Both share the same YAML syntax. Write once, run anywhere.
+All implementations share the same YAML syntax. Write once, run anywhere.
+
+### Browser LLM (WASM)
+
+Run TEA workflows with local LLM inference entirely in the browser:
+
+```bash
+# Install from npm
+npm install tea-wasm-llm
+
+# Or download from releases
+curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-wasm-llm-0.9.5.tar.gz -o tea-wasm-llm.tar.gz
+```
+
+```javascript
+import { initTeaLlm, loadModel, executeLlmYaml } from 'tea-wasm-llm';
+
+await initTeaLlm();
+await loadModel('./models/phi-4-mini.gguf');
+
+const result = await executeLlmYaml(yamlWorkflow, { question: "What is 2+2?" });
+```
+
+**Features:**
+- Offline operation after initial model download
+- IndexedDB model caching for fast subsequent loads
+- Multi-threaded inference via SharedArrayBuffer
+- Opik observability integration
+
+See [WASM LLM Deployment Guide](docs/wasm/llm-deployment.md) for server configuration and examples.
 
 ## Examples
 

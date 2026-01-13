@@ -22,6 +22,7 @@ import networkx as nx
 # Make pygraphviz optional
 try:
     from networkx.drawing.nx_agraph import to_agraph
+
     HAS_PYGRAPHVIZ = True
 except ImportError:
     HAS_PYGRAPHVIZ = False
@@ -45,6 +46,132 @@ class VisualizationMixin:
     graph: Any
     interrupt_before: List[str]
     interrupt_after: List[str]
+
+    def to_mermaid(self) -> str:
+        """
+        Generate Mermaid graph syntax representing the StateGraph.
+
+        Returns valid Mermaid syntax that can be rendered in Opik's
+        "Show Agent Graph" UI or any Mermaid-compatible viewer.
+
+        Returns:
+            str: Mermaid graph definition string.
+
+        Example:
+            >>> graph = StateGraph({"value": int})
+            >>> graph.add_node("process", run=lambda state: state)
+            >>> graph.set_entry_point("process")
+            >>> graph.set_finish_point("process")
+            >>> print(graph.to_mermaid())
+            graph TD
+                __start__((Start))
+                process[process]
+                __end__((End))
+                __start__-->process
+                process-->__end__
+        """
+        lines = ["graph TD"]
+
+        # Track which nodes we've rendered
+        rendered_nodes = set()
+
+        # Helper to escape node names for Mermaid (handle special characters)
+        def escape_node_id(name: str) -> str:
+            """Escape special characters in node IDs."""
+            # Replace characters that could break Mermaid syntax
+            escaped = name.replace(" ", "_").replace("-", "_").replace(".", "_")
+            escaped = escaped.replace("(", "_").replace(")", "_")
+            escaped = escaped.replace("[", "_").replace("]", "_")
+            escaped = escaped.replace("{", "_").replace("}", "_")
+            escaped = escaped.replace("<", "_").replace(">", "_")
+            escaped = escaped.replace("|", "_").replace(":", "_")
+            escaped = escaped.replace(";", "_").replace(",", "_")
+            escaped = escaped.replace("&", "_").replace("#", "_")
+            return escaped
+
+        def escape_label(name: str) -> str:
+            """Escape special characters in labels displayed to users."""
+            # Escape quotes and other characters that could break Mermaid labels
+            return name.replace('"', "'").replace("|", "/")
+
+        # Render all nodes first
+        for node in self.graph.nodes():
+            node_id = escape_node_id(node)
+            label = escape_label(node)
+
+            if node == "__start__":
+                # Circle node for start
+                lines.append(f"    {node_id}((Start))")
+            elif node == "__end__":
+                # Circle node for end
+                lines.append(f"    {node_id}((End))")
+            else:
+                # Rectangle node for regular nodes
+                lines.append(f"    {node_id}[{label}]")
+            rendered_nodes.add(node)
+
+        # Track edges we've already rendered (to avoid duplicates)
+        rendered_edges = set()
+
+        # Render all edges
+        for u, v, data in self.graph.edges(data=True):
+            u_id = escape_node_id(u)
+            v_id = escape_node_id(v)
+
+            # Skip if already rendered
+            edge_key = (u_id, v_id)
+            if edge_key in rendered_edges:
+                continue
+            rendered_edges.add(edge_key)
+
+            # Check edge type
+            cond = data.get("cond")
+            cond_map = data.get("cond_map", {})
+            is_parallel = data.get("parallel", False)
+            fan_in_node = data.get("fan_in_node")
+
+            # Determine edge label
+            edge_label = None
+
+            if is_parallel and fan_in_node:
+                # Parallel edge - show fan-in target
+                fan_in_id = escape_node_id(fan_in_node)
+                edge_label = f"parallel→{fan_in_id}"
+            elif cond is not None and cond_map:
+                # Conditional edge - try to get meaningful label
+                # Check if this is a "trivial" condition that always returns True
+                # (used internally by add_edge for unconditional edges)
+                is_trivial_condition = (
+                    len(cond_map) == 1 and True in cond_map and cond_map[True] == v
+                )
+
+                if not is_trivial_condition:
+                    # Find which condition value leads to this target
+                    for cond_value, target in cond_map.items():
+                        if target == v:
+                            if cond_value is True:
+                                edge_label = "true"
+                            elif cond_value is False:
+                                edge_label = "false"
+                            elif isinstance(cond_value, str):
+                                edge_label = escape_label(cond_value)
+                            else:
+                                edge_label = str(cond_value)
+                            break
+
+                    # If no specific label found, check if it's a named function
+                    if edge_label is None and callable(cond):
+                        func_name = getattr(cond, "__name__", None)
+                        if func_name and func_name != "<lambda>":
+                            edge_label = "condition"
+
+            # Build edge line
+            if edge_label:
+                lines.append(f"    {u_id}-->|{edge_label}|{v_id}")
+            else:
+                lines.append(f"    {u_id}-->{v_id}")
+
+        return "\n".join(lines)
 
     def render_graphviz(self):
         """
@@ -75,9 +202,9 @@ class VisualizationMixin:
         # Add edges with attributes
         for u, v, data in self.graph.edges(data=True):
             edge_label = ""
-            if 'cond' in data:
-                cond = data['cond']
-                if callable(cond) and cond.__name__ != '<lambda>':
+            if "cond" in data:
+                cond = data["cond"]
+                if callable(cond) and cond.__name__ != "<lambda>":
                     edge_label = "condition"
                 elif isinstance(cond, dict) and len(cond) > 1:
                     edge_label = "condition"
@@ -104,5 +231,5 @@ class VisualizationMixin:
             ImportError: If pygraphviz is not installed.
         """
         A = self.render_graphviz()
-        A.layout(prog='dot')
+        A.layout(prog="dot")
         A.draw(filename)
