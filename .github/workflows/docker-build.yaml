@@ -251,8 +251,8 @@ jobs:
         run: |
           docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }} --version
           # Verify model path is set
-          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }} \
-            python -c "import os; print(f'TEA_MODEL_PATH={os.environ.get(\"TEA_MODEL_PATH\", \"NOT SET\")}')"
+          docker run --rm --entrypoint python ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.variant }} \
+            -c "import os; print(f'TEA_MODEL_PATH={os.environ.get(\"TEA_MODEL_PATH\", \"NOT SET\")}')"
 
       - name: Output image info
         if: success()
