@@ -28,12 +28,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Download Phi-4 mini Q8_0 model (~4GB)
 RUN mkdir -p /models && \
-    wget -q --show-progress -O /models/Phi-4-mini-instruct-Q8_0.gguf \
-    "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q8_0.gguf"
+    wget -q --show-progress -O /models/Phi-4-mini-instruct.Q8_0.gguf \
+    "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct.Q8_0.gguf"
 
 # Verify model was downloaded
 RUN ls -lh /models/ && \
-    test -f /models/Phi-4-mini-instruct-Q8_0.gguf
+    test -f /models/Phi-4-mini-instruct.Q8_0.gguf
 
 # =============================================================================
 # Stage 2: Builder - Install build dependencies and compile packages
@@ -123,7 +123,7 @@ COPY --from=model-downloader /models /opt/tea-models
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV TEA_MODEL_PATH="/opt/tea-models/Phi-4-mini-instruct-Q8_0.gguf"
+ENV TEA_MODEL_PATH="/opt/tea-models/Phi-4-mini-instruct.Q8_0.gguf"
 ENV TEA_MODEL_NAME="phi-4-mini-instruct"
 
 # Create non-root user for security
@@ -142,7 +142,7 @@ LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_age
 LABEL org.opencontainers.image.description="TEA Phi4-Mini - Full features with bundled Phi-4 mini model"
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL tea.variant="phi4-mini"
-LABEL tea.model="Phi-4-mini-instruct-Q8_0"
+LABEL tea.model="Phi-4-mini-instruct.Q8_0"
 LABEL tea.model.size="4GB"
 
 # Entrypoint is the tea CLI

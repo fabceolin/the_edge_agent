@@ -59,6 +59,28 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     # Track wrapped clients to prevent double-wrapping
     _opik_wrapped_clients = set()
 
+    def _deep_serialize(obj):
+        """
+        Recursively serialize Pydantic objects and nested structures to plain dicts.
+
+        This prevents PydanticSerializationUnexpectedValue warnings when LiteLLM
+        returns simplified Pydantic models that don't match the full OpenAI schema.
+        """
+        if obj is None:
+            return None
+        if hasattr(obj, "model_dump"):
+            # Pydantic v2 model - serialize and recurse
+            return _deep_serialize(obj.model_dump())
+        if hasattr(obj, "dict") and callable(obj.dict):
+            # Pydantic v1 model - serialize and recurse
+            return _deep_serialize(obj.dict())
+        if isinstance(obj, dict):
+            return {k: _deep_serialize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_deep_serialize(item) for item in obj]
+        # Primitive types (str, int, float, bool, None)
+        return obj
+
     # Cache wrapped clients by (provider, api_base, project_name) to reuse across calls
     # This ensures only one track_openai wrapper is created per configuration
     _opik_client_cache: Dict[tuple, Any] = {}
@@ -753,6 +775,17 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "LiteLLM library not installed. Install with: pip install litellm"
                 )
 
+            # Suppress Pydantic serialization warnings from LiteLLM's internal logging
+            # This is a known issue where LiteLLM's response models don't match OpenAI's
+            # full schema when using providers like Bedrock (TEA-BUILTIN-001.2)
+            import warnings
+
+            warnings.filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+            )
+
             # Set up Opik callback if requested
             if opik_trace:
                 try:
@@ -818,11 +851,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             def build_litellm_result(response, extra_fields=None):
                 usage = {}
                 if hasattr(response, "usage") and response.usage:
-                    usage = (
-                        response.usage.model_dump()
-                        if hasattr(response.usage, "model_dump")
-                        else dict(response.usage)
-                    )
+                    # Deep serialize to avoid Pydantic warnings from nested objects
+                    usage = _deep_serialize(response.usage)
 
                 result = {
                     "content": response.choices[0].message.content,
@@ -1033,11 +1063,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Helper function to build result with optional cost
         def build_result(response, extra_fields=None):
             """Build result dict with optional cost calculation."""
-            usage = (
-                response.usage.model_dump()
-                if hasattr(response.usage, "model_dump")
-                else {}
-            )
+            # Deep serialize to avoid Pydantic warnings from nested objects
+            usage = _deep_serialize(response.usage) if response.usage else {}
             result = {"content": response.choices[0].message.content, "usage": usage}
             # Add cost estimation when opik_trace is enabled (skip for Ollama - free/local)
             if opik_trace and usage and not is_ollama:
@@ -1320,13 +1347,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         full_content.append(content)
                         chunk_index += 1
 
-                    # Capture usage if available
+                    # Capture usage if available (deep serialize to avoid Pydantic warnings)
                     if hasattr(chunk, "usage") and chunk.usage is not None:
-                        usage_data = (
-                            chunk.usage.model_dump()
-                            if hasattr(chunk.usage, "model_dump")
-                            else dict(chunk.usage)
-                        )
+                        usage_data = _deep_serialize(chunk.usage)
 
                 result = {
                     "content": "".join(full_content),
@@ -1441,13 +1464,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     full_content.append(content)
                     chunk_index += 1
 
-                # Capture usage if available (usually in final chunk)
+                # Capture usage if available (deep serialize to avoid Pydantic warnings)
                 if hasattr(chunk, "usage") and chunk.usage is not None:
-                    usage_data = (
-                        chunk.usage.model_dump()
-                        if hasattr(chunk.usage, "model_dump")
-                        else {}
-                    )
+                    usage_data = _deep_serialize(chunk.usage)
 
             result = {
                 "content": "".join(full_content),
