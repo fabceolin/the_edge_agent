@@ -471,6 +471,7 @@ DEBUG: [OPIK DEBUG llm_call] Before track_openai: trace=019bb54f-a19a... ✅
 |------|--------|-------------|
 | `python/src/the_edge_agent/parallel_executors.py` | Modified | Added `contextvars` import, updated `ThreadExecutor.submit()` to propagate context |
 | `python/src/the_edge_agent/cli.py` | Modified | Added wrapper span creation to prevent trace from being popped during sequential execution |
+| `firebase/functions-agents/routers/run_agent.py` | Modified | Added wrapper span creation for FastAPI endpoint (same fix as cli.py) |
 | `python/src/the_edge_agent/actions/llm_actions.py` | Modified | Restored `track_openai` wrapper, added debug logging |
 | `python/tests/test_opik_trace_propagation.py` | Modified | Added 3 new tests for `TestThreadExecutorContextPropagation` |
 | `firebase/functions-agents/scripts/test_opik_trace_context.py` | Created | Manual test script for trace context with YAMLEngine |
