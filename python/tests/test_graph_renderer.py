@@ -379,6 +379,211 @@ class TestRenderSimpleProgress(unittest.TestCase):
         self.assertEqual(result, "[my_node] ✓")
 
 
+class TestDynamicParallelTracking(unittest.TestCase):
+    """Test dynamic parallel item tracking for runtime-aware visualization."""
+
+    def _create_mock_graph(self, nodes, edges):
+        """Create a mock compiled graph for testing."""
+        mock_graph = MagicMock()
+        mock_nx_graph = nx.DiGraph()
+        mock_nx_graph.add_nodes_from(nodes)
+        mock_nx_graph.add_edges_from(edges)
+        mock_graph.graph = mock_nx_graph
+        return mock_graph
+
+    def test_register_parallel_items(self):
+        """Test registering parallel items dynamically at runtime."""
+        compiled = self._create_mock_graph(
+            ["__start__", "phase1_parallel", "phase1_collect", "__end__"],
+            [
+                ("__start__", "phase1_parallel"),
+                ("phase1_parallel", "phase1_collect"),
+                ("phase1_collect", "__end__"),
+            ],
+        )
+
+        engine_config = {
+            "nodes": [
+                {"name": "phase1_parallel", "type": "dynamic_parallel"},
+                {"name": "phase1_collect", "fan_in": True},
+            ],
+            "edges": [],
+        }
+
+        tracker = GraphProgressTracker(compiled, engine_config)
+
+        # Initially no items
+        self.assertEqual(tracker.layout.dynamic_parallel_items.get("phase1_parallel"), None)
+
+        # Register items dynamically
+        items = ["TEA-WASM-003.1", "TEA-WASM-003.2"]
+        tracker.register_parallel_items("phase1_parallel", items)
+
+        # Verify items registered
+        self.assertEqual(
+            tracker.layout.dynamic_parallel_items["phase1_parallel"], items
+        )
+
+        # Verify item states initialized
+        for item in items:
+            key = ("phase1_parallel", item)
+            self.assertIn(key, tracker.layout.parallel_item_states)
+            self.assertEqual(
+                tracker.layout.parallel_item_states[key], NodeState.PENDING
+            )
+
+        # Verify node info updated
+        node_info = tracker.layout.node_info["phase1_parallel"]
+        self.assertTrue(node_info.is_parallel_group)
+        self.assertEqual(node_info.parallel_members, items)
+
+    def test_mark_parallel_item_running(self):
+        """Test marking a parallel item as running."""
+        compiled = self._create_mock_graph(
+            ["__start__", "parallel_node", "__end__"],
+            [("__start__", "parallel_node"), ("parallel_node", "__end__")],
+        )
+
+        tracker = GraphProgressTracker(compiled)
+
+        # Register items
+        items = ["item1", "item2"]
+        tracker.register_parallel_items("parallel_node", items)
+
+        # Mark item1 as running
+        tracker.mark_parallel_item_running("parallel_node", "item1")
+
+        # Verify state
+        key = ("parallel_node", "item1")
+        self.assertEqual(
+            tracker.layout.parallel_item_states[key], NodeState.RUNNING
+        )
+
+        # item2 should still be pending
+        key2 = ("parallel_node", "item2")
+        self.assertEqual(
+            tracker.layout.parallel_item_states[key2], NodeState.PENDING
+        )
+
+    def test_mark_parallel_item_completed(self):
+        """Test marking a parallel item as completed."""
+        compiled = self._create_mock_graph(
+            ["__start__", "parallel_node", "__end__"],
+            [("__start__", "parallel_node"), ("parallel_node", "__end__")],
+        )
+
+        tracker = GraphProgressTracker(compiled)
+
+        # Register items
+        items = ["item1", "item2"]
+        tracker.register_parallel_items("parallel_node", items)
+
+        # Mark item1 as running then completed
+        tracker.mark_parallel_item_running("parallel_node", "item1")
+        tracker.mark_parallel_item_completed("parallel_node", "item1")
+
+        # Verify state
+        key = ("parallel_node", "item1")
+        self.assertEqual(
+            tracker.layout.parallel_item_states[key], NodeState.COMPLETED
+        )
+
+    def test_render_dynamic_parallel_node(self):
+        """Test rendering a node with dynamic parallel items."""
+        compiled = self._create_mock_graph(
+            ["__start__", "parallel_node", "__end__"],
+            [("__start__", "parallel_node"), ("parallel_node", "__end__")],
+        )
+
+        tracker = GraphProgressTracker(compiled)
+
+        # Register items
+        items = ["item1", "item2"]
+        tracker.register_parallel_items("parallel_node", items)
+
+        # Render the graph
+        rendered = tracker.render()
+
+        # Verify output contains items
+        self.assertIn("parallel_node", rendered)
+        self.assertIn("item1", rendered)
+        self.assertIn("item2", rendered)
+
+    def test_dynamic_parallel_state_markers(self):
+        """Test that state markers appear correctly for parallel items."""
+        compiled = self._create_mock_graph(
+            ["__start__", "parallel_node", "__end__"],
+            [("__start__", "parallel_node"), ("parallel_node", "__end__")],
+        )
+
+        tracker = GraphProgressTracker(compiled)
+
+        # Register items
+        items = ["item1", "item2"]
+        tracker.register_parallel_items("parallel_node", items)
+
+        # Mark item1 as running
+        tracker.mark_parallel_item_running("parallel_node", "item1")
+
+        # Render
+        rendered = tracker.render()
+
+        # Should show running marker for item1
+        self.assertIn("* running", rendered)
+
+        # Mark item1 as completed
+        tracker.mark_parallel_item_completed("parallel_node", "item1")
+
+        # Render again
+        rendered = tracker.render()
+
+        # Should show completion marker
+        self.assertIn("✓", rendered)
+
+    def test_multiple_dynamic_parallel_sections(self):
+        """Test graph with multiple dynamic_parallel nodes."""
+        compiled = self._create_mock_graph(
+            [
+                "__start__",
+                "phase1_parallel",
+                "phase1_collect",
+                "phase2_parallel",
+                "phase2_collect",
+                "__end__",
+            ],
+            [
+                ("__start__", "phase1_parallel"),
+                ("phase1_parallel", "phase1_collect"),
+                ("phase1_collect", "phase2_parallel"),
+                ("phase2_parallel", "phase2_collect"),
+                ("phase2_collect", "__end__"),
+            ],
+        )
+
+        tracker = GraphProgressTracker(compiled)
+
+        # Register items for both phases
+        phase1_items = ["item1", "item2"]
+        phase2_items = ["item3"]
+
+        tracker.register_parallel_items("phase1_parallel", phase1_items)
+        tracker.register_parallel_items("phase2_parallel", phase2_items)
+
+        # Verify both registered
+        self.assertEqual(
+            tracker.layout.dynamic_parallel_items["phase1_parallel"], phase1_items
+        )
+        self.assertEqual(
+            tracker.layout.dynamic_parallel_items["phase2_parallel"], phase2_items
+        )
+
+        # Render should include all items
+        rendered = tracker.render()
+        self.assertIn("item1", rendered)
+        self.assertIn("item2", rendered)
+        self.assertIn("item3", rendered)
+
+
 class TestCLIIntegration(unittest.TestCase):
     """Test CLI integration with graph renderer."""
 

@@ -1226,6 +1226,14 @@ class NodeFactory:
                         "mode": mode,
                     }
                 )
+                # TEA-CLI-006: Emit parallel_start for graph renderer
+                trace_context.log_event(
+                    event={
+                        "type": "parallel_start",
+                        "node": node_name,
+                        "items": [str(item) for item in items_list],
+                    }
+                )
 
             # Handle empty items (AC: 1)
             if item_count == 0:
@@ -1291,6 +1299,14 @@ class NodeFactory:
                                 ),
                             }
                         )
+                        # TEA-CLI-006: Emit parallel_item_start for graph renderer
+                        trace_context.log_event(
+                            event={
+                                "type": "parallel_item_start",
+                                "node": node_name,
+                                "item": str(item),
+                            }
+                        )
 
                     # Deep copy state and inject item context (AC: 2)
                     branch_state = copy.deepcopy(state)
@@ -1312,6 +1328,15 @@ class NodeFactory:
                                 "index": index,
                                 "success": True,
                                 "timing_ms": timing_ms,
+                            }
+                        )
+                        # TEA-CLI-006: Emit parallel_item_complete for graph renderer
+                        trace_context.log_event(
+                            event={
+                                "type": "parallel_item_complete",
+                                "node": node_name,
+                                "item": str(item),
+                                "success": True,
                             }
                         )
 
@@ -1341,6 +1366,15 @@ class NodeFactory:
                                 "success": False,
                                 "timing_ms": timing_ms,
                                 "error": str(e),
+                            }
+                        )
+                        # TEA-CLI-006: Emit parallel_item_complete for graph renderer
+                        trace_context.log_event(
+                            event={
+                                "type": "parallel_item_complete",
+                                "node": node_name,
+                                "item": str(item),
+                                "success": False,
                             }
                         )
 
@@ -1387,6 +1421,14 @@ class NodeFactory:
                         "completed": completed_count,
                         "failed": failed_count,
                         "total_timing_ms": total_timing_ms,
+                    }
+                )
+                # TEA-CLI-006: Emit parallel_complete for graph renderer
+                trace_context.log_event(
+                    event={
+                        "type": "parallel_complete",
+                        "node": node_name,
+                        "fan_in": fan_in_target,
                     }
                 )
 

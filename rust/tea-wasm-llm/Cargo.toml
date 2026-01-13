@@ -1,13 +1,27 @@
 [package]
 name = "tea-wasm-llm"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
-description = "WASM LLM package for The Edge Agent with wllama integration and Opik tracing"
+description = "WASM LLM package for The Edge Agent with wllama integration, Opik tracing, and OpenDAL storage"
 license = "MIT"
 publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["storage-memory", "storage-http"]
+# Storage backends - enable as needed
+# Memory is always available in OpenDAL 0.55+
+storage-memory = []
+storage-http = ["opendal/services-http"]
+storage-s3 = ["opendal/services-s3"]
+storage-gcs = ["opendal/services-gcs"]
+storage-azblob = ["opendal/services-azblob"]
+# OPFS is only available on wasm32 target
+storage-opfs = ["opendal/services-opfs"]
+# Enable all cloud backends (excluding OPFS for native builds)
+storage-all = ["storage-s3", "storage-gcs", "storage-azblob", "storage-http", "storage-memory"]
 
 [dependencies]
 # WASM bindings - pinned to 0.2.92 to avoid externref table issues in some browsers
@@ -35,6 +49,22 @@ uuid = { version = "1.11", features = ["v4", "js"] }
 # Panic hook for better error messages
 console_error_panic_hook = "0.1.7"
 
+# URL parsing for storage URIs
+url = "2.5"
+
+# Base64 encoding for binary file support
+base64 = "0.22"
+
+# Async streams for listing operations
+futures = "0.3"
+
+# SHA-256 hashing for content deduplication (LTM)
+sha2 = "0.10"
+
+# OpenDAL for unified storage access (WASM-compatible)
+# Note: Use send_wrapper feature for wasm32-unknown-unknown target
+opendal = { version = "0.55", default-features = false, features = ["rustls-aws-lc-cryptoprovider"] }
+
 # Web APIs - pinned to match wasm-bindgen version
 [dependencies.web-sys]
 version = "=0.3.69"
@@ -45,6 +75,8 @@ features = [
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+# Enable send_wrapper for WASM builds
+opendal = { version = "0.55", default-features = false, features = ["rustls-aws-lc-cryptoprovider", "send_wrapper"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "=0.3.42"

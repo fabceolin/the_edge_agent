@@ -27,10 +27,13 @@
 //! const result = await executeLlmYaml(yaml, { input: "hello" });
 //! ```
 
+mod duckdb;
 mod llm;
+mod ltm;
 mod lua;
 mod opik;
 mod prolog;
+mod storage;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -54,6 +57,30 @@ pub use prolog::{
 pub use opik::{
     clear_opik_callback, configure_opik, create_llm_trace, get_opik_config, has_opik_callback,
     is_opik_enabled, send_opik_trace_async, set_opik_callback, OpikConfig, OpikTrace, OpikUsage,
+};
+
+pub use duckdb::{
+    clear_duckdb_handler, duckdb_begin_async, duckdb_commit_async, duckdb_execute_async,
+    duckdb_query_async, duckdb_rollback_async, get_duckdb_extensions_async, has_duckdb_handler,
+    init_duckdb_async, load_duckdb_extension_async, set_duckdb_handler, DuckDbExtension,
+    DuckDbField, DuckDbInitOptions, DuckDbQueryParams, DuckDbQueryResponse,
+};
+
+pub use storage::{
+    clear_storage_credentials, has_storage_credentials, init_memory, init_opfs,
+    is_memory_available, is_opfs_available, set_storage_credentials, storage_copy_async,
+    storage_delete_async, storage_exists_async, storage_list_async, storage_read_async,
+    storage_read_binary_async, storage_supported_schemes, storage_write_async,
+    storage_write_binary_async, StorageCopyResult, StorageDeleteResult, StorageError,
+    StorageExistsResult, StorageListEntry, StorageListResult, StorageReadResult,
+    StorageWriteResult,
+};
+
+pub use ltm::{
+    clear_ltm_handler, configure_ltm, get_ltm_config, has_ltm_handler, ltm_cleanup_expired_async,
+    ltm_delete_async, ltm_list_async, ltm_retrieve_async, ltm_search_async, ltm_stats_async,
+    ltm_store_async, set_ltm_handler, LtmConfig, LtmDeleteResult, LtmEntry, LtmListEntry,
+    LtmListResult, LtmRetrieveResult, LtmSearchEntry, LtmSearchResult, LtmStoreResult,
 };
 
 /// Error types for TEA WASM LLM operations
@@ -254,6 +281,19 @@ async fn execute_node(
         "llm.embed" => execute_llm_embed(node, state, variables).await,
         "lua.eval" => execute_lua_eval(node, state, variables).await,
         "prolog.query" => execute_prolog_query(node, state, variables).await,
+        "duckdb.query" => execute_duckdb_query(node, state, variables).await,
+        "duckdb.execute" => execute_duckdb_execute(node, state, variables).await,
+        "storage.read" => execute_storage_read(node, state, variables).await,
+        "storage.write" => execute_storage_write(node, state, variables).await,
+        "storage.exists" => execute_storage_exists(node, state, variables).await,
+        "storage.delete" => execute_storage_delete(node, state, variables).await,
+        "storage.list" => execute_storage_list(node, state, variables).await,
+        "storage.copy" => execute_storage_copy(node, state, variables).await,
+        "ltm.store" => execute_ltm_store(node, state, variables).await,
+        "ltm.retrieve" => execute_ltm_retrieve(node, state, variables).await,
+        "ltm.delete" => execute_ltm_delete(node, state, variables).await,
+        "ltm.search" => execute_ltm_search(node, state, variables).await,
+        "ltm.list" => execute_ltm_list(node, state, variables).await,
         "return" => execute_return(node, state, variables),
         _ => Ok(state), // passthrough or unknown actions
     }
@@ -454,6 +494,534 @@ async fn execute_prolog_query(
     } else {
         Ok(result)
     }
+}
+
+/// Execute duckdb.query action
+async fn execute_duckdb_query(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("duckdb.query requires 'with' parameters"))?;
+
+    // Get SQL query with template processing
+    let sql = params
+        .get("sql")
+        .and_then(|v| v.as_str())
+        .map(|s| process_template(s, &state, variables))
+        .ok_or_else(|| JsValue::from_str("duckdb.query requires 'sql' parameter"))?;
+
+    // Get query parameters (for prepared statements)
+    let query_params: Vec<JsonValue> = params
+        .get("params")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| process_template_value(v, &state, variables))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let params_json = serde_json::to_string(&query_params)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize params: {}", e)))?;
+
+    // Execute query
+    let result_json = duckdb_query_async(&sql, &params_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse DuckDB result: {}", e)))?;
+
+    // Store result in output key (default to node name)
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+
+    // Check if query succeeded and extract rows
+    if result.get("success") == Some(&JsonValue::Bool(true)) {
+        let output_value = if let Some(rows) = result.get("rows").cloned() {
+            rows
+        } else {
+            result.clone()
+        };
+
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), output_value);
+            // Also store metadata
+            if let Some(row_count) = result.get("row_count") {
+                obj.insert(format!("{}_count", output_key), row_count.clone());
+            }
+            if let Some(schema) = result.get("schema") {
+                obj.insert(format!("{}_schema", output_key), schema.clone());
+            }
+        }
+    } else {
+        // Store error info
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), JsonValue::Null);
+            obj.insert(
+                format!("{}_error", output_key),
+                result.get("error").cloned().unwrap_or(JsonValue::Null),
+            );
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute duckdb.execute action (for DDL/DML without returning rows)
+async fn execute_duckdb_execute(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("duckdb.execute requires 'with' parameters"))?;
+
+    // Get SQL statement with template processing
+    let sql = params
+        .get("sql")
+        .and_then(|v| v.as_str())
+        .map(|s| process_template(s, &state, variables))
+        .ok_or_else(|| JsValue::from_str("duckdb.execute requires 'sql' parameter"))?;
+
+    // Execute statement
+    let result_json = duckdb_execute_async(&sql).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse DuckDB result: {}", e)))?;
+
+    // Store result if output key specified
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.read action
+async fn execute_storage_read(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.read requires 'with' parameters"))?;
+
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.read requires 'uri' parameter"))?;
+
+    let binary = params
+        .get("binary")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let state_json = serde_json::to_string(&state)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize state: {}", e)))?;
+
+    let result_json = if binary {
+        storage_read_binary_async(&uri).await?
+    } else {
+        storage_read_async(&uri, &state_json).await?
+    };
+
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+    if let Some(obj) = state.as_object_mut() {
+        // Extract content or content_base64 for convenience
+        let content = if binary {
+            result.get("content_base64").cloned()
+        } else {
+            result.get("content").cloned()
+        };
+        obj.insert(output_key.clone(), content.unwrap_or(result));
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.write action
+async fn execute_storage_write(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.write requires 'with' parameters"))?;
+
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.write requires 'uri' parameter"))?;
+
+    let content = params
+        .get("content")
+        .map(|v| {
+            if let Some(s) = v.as_str() {
+                process_template(s, &state, variables)
+            } else {
+                v.to_string()
+            }
+        })
+        .ok_or_else(|| JsValue::from_str("storage.write requires 'content' parameter"))?;
+
+    let binary = params
+        .get("binary")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let state_json = serde_json::to_string(&state)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize state: {}", e)))?;
+
+    let result_json = if binary {
+        storage_write_binary_async(&uri, &content).await?
+    } else {
+        storage_write_async(&uri, &content, &state_json).await?
+    };
+
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.exists action
+async fn execute_storage_exists(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.exists requires 'with' parameters"))?;
+
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.exists requires 'uri' parameter"))?;
+
+    let result_json = storage_exists_async(&uri).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+    if let Some(obj) = state.as_object_mut() {
+        // Store just the exists boolean for convenience
+        let exists = result.get("exists").cloned().unwrap_or(JsonValue::Bool(false));
+        obj.insert(output_key.clone(), exists);
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.delete action
+async fn execute_storage_delete(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.delete requires 'with' parameters"))?;
+
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.delete requires 'uri' parameter"))?;
+
+    let result_json = storage_delete_async(&uri).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.list action
+async fn execute_storage_list(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.list requires 'with' parameters"))?;
+
+    let uri = params
+        .get("uri")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.list requires 'uri' parameter"))?;
+
+    let options = serde_json::json!({
+        "limit": params.get("limit").and_then(|v| v.as_u64()).unwrap_or(1000)
+    });
+    let options_json = options.to_string();
+
+    let result_json = storage_list_async(&uri, &options_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+    if let Some(obj) = state.as_object_mut() {
+        // Store just the entries array for convenience
+        let entries = result.get("entries").cloned().unwrap_or(JsonValue::Array(vec![]));
+        obj.insert(output_key.clone(), entries);
+    }
+
+    Ok(state)
+}
+
+/// Execute storage.copy action
+async fn execute_storage_copy(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("storage.copy requires 'with' parameters"))?;
+
+    let source = params
+        .get("source")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.copy requires 'source' parameter"))?;
+
+    let destination = params
+        .get("destination")
+        .and_then(|v| v.as_str())
+        .map(|u| process_template(u, &state, variables))
+        .ok_or_else(|| JsValue::from_str("storage.copy requires 'destination' parameter"))?;
+
+    let result_json = storage_copy_async(&source, &destination).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse storage result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute ltm.store action
+async fn execute_ltm_store(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("ltm.store requires 'with' parameters"))?;
+
+    let key = params
+        .get("key")
+        .and_then(|v| v.as_str())
+        .map(|k| process_template(k, &state, variables))
+        .ok_or_else(|| JsValue::from_str("ltm.store requires 'key' parameter"))?;
+
+    // Value can be a direct value or a reference
+    let value = if let Some(value_param) = params.get("value") {
+        process_template_value(value_param, &state, variables)
+    } else {
+        return Err(JsValue::from_str("ltm.store requires 'value' parameter"));
+    };
+
+    let value_json = serde_json::to_string(&value)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize value: {}", e)))?;
+
+    // Extract metadata from params
+    let metadata = params.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+    let metadata_json = serde_json::to_string(&metadata)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize metadata: {}", e)))?;
+
+    let result_json = ltm_store_async(&key, &value_json, &metadata_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse LTM result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute ltm.retrieve action
+async fn execute_ltm_retrieve(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("ltm.retrieve requires 'with' parameters"))?;
+
+    let key = params
+        .get("key")
+        .and_then(|v| v.as_str())
+        .map(|k| process_template(k, &state, variables))
+        .ok_or_else(|| JsValue::from_str("ltm.retrieve requires 'key' parameter"))?;
+
+    // Default value if not found
+    let default_value = params.get("default").cloned().unwrap_or(JsonValue::Null);
+    let default_json = serde_json::to_string(&default_value)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize default: {}", e)))?;
+
+    let result_json = ltm_retrieve_async(&key, &default_json).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse LTM result: {}", e)))?;
+
+    // Extract value for convenience
+    let output = if let Some(true) = result.get("found").and_then(|v| v.as_bool()) {
+        result.get("value").cloned().unwrap_or(result.clone())
+    } else {
+        result
+    };
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), output);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute ltm.delete action
+async fn execute_ltm_delete(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("ltm.delete requires 'with' parameters"))?;
+
+    let key = params
+        .get("key")
+        .and_then(|v| v.as_str())
+        .map(|k| process_template(k, &state, variables))
+        .ok_or_else(|| JsValue::from_str("ltm.delete requires 'key' parameter"))?;
+
+    let result_json = ltm_delete_async(&key).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse LTM result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute ltm.search action
+async fn execute_ltm_search(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node
+        .params
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("ltm.search requires 'with' parameters"))?;
+
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .map(|q| process_template(q, &state, variables))
+        .unwrap_or_default();
+
+    let metadata_filter = params.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+    let metadata_json = serde_json::to_string(&metadata_filter)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize filter: {}", e)))?;
+
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10) as u32;
+
+    let result_json = ltm_search_async(&query, &metadata_json, limit).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse LTM result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
+}
+
+/// Execute ltm.list action
+async fn execute_ltm_list(
+    node: &LlmNodeConfig,
+    mut state: JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<JsonValue, JsValue> {
+    let params = node.params.as_ref();
+
+    let prefix = params
+        .and_then(|p| p.get("prefix"))
+        .and_then(|v| v.as_str())
+        .map(|p| process_template(p, &state, variables))
+        .unwrap_or_default();
+
+    let limit = params
+        .and_then(|p| p.get("limit"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100) as u32;
+
+    let result_json = ltm_list_async(&prefix, limit).await?;
+    let result: JsonValue = serde_json::from_str(&result_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse LTM result: {}", e)))?;
+
+    if let Some(ref output_key) = node.output {
+        if let Some(obj) = state.as_object_mut() {
+            obj.insert(output_key.clone(), result);
+        }
+    }
+
+    Ok(state)
 }
 
 /// Execute return action

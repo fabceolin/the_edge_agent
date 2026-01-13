@@ -2,18 +2,15 @@
 
 ## Status
 
-Ready for Development
+**✅ Implemented**
 
+_Status updated: 2026-01-13 - Implementation verified in codebase._
+- `python/src/the_edge_agent/actions/web_actions.py` - ScrapeGraphAI integration with `scrapegraph_py`
+- Supports both API and local backend modes
+- Includes retry mechanism with error handling
+- API key management via environment variables
 
-## Status: Deferred ⏸️
-
-**Priority: Very Low**
-
-**Story Quality Score: TBD**
-
-> Extends TEA-BUILTIN-008.4 with an open-source/local backend option, allowing users to choose between the ScrapeGraphAI API or the open-source library with LiteLLM-compatible LLM providers.
-
-**Deferral Reason:** Nice-to-have feature. Current API-based implementation meets immediate needs. Revisit when there's demand for local/private execution or cost optimization at scale.
+> **Previous Status:** Deferred ⏸️ - Now implemented as part of web_actions module.
 
 ## Story
 

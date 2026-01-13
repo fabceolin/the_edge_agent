@@ -1024,7 +1024,46 @@ def run(
                         raise typer.Exit(1)
                 elif show_graph:
                     # TEA-CLI-006: Graph progress display mode
-                    if event_type == "state":
+                    if event_type == "parallel_start":
+                        # Register parallel items dynamically
+                        items = event.get("items", [])
+                        parent = event.get("node")
+                        if parent and items:
+                            graph_tracker.register_parallel_items(parent, items)
+                            # Refresh display to show new parallel structure
+                            if use_ansi_updates:
+                                typer.echo(graph_tracker.render_with_update())
+
+                    elif event_type == "parallel_item_start":
+                        # Mark specific parallel item as running
+                        parent = event.get("node")
+                        item = event.get("item")
+                        if parent and item:
+                            graph_tracker.mark_parallel_item_running(parent, item)
+                            # Refresh display
+                            if use_ansi_updates:
+                                typer.echo(graph_tracker.render_with_update())
+
+                    elif event_type == "parallel_item_complete":
+                        # Mark specific parallel item as completed
+                        parent = event.get("node")
+                        item = event.get("item")
+                        if parent and item:
+                            graph_tracker.mark_parallel_item_completed(parent, item)
+                            # Refresh display
+                            if use_ansi_updates:
+                                typer.echo(graph_tracker.render_with_update())
+
+                    elif event_type == "parallel_complete":
+                        # All parallel items complete, mark parent as complete
+                        parent = event.get("node")
+                        if parent:
+                            graph_tracker.mark_completed(parent)
+                            # Refresh display
+                            if use_ansi_updates:
+                                typer.echo(graph_tracker.render_with_update())
+
+                    elif event_type == "state":
                         # AC-3, AC-4: Mark previous node complete, mark current running
                         if previous_node and previous_node not in (
                             "__start__",
