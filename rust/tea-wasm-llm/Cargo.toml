@@ -12,22 +12,19 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["storage-memory", "storage-http"]
 # Storage backends - enable as needed
-# Memory is always available in OpenDAL 0.55+
-storage-memory = []
+storage-memory = ["opendal/services-memory"]
 storage-http = ["opendal/services-http"]
 storage-s3 = ["opendal/services-s3"]
 storage-gcs = ["opendal/services-gcs"]
 storage-azblob = ["opendal/services-azblob"]
-# OPFS is only available on wasm32 target
-storage-opfs = ["opendal/services-opfs"]
-# Enable all cloud backends (excluding OPFS for native builds)
+# Enable all cloud backends
 storage-all = ["storage-s3", "storage-gcs", "storage-azblob", "storage-http", "storage-memory"]
 
 [dependencies]
-# WASM bindings - pinned to 0.2.92 to avoid externref table issues in some browsers
-wasm-bindgen = "=0.2.92"
-wasm-bindgen-futures = "=0.4.42"
-js-sys = "=0.3.69"
+# WASM bindings
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -62,12 +59,12 @@ futures = "0.3"
 sha2 = "0.10"
 
 # OpenDAL for unified storage access (WASM-compatible)
-# Note: Use send_wrapper feature for wasm32-unknown-unknown target
-opendal = { version = "0.55", default-features = false, features = ["rustls-aws-lc-cryptoprovider"] }
+# Using 0.50 which has compatible API
+opendal = { version = "0.50", default-features = false }
 
-# Web APIs - pinned to match wasm-bindgen version
+# Web APIs
 [dependencies.web-sys]
-version = "=0.3.69"
+version = "0.3"
 features = [
     "console",
     "Window",
@@ -75,11 +72,9 @@ features = [
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-# Enable send_wrapper for WASM builds
-opendal = { version = "0.55", default-features = false, features = ["rustls-aws-lc-cryptoprovider", "send_wrapper"] }
 
 [dev-dependencies]
-wasm-bindgen-test = "=0.3.42"
+wasm-bindgen-test = "0.3"
 
 [profile.release]
 opt-level = "s"

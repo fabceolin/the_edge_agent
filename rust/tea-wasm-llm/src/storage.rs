@@ -199,12 +199,12 @@ pub fn clear_storage_credentials() {
 /// Check if credentials are set for a provider
 #[wasm_bindgen]
 pub fn has_storage_credentials(provider: &str) -> bool {
-    CREDENTIALS
-        .read()
-        .ok()
-        .and_then(|store| store.as_ref())
-        .map(|map| map.contains_key(&provider.to_lowercase()))
-        .unwrap_or(false)
+    if let Ok(guard) = CREDENTIALS.read() {
+        if let Some(map) = guard.as_ref() {
+            return map.contains_key(&provider.to_lowercase());
+        }
+    }
+    false
 }
 
 /// Initialize OPFS operator (call once at startup for browser local storage)
@@ -580,12 +580,14 @@ pub async fn storage_read_binary_async(uri: &str) -> Result<String, JsValue> {
 
     let (operator, path) = create_operator(uri).map_err(|e| e.with_uri(uri).to_js_error())?;
 
-    let bytes = operator.read(&path).await.map_err(|e| {
+    let buffer = operator.read(&path).await.map_err(|e| {
         StorageError::new("READ_FAILED", &format!("Read failed: {}", e))
             .with_uri(uri)
             .to_js_error()
     })?;
 
+    // Convert opendal::Buffer to bytes for base64 encoding
+    let bytes: Vec<u8> = buffer.to_vec();
     let base64_content = BASE64_STANDARD.encode(&bytes);
 
     let result = StorageReadResult {
