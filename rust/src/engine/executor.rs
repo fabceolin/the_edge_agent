@@ -17,8 +17,7 @@ use crate::engine::checkpoint::{Checkpoint, Checkpointer};
 use crate::engine::graph::{CompiledGraph, EdgeType, Node, NodeType};
 use crate::engine::lua_runtime::LuaRuntime;
 use crate::engine::observability::{
-    get_trace_context, push_span, set_trace_context, HandlerRegistry, ObsConfig,
-    ObservabilityContext, TraceContext,
+    push_span, set_trace_context, HandlerRegistry, ObsConfig, ObservabilityContext, TraceContext,
 };
 use crate::engine::parallel::{ParallelConfig, ParallelExecutor, ParallelFlowResult};
 #[cfg(feature = "prolog")]

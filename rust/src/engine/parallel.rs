@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::engine::observability::{get_trace_context, set_trace_context, TraceContext};
+use crate::engine::observability::{get_trace_context, set_trace_context};
 use crate::error::{TeaError, TeaResult};
 
 /// Parallel execution configuration
