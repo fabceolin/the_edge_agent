@@ -555,8 +555,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     def llm_call(
         state,
-        model,
-        messages,
+        model=None,
+        messages=None,
         temperature=0.7,
         max_retries=0,
         base_delay=1.0,
@@ -765,6 +765,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "error": f"Local LLM error: {str(e)}",
                     "success": False,
                 }
+
+        # Validate model is provided for providers that require it
+        # Shell provider doesn't need model (already returned above)
+        # Local provider resolves model from settings/env (handled above)
+        if not model:
+            return {
+                "error": f"model is required for provider '{resolved_provider}'",
+                "success": False,
+            }
 
         # LiteLLM provider - uses separate code path (TEA-LLM-003)
         if resolved_provider == "litellm":
@@ -1182,8 +1191,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     def llm_stream(
         state,
-        model,
-        messages,
+        model=None,
+        messages=None,
         temperature=0.7,
         opik_trace=False,
         opik_project_name=None,
@@ -1269,6 +1278,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     timeout=timeout,
                     **kwargs,
                 )
+
+            # Validate model is provided for providers that require it
+            if not model:
+                return {
+                    "error": f"model is required for provider '{resolved_provider}'",
+                    "success": False,
+                }
 
             # LiteLLM provider - uses separate streaming code path (TEA-LLM-003)
             if resolved_provider == "litellm":
@@ -1489,8 +1505,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     def llm_retry(
         state,
-        model,
-        messages,
+        model=None,
+        messages=None,
         max_retries=3,
         base_delay=1.0,
         max_delay=60.0,
@@ -1552,9 +1568,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     def llm_tools(
         state,
-        model,
-        messages,
-        tools,
+        model=None,
+        messages=None,
+        tools=None,
         tool_choice="auto",
         max_tool_rounds=10,
         temperature=0.7,
@@ -1727,6 +1743,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
+
+        # Validate model is provided (shell provider not supported for tool calling)
+        if not model:
+            return {
+                "error": f"model is required for provider '{resolved_provider}'",
+                "success": False,
+            }
 
         # LiteLLM provider - uses separate tool calling code path (TEA-LLM-003)
         if resolved_provider == "litellm":

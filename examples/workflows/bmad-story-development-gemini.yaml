@@ -1,0 +1,371 @@
+name: bmad-story-development
+description: |
+  Autonomous BMad Story Development Pipeline using Context Injection Pattern.
+  Orchestrates: Dev → QA → SM agents for full story lifecycle.
+
+  Usage: tea run examples/workflows/bmad-story-development.yaml --arg="TEA-KIROKU-006"
+
+state_schema:
+  arg: str                    # Story ID (e.g., "TEA-KIROKU-006")
+  bmad_root: str              # Auto-detected BMad directory
+  dev_persona: str            # Dev agent persona
+  qa_persona: str             # QA agent persona
+  sm_persona: str             # SM agent persona
+  develop_story_task: str     # develop-story task definition
+  review_story_task: str      # review-story task definition
+  dev_output: str             # Output from dev agent
+  qa_output: str              # Output from qa agent
+  qa_gate_status: str         # QA gate status: PASS | CONCERNS | FAIL | WAIVED
+  sm_output: str              # Output from sm agent
+  final_status: str           # Final story status
+
+nodes:
+  - name: detect_bmad_version
+    description: Auto-detect BMad directory structure
+    run: |
+      import os
+      if os.path.isdir(".bmad-core/agents"):
+          bmad_root = ".bmad-core"
+      elif os.path.isdir("_bmad/bmm/agents"):
+          bmad_root = "_bmad/bmm"
+      else:
+          bmad_root = ".bmad-core"
+      return {"bmad_root": bmad_root}
+
+  - name: load_dev_context
+    description: Load Dev agent persona
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+
+      # Load dev agent persona
+      agent_file = os.path.join(bmad_root, "agents", "dev.md")
+      dev_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              dev_persona = f.read()
+
+      return {"dev_persona": dev_persona}
+
+  - name: run_dev_develop_story
+    description: Execute Dev agent *develop-story command
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: gemini
+      model: gemini
+      timeout: 1800  # 30 minutes for complex development
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.dev_persona }}
+
+            TASK: Execute *develop-story for story {{ state.arg }}.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write code. Run tests.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Follow the develop-story command order-of-execution exactly:
+               - Read each task → Implement task and subtasks → Write tests → Execute validations
+               - Only mark checkbox [x] if ALL validations pass
+               - Update File List with new/modified/deleted files
+               - Repeat until all tasks complete
+            3. Run ALL tests and confirm they pass
+            4. Set story status to "Ready for Review" when complete
+
+            CRITICAL: Do NOT skip any steps. Implement ALL tasks sequentially.
+            CRITICAL: Write proper tests for each implementation.
+            CRITICAL: Update the File List section accurately.
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  - name: load_qa_context
+    description: Load QA agent persona and review-story task
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+
+      # Load QA agent persona
+      agent_file = os.path.join(bmad_root, "agents", "qa.md")
+      qa_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              qa_persona = f.read()
+
+      # Load review-story task
+      task_file = os.path.join(bmad_root, "tasks", "review-story.md")
+      review_story_task = ""
+      if os.path.exists(task_file):
+          with open(task_file, "r") as f:
+              review_story_task = f.read()
+
+      return {"qa_persona": qa_persona, "review_story_task": review_story_task}
+
+  - name: run_qa_review
+    description: Execute QA agent *review command
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: gemini
+      model: gemini
+      timeout: 1200  # 20 minutes for thorough review
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.qa_persona }}
+
+            TASK: Execute *review for story {{ state.arg }}.
+
+            {{ state.review_story_task }}
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Perform comprehensive review following the review-story task:
+               - Risk Assessment (determines review depth)
+               - Requirements Traceability
+               - Code Quality Review
+               - Test Architecture Assessment
+               - NFR Validation
+               - Standards Compliance Check
+            3. Update ONLY the "## QA Results" section in the story file
+            4. Create quality gate file in docs/qa/gates/
+            5. Determine gate status: PASS | CONCERNS | FAIL | WAIVED
+
+            CRITICAL: Only modify the QA Results section of the story.
+            CRITICAL: Create the gate file with proper status.
+
+            When done print: QA_REVIEW_COMPLETED
+    output: qa_output
+
+  - name: check_qa_gate
+    description: Parse QA gate status from story file using grep
+    run: |
+      import subprocess
+      import os
+      import glob
+
+      arg = state.get("arg", "")
+      qa_gate_status = "UNKNOWN"
+
+      # Find story file
+      story_file = None
+      patterns = [f"docs/stories/{arg}.md", f"docs/stories/{arg.upper()}.md"]
+      for p in patterns:
+          matches = glob.glob(p)
+          if matches:
+              story_file = matches[0]
+              break
+
+      if story_file and os.path.exists(story_file):
+          # Use grep to find "Gate:" lines, then filter out "Previous QA Gate:"
+          # grep -E "Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)" | grep -v "Previous"
+          try:
+              result = subprocess.run(
+                  ["grep", "-E", r"Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", story_file],
+                  capture_output=True,
+                  text=True
+              )
+              if result.returncode == 0:
+                  lines = result.stdout.strip().split('\n')
+                  for line in lines:
+                      # Skip historical entries like "Previous QA Gate:"
+                      if "Previous" in line:
+                          continue
+                      # Extract gate status
+                      for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                          if status in line.upper():
+                              qa_gate_status = status
+                              break
+                      if qa_gate_status != "UNKNOWN":
+                          break
+          except Exception as e:
+              print(f"grep error: {e}")
+
+      # Fallback: check gate YAML file
+      if qa_gate_status == "UNKNOWN":
+          gate_patterns = [
+              f"docs/qa/gates/{arg}.yml",
+              f"docs/qa/gates/{arg}.yaml",
+          ]
+          for pattern in gate_patterns:
+              if os.path.exists(pattern):
+                  try:
+                      result = subprocess.run(
+                          ["grep", "-E", r"^gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", pattern],
+                          capture_output=True,
+                          text=True
+                      )
+                      if result.returncode == 0:
+                          line = result.stdout.strip()
+                          for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                              if status in line.upper():
+                                  qa_gate_status = status
+                                  break
+                  except Exception:
+                      pass
+                  break
+
+      print(f"QA Gate Status: {qa_gate_status}")
+      return {"qa_gate_status": qa_gate_status}
+
+  - name: run_dev_review_qa
+    description: Execute Dev agent *review-qa command to address QA concerns
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: gemini
+      model: gemini
+      timeout: 1800  # 30 minutes for addressing concerns
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.dev_persona }}
+
+            TASK: Execute *review-qa for story {{ state.arg }}.
+
+            The QA review returned CONCERNS. You must address them.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write code. Run tests.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Read the "## QA Results" section to understand the concerns
+            3. Address each concern raised by the QA agent:
+               - Fix code issues
+               - Add missing tests
+               - Update documentation as needed
+            4. Run ALL tests and confirm they pass
+            5. Update the Dev Agent Record section with your fixes
+
+            CRITICAL: Address ALL QA concerns before completing.
+            CRITICAL: Do NOT skip any concerns. Fix them all.
+
+            When done print: DEV_REVIEW_QA_COMPLETED
+    output: dev_output
+
+  - name: load_sm_context
+    description: Load SM agent persona
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+
+      # Load SM agent persona
+      agent_file = os.path.join(bmad_root, "agents", "sm.md")
+      sm_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              sm_persona = f.read()
+
+      return {"sm_persona": sm_persona}
+
+  - name: run_sm_status_update
+    description: Execute SM agent to update story status based on QA results
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: gemini
+      model: gemini
+      timeout: 600  # 10 minutes
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.sm_persona }}
+
+            TASK: Update story status for {{ state.arg }} based on QA review results.
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Read the "## QA Results" section to determine gate status
+            3. Check the gate file in docs/qa/gates/ for the gate decision
+            4. Update the story status based on the gate:
+               - If gate is PASS: Set status to "Done"
+               - If gate is CONCERNS: Set status to "Done" with QA notes
+               - If gate is FAIL: Set status to "Changes Required"
+               - If gate is WAIVED: Set status to "Done (Waived)"
+            5. Update the "## Status" section in the story file
+
+            CRITICAL: Only update the Status section based on QA gate decision.
+            CRITICAL: Do NOT modify code or other sections.
+
+            When done print: SM_STATUS_UPDATED with the final status.
+    output: sm_output
+
+  - name: summary
+    description: Generate final summary of the development pipeline
+    run: |
+      arg = state.get("arg", "unknown")
+      dev_output = state.get("dev_output", "")
+      qa_output = state.get("qa_output", "")
+      sm_output = state.get("sm_output", "")
+
+      # Extract completion markers
+      dev_done = "DEV_STORY_COMPLETED" in dev_output
+      qa_done = "QA_REVIEW_COMPLETED" in qa_output
+      sm_done = "SM_STATUS_UPDATED" in sm_output
+
+      summary = f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad Story Development Pipeline Complete          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {arg:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Phase           │ Status                                   ║
+      ╠═════════════════╪══════════════════════════════════════════╣
+      ║ Dev Agent       │ {'✓ Completed' if dev_done else '✗ Failed':<40} ║
+      ║ QA Agent        │ {'✓ Completed' if qa_done else '✗ Failed':<40} ║
+      ║ SM Agent        │ {'✓ Completed' if sm_done else '✗ Failed':<40} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """
+
+      print(summary)
+      return {"final_status": "completed" if all([dev_done, qa_done, sm_done]) else "incomplete"}
+
+edges:
+  - from: __start__
+    to: detect_bmad_version
+  - from: detect_bmad_version
+    to: load_dev_context
+  - from: load_dev_context
+    to: run_dev_develop_story
+  - from: run_dev_develop_story
+    to: load_qa_context
+  - from: load_qa_context
+    to: run_qa_review
+  - from: run_qa_review
+    to: check_qa_gate
+
+  # Conditional routing based on QA gate status
+  # If CONCERNS: route back to dev to fix issues, then re-run QA
+  - from: check_qa_gate
+    to: run_dev_review_qa
+    when: "state.get('qa_gate_status') == 'CONCERNS'"
+
+  # If NOT CONCERNS (PASS, FAIL, WAIVED, or UNKNOWN): proceed to SM
+  - from: check_qa_gate
+    to: load_sm_context
+    when: "state.get('qa_gate_status') != 'CONCERNS'"
+
+  # After dev fixes concerns, re-run QA review
+  - from: run_dev_review_qa
+    to: load_qa_context
+
+  - from: load_sm_context
+    to: run_sm_status_update
+  - from: run_sm_status_update
+    to: summary
+  - from: summary
+    to: __end__
