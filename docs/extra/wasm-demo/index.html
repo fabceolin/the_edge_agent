@@ -16,6 +16,7 @@
         "@codemirror/state": "https://esm.sh/@codemirror/state@6.4.1",
         "@codemirror/view": "https://esm.sh/@codemirror/view@6.26.0?external=@codemirror/state",
         "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1?external=@codemirror/state,@codemirror/view",
+        "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2?external=@codemirror/state,@codemirror/view",
         "js-yaml": "https://esm.sh/js-yaml@4.1.0",
         "wasmoon": "https://cdn.jsdelivr.net/npm/wasmoon@1.16.0/+esm",
@@ -86,38 +87,94 @@
         </div>
 
         <main>
-            <!-- YAML Workflow -->
-            <div class="yaml-container">
-                <div class="yaml-editor">
-                    <label>YAML Workflow:</label>
-                    <div id="yaml-editor" class="editor-container"></div>
-                </div>
-                <div class="yaml-state">
-                    <label>Initial State (YAML):</label>
-                    <div id="state-editor" class="state-editor-container"></div>
-                </div>
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="workflow">Workflow</button>
+                <button class="tab-btn" data-tab="opik">Opik Traces</button>
             </div>
-            <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
 
-            <!-- Graph Panel -->
-            <div id="graph-panel" class="collapsible-panel">
-                <div class="panel-header" onclick="toggleGraphPanel()">
-                    <span class="panel-icon">▶</span>
-                    <span class="panel-title">Agent Graph</span>
-                    <span id="graph-status" class="status-badge"></span>
-                </div>
-                <div class="panel-content" id="graph-content">
-                    <div id="mermaid-container"></div>
-                    <div id="graph-error" class="error-message hidden">
-                        <span class="error-icon">⚠</span>
-                        <span>Graph unavailable</span>
+            <!-- Workflow Tab -->
+            <div id="tab-workflow" class="tab-content active">
+                <!-- YAML Workflow -->
+                <div class="yaml-container">
+                    <div class="yaml-editor">
+                        <label>YAML Workflow:</label>
+                        <div id="yaml-editor" class="editor-container"></div>
+                    </div>
+                    <div class="yaml-state">
+                        <label>Initial State (YAML):</label>
+                        <div id="state-editor" class="state-editor-container"></div>
                     </div>
                 </div>
+                <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
+
+                <!-- Graph Panel -->
+                <div id="graph-panel" class="collapsible-panel">
+                    <div class="panel-header" onclick="toggleGraphPanel()">
+                        <span class="panel-icon">▶</span>
+                        <span class="panel-title">Agent Graph</span>
+                        <span id="graph-status" class="status-badge"></span>
+                    </div>
+                    <div class="panel-content" id="graph-content">
+                        <div id="mermaid-container"></div>
+                        <div id="graph-error" class="error-message hidden">
+                            <span class="error-icon">⚠</span>
+                            <span>Graph unavailable</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="yaml-output" class="hidden">
+                    <h3>Output:</h3>
+                    <div id="output-editor" class="output-editor-container"></div>
+                </div>
             </div>
 
-            <div id="yaml-output" class="hidden">
-                <h3>Output:</h3>
-                <div id="output-editor" class="output-editor-container"></div>
+            <!-- Opik Traces Tab -->
+            <div id="tab-opik" class="tab-content">
+                <div class="opik-header">
+                    <div class="opik-status">
+                        <span id="opik-status-indicator" class="status-indicator disconnected"></span>
+                        <span id="opik-status-text">Not connected</span>
+                    </div>
+                    <div class="opik-config">
+                        <input type="password" id="opik-api-key" placeholder="Enter Opik API Key" />
+                        <input type="text" id="opik-project" placeholder="Project name" value="tea-wasm-demo" />
+                        <button id="opik-connect-btn">Connect</button>
+                    </div>
+                </div>
+
+                <div class="opik-info">
+                    <p>Connect to <a href="https://www.comet.com/opik" target="_blank">Comet Opik</a> to send LLM traces in real-time.</p>
+                    <p>Traces are sent when you run YAML workflows with <code>llm.call</code> actions.</p>
+                </div>
+
+                <div class="trace-controls">
+                    <span id="trace-count">0 traces</span>
+                    <button id="clear-traces-btn">Clear Traces</button>
+                </div>
+
+                <div id="trace-list" class="trace-list">
+                    <div class="trace-empty">No traces yet. Run a workflow to generate traces.</div>
+                </div>
+
+                <!-- Trace Detail Modal -->
+                <div id="trace-detail" class="trace-detail hidden">
+                    <div class="trace-detail-header">
+                        <h3 id="trace-detail-title">Trace Details</h3>
+                        <button id="close-trace-detail">✕</button>
+                    </div>
+                    <div class="trace-detail-content">
+                        <div class="trace-detail-section">
+                            <label>Input:</label>
+                            <div id="trace-input-editor" class="trace-editor-container"></div>
+                        </div>
+                        <div class="trace-detail-section">
+                            <label>Output:</label>
+                            <div id="trace-output-editor" class="trace-editor-container"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </main>
 

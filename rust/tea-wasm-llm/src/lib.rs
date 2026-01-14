@@ -328,7 +328,7 @@ async fn execute_llm_call(
         .unwrap_or(0.7) as f32;
 
     let llm_params = LlmParams {
-        prompt,
+        prompt: prompt.clone(),
         system: params
             .get("system")
             .and_then(|v| v.as_str())
@@ -358,9 +358,61 @@ async fn execute_llm_call(
     let state_json = serde_json::to_string(&state)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize state: {}", e)))?;
 
+    // Record start time for Opik trace
+    let start_time = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+
     let result_json = llm_call_async(&params_json, &state_json).await?;
+
+    // Record end time for Opik trace
+    let end_time = js_sys::Date::new_0().to_iso_string().as_string().unwrap_or_default();
+
     let result: JsonValue = serde_json::from_str(&result_json)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse LLM result: {}", e)))?;
+
+    // Send Opik trace if enabled
+    if opik::is_opik_enabled() {
+        let project_name = opik::OPIK_CONFIG.with(|c| {
+            c.borrow()
+                .project_name
+                .clone()
+                .unwrap_or_else(|| "tea-wasm".to_string())
+        });
+
+        // Extract token usage if available
+        let usage = result.get("usage").and_then(|u| {
+            Some(opik::OpikUsage {
+                prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).map(|v| v as u32),
+                completion_tokens: u
+                    .get("completion_tokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32),
+                total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).map(|v| v as u32),
+            })
+        });
+
+        let trace = opik::OpikTrace {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: node.name.clone(),
+            project_name,
+            start_time,
+            end_time,
+            input: serde_json::json!({
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }),
+            output: result.clone(),
+            usage,
+            metadata: serde_json::json!({
+                "runtime": "tea-wasm",
+                "node": node.name,
+                "action": "llm.call",
+            }),
+        };
+
+        // Fire-and-forget trace send
+        let _ = opik::send_trace(&trace);
+    }
 
     // Store result in output key (default to node name)
     let output_key = node.output.as_ref().unwrap_or(&node.name);
