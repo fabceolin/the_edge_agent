@@ -5446,7 +5446,7 @@ dependencies = [
 
 [[package]]
 name = "the_edge_agent"
-version = "0.9.44"
+version = "0.9.49"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -5467,6 +5467,7 @@ dependencies = [
  "jmespath",
  "jsonschema",
  "llama-cpp-2",
+ "log",
  "mlua",
  "parking_lot",
  "petgraph",

@@ -40,6 +40,249 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 // =============================================================================
+// TEA-RUST-044.2: Trace Context Propagation
+// =============================================================================
+
+/// Trace context for parent-child span relationships (TEA-RUST-044.2).
+///
+/// This struct holds the trace ID and span hierarchy information needed
+/// to link LLM calls as child spans under a parent trace in Opik.
+///
+/// # Thread-Safety
+///
+/// TraceContext is designed to be passed through parallel execution branches.
+/// Use `thread_local!` storage for per-thread context or pass explicitly
+/// through function parameters.
+///
+/// # Example
+///
+/// ```ignore
+/// use the_edge_agent::engine::observability::TraceContext;
+///
+/// // Create root trace context at agent start
+/// let root_ctx = TraceContext::new_root();
+///
+/// // Create child span for an LLM call
+/// let llm_span_ctx = root_ctx.child_span();
+/// assert_eq!(llm_span_ctx.trace_id, root_ctx.trace_id);
+/// assert_eq!(llm_span_ctx.parent_span_id, Some(root_ctx.span_id.clone()));
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TraceContext {
+    /// Unique identifier for the entire trace (shared across all spans)
+    pub trace_id: String,
+    /// Unique identifier for this specific span
+    pub span_id: String,
+    /// Parent span ID (None for root span)
+    pub parent_span_id: Option<String>,
+    /// Name of the span (typically the node name)
+    #[serde(default)]
+    pub span_name: Option<String>,
+}
+
+impl TraceContext {
+    /// Create a new root trace context with fresh IDs.
+    ///
+    /// This should be called once at the start of an agent execution
+    /// to establish the root trace.
+    pub fn new_root() -> Self {
+        let trace_id = Uuid::new_v4().to_string();
+        let span_id = Uuid::new_v4().to_string();
+
+        log::debug!(
+            "[OPIK TRACE] New root context: trace_id={}, span_id={}",
+            trace_id,
+            span_id
+        );
+
+        Self {
+            trace_id,
+            span_id,
+            parent_span_id: None,
+            span_name: Some("root".to_string()),
+        }
+    }
+
+    /// Create a new root trace context with a specific trace ID.
+    ///
+    /// Useful for resuming from a checkpoint or correlating with external systems.
+    pub fn with_trace_id(trace_id: impl Into<String>) -> Self {
+        Self {
+            trace_id: trace_id.into(),
+            span_id: Uuid::new_v4().to_string(),
+            parent_span_id: None,
+            span_name: Some("root".to_string()),
+        }
+    }
+
+    /// Create a child span context.
+    ///
+    /// The child inherits the trace_id but gets a new span_id,
+    /// with parent_span_id pointing to this span.
+    pub fn child_span(&self) -> Self {
+        let child = Self {
+            trace_id: self.trace_id.clone(),
+            span_id: Uuid::new_v4().to_string(),
+            parent_span_id: Some(self.span_id.clone()),
+            span_name: None,
+        };
+
+        log::debug!(
+            "[OPIK TRACE] Child span: trace_id={}, span_id={}, parent_span_id={:?}",
+            child.trace_id,
+            child.span_id,
+            child.parent_span_id
+        );
+
+        child
+    }
+
+    /// Create a child span context with a specific name.
+    pub fn child_span_named(&self, name: impl Into<String>) -> Self {
+        let mut child = self.child_span();
+        child.span_name = Some(name.into());
+        child
+    }
+
+    /// Create a sibling span (same parent, new span_id).
+    ///
+    /// Useful for sequential LLM calls at the same level.
+    pub fn sibling_span(&self) -> Self {
+        Self {
+            trace_id: self.trace_id.clone(),
+            span_id: Uuid::new_v4().to_string(),
+            parent_span_id: self.parent_span_id.clone(),
+            span_name: None,
+        }
+    }
+}
+
+impl Default for TraceContext {
+    fn default() -> Self {
+        Self::new_root()
+    }
+}
+
+// Thread-local storage for trace context (TEA-RUST-044.2)
+//
+// This allows trace context to be accessed from anywhere in the call stack
+// without explicitly passing it through every function.
+thread_local! {
+    static CURRENT_TRACE_CONTEXT: std::cell::RefCell<Option<TraceContext>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Set the current trace context for this thread.
+///
+/// # Example
+///
+/// ```ignore
+/// use the_edge_agent::engine::observability::{TraceContext, set_trace_context};
+///
+/// let ctx = TraceContext::new_root();
+/// set_trace_context(Some(ctx));
+/// ```
+pub fn set_trace_context(ctx: Option<TraceContext>) {
+    log::debug!(
+        "[OPIK TRACE] Setting trace context: {:?}",
+        ctx.as_ref().map(|c| (&c.trace_id, &c.span_id))
+    );
+    CURRENT_TRACE_CONTEXT.with(|c| {
+        *c.borrow_mut() = ctx;
+    });
+}
+
+/// Get the current trace context for this thread.
+///
+/// Returns None if no context has been set.
+pub fn get_trace_context() -> Option<TraceContext> {
+    CURRENT_TRACE_CONTEXT.with(|c| c.borrow().clone())
+}
+
+/// Execute a closure with a specific trace context.
+///
+/// The context is automatically set before and cleared after execution.
+/// This is useful for scoped context management.
+///
+/// # Example
+///
+/// ```ignore
+/// use the_edge_agent::engine::observability::{TraceContext, with_trace_context};
+///
+/// let ctx = TraceContext::new_root();
+/// let result = with_trace_context(ctx, || {
+///     // Code here can access the trace context via get_trace_context()
+///     "result"
+/// });
+/// ```
+pub fn with_trace_context<F, R>(ctx: TraceContext, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let previous = get_trace_context();
+    set_trace_context(Some(ctx));
+    let result = f();
+    set_trace_context(previous);
+    result
+}
+
+/// Push a child span onto the context stack and return a guard that pops it on drop.
+///
+/// This is the recommended way to manage nested spans in synchronous code.
+///
+/// # Example
+///
+/// ```ignore
+/// use the_edge_agent::engine::observability::{TraceContext, set_trace_context, push_span};
+///
+/// set_trace_context(Some(TraceContext::new_root()));
+///
+/// {
+///     let _guard = push_span("llm_call");
+///     // Inside this scope, get_trace_context() returns the child span
+/// }
+/// // After guard drops, get_trace_context() returns the parent span
+/// ```
+pub fn push_span(name: impl Into<String>) -> SpanGuard {
+    let name = name.into();
+    let parent = get_trace_context();
+
+    let child = if let Some(ref parent_ctx) = parent {
+        parent_ctx.child_span_named(&name)
+    } else {
+        let mut ctx = TraceContext::new_root();
+        ctx.span_name = Some(name.clone());
+        ctx
+    };
+
+    log::debug!(
+        "[OPIK TRACE] Pushing span '{}': trace_id={}, span_id={}, parent={:?}",
+        name,
+        child.trace_id,
+        child.span_id,
+        child.parent_span_id
+    );
+
+    set_trace_context(Some(child));
+    SpanGuard { parent }
+}
+
+/// Guard that restores the parent trace context when dropped.
+pub struct SpanGuard {
+    parent: Option<TraceContext>,
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        log::debug!(
+            "[OPIK TRACE] Popping span, restoring parent: {:?}",
+            self.parent.as_ref().map(|c| (&c.trace_id, &c.span_id))
+        );
+        set_trace_context(self.parent.take());
+    }
+}
+
+// =============================================================================
 // Core Types
 // =============================================================================
 
@@ -494,6 +737,10 @@ pub trait EventHandler: Send + Sync {
 
     /// Flush any buffered events (optional)
     fn flush(&self) {}
+
+    /// Set Mermaid graph definition (TEA-RUST-044.1)
+    /// Default implementation does nothing - only OpikHandler uses this.
+    fn set_mermaid_graph(&self, _mermaid: String) {}
 }
 
 /// Console handler - prints events to stdout
@@ -693,6 +940,11 @@ pub struct OpikHandler {
     buffer: RwLock<Vec<LogEvent>>,
     /// Batch size threshold
     batch_size: usize,
+    /// Mermaid graph definition (TEA-RUST-044.1)
+    /// Only sent on first trace event
+    mermaid_graph: RwLock<Option<String>>,
+    /// Whether graph has been sent (TEA-RUST-044.1)
+    graph_sent: RwLock<bool>,
 }
 
 impl std::fmt::Debug for OpikHandler {
@@ -703,6 +955,8 @@ impl std::fmt::Debug for OpikHandler {
             .field("url", &self.url)
             .field("batch_size", &self.batch_size)
             .field("buffer_len", &self.buffer.read().len())
+            .field("has_mermaid_graph", &self.mermaid_graph.read().is_some())
+            .field("graph_sent", &*self.graph_sent.read())
             // Omit api_key for security
             .finish()
     }
@@ -746,6 +1000,8 @@ impl OpikHandler {
             client,
             buffer: RwLock::new(Vec::new()),
             batch_size: config.batch_size.unwrap_or(Self::DEFAULT_BATCH_SIZE),
+            mermaid_graph: RwLock::new(None),
+            graph_sent: RwLock::new(false),
         })
     }
 
@@ -769,15 +1025,83 @@ impl OpikHandler {
         }
     }
 
+    /// Set the Mermaid graph definition to be sent with the first trace event (TEA-RUST-044.1)
+    ///
+    /// The graph will be included in the `_opik_graph_definition` metadata field
+    /// of the first trace event sent to Opik.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use the_edge_agent::engine::observability::{OpikHandler, OpikConfig};
+    ///
+    /// let handler = OpikHandler::from_config(&OpikConfig::default())?;
+    /// handler.set_mermaid_graph("graph TD\n    __start__((Start))-->process".to_string());
+    /// ```
+    pub fn set_mermaid_graph(&self, mermaid: String) {
+        *self.mermaid_graph.write() = Some(mermaid);
+    }
+
+    /// Check if a Mermaid graph is set
+    pub fn has_mermaid_graph(&self) -> bool {
+        self.mermaid_graph.read().is_some()
+    }
+
     /// Convert LogEvent to Opik trace format and send to API.
+    ///
+    /// TEA-RUST-044.2: Now uses TraceContext for proper parent-child span relationships.
+    /// The trace_id is consistent across all spans in an execution, and parent_span_id
+    /// links child spans to their parents.
     fn send_batch(&self, events: Vec<LogEvent>) -> Result<(), String> {
         if events.is_empty() {
             return Ok(());
         }
 
-        for event in events {
+        // TEA-RUST-044.1: Check if we should include the graph definition
+        // Only include it on the first batch
+        let include_graph = {
+            let graph_sent = *self.graph_sent.read();
+            if !graph_sent && self.mermaid_graph.read().is_some() {
+                *self.graph_sent.write() = true;
+                true
+            } else {
+                false
+            }
+        };
+
+        // Get the mermaid graph if we should include it
+        let mermaid_graph = if include_graph {
+            self.mermaid_graph.read().clone()
+        } else {
+            None
+        };
+
+        // TEA-RUST-044.2: Get current trace context for parent-child linking
+        let trace_ctx = get_trace_context();
+
+        for (idx, event) in events.iter().enumerate() {
+            // TEA-RUST-044.2: Use trace context for consistent trace_id and parent linking
+            let (trace_id, span_id, parent_span_id) = if let Some(ref ctx) = trace_ctx {
+                // Use the trace context's trace_id for all spans
+                // Generate a unique span_id for this event but use the same trace_id
+                let span_id = Uuid::new_v4().to_string();
+                (ctx.trace_id.clone(), span_id, ctx.parent_span_id.clone())
+            } else {
+                // Fallback: no context, create independent trace
+                let trace_id = Uuid::new_v4().to_string();
+                let span_id = Uuid::new_v4().to_string();
+                (trace_id, span_id, None)
+            };
+
+            log::debug!(
+                "[OPIK TRACE] Sending span for '{}': trace_id={}, span_id={}, parent_span_id={:?}",
+                event.node,
+                trace_id,
+                span_id,
+                parent_span_id
+            );
+
             // Build trace payload matching Opik REST API schema
-            let trace_id = Uuid::new_v4().to_string();
             let start_time = timestamp_to_iso8601(event.timestamp);
             let end_time = event
                 .metrics
@@ -786,8 +1110,10 @@ impl OpikHandler {
                 .map(|dur| timestamp_to_iso8601(event.timestamp + dur / 1000.0))
                 .unwrap_or_else(|| start_time.clone());
 
+            // TEA-RUST-044.2: Include span hierarchy in trace data
             let mut trace_data = serde_json::json!({
-                "id": trace_id,
+                "id": span_id,
+                "trace_id": trace_id,
                 "name": event.node,
                 "project_name": self.project_name,
                 "start_time": start_time,
@@ -800,6 +1126,22 @@ impl OpikHandler {
                     "level": event.level,
                 },
             });
+
+            // TEA-RUST-044.2: Add parent_span_id if this is a child span
+            if let Some(ref parent_id) = parent_span_id {
+                trace_data["parent_span_id"] = serde_json::json!(parent_id);
+                trace_data["metadata"]["parent_span_id"] = serde_json::json!(parent_id);
+            }
+
+            // TEA-RUST-044.1: Add graph definition to first event only
+            if idx == 0 {
+                if let Some(ref graph) = mermaid_graph {
+                    trace_data["metadata"]["_opik_graph_definition"] = serde_json::json!({
+                        "format": "mermaid",
+                        "data": graph
+                    });
+                }
+            }
 
             // Add workspace if configured
             if let Some(ref workspace) = self.workspace {
@@ -884,6 +1226,11 @@ impl EventHandler for OpikHandler {
             }
         }
     }
+
+    /// Set Mermaid graph definition (TEA-RUST-044.1)
+    fn set_mermaid_graph(&self, mermaid: String) {
+        *self.mermaid_graph.write() = Some(mermaid);
+    }
 }
 
 impl Drop for OpikHandler {
@@ -910,6 +1257,8 @@ fn timestamp_to_iso8601(timestamp: f64) -> String {
 /// Registry of active event handlers
 pub struct HandlerRegistry {
     handlers: RwLock<Vec<Arc<dyn EventHandler>>>,
+    /// Cached mermaid graph for OpikHandler (TEA-RUST-044.1)
+    mermaid_graph: RwLock<Option<String>>,
 }
 
 impl HandlerRegistry {
@@ -917,6 +1266,7 @@ impl HandlerRegistry {
     pub fn new() -> Self {
         Self {
             handlers: RwLock::new(Vec::new()),
+            mermaid_graph: RwLock::new(None),
         }
     }
 
@@ -973,6 +1323,33 @@ impl HandlerRegistry {
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.handlers.read().is_empty()
+    }
+
+    /// Set Mermaid graph definition for Opik integration (TEA-RUST-044.1)
+    ///
+    /// This method stores the Mermaid graph definition and propagates it
+    /// to all handlers that support it (e.g., OpikHandler).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use the_edge_agent::engine::observability::HandlerRegistry;
+    ///
+    /// let registry = HandlerRegistry::new();
+    /// registry.set_mermaid_graph("graph TD\n    __start__((Start))-->process".to_string());
+    /// ```
+    pub fn set_mermaid_graph(&self, mermaid: String) {
+        *self.mermaid_graph.write() = Some(mermaid.clone());
+
+        // TEA-RUST-044.1: Propagate to all handlers that support it
+        for handler in self.handlers.read().iter() {
+            handler.set_mermaid_graph(mermaid.clone());
+        }
+    }
+
+    /// Get the Mermaid graph definition if set
+    pub fn mermaid_graph(&self) -> Option<String> {
+        self.mermaid_graph.read().clone()
     }
 }
 

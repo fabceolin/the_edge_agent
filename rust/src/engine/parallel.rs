@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::engine::observability::{get_trace_context, set_trace_context, TraceContext};
 use crate::error::{TeaError, TeaResult};
 
 /// Parallel execution configuration
@@ -301,6 +302,9 @@ impl ParallelExecutor {
     }
 
     /// Execute branches in parallel
+    ///
+    /// TEA-RUST-044.2: Trace context is propagated to each parallel branch.
+    /// Each branch gets a child span with the same trace_id but unique span_id.
     pub fn execute<F>(
         &self,
         branches: &[String],
@@ -314,16 +318,39 @@ impl ParallelExecutor {
         let start = Instant::now();
         let timeout = config.timeout;
 
+        // TEA-RUST-044.2: Capture parent trace context before entering parallel section
+        // This context will be used to create child spans for each branch
+        let parent_trace_ctx = get_trace_context();
+
         // Deep copy state for each branch
+        // TEA-RUST-044.2: Also create unique child contexts for each branch
         let branch_states: Vec<_> = branches
             .iter()
-            .map(|b| (b.clone(), state.clone()))
+            .map(|b| {
+                let child_ctx = parent_trace_ctx
+                    .as_ref()
+                    .map(|ctx| ctx.child_span_named(format!("parallel:{}", b)));
+                (b.clone(), state.clone(), child_ctx)
+            })
             .collect();
 
         // Execute in parallel using rayon
         let results: Vec<ParallelFlowResult> = branch_states
             .par_iter()
-            .map(|(branch, branch_state)| {
+            .map(|(branch, branch_state, branch_ctx)| {
+                // TEA-RUST-044.2: Set trace context for this thread
+                // This ensures any LLM calls within this branch have proper parent-child linking
+                if let Some(ctx) = branch_ctx {
+                    set_trace_context(Some(ctx.clone()));
+                    log::debug!(
+                        "[OPIK TRACE] Parallel branch '{}': trace_id={}, span_id={}, parent={:?}",
+                        branch,
+                        ctx.trace_id,
+                        ctx.span_id,
+                        ctx.parent_span_id
+                    );
+                }
+
                 // Check timeout
                 if let Some(t) = timeout {
                     if start.elapsed() >= t {

@@ -706,3 +706,280 @@ edges:
         assert!(parsed.get("node").is_some());
     }
 }
+
+// ============================================================================
+// TEA-RUST-044.2: Trace Context Tests
+// ============================================================================
+
+use the_edge_agent::engine::observability::{
+    get_trace_context, push_span, set_trace_context, with_trace_context, TraceContext,
+};
+
+#[test]
+fn test_trace_context_new_root() {
+    let ctx = TraceContext::new_root();
+
+    // Should have non-empty IDs
+    assert!(!ctx.trace_id.is_empty());
+    assert!(!ctx.span_id.is_empty());
+
+    // Root context has no parent
+    assert!(ctx.parent_span_id.is_none());
+
+    // Should have default span name
+    assert_eq!(ctx.span_name, Some("root".to_string()));
+}
+
+#[test]
+fn test_trace_context_child_span() {
+    let root = TraceContext::new_root();
+    let child = root.child_span();
+
+    // Child should share the same trace_id
+    assert_eq!(child.trace_id, root.trace_id);
+
+    // Child should have different span_id
+    assert_ne!(child.span_id, root.span_id);
+
+    // Child should reference parent's span_id
+    assert_eq!(child.parent_span_id, Some(root.span_id.clone()));
+}
+
+#[test]
+fn test_trace_context_child_span_named() {
+    let root = TraceContext::new_root();
+    let child = root.child_span_named("llm_call");
+
+    // Child should have the name
+    assert_eq!(child.span_name, Some("llm_call".to_string()));
+
+    // Still should have parent-child relationship
+    assert_eq!(child.trace_id, root.trace_id);
+    assert_eq!(child.parent_span_id, Some(root.span_id.clone()));
+}
+
+#[test]
+fn test_trace_context_sibling_span() {
+    let root = TraceContext::new_root();
+    let child = root.child_span();
+    let sibling = child.sibling_span();
+
+    // Sibling shares same trace_id
+    assert_eq!(sibling.trace_id, root.trace_id);
+
+    // Sibling has different span_id than both
+    assert_ne!(sibling.span_id, root.span_id);
+    assert_ne!(sibling.span_id, child.span_id);
+
+    // Sibling has same parent as child
+    assert_eq!(sibling.parent_span_id, child.parent_span_id);
+}
+
+#[test]
+fn test_trace_context_deep_nesting() {
+    let root = TraceContext::new_root();
+    let level1 = root.child_span_named("level1");
+    let level2 = level1.child_span_named("level2");
+    let level3 = level2.child_span_named("level3");
+
+    // All should share same trace_id
+    assert_eq!(level1.trace_id, root.trace_id);
+    assert_eq!(level2.trace_id, root.trace_id);
+    assert_eq!(level3.trace_id, root.trace_id);
+
+    // Each level should have correct parent
+    assert_eq!(level1.parent_span_id, Some(root.span_id.clone()));
+    assert_eq!(level2.parent_span_id, Some(level1.span_id.clone()));
+    assert_eq!(level3.parent_span_id, Some(level2.span_id.clone()));
+
+    // All span_ids should be unique
+    let ids = vec![
+        &root.span_id,
+        &level1.span_id,
+        &level2.span_id,
+        &level3.span_id,
+    ];
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), 4);
+}
+
+#[test]
+fn test_thread_local_trace_context() {
+    // Initially no context
+    set_trace_context(None);
+    assert!(get_trace_context().is_none());
+
+    // Set context
+    let ctx = TraceContext::new_root();
+    let trace_id = ctx.trace_id.clone();
+    set_trace_context(Some(ctx));
+
+    // Should retrieve same context
+    let retrieved = get_trace_context().expect("Should have context");
+    assert_eq!(retrieved.trace_id, trace_id);
+
+    // Clear context
+    set_trace_context(None);
+    assert!(get_trace_context().is_none());
+}
+
+#[test]
+fn test_with_trace_context() {
+    set_trace_context(None);
+
+    let ctx = TraceContext::new_root();
+    let trace_id = ctx.trace_id.clone();
+
+    let result = with_trace_context(ctx, || {
+        // Inside closure, context should be set
+        let inner = get_trace_context().expect("Should have context");
+        assert_eq!(inner.trace_id, trace_id);
+        "result"
+    });
+
+    assert_eq!(result, "result");
+
+    // After closure, context should be cleared
+    assert!(get_trace_context().is_none());
+}
+
+#[test]
+fn test_push_span_creates_child() {
+    // Set up root context
+    let root = TraceContext::new_root();
+    let root_trace_id = root.trace_id.clone();
+    let root_span_id = root.span_id.clone();
+    set_trace_context(Some(root));
+
+    {
+        // Push child span
+        let _guard = push_span("child_operation");
+
+        // Should have child context with correct parent
+        let child = get_trace_context().expect("Should have child context");
+        assert_eq!(child.trace_id, root_trace_id);
+        assert_eq!(child.parent_span_id, Some(root_span_id.clone()));
+        assert_eq!(child.span_name, Some("child_operation".to_string()));
+    }
+
+    // After guard drops, should restore parent
+    let restored = get_trace_context().expect("Should have restored context");
+    assert_eq!(restored.trace_id, root_trace_id);
+    assert_eq!(restored.span_id, root_span_id);
+    assert!(restored.parent_span_id.is_none());
+
+    // Cleanup
+    set_trace_context(None);
+}
+
+#[test]
+fn test_push_span_nested() {
+    let root = TraceContext::new_root();
+    let root_trace_id = root.trace_id.clone();
+    let root_span_id = root.span_id.clone();
+    set_trace_context(Some(root));
+
+    {
+        let _guard1 = push_span("level1");
+        let level1_span_id = get_trace_context().unwrap().span_id.clone();
+
+        {
+            let _guard2 = push_span("level2");
+            let level2_ctx = get_trace_context().unwrap();
+
+            // Level 2 should have level 1 as parent
+            assert_eq!(level2_ctx.trace_id, root_trace_id);
+            assert_eq!(level2_ctx.parent_span_id, Some(level1_span_id.clone()));
+        }
+
+        // After level2 guard drops, should be at level1
+        let ctx_after = get_trace_context().unwrap();
+        assert_eq!(ctx_after.span_id, level1_span_id);
+    }
+
+    // After all guards drop, back at root
+    let final_ctx = get_trace_context().unwrap();
+    assert_eq!(final_ctx.span_id, root_span_id);
+
+    set_trace_context(None);
+}
+
+#[test]
+fn test_push_span_without_existing_context() {
+    // Clear any existing context
+    set_trace_context(None);
+
+    {
+        // Push span without parent
+        let _guard = push_span("orphan_operation");
+
+        // Should create new root context
+        let ctx = get_trace_context().expect("Should have created context");
+        assert!(ctx.parent_span_id.is_none()); // It's a root
+        assert_eq!(ctx.span_name, Some("orphan_operation".to_string()));
+    }
+
+    // After guard drops, context should be cleared
+    assert!(get_trace_context().is_none());
+}
+
+#[test]
+fn test_trace_context_with_trace_id() {
+    let custom_trace_id = "custom-trace-12345";
+    let ctx = TraceContext::with_trace_id(custom_trace_id);
+
+    assert_eq!(ctx.trace_id, custom_trace_id);
+    assert!(ctx.parent_span_id.is_none());
+
+    // Child should inherit custom trace_id
+    let child = ctx.child_span();
+    assert_eq!(child.trace_id, custom_trace_id);
+}
+
+#[test]
+fn test_trace_context_serialization() {
+    let ctx = TraceContext::new_root();
+
+    // Should serialize to JSON
+    let json = serde_json::to_string(&ctx).expect("Should serialize");
+    assert!(json.contains("trace_id"));
+    assert!(json.contains("span_id"));
+
+    // Should deserialize back
+    let deserialized: TraceContext =
+        serde_json::from_str(&json).expect("Should deserialize");
+    assert_eq!(deserialized.trace_id, ctx.trace_id);
+    assert_eq!(deserialized.span_id, ctx.span_id);
+}
+
+// ============================================================================
+// TEA-RUST-044.2: Executor Trace Context Integration Tests
+// ============================================================================
+
+#[test]
+fn test_executor_sets_trace_context() {
+    // Clear any existing context
+    set_trace_context(None);
+
+    let graph = create_simple_graph().compile().unwrap();
+
+    let config = ObsConfig {
+        enabled: true,
+        level: Some(LogLevel::Info),
+        buffer_size: Some(100),
+        handlers: vec![],
+    };
+
+    let executor = Executor::with_observability(graph, config).unwrap();
+    let result = executor.invoke(json!({"input": "test"})).unwrap();
+
+    // Check trace context was injected into state
+    assert!(result.get("_observability").is_some());
+    let obs = result.get("_observability").unwrap();
+    assert!(obs.get("trace_id").is_some());
+    assert!(obs.get("span_id").is_some());
+
+    // Trace ID should be a valid UUID format
+    let trace_id = obs.get("trace_id").unwrap().as_str().unwrap();
+    assert!(!trace_id.is_empty());
+}

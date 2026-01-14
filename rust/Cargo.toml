@@ -53,6 +53,7 @@ thiserror = "2.0"
 anyhow = "1.0"
 
 # Logging and tracing
+log = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 

@@ -31,6 +31,9 @@ pub struct YamlEngine {
     template_processor: TemplateProcessor,
     /// Observability configuration from last loaded YAML (TEA-OBS-001.2)
     observability_config: Arc<RwLock<Option<ObsConfig>>>,
+    /// Cached Mermaid graph from last built graph (TEA-RUST-044.1)
+    /// Stores the Mermaid syntax string for the most recently built graph
+    cached_mermaid: Arc<RwLock<Option<String>>>,
 }
 
 impl Clone for YamlEngine {
@@ -38,6 +41,7 @@ impl Clone for YamlEngine {
         Self {
             template_processor: self.template_processor.clone(),
             observability_config: Arc::clone(&self.observability_config),
+            cached_mermaid: Arc::clone(&self.cached_mermaid),
         }
     }
 }
@@ -48,6 +52,7 @@ impl YamlEngine {
         Self {
             template_processor: TemplateProcessor::new(HashMap::new()),
             observability_config: Arc::new(RwLock::new(None)),
+            cached_mermaid: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -171,6 +176,46 @@ impl YamlEngine {
             .unwrap_or(false)
     }
 
+    /// Get the Mermaid graph representation from the last built graph (TEA-RUST-044.1)
+    ///
+    /// Returns `None` if no graph has been loaded yet.
+    /// Returns `Some(mermaid_string)` containing the Mermaid syntax representation
+    /// of the most recently built graph.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use the_edge_agent::engine::yaml::YamlEngine;
+    ///
+    /// let engine = YamlEngine::new();
+    ///
+    /// // Before loading, returns None
+    /// assert!(engine.get_mermaid_graph().is_none());
+    ///
+    /// // Load a workflow
+    /// let yaml = r#"
+    /// name: test
+    /// nodes:
+    ///   - name: step1
+    ///     run: return {}
+    /// edges:
+    ///   - from: __start__
+    ///     to: step1
+    ///   - from: step1
+    ///     to: __end__
+    /// "#;
+    ///
+    /// let graph = engine.load_from_string(yaml).unwrap();
+    ///
+    /// // After loading, returns Mermaid syntax
+    /// let mermaid = engine.get_mermaid_graph().expect("Should have Mermaid graph");
+    /// assert!(mermaid.contains("graph TD"));
+    /// assert!(mermaid.contains("__start__((Start))"));
+    /// ```
+    pub fn get_mermaid_graph(&self) -> Option<String> {
+        self.cached_mermaid.read().unwrap().clone()
+    }
+
     /// Load a workflow from a YAML file
     pub fn load_from_file<P: AsRef<Path>>(&self, path: P) -> TeaResult<StateGraph> {
         let content = std::fs::read_to_string(path.as_ref()).map_err(TeaError::Io)?;
@@ -193,6 +238,9 @@ impl YamlEngine {
 
         // Store observability config (TEA-OBS-001.2)
         *self.observability_config.write().unwrap() = Some(obs_config);
+
+        // Cache Mermaid graph representation (TEA-RUST-044.1)
+        *self.cached_mermaid.write().unwrap() = Some(graph.to_mermaid());
 
         Ok(graph)
     }

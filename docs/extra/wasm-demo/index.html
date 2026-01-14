@@ -98,6 +98,23 @@
                 </div>
             </div>
             <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
+
+            <!-- Graph Panel -->
+            <div id="graph-panel" class="collapsible-panel">
+                <div class="panel-header" onclick="toggleGraphPanel()">
+                    <span class="panel-icon">▶</span>
+                    <span class="panel-title">Agent Graph</span>
+                    <span id="graph-status" class="status-badge"></span>
+                </div>
+                <div class="panel-content" id="graph-content">
+                    <div id="mermaid-container"></div>
+                    <div id="graph-error" class="error-message hidden">
+                        <span class="error-icon">⚠</span>
+                        <span>Graph unavailable</span>
+                    </div>
+                </div>
+            </div>
+
             <div id="yaml-output" class="hidden">
                 <h3>Output:</h3>
                 <div id="output-editor" class="output-editor-container"></div>

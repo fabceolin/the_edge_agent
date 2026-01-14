@@ -236,6 +236,97 @@ footer button:hover {
     font-size: 0.8rem;
 }
 
+/* Graph Panel */
+.collapsible-panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    overflow: hidden;
+}
+
+.panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    background: var(--bg-highlight);
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.panel-header:hover {
+    background: var(--bg-lighter);
+}
+
+.panel-icon {
+    font-size: 0.8rem;
+    transition: transform 0.2s;
+    color: var(--text-muted);
+}
+
+.collapsible-panel.expanded .panel-icon {
+    transform: rotate(90deg);
+}
+
+.panel-title {
+    font-weight: 500;
+    color: var(--text-bright);
+}
+
+.panel-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+}
+
+.collapsible-panel.expanded .panel-content {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+#mermaid-container {
+    padding: 1rem;
+    display: flex;
+    justify-content: center;
+    background: var(--bg-color);
+    min-height: 100px;
+}
+
+#mermaid-container svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.error-message {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    color: var(--warning-color);
+}
+
+.error-icon {
+    font-size: 1.2rem;
+}
+
+.status-badge {
+    margin-left: auto;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-badge.success {
+    color: var(--success-color);
+}
+
+.status-badge.error {
+    color: var(--danger-color);
+}
+
 /* Utilities */
 .hidden {
     display: none !important;

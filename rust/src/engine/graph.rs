@@ -729,6 +729,139 @@ impl StateGraph {
     pub fn finish_point(&self) -> Option<&str> {
         self.finish_point.as_deref()
     }
+
+    /// Generate Mermaid graph syntax representing the StateGraph.
+    ///
+    /// Returns valid Mermaid syntax that can be rendered in Opik's
+    /// "Show Agent Graph" UI or any Mermaid-compatible viewer.
+    ///
+    /// # Returns
+    ///
+    /// A `String` containing the Mermaid graph definition.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use the_edge_agent::StateGraph;
+    /// use the_edge_agent::engine::graph::Node;
+    ///
+    /// let mut graph = StateGraph::new();
+    /// graph.add_node(Node::new("process"));
+    /// graph.set_entry_point("process").unwrap();
+    /// graph.set_finish_point("process").unwrap();
+    ///
+    /// let mermaid = graph.to_mermaid();
+    /// assert!(mermaid.contains("graph TD"));
+    /// assert!(mermaid.contains("__start__((Start))"));
+    /// assert!(mermaid.contains("process[process]"));
+    /// assert!(mermaid.contains("__end__((End))"));
+    /// ```
+    ///
+    /// # Mermaid Syntax Reference
+    ///
+    /// - `graph TD` - Top-down directed graph
+    /// - `A-->B` - Simple edge
+    /// - `A-->|label|B` - Labeled edge
+    /// - `A[Label]` - Rectangle node
+    /// - `A((Label))` - Circle node (for start/end)
+    pub fn to_mermaid(&self) -> String {
+        let mut lines = vec!["graph TD".to_string()];
+
+        // Helper to escape node names for Mermaid (handle special characters)
+        fn escape_node_id(name: &str) -> String {
+            name.chars()
+                .map(|c| match c {
+                    ' ' | '-' | '.' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '|' | ':'
+                    | ';' | ',' | '&' | '#' | '"' | '\'' => '_',
+                    _ => c,
+                })
+                .collect()
+        }
+
+        // Helper to escape labels (displayed to users)
+        fn escape_label(name: &str) -> String {
+            name.replace('"', "'").replace('|', "/")
+        }
+
+        // Collect all nodes
+        let mut node_names: Vec<String> = self
+            .graph
+            .node_indices()
+            .map(|idx| self.graph[idx].name.clone())
+            .collect();
+        // Sort for consistent output
+        node_names.sort();
+
+        // Render all nodes first
+        for node_name in &node_names {
+            let node_id = escape_node_id(node_name);
+            let label = escape_label(node_name);
+
+            if node_name == START {
+                // Circle node for start
+                lines.push(format!("    {node_id}((Start))"));
+            } else if node_name == END {
+                // Circle node for end
+                lines.push(format!("    {node_id}((End))"));
+            } else {
+                // Rectangle node for regular nodes
+                lines.push(format!("    {node_id}[{label}]"));
+            }
+        }
+
+        // Track edges we've already rendered (to avoid duplicates)
+        let mut rendered_edges: std::collections::HashSet<(String, String, Option<String>)> =
+            std::collections::HashSet::new();
+
+        // Render all edges
+        for node_name in &node_names {
+            for (target_name, edge) in self.outgoing_edges(node_name) {
+                let u_id = escape_node_id(node_name);
+                let v_id = escape_node_id(target_name);
+
+                // Determine edge label based on edge type
+                let edge_label = match &edge.edge_type {
+                    EdgeType::Simple => None,
+                    EdgeType::Conditional {
+                        condition, target, ..
+                    } => {
+                        // Use the target as the label (it represents the condition result)
+                        // If condition is provided, use it; otherwise use target
+                        if let Some(cond) = condition {
+                            // Check for trivial conditions
+                            if cond == "true" || cond == "false" {
+                                Some(cond.clone())
+                            } else {
+                                Some(escape_label(target))
+                            }
+                        } else {
+                            Some(escape_label(target))
+                        }
+                    }
+                    EdgeType::Parallel { branches: _ } => {
+                        // For parallel edges, show the fan-out notation
+                        Some(format!("parallel→{v_id}"))
+                    }
+                };
+
+                // Skip if already rendered (with same label)
+                let edge_key = (u_id.clone(), v_id.clone(), edge_label.clone());
+                if rendered_edges.contains(&edge_key) {
+                    continue;
+                }
+                rendered_edges.insert(edge_key);
+
+                // Build edge line
+                if let Some(label) = edge_label {
+                    lines.push(format!("    {u_id}-->|{label}|{v_id}"));
+                } else {
+                    lines.push(format!("    {u_id}-->{v_id}"));
+                }
+            }
+        }
+
+        lines.join("\n")
+    }
 }
 
 impl Default for StateGraph {
@@ -848,6 +981,17 @@ impl CompiledGraph {
     /// Get LLM configuration from settings.llm
     pub fn llm_config(&self) -> Option<&serde_json::Value> {
         self.graph.llm_config()
+    }
+
+    /// Generate Mermaid graph syntax representing the compiled StateGraph.
+    ///
+    /// Delegates to the underlying StateGraph's `to_mermaid()` method.
+    ///
+    /// # Returns
+    ///
+    /// A `String` containing the Mermaid graph definition.
+    pub fn to_mermaid(&self) -> String {
+        self.graph.to_mermaid()
     }
 }
 

@@ -3,6 +3,7 @@
  *
  * Demonstrates YAML workflow execution with browser-based LLM.
  * Features syntax highlighting with CodeMirror.
+ * Includes Mermaid graph visualization for agent workflows.
  */
 
 // CodeMirror imports
@@ -13,6 +14,229 @@ import { EditorState } from '@codemirror/state';
 
 // YAML serialization
 import jsYaml from 'js-yaml';
+
+// ============================================================================
+// Mermaid Graph Visualization
+// ============================================================================
+
+// Mermaid instance cache
+let mermaidInstance = null;
+
+/**
+ * Dynamically load Mermaid.js from CDN
+ * @returns {Promise<object>} Mermaid instance
+ */
+async function loadMermaid() {
+  if (mermaidInstance) return mermaidInstance;
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+    script.onload = () => {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          primaryColor: '#61afef',
+          primaryTextColor: '#abb2bf',
+          primaryBorderColor: '#528bff',
+          lineColor: '#5c6370',
+          secondaryColor: '#2c313a',
+          tertiaryColor: '#21252b',
+          background: '#21252b',
+          mainBkg: '#2c313a',
+          nodeBorder: '#528bff',
+          clusterBkg: '#21252b',
+          clusterBorder: '#3a3f4b',
+          titleColor: '#e6e6e6',
+          edgeLabelBackground: '#21252b',
+        },
+        flowchart: {
+          htmlLabels: true,
+          curve: 'basis',
+        },
+      });
+      mermaidInstance = mermaid;
+      console.log('[TEA-DEMO] Mermaid.js loaded');
+      resolve(mermaid);
+    };
+    script.onerror = (e) => {
+      console.error('[TEA-DEMO] Failed to load Mermaid.js:', e);
+      reject(new Error('Failed to load Mermaid.js'));
+    };
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * Escape node name for Mermaid syntax
+ * @param {string} name - Node name
+ * @returns {string} Escaped name
+ */
+function escapeNodeId(name) {
+  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/**
+ * Escape label for Mermaid display
+ * @param {string} label - Label text
+ * @returns {string} Escaped label
+ */
+function escapeLabel(label) {
+  return label
+    .replace(/"/g, "'")
+    .replace(/\|/g, '/')
+    .replace(/\[/g, '(')
+    .replace(/\]/g, ')');
+}
+
+/**
+ * Generate Mermaid graph syntax from YAML workflow
+ * @param {string} yamlContent - YAML workflow content
+ * @returns {string|null} Mermaid syntax or null on error
+ */
+function generateMermaidFromYaml(yamlContent) {
+  try {
+    const config = jsYaml.load(yamlContent);
+    if (!config || !config.nodes || config.nodes.length === 0) {
+      return null;
+    }
+
+    const lines = ['graph TD'];
+    const nodeNames = config.nodes.map(n => n.name);
+    const edges = new Set();
+
+    // Add start node
+    lines.push('    __start__((Start))');
+
+    // Add regular nodes
+    for (const node of config.nodes) {
+      const nodeId = escapeNodeId(node.name);
+      const action = node.action || 'passthrough';
+      const label = escapeLabel(`${node.name}\\n[${action}]`);
+      lines.push(`    ${nodeId}["${label}"]`);
+    }
+
+    // Add end node
+    lines.push('    __end__((End))');
+
+    // Build edges from explicit edges or implicit sequential order
+    if (config.edges && config.edges.length > 0) {
+      // Use explicit edges
+      for (const edge of config.edges) {
+        const fromId = escapeNodeId(edge.from);
+        const toId = escapeNodeId(edge.to);
+        const edgeKey = `${fromId}->${toId}`;
+        if (!edges.has(edgeKey)) {
+          edges.add(edgeKey);
+          if (edge.condition) {
+            lines.push(`    ${fromId}-->|${escapeLabel(edge.condition)}|${toId}`);
+          } else {
+            lines.push(`    ${fromId}-->${toId}`);
+          }
+        }
+      }
+    } else {
+      // Implicit sequential order: __start__ -> first node -> ... -> last node -> __end__
+      if (nodeNames.length > 0) {
+        // Start to first node
+        const firstNodeId = escapeNodeId(nodeNames[0]);
+        lines.push(`    __start__-->${firstNodeId}`);
+
+        // Sequential edges between nodes
+        for (let i = 0; i < nodeNames.length - 1; i++) {
+          const fromId = escapeNodeId(nodeNames[i]);
+          const toId = escapeNodeId(nodeNames[i + 1]);
+          lines.push(`    ${fromId}-->${toId}`);
+        }
+
+        // Last node to end
+        const lastNodeId = escapeNodeId(nodeNames[nodeNames.length - 1]);
+        lines.push(`    ${lastNodeId}-->__end__`);
+      }
+    }
+
+    return lines.join('\n');
+  } catch (e) {
+    console.warn('[TEA-DEMO] Could not generate Mermaid graph:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Render agent graph using Mermaid
+ * @param {string|null} mermaidSyntax - Mermaid diagram syntax
+ */
+async function renderAgentGraph(mermaidSyntax) {
+  const container = document.getElementById('mermaid-container');
+  const errorDiv = document.getElementById('graph-error');
+  const statusBadge = document.getElementById('graph-status');
+
+  if (!container) return;
+
+  if (!mermaidSyntax) {
+    container.innerHTML = '';
+    if (errorDiv) errorDiv.classList.remove('hidden');
+    if (statusBadge) {
+      statusBadge.textContent = '';
+      statusBadge.className = 'status-badge';
+    }
+    return;
+  }
+
+  try {
+    const mermaid = await loadMermaid();
+    if (errorDiv) errorDiv.classList.add('hidden');
+
+    // Generate unique ID for this render
+    const id = `graph-${Date.now()}`;
+
+    // Render mermaid to SVG
+    const { svg } = await mermaid.render(id, mermaidSyntax);
+    container.innerHTML = svg;
+
+    if (statusBadge) {
+      statusBadge.textContent = '✓';
+      statusBadge.className = 'status-badge success';
+    }
+
+    console.log('[TEA-DEMO] Graph rendered successfully');
+  } catch (e) {
+    console.error('[TEA-DEMO] Graph render error:', e);
+    container.innerHTML = '';
+    if (errorDiv) errorDiv.classList.remove('hidden');
+    if (statusBadge) {
+      statusBadge.textContent = '✗';
+      statusBadge.className = 'status-badge error';
+    }
+  }
+}
+
+/**
+ * Toggle graph panel expand/collapse
+ */
+function toggleGraphPanel() {
+  const panel = document.getElementById('graph-panel');
+  if (panel) {
+    panel.classList.toggle('expanded');
+    // Remember state in localStorage
+    localStorage.setItem('graphPanelExpanded', panel.classList.contains('expanded'));
+  }
+}
+
+/**
+ * Restore graph panel state from localStorage
+ */
+function restoreGraphPanelState() {
+  const expanded = localStorage.getItem('graphPanelExpanded') === 'true';
+  const panel = document.getElementById('graph-panel');
+  if (panel && expanded) {
+    panel.classList.add('expanded');
+  }
+}
+
+// Make toggleGraphPanel available globally for onclick handler
+window.toggleGraphPanel = toggleGraphPanel;
 
 // Import from the bundled package
 import {
@@ -362,6 +586,10 @@ runYamlBtn.addEventListener('click', async () => {
     runYamlBtn.disabled = true;
     runYamlBtn.textContent = 'Running...';
 
+    // Generate and render agent graph before execution
+    const mermaidSyntax = generateMermaidFromYaml(yamlContent);
+    await renderAgentGraph(mermaidSyntax);
+
     const result = await executeLlmYaml(yamlContent, state);
 
     yamlOutput.classList.remove('hidden');
@@ -381,6 +609,13 @@ runYamlBtn.addEventListener('click', async () => {
     console.error('YAML execution error:', error);
     yamlOutput.classList.remove('hidden');
     setOutputContent(`Error: ${error.message}`);
+    // Still try to render graph even on execution error
+    try {
+      const mermaidSyntax = generateMermaidFromYaml(yamlContent);
+      await renderAgentGraph(mermaidSyntax);
+    } catch (graphError) {
+      console.warn('[TEA-DEMO] Could not render graph on error:', graphError);
+    }
   } finally {
     runYamlBtn.disabled = false;
     runYamlBtn.textContent = 'Run YAML Workflow';
@@ -422,3 +657,6 @@ try {
 // Initialize editors first, then LLM
 initEditors();
 initializeLlm();
+
+// Restore graph panel state from localStorage
+restoreGraphPanelState();
