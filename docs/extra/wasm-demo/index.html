@@ -89,14 +89,7 @@
         </div>
 
         <main>
-            <!-- Tab Navigation -->
-            <div class="tab-nav">
-                <button class="tab-btn active" data-tab="workflow">Workflow</button>
-                <button class="tab-btn" data-tab="opik">Opik Traces</button>
-            </div>
-
-            <!-- Workflow Tab -->
-            <div id="tab-workflow" class="tab-content active">
+            <!-- Workflow Content -->
                 <!-- YAML Workflow -->
                 <div class="yaml-container">
                     <div class="yaml-editor">
@@ -130,54 +123,6 @@
                     <h3>Output:</h3>
                     <div id="output-editor" class="output-editor-container"></div>
                 </div>
-            </div>
-
-            <!-- Opik Traces Tab -->
-            <div id="tab-opik" class="tab-content">
-                <div class="opik-header">
-                    <div class="opik-status">
-                        <span id="opik-status-indicator" class="status-indicator disconnected"></span>
-                        <span id="opik-status-text">Not connected</span>
-                    </div>
-                    <div class="opik-config">
-                        <input type="password" id="opik-api-key" placeholder="Enter Opik API Key" />
-                        <input type="text" id="opik-project" placeholder="Project name" value="tea-wasm-demo" />
-                        <button id="opik-connect-btn">Connect</button>
-                    </div>
-                </div>
-
-                <div class="opik-info">
-                    <p>Connect to <a href="https://www.comet.com/opik" target="_blank">Comet Opik</a> to send LLM traces in real-time.</p>
-                    <p>Traces are sent when you run YAML workflows with <code>llm.call</code> actions.</p>
-                </div>
-
-                <div class="trace-controls">
-                    <span id="trace-count">0 traces</span>
-                    <button id="clear-traces-btn">Clear Traces</button>
-                </div>
-
-                <div id="trace-list" class="trace-list">
-                    <div class="trace-empty">No traces yet. Run a workflow to generate traces.</div>
-                </div>
-
-                <!-- Trace Detail Modal -->
-                <div id="trace-detail" class="trace-detail hidden">
-                    <div class="trace-detail-header">
-                        <h3 id="trace-detail-title">Trace Details</h3>
-                        <button id="close-trace-detail">✕</button>
-                    </div>
-                    <div class="trace-detail-content">
-                        <div class="trace-detail-section">
-                            <label>Input:</label>
-                            <div id="trace-input-editor" class="trace-editor-container"></div>
-                        </div>
-                        <div class="trace-detail-section">
-                            <label>Output:</label>
-                            <div id="trace-output-editor" class="trace-editor-container"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </main>
 
         <footer>
