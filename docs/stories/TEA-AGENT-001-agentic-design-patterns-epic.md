@@ -2,9 +2,21 @@
 
 ## Status
 
-**Ready for Development**
+**🔄 Partially Implemented**
 
-_Status updated: 2026-01-05 - QA Gate passed with 186 test scenarios, no blockers identified._
+_Status updated: 2026-01-13 - Core patterns implemented, some sub-stories in progress._
+
+**Implemented Components:**
+- `python/src/the_edge_agent/actions/agent_actions.py` - Agent coordination actions
+- `python/src/the_edge_agent/actions/a2a_actions.py` - Agent-to-agent communication
+- `python/src/the_edge_agent/a2a/` - A2A module (message queues, discovery)
+- `rust/src/actions/planning.rs` - Rust planning actions
+- `rust/src/actions/reasoning.rs` - Rust reasoning actions
+- `rust/src/actions/reflection.rs` - Rust reflection actions
+- `examples/multi-agent/` - Multi-agent examples
+- `examples/planning/` - Planning examples
+
+**QA Notes (2026-01-05):** QA Gate passed with 186 test scenarios, no blockers identified.
 
 ## Executive Summary
 

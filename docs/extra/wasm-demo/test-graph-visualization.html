@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graph Visualization Tests</title>
+    <style>
+        :root {
+            --bg-color: #282c34;
+            --text-color: #abb2bf;
+            --success-color: #98c379;
+            --danger-color: #e06c75;
+            --border-color: #3a3f4b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        h1 { color: #61afef; }
+        h2 { color: #c678dd; margin-top: 2rem; }
+        .test-case {
+            background: #21252b;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        .test-name { font-weight: bold; color: #e5c07b; }
+        .pass { color: var(--success-color); }
+        .fail { color: var(--danger-color); }
+        pre {
+            background: #1e2127;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            overflow-x: auto;
+            font-size: 0.85rem;
+        }
+        .mermaid-preview {
+            background: #1e2127;
+            padding: 1rem;
+            border-radius: 0.25rem;
+            margin-top: 0.5rem;
+        }
+        #summary {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            background: #21252b;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1rem;
+        }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "js-yaml": "https://esm.sh/js-yaml@4.1.0"
+      }
+    }
+    </script>
+</head>
+<body>
+    <h1>TEA WASM Demo - Graph Visualization Tests</h1>
+
+    <div id="summary">
+        <div>Tests: <span id="total">0</span></div>
+        <div>Passed: <span id="passed" class="pass">0</span></div>
+        <div>Failed: <span id="failed" class="fail">0</span></div>
+    </div>
+
+    <div id="test-results"></div>
+
+    <script type="module">
+        import jsYaml from 'js-yaml';
+
+        // Test utilities
+        let totalTests = 0;
+        let passedTests = 0;
+        let failedTests = 0;
+
+        function updateSummary() {
+            document.getElementById('total').textContent = totalTests;
+            document.getElementById('passed').textContent = passedTests;
+            document.getElementById('failed').textContent = failedTests;
+        }
+
+        function renderTest(name, passed, expected, actual, mermaid = null) {
+            totalTests++;
+            if (passed) passedTests++;
+            else failedTests++;
+            updateSummary();
+
+            const container = document.getElementById('test-results');
+            const div = document.createElement('div');
+            div.className = 'test-case';
+            div.innerHTML = `
+                <div class="test-name">${name} <span class="${passed ? 'pass' : 'fail'}">${passed ? 'PASS' : 'FAIL'}</span></div>
+                ${!passed ? `<div><strong>Expected:</strong> ${expected}</div><div><strong>Actual:</strong> ${actual}</div>` : ''}
+                ${mermaid ? `<pre>${escapeHtml(mermaid)}</pre>` : ''}
+            `;
+            container.appendChild(div);
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        // Mermaid generation functions (copied from app.js for testing)
+        function escapeNodeId(name) {
+            return name.replace(/[^a-zA-Z0-9_]/g, '_');
+        }
+
+        function escapeLabel(label) {
+            return label
+                .replace(/"/g, "'")
+                .replace(/\|/g, '/')
+                .replace(/\[/g, '(')
+                .replace(/\]/g, ')');
+        }
+
+        function generateMermaidFromYaml(yamlContent) {
+            try {
+                const config = jsYaml.load(yamlContent);
+                if (!config || !config.nodes || config.nodes.length === 0) {
+                    return null;
+                }
+
+                const lines = ['graph TD'];
+                const nodeNames = config.nodes.map(n => n.name);
+                const edges = new Set();
+
+                lines.push('    __start__((Start))');
+
+                for (const node of config.nodes) {
+                    const nodeId = escapeNodeId(node.name);
+                    const action = node.action || 'passthrough';
+                    const label = escapeLabel(`${node.name}\\n[${action}]`);
+                    lines.push(`    ${nodeId}["${label}"]`);
+                }
+
+                lines.push('    __end__((End))');
+
+                if (config.edges && config.edges.length > 0) {
+                    for (const edge of config.edges) {
+                        const fromId = escapeNodeId(edge.from);
+                        const toId = escapeNodeId(edge.to);
+                        const edgeKey = `${fromId}->${toId}`;
+                        if (!edges.has(edgeKey)) {
+                            edges.add(edgeKey);
+                            if (edge.condition) {
+                                lines.push(`    ${fromId}-->|${escapeLabel(edge.condition)}|${toId}`);
+                            } else {
+                                lines.push(`    ${fromId}-->${toId}`);
+                            }
+                        }
+                    }
+                } else {
+                    if (nodeNames.length > 0) {
+                        const firstNodeId = escapeNodeId(nodeNames[0]);
+                        lines.push(`    __start__-->${firstNodeId}`);
+
+                        for (let i = 0; i < nodeNames.length - 1; i++) {
+                            const fromId = escapeNodeId(nodeNames[i]);
+                            const toId = escapeNodeId(nodeNames[i + 1]);
+                            lines.push(`    ${fromId}-->${toId}`);
+                        }
+
+                        const lastNodeId = escapeNodeId(nodeNames[nodeNames.length - 1]);
+                        lines.push(`    ${lastNodeId}-->__end__`);
+                    }
+                }
+
+                return lines.join('\n');
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // Test cases
+        const tests = [
+            {
+                name: 'Test 1: Simple linear workflow (implicit edges)',
+                yaml: `name: simple-linear
+nodes:
+  - name: step1
+    action: llm.call
+  - name: step2
+    action: llm.call`,
+                assertions: [
+                    { check: (m) => m.includes('graph TD'), desc: 'Has graph header' },
+                    { check: (m) => m.includes('__start__((Start))'), desc: 'Has start node' },
+                    { check: (m) => m.includes('__end__((End))'), desc: 'Has end node' },
+                    { check: (m) => m.includes('__start__-->step1'), desc: 'Start connects to first node' },
+                    { check: (m) => m.includes('step1-->step2'), desc: 'Sequential edge exists' },
+                    { check: (m) => m.includes('step2-->__end__'), desc: 'Last node connects to end' },
+                ]
+            },
+            {
+                name: 'Test 2: Single node workflow',
+                yaml: `name: single-node
+nodes:
+  - name: only_node
+    action: return`,
+                assertions: [
+                    { check: (m) => m.includes('__start__-->only_node'), desc: 'Start to only node' },
+                    { check: (m) => m.includes('only_node-->__end__'), desc: 'Only node to end' },
+                ]
+            },
+            {
+                name: 'Test 3: Conditional workflow with explicit edges',
+                yaml: `name: conditional
+nodes:
+  - name: check
+    action: llm.call
+  - name: success_path
+    action: llm.call
+  - name: error_path
+    action: llm.call
+edges:
+  - from: __start__
+    to: check
+  - from: check
+    to: success_path
+    condition: success
+  - from: check
+    to: error_path
+    condition: error
+  - from: success_path
+    to: __end__
+  - from: error_path
+    to: __end__`,
+                assertions: [
+                    { check: (m) => m.includes('check-->|success|success_path'), desc: 'Success condition edge' },
+                    { check: (m) => m.includes('check-->|error|error_path'), desc: 'Error condition edge' },
+                    { check: (m) => m.includes('success_path-->__end__'), desc: 'Success path to end' },
+                    { check: (m) => m.includes('error_path-->__end__'), desc: 'Error path to end' },
+                ]
+            },
+            {
+                name: 'Test 4: Node names with special characters',
+                yaml: `name: special-chars
+nodes:
+  - name: my node 1
+    action: llm.call
+  - name: process-data
+    action: llm.call
+  - name: step.final
+    action: return`,
+                assertions: [
+                    { check: (m) => m.includes('my_node_1'), desc: 'Spaces escaped to underscores' },
+                    { check: (m) => m.includes('process_data'), desc: 'Hyphens escaped' },
+                    { check: (m) => m.includes('step_final'), desc: 'Dots escaped' },
+                ]
+            },
+            {
+                name: 'Test 5: Multi-engine workflow',
+                yaml: `name: multi-engine
+nodes:
+  - name: lua_analyze
+    action: lua.eval
+  - name: prolog_classify
+    action: prolog.query
+  - name: think
+    action: llm.call
+  - name: answer
+    action: llm.call`,
+                assertions: [
+                    { check: (m) => m.includes('lua_analyze["lua_analyze'), desc: 'Lua node present' },
+                    { check: (m) => m.includes('prolog_classify["prolog_classify'), desc: 'Prolog node present' },
+                    { check: (m) => m.includes('lua.eval'), desc: 'Lua action shown' },
+                    { check: (m) => m.includes('prolog.query'), desc: 'Prolog action shown' },
+                    { check: (m) => m.includes('lua_analyze-->prolog_classify'), desc: 'Sequential edge 1' },
+                    { check: (m) => m.includes('prolog_classify-->think'), desc: 'Sequential edge 2' },
+                    { check: (m) => m.includes('think-->answer'), desc: 'Sequential edge 3' },
+                ]
+            },
+            {
+                name: 'Test 6: Empty nodes array returns null',
+                yaml: `name: empty
+nodes: []`,
+                assertions: [
+                    { check: (m) => m === null, desc: 'Returns null for empty nodes' },
+                ]
+            },
+            {
+                name: 'Test 7: Invalid YAML returns null',
+                yaml: `invalid: yaml: : broken`,
+                assertions: [
+                    { check: (m) => m === null, desc: 'Returns null for invalid YAML' },
+                ]
+            },
+            {
+                name: 'Test 8: No nodes key returns null',
+                yaml: `name: no-nodes
+description: workflow without nodes`,
+                assertions: [
+                    { check: (m) => m === null, desc: 'Returns null when nodes missing' },
+                ]
+            },
+        ];
+
+        // Run all tests
+        console.log('Running graph visualization tests...');
+
+        for (const test of tests) {
+            const mermaid = generateMermaidFromYaml(test.yaml);
+
+            for (const assertion of test.assertions) {
+                const passed = assertion.check(mermaid);
+                renderTest(
+                    `${test.name}: ${assertion.desc}`,
+                    passed,
+                    assertion.desc,
+                    mermaid ? 'See generated Mermaid below' : 'null',
+                    test.assertions.indexOf(assertion) === 0 ? mermaid : null
+                );
+            }
+        }
+
+        console.log(`Tests complete: ${passedTests}/${totalTests} passed`);
+    </script>
+</body>
+</html>

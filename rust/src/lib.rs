@@ -102,6 +102,7 @@
 pub mod actions;
 pub mod engine;
 mod error;
+pub mod experiments;
 #[cfg(feature = "scryer")]
 pub mod prolog;
 pub mod report;

@@ -22,6 +22,14 @@
     "./wllama-loader": {
       "types": "./dist/js/wllama-loader.d.ts",
       "import": "./dist/js/wllama-loader.js"
+    },
+    "./duckdb-loader": {
+      "types": "./dist/js/duckdb-loader.d.ts",
+      "import": "./dist/js/duckdb-loader.js"
+    },
+    "./ltm-loader": {
+      "types": "./dist/js/ltm-loader.d.ts",
+      "import": "./dist/js/ltm-loader.js"
     }
   },
   "files": [
@@ -50,7 +58,8 @@
     "build:demo": "npm run build:wasm && npm run build:ts && node scripts/bundle-for-demo.cjs"
   },
   "dependencies": {
-    "@wllama/wllama": "^2.3.7"
+    "@wllama/wllama": "^2.3.7",
+    "@duckdb/duckdb-wasm": "^1.29.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0",
@@ -70,7 +79,11 @@
     "model-caching",
     "opik",
     "observability",
-    "tracing"
+    "tracing",
+    "duckdb",
+    "sql",
+    "analytics",
+    "vector-search"
   ],
   "repository": {
     "type": "git",

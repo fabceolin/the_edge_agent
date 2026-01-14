@@ -82,6 +82,31 @@ import init, {
   is_opik_enabled,
   send_opik_trace_async,
   create_llm_trace,
+  // DuckDB bridge (TEA-WASM-003.2)
+  set_duckdb_handler,
+  clear_duckdb_handler,
+  has_duckdb_handler,
+  duckdb_query_async,
+  duckdb_execute_async,
+  init_duckdb_async,
+  load_duckdb_extension_async,
+  get_duckdb_extensions_async,
+  duckdb_begin_async,
+  duckdb_commit_async,
+  duckdb_rollback_async,
+  // LTM bridge (TEA-WASM-003.3)
+  set_ltm_handler,
+  clear_ltm_handler,
+  has_ltm_handler,
+  configure_ltm,
+  get_ltm_config,
+  ltm_store_async,
+  ltm_retrieve_async,
+  ltm_delete_async,
+  ltm_search_async,
+  ltm_list_async,
+  ltm_cleanup_expired_async,
+  ltm_stats_async,
   has_shared_array_buffer,
   version,
 } from '../pkg/tea_wasm_llm.js';
@@ -115,6 +140,42 @@ import {
   type CachedModel,
   type CacheStats,
 } from './model-cache';
+
+// Import DuckDB loader (TEA-WASM-003.2)
+import {
+  initDuckDb,
+  initDuckDbWithHandler,
+  getConnection as getDuckDbConnection,
+  createDuckDbHandler,
+  loadExtension as loadDuckDbExtension,
+  query as queryDuckDb,
+  execute as executeDuckDb,
+  closeDuckDb,
+  isDuckDbInitialized,
+  getDuckDbVersion,
+  hasSharedArrayBuffer as hasSAB,
+  EXTENSIONS as DUCKDB_EXTENSIONS,
+  type DuckDbLoaderOptions,
+  type DuckDbQueryResult,
+  type DuckDbHandler,
+} from './duckdb-loader';
+
+// Import LTM loader (TEA-WASM-003.3)
+import {
+  initLtm,
+  initLtmWithHandler,
+  createLtmHandler,
+  clearLtmData,
+  getLtmStats,
+  isIndexedDBAvailable,
+  isLtmInitialized,
+  closeLtm,
+  startSyncWorker,
+  stopSyncWorker,
+  type LtmLoaderOptions,
+  type LtmEntry,
+  type LtmHandler,
+} from './ltm-loader';
 
 /**
  * Configuration options for TEA LLM initialization
@@ -331,6 +392,15 @@ export interface PrologResponse {
  * ```
  */
 export type PrologHandler = (queryJson: string) => Promise<string>;
+
+// ============================================================================
+// DuckDB Handler Bridge Types (TEA-WASM-003.2)
+// ============================================================================
+
+/**
+ * Re-export DuckDB types from duckdb-loader
+ */
+export type { DuckDbLoaderOptions, DuckDbQueryResult, DuckDbHandler };
 
 // Track initialization state
 let initialized = false;
@@ -944,6 +1014,18 @@ export {
   is_opik_enabled,
   send_opik_trace_async,
   create_llm_trace,
+  // DuckDB bridge (TEA-WASM-003.2)
+  set_duckdb_handler,
+  clear_duckdb_handler,
+  has_duckdb_handler,
+  duckdb_query_async,
+  duckdb_execute_async,
+  init_duckdb_async,
+  load_duckdb_extension_async,
+  get_duckdb_extensions_async,
+  duckdb_begin_async,
+  duckdb_commit_async,
+  duckdb_rollback_async,
   // Utilities
   has_shared_array_buffer,
   version,
@@ -1005,5 +1087,71 @@ export {
   type TokenCallback,
   type WllamaAssetPaths,
 } from './wllama-loader';
+
+// ============================================================================
+// DuckDB WASM Integration (TEA-WASM-003.2)
+// ============================================================================
+
+// Re-export from duckdb-loader for the DuckDB API
+export {
+  // Core initialization
+  initDuckDb,
+  initDuckDbWithHandler,
+  getDuckDbConnection,
+  createDuckDbHandler,
+  // Query helpers
+  queryDuckDb,
+  executeDuckDb,
+  // Extension loading
+  loadDuckDbExtension,
+  // Lifecycle
+  closeDuckDb,
+  isDuckDbInitialized,
+  getDuckDbVersion,
+  // Constants
+  DUCKDB_EXTENSIONS,
+};
+
+// ============================================================================
+// LTM (Long-Term Memory) Integration (TEA-WASM-003.3)
+// ============================================================================
+
+// Re-export from ltm-loader for the LTM API
+export {
+  // Core initialization
+  initLtm,
+  initLtmWithHandler,
+  createLtmHandler,
+  // Data operations
+  clearLtmData,
+  getLtmStats,
+  // Sync operations
+  startSyncWorker,
+  stopSyncWorker,
+  // Lifecycle
+  isIndexedDBAvailable,
+  isLtmInitialized,
+  closeLtm,
+  // Types
+  type LtmLoaderOptions,
+  type LtmEntry,
+  type LtmHandler,
+};
+
+// Re-export raw WASM LTM bindings
+export {
+  set_ltm_handler,
+  clear_ltm_handler,
+  has_ltm_handler,
+  configure_ltm,
+  get_ltm_config,
+  ltm_store_async,
+  ltm_retrieve_async,
+  ltm_delete_async,
+  ltm_search_async,
+  ltm_list_async,
+  ltm_cleanup_expired_async,
+  ltm_stats_async,
+};
 
 // Note: initTeaLlm and executeLlmYaml are already exported above with @deprecated notices

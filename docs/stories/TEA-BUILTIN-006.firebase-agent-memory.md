@@ -2,7 +2,17 @@
 
 ## Status
 
-**Approved** - Ready for development
+**✅ Implemented**
+
+_Status updated: 2026-01-13 - Full implementation verified in codebase._
+- `python/src/the_edge_agent/memory/firestore_backend.py` - Firestore LTM backend
+- `python/src/the_edge_agent/memory/catalog_firestore.py` - Firestore catalog
+- `python/src/the_edge_agent/memory/locks/firestore_lock.py` - Distributed locking
+- `python/src/the_edge_agent/memory/metadata/firestore.py` - Metadata storage
+- `python/src/the_edge_agent/actions/firestore_actions.py` - Firestore actions
+- `python/src/the_edge_agent/auth/firebase_provider.py` - Firebase auth
+- `python/src/the_edge_agent/session/firestore_backend.py` - Session storage
+- `python/tests/test_firestore_actions.py` - Tests
 
 ## Story
 

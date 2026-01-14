@@ -33,6 +33,12 @@ Data processing actions handle JSON/CSV parsing, transformation, validation, fil
   - [data.delete](#datadelete)
   - [data.query](#dataquery)
   - [data.consolidate](#dataconsolidate)
+- [DuckDB WASM Actions (Browser)](#duckdb-wasm-actions-browser)
+  - [duckdb.query](#duckdbquery)
+  - [duckdb.execute](#duckdbexecute)
+  - [Vector Similarity Search](#vector-similarity-search)
+  - [Full-Text Search](#full-text-search)
+  - [Parquet Support](#parquet-support)
 
 ---
 
@@ -408,10 +414,231 @@ Compact inlined rows into Parquet files:
 
 ---
 
+## DuckDB WASM Actions (Browser)
+
+> **Story:** TEA-WASM-003.2 - DuckDB WASM Integration
+> **Platform:** Browser only (WebAssembly)
+
+For browser-based analytics agents, DuckDB WASM provides SQL query capabilities with vector similarity search, full-text search, and parquet support directly in the browser.
+
+**Required:** DuckDB handler must be registered via JavaScript before use.
+
+### `duckdb.query`
+
+Execute SQL query and return results:
+
+```yaml
+- name: fetch_users
+  uses: duckdb.query
+  with:
+    sql: "SELECT * FROM users WHERE status = ?"   # Required
+    params:                                        # Optional (for prepared statements)
+      - "active"
+  output: users
+```
+
+**Returns:**
+- Success: Results stored in `state.users` (rows array)
+- Also stores: `state.users_count` (row count), `state.users_schema` (column types)
+- Failure: `state.users` = null, `state.users_error` = error message
+
+**Template support:**
+
+```yaml
+- name: dynamic_query
+  uses: duckdb.query
+  with:
+    sql: |
+      SELECT *
+      FROM {{ state.table_name }}
+      WHERE category = ?
+      LIMIT {{ state.limit | default(100) }}
+    params:
+      - "{{ state.selected_category }}"
+```
+
+### `duckdb.execute`
+
+Execute DDL/DML statement without returning rows:
+
+```yaml
+- name: create_table
+  uses: duckdb.execute
+  with:
+    sql: |
+      CREATE TABLE IF NOT EXISTS documents (
+        id INTEGER PRIMARY KEY,
+        content VARCHAR,
+        embedding FLOAT[1536],
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+
+- name: insert_doc
+  uses: duckdb.execute
+  with:
+    sql: |
+      INSERT INTO documents (id, content, embedding)
+      VALUES ({{ state.doc_id }}, '{{ state.content }}', {{ state.embedding | tojson }})
+```
+
+**Returns:** `{"success": true, "message": str, "rows_affected": int}`
+
+### Vector Similarity Search
+
+DuckDB WASM supports vector operations via the VSS extension:
+
+```yaml
+name: semantic-search-agent
+state_schema:
+  query_embedding: list
+  similar_docs: list
+
+nodes:
+  - name: setup_vss
+    uses: duckdb.execute
+    with:
+      sql: |
+        INSTALL vss;
+        LOAD vss;
+        CREATE INDEX IF NOT EXISTS idx_docs_embedding
+        ON documents USING HNSW (embedding)
+        WITH (metric = 'cosine')
+
+  - name: search
+    uses: duckdb.query
+    with:
+      sql: |
+        SELECT id, content,
+               array_cosine_distance(embedding, ?::FLOAT[1536]) as distance
+        FROM documents
+        ORDER BY distance
+        LIMIT 10
+      params:
+        - "{{ state.query_embedding }}"
+    output: similar_docs
+```
+
+### Full-Text Search
+
+Use the FTS extension for text search:
+
+```yaml
+- name: setup_fts
+  uses: duckdb.execute
+  with:
+    sql: |
+      INSTALL fts;
+      LOAD fts;
+      PRAGMA create_fts_index('documents', 'id', 'content')
+
+- name: text_search
+  uses: duckdb.query
+  with:
+    sql: |
+      SELECT *, fts_main_documents.match_bm25(id, ?, 'content') as score
+      FROM documents
+      WHERE score IS NOT NULL
+      ORDER BY score DESC
+      LIMIT 10
+    params:
+      - "{{ state.search_query }}"
+  output: search_results
+```
+
+### Parquet Support
+
+Read and write Parquet files:
+
+```yaml
+- name: load_parquet
+  uses: duckdb.query
+  with:
+    sql: "SELECT * FROM read_parquet('{{ state.data_url }}') LIMIT 100"
+  output: parquet_data
+
+- name: export_parquet
+  uses: duckdb.execute
+  with:
+    sql: "COPY (SELECT * FROM results) TO 'output.parquet' (FORMAT PARQUET)"
+```
+
+### Transaction Support
+
+```yaml
+- name: begin_tx
+  uses: duckdb.execute
+  with:
+    sql: "BEGIN TRANSACTION"
+
+- name: batch_insert
+  uses: duckdb.execute
+  with:
+    sql: |
+      INSERT INTO audit_log VALUES (1, 'action1');
+      INSERT INTO audit_log VALUES (2, 'action2');
+
+- name: commit_tx
+  uses: duckdb.execute
+  with:
+    sql: "COMMIT"
+```
+
+### Available Extensions
+
+| Extension | Use Case | Size |
+|-----------|----------|------|
+| `parquet` | Columnar file format | ~2MB (autoloaded) |
+| `json` | JSON operations | ~500KB (autoloaded) |
+| `vss` | Vector similarity (HNSW) | ~1MB |
+| `fts` | Full-text search | ~800KB |
+| `spatial` | Geospatial operations | ~3MB |
+| `icu` | Timezones, collations | ~2MB |
+| `httpfs` | Remote file access | ~500KB |
+
+### Error Handling
+
+DuckDB actions return structured errors:
+
+```yaml
+- name: safe_query
+  uses: duckdb.query
+  with:
+    sql: "SELECT * FROM maybe_missing_table"
+  output: result
+
+- name: check_error
+  condition: "{{ state.result_error is not none }}"
+  run: |
+    # Handle error - result_error contains helpful message
+    return {"status": "error", "message": state.result_error}
+```
+
+**Error categories:**
+- `SYNTAX_ERROR` - SQL grammar errors
+- `NOT_FOUND_ERROR` - Missing tables/columns
+- `TYPE_ERROR` - Type mismatches
+- `EXTENSION_ERROR` - Extension load failures
+- `CORS_ERROR` - Remote file access blocked (includes guidance)
+- `MEMORY_ERROR` - Out of memory (includes remediation)
+
+### CORS Requirements for Remote Files
+
+When using `httpfs` to read remote files, the server must include:
+
+```
+Access-Control-Allow-Origin: https://your-app.com
+Access-Control-Allow-Methods: GET, HEAD
+Access-Control-Allow-Headers: Range
+Access-Control-Expose-Headers: Content-Range, Content-Length
+```
+
+---
+
 ## Dual Namespace
 
 All code actions are available via dual namespaces: `code.*` and `actions.code_*`.
 All tabular data actions use dual namespaces: `data.*` and `actions.data_*`.
+DuckDB actions (WASM only): `duckdb.*` and `actions.duckdb_*`.
 
 ---
 

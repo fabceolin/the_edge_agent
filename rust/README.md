@@ -168,6 +168,48 @@ let options = ExecutionOptions {
 };
 ```
 
+## Mermaid Graph Export
+
+Generate Mermaid diagram syntax for visualizing workflow structure:
+
+```rust
+use the_edge_agent::StateGraph;
+use the_edge_agent::engine::graph::Node;
+
+let mut graph = StateGraph::new();
+graph.add_node(Node::new("process"));
+graph.set_entry_point("process").unwrap();
+graph.set_finish_point("process").unwrap();
+
+// Generate Mermaid syntax
+let mermaid = graph.to_mermaid();
+println!("{}", mermaid);
+// Output:
+// graph TD
+//     __start__((Start))
+//     __end__((End))
+//     process[process]
+//     __start__-->process
+//     process-->__end__
+```
+
+You can also access the Mermaid graph from `YamlEngine` after loading a workflow:
+
+```rust
+use the_edge_agent::engine::yaml::YamlEngine;
+
+let engine = YamlEngine::new();
+let _graph = engine.load_from_string(yaml).unwrap();
+
+// Get Mermaid graph from last loaded workflow
+if let Some(mermaid) = engine.get_mermaid_graph() {
+    println!("{}", mermaid);
+}
+```
+
+The Mermaid output integrates with Opik observability when `settings.opik` is configured,
+allowing visualization of agent execution flow in Opik's "Show Agent Graph" UI.
+
 ## Built-in Actions
 
 | Action | Description |
@@ -179,6 +221,36 @@ let options = ExecutionOptions {
 | `llm.call` | LLM API integration |
 | `data.validate` | JSON Schema validation |
 | `data.transform` | JMESPath transformation |
+
+## Experiment Framework
+
+Run systematic evaluations of TEA agents against datasets with metrics:
+
+```rust
+use the_edge_agent::experiments::{
+    run_experiment, ExperimentConfig, Dataset, JsonPathMatch
+};
+use serde_json::json;
+
+// Load dataset
+let dataset = Dataset::from_json_str(r#"{
+    "name": "test",
+    "items": [{"input": {"x": 1}, "expected_output": {"y": 2}}]
+}"#)?;
+
+// Run experiment with metrics
+let config = ExperimentConfig::new(agent_yaml, dataset)
+    .with_metric(Box::new(JsonPathMatch::new("y")));
+
+let result = run_experiment(config).await?;
+println!("Pass rate: {}", result.aggregates.pass_rates["json_path_match"]);
+```
+
+**Built-in Metrics:**
+- `ExactMatch` - Exact JSON equality
+- `ContainsMatch` - Substring matching
+- `NumericTolerance` - Numeric comparison with tolerance
+- `JsonPathMatch` - Compare values at specific paths
 
 ## Documentation
 

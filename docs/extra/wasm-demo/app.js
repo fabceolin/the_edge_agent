@@ -3,6 +3,7 @@
  *
  * Demonstrates YAML workflow execution with browser-based LLM.
  * Features syntax highlighting with CodeMirror.
+ * Includes Mermaid graph visualization for agent workflows.
  */
 
 // CodeMirror imports
@@ -13,6 +14,229 @@ import { EditorState } from '@codemirror/state';
 
 // YAML serialization
 import jsYaml from 'js-yaml';
+
+// ============================================================================
+// Mermaid Graph Visualization
+// ============================================================================
+
+// Mermaid instance cache
+let mermaidInstance = null;
+
+/**
+ * Dynamically load Mermaid.js from CDN
+ * @returns {Promise<object>} Mermaid instance
+ */
+async function loadMermaid() {
+  if (mermaidInstance) return mermaidInstance;
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+    script.onload = () => {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: 'dark',
+        themeVariables: {
+          primaryColor: '#61afef',
+          primaryTextColor: '#abb2bf',
+          primaryBorderColor: '#528bff',
+          lineColor: '#5c6370',
+          secondaryColor: '#2c313a',
+          tertiaryColor: '#21252b',
+          background: '#21252b',
+          mainBkg: '#2c313a',
+          nodeBorder: '#528bff',
+          clusterBkg: '#21252b',
+          clusterBorder: '#3a3f4b',
+          titleColor: '#e6e6e6',
+          edgeLabelBackground: '#21252b',
+        },
+        flowchart: {
+          htmlLabels: true,
+          curve: 'basis',
+        },
+      });
+      mermaidInstance = mermaid;
+      console.log('[TEA-DEMO] Mermaid.js loaded');
+      resolve(mermaid);
+    };
+    script.onerror = (e) => {
+      console.error('[TEA-DEMO] Failed to load Mermaid.js:', e);
+      reject(new Error('Failed to load Mermaid.js'));
+    };
+    document.head.appendChild(script);
+  });
+}
+
+/**
+ * Escape node name for Mermaid syntax
+ * @param {string} name - Node name
+ * @returns {string} Escaped name
+ */
+function escapeNodeId(name) {
+  return name.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+/**
+ * Escape label for Mermaid display
+ * @param {string} label - Label text
+ * @returns {string} Escaped label
+ */
+function escapeLabel(label) {
+  return label
+    .replace(/"/g, "'")
+    .replace(/\|/g, '/')
+    .replace(/\[/g, '(')
+    .replace(/\]/g, ')');
+}
+
+/**
+ * Generate Mermaid graph syntax from YAML workflow
+ * @param {string} yamlContent - YAML workflow content
+ * @returns {string|null} Mermaid syntax or null on error
+ */
+function generateMermaidFromYaml(yamlContent) {
+  try {
+    const config = jsYaml.load(yamlContent);
+    if (!config || !config.nodes || config.nodes.length === 0) {
+      return null;
+    }
+
+    const lines = ['graph TD'];
+    const nodeNames = config.nodes.map(n => n.name);
+    const edges = new Set();
+
+    // Add start node
+    lines.push('    __start__((Start))');
+
+    // Add regular nodes
+    for (const node of config.nodes) {
+      const nodeId = escapeNodeId(node.name);
+      const action = node.action || 'passthrough';
+      const label = escapeLabel(`${node.name}\\n[${action}]`);
+      lines.push(`    ${nodeId}["${label}"]`);
+    }
+
+    // Add end node
+    lines.push('    __end__((End))');
+
+    // Build edges from explicit edges or implicit sequential order
+    if (config.edges && config.edges.length > 0) {
+      // Use explicit edges
+      for (const edge of config.edges) {
+        const fromId = escapeNodeId(edge.from);
+        const toId = escapeNodeId(edge.to);
+        const edgeKey = `${fromId}->${toId}`;
+        if (!edges.has(edgeKey)) {
+          edges.add(edgeKey);
+          if (edge.condition) {
+            lines.push(`    ${fromId}-->|${escapeLabel(edge.condition)}|${toId}`);
+          } else {
+            lines.push(`    ${fromId}-->${toId}`);
+          }
+        }
+      }
+    } else {
+      // Implicit sequential order: __start__ -> first node -> ... -> last node -> __end__
+      if (nodeNames.length > 0) {
+        // Start to first node
+        const firstNodeId = escapeNodeId(nodeNames[0]);
+        lines.push(`    __start__-->${firstNodeId}`);
+
+        // Sequential edges between nodes
+        for (let i = 0; i < nodeNames.length - 1; i++) {
+          const fromId = escapeNodeId(nodeNames[i]);
+          const toId = escapeNodeId(nodeNames[i + 1]);
+          lines.push(`    ${fromId}-->${toId}`);
+        }
+
+        // Last node to end
+        const lastNodeId = escapeNodeId(nodeNames[nodeNames.length - 1]);
+        lines.push(`    ${lastNodeId}-->__end__`);
+      }
+    }
+
+    return lines.join('\n');
+  } catch (e) {
+    console.warn('[TEA-DEMO] Could not generate Mermaid graph:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Render agent graph using Mermaid
+ * @param {string|null} mermaidSyntax - Mermaid diagram syntax
+ */
+async function renderAgentGraph(mermaidSyntax) {
+  const container = document.getElementById('mermaid-container');
+  const errorDiv = document.getElementById('graph-error');
+  const statusBadge = document.getElementById('graph-status');
+
+  if (!container) return;
+
+  if (!mermaidSyntax) {
+    container.innerHTML = '';
+    if (errorDiv) errorDiv.classList.remove('hidden');
+    if (statusBadge) {
+      statusBadge.textContent = '';
+      statusBadge.className = 'status-badge';
+    }
+    return;
+  }
+
+  try {
+    const mermaid = await loadMermaid();
+    if (errorDiv) errorDiv.classList.add('hidden');
+
+    // Generate unique ID for this render
+    const id = `graph-${Date.now()}`;
+
+    // Render mermaid to SVG
+    const { svg } = await mermaid.render(id, mermaidSyntax);
+    container.innerHTML = svg;
+
+    if (statusBadge) {
+      statusBadge.textContent = '✓';
+      statusBadge.className = 'status-badge success';
+    }
+
+    console.log('[TEA-DEMO] Graph rendered successfully');
+  } catch (e) {
+    console.error('[TEA-DEMO] Graph render error:', e);
+    container.innerHTML = '';
+    if (errorDiv) errorDiv.classList.remove('hidden');
+    if (statusBadge) {
+      statusBadge.textContent = '✗';
+      statusBadge.className = 'status-badge error';
+    }
+  }
+}
+
+/**
+ * Toggle graph panel expand/collapse
+ */
+function toggleGraphPanel() {
+  const panel = document.getElementById('graph-panel');
+  if (panel) {
+    panel.classList.toggle('expanded');
+    // Remember state in localStorage
+    localStorage.setItem('graphPanelExpanded', panel.classList.contains('expanded'));
+  }
+}
+
+/**
+ * Restore graph panel state from localStorage
+ */
+function restoreGraphPanelState() {
+  const expanded = localStorage.getItem('graphPanelExpanded') === 'true';
+  const panel = document.getElementById('graph-panel');
+  if (panel && expanded) {
+    panel.classList.add('expanded');
+  }
+}
+
+// Make toggleGraphPanel available globally for onclick handler
+window.toggleGraphPanel = toggleGraphPanel;
 
 // Import from the bundled package
 import {
@@ -32,7 +256,15 @@ import {
   registerPrologHandler,
   clearPrologHandler,
   isPrologHandlerRegistered,
+  // Opik tracing bridge
+  initOpikTracing,
+  disableOpikTracing,
+  isOpikTracingEnabled,
+  registerOpikCallback,
 } from './pkg/index.js';
+
+// Import JSON language support for trace detail editors
+import { json } from '@codemirror/lang-json';
 
 // Lua engine instance
 let luaEngine = null;
@@ -109,6 +341,388 @@ async function initPrologEngine() {
   } catch (e) {
     console.warn('[TEA-DEMO] Could not load Prolog engine:', e.message);
     return null;
+  }
+}
+
+// ============================================================================
+// Opik Tracing
+// ============================================================================
+
+// Collected traces for display
+let opikTraces = [];
+let opikConnected = false;
+
+// Trace detail editors
+let traceInputEditor = null;
+let traceOutputEditor = null;
+
+/**
+ * Initialize Opik tracing with the provided API key
+ */
+async function connectOpik() {
+  const apiKeyInput = document.getElementById('opik-api-key');
+  const projectInput = document.getElementById('opik-project');
+  const connectBtn = document.getElementById('opik-connect-btn');
+  const statusIndicator = document.getElementById('opik-status-indicator');
+  const statusText = document.getElementById('opik-status-text');
+
+  const apiKey = apiKeyInput.value.trim();
+  const projectName = projectInput.value.trim() || 'tea-wasm-demo';
+
+  if (!apiKey) {
+    statusText.textContent = 'API key required';
+    statusIndicator.className = 'status-indicator disconnected';
+    return;
+  }
+
+  // Update UI to connecting state
+  statusIndicator.className = 'status-indicator connecting';
+  statusText.textContent = 'Connecting...';
+  connectBtn.disabled = true;
+  connectBtn.textContent = 'Connecting...';
+
+  try {
+    // Initialize Opik tracing
+    await initOpikTracing({
+      apiKey: apiKey,
+      projectName: projectName,
+      verbose: true,
+    });
+
+    // Register custom callback to capture traces for display
+    registerOpikCallback(async (traceJson) => {
+      const trace = JSON.parse(traceJson);
+      addTraceToList(trace, 'sending');
+
+      // Send to Opik API
+      try {
+        const response = await fetch('https://www.comet.com/opik/api/v1/private/traces', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: traceJson,
+        });
+
+        if (response.ok) {
+          updateTraceStatus(trace.id, 'sent');
+          console.log('[TEA-DEMO-OPIK] Trace sent successfully:', trace.name);
+        } else {
+          updateTraceStatus(trace.id, 'failed');
+          console.warn('[TEA-DEMO-OPIK] Failed to send trace:', response.status);
+        }
+      } catch (error) {
+        updateTraceStatus(trace.id, 'failed');
+        console.error('[TEA-DEMO-OPIK] Error sending trace:', error);
+      }
+    });
+
+    // Store API key in localStorage for convenience
+    localStorage.setItem('OPIK_API_KEY', apiKey);
+    localStorage.setItem('OPIK_PROJECT_NAME', projectName);
+
+    // Update UI to connected state
+    opikConnected = true;
+    statusIndicator.className = 'status-indicator connected';
+    statusText.textContent = `Connected to ${projectName}`;
+    connectBtn.textContent = 'Disconnect';
+    connectBtn.disabled = false;
+
+    console.log('[TEA-DEMO-OPIK] Connected to Opik');
+  } catch (error) {
+    console.error('[TEA-DEMO-OPIK] Failed to connect:', error);
+    statusIndicator.className = 'status-indicator disconnected';
+    statusText.textContent = `Error: ${error.message}`;
+    connectBtn.textContent = 'Connect';
+    connectBtn.disabled = false;
+  }
+}
+
+/**
+ * Disconnect from Opik
+ */
+function disconnectOpik() {
+  const statusIndicator = document.getElementById('opik-status-indicator');
+  const statusText = document.getElementById('opik-status-text');
+  const connectBtn = document.getElementById('opik-connect-btn');
+
+  disableOpikTracing();
+  opikConnected = false;
+
+  statusIndicator.className = 'status-indicator disconnected';
+  statusText.textContent = 'Disconnected';
+  connectBtn.textContent = 'Connect';
+
+  console.log('[TEA-DEMO-OPIK] Disconnected from Opik');
+}
+
+/**
+ * Toggle Opik connection
+ */
+function toggleOpikConnection() {
+  if (opikConnected) {
+    disconnectOpik();
+  } else {
+    connectOpik();
+  }
+}
+
+/**
+ * Add a trace to the display list
+ */
+function addTraceToList(trace, status = 'sending') {
+  // Store trace
+  opikTraces.unshift({ ...trace, status });
+
+  // Update UI
+  renderTraceList();
+}
+
+/**
+ * Update trace status in the list
+ */
+function updateTraceStatus(traceId, status) {
+  const trace = opikTraces.find(t => t.id === traceId);
+  if (trace) {
+    trace.status = status;
+    renderTraceList();
+  }
+}
+
+/**
+ * Render the trace list UI
+ */
+function renderTraceList() {
+  const traceList = document.getElementById('trace-list');
+  const traceCount = document.getElementById('trace-count');
+
+  if (opikTraces.length === 0) {
+    traceList.innerHTML = '<div class="trace-empty">No traces yet. Run a workflow to generate traces.</div>';
+    traceCount.textContent = '0 traces';
+    return;
+  }
+
+  traceCount.textContent = `${opikTraces.length} trace${opikTraces.length !== 1 ? 's' : ''}`;
+
+  traceList.innerHTML = opikTraces.map(trace => {
+    const duration = calculateDuration(trace.start_time, trace.end_time);
+    const tokens = trace.usage?.total_tokens || 0;
+    const time = formatTime(trace.start_time);
+
+    const statusIcon = {
+      sending: '⏳',
+      sent: '✓',
+      failed: '✗',
+    }[trace.status] || '';
+
+    return `
+      <div class="trace-item ${trace.status}" data-trace-id="${trace.id}">
+        <span class="trace-status-icon ${trace.status}">${statusIcon}</span>
+        <span class="trace-name">${escapeHtml(trace.name)}</span>
+        <span class="trace-duration">${duration}ms</span>
+        ${tokens > 0 ? `<span class="trace-tokens">${tokens} tokens</span>` : ''}
+        <span class="trace-time">${time}</span>
+      </div>
+    `;
+  }).join('');
+
+  // Add click handlers for trace detail view
+  traceList.querySelectorAll('.trace-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const traceId = item.dataset.traceId;
+      showTraceDetail(traceId);
+    });
+  });
+}
+
+/**
+ * Calculate duration between two ISO timestamps
+ */
+function calculateDuration(startTime, endTime) {
+  try {
+    const start = new Date(startTime).getTime();
+    const end = new Date(endTime).getTime();
+    return end - start;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Format timestamp for display
+ */
+function formatTime(isoTime) {
+  try {
+    const date = new Date(isoTime);
+    return date.toLocaleTimeString();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Escape HTML for safe display
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Show trace detail panel
+ */
+function showTraceDetail(traceId) {
+  const trace = opikTraces.find(t => t.id === traceId);
+  if (!trace) return;
+
+  const detailPanel = document.getElementById('trace-detail');
+  const titleEl = document.getElementById('trace-detail-title');
+
+  titleEl.textContent = `${trace.name} (${calculateDuration(trace.start_time, trace.end_time)}ms)`;
+
+  // Initialize detail editors if needed
+  initTraceDetailEditors();
+
+  // Set content
+  setTraceEditorContent(traceInputEditor, trace.input);
+  setTraceEditorContent(traceOutputEditor, trace.output);
+
+  // Show panel
+  detailPanel.classList.remove('hidden');
+  detailPanel.classList.add('visible');
+}
+
+/**
+ * Hide trace detail panel
+ */
+function hideTraceDetail() {
+  const detailPanel = document.getElementById('trace-detail');
+  detailPanel.classList.remove('visible');
+  setTimeout(() => {
+    detailPanel.classList.add('hidden');
+  }, 300);
+}
+
+/**
+ * Initialize trace detail editors
+ */
+function initTraceDetailEditors() {
+  if (traceInputEditor) return;
+
+  const inputContainer = document.getElementById('trace-input-editor');
+  const outputContainer = document.getElementById('trace-output-editor');
+
+  if (!inputContainer || !outputContainer) return;
+
+  traceInputEditor = new EditorView({
+    state: EditorState.create({
+      doc: '',
+      extensions: [
+        basicSetup,
+        json(),
+        oneDark,
+        EditorView.lineWrapping,
+        EditorState.readOnly.of(true),
+      ],
+    }),
+    parent: inputContainer,
+  });
+
+  traceOutputEditor = new EditorView({
+    state: EditorState.create({
+      doc: '',
+      extensions: [
+        basicSetup,
+        json(),
+        oneDark,
+        EditorView.lineWrapping,
+        EditorState.readOnly.of(true),
+      ],
+    }),
+    parent: outputContainer,
+  });
+}
+
+/**
+ * Set content in a trace editor
+ */
+function setTraceEditorContent(editor, content) {
+  if (!editor) return;
+  const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  editor.dispatch({
+    changes: {
+      from: 0,
+      to: editor.state.doc.length,
+      insert: text,
+    },
+  });
+}
+
+/**
+ * Clear all traces
+ */
+function clearTraces() {
+  opikTraces = [];
+  renderTraceList();
+}
+
+/**
+ * Restore Opik configuration from localStorage
+ */
+function restoreOpikConfig() {
+  const apiKey = localStorage.getItem('OPIK_API_KEY');
+  const projectName = localStorage.getItem('OPIK_PROJECT_NAME');
+
+  if (apiKey) {
+    document.getElementById('opik-api-key').value = apiKey;
+  }
+  if (projectName) {
+    document.getElementById('opik-project').value = projectName;
+  }
+}
+
+// ============================================================================
+// Tab Navigation
+// ============================================================================
+
+/**
+ * Initialize tab navigation
+ */
+function initTabNavigation() {
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetTab = btn.dataset.tab;
+
+      // Update button states
+      tabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Update content visibility
+      tabContents.forEach(content => {
+        if (content.id === `tab-${targetTab}`) {
+          content.classList.add('active');
+        } else {
+          content.classList.remove('active');
+        }
+      });
+
+      // Store active tab
+      localStorage.setItem('activeTab', targetTab);
+    });
+  });
+
+  // Restore active tab from localStorage
+  const savedTab = localStorage.getItem('activeTab');
+  if (savedTab) {
+    const btn = document.querySelector(`.tab-btn[data-tab="${savedTab}"]`);
+    if (btn) {
+      btn.click();
+    }
   }
 }
 
@@ -362,6 +976,10 @@ runYamlBtn.addEventListener('click', async () => {
     runYamlBtn.disabled = true;
     runYamlBtn.textContent = 'Running...';
 
+    // Generate and render agent graph before execution
+    const mermaidSyntax = generateMermaidFromYaml(yamlContent);
+    await renderAgentGraph(mermaidSyntax);
+
     const result = await executeLlmYaml(yamlContent, state);
 
     yamlOutput.classList.remove('hidden');
@@ -381,6 +999,13 @@ runYamlBtn.addEventListener('click', async () => {
     console.error('YAML execution error:', error);
     yamlOutput.classList.remove('hidden');
     setOutputContent(`Error: ${error.message}`);
+    // Still try to render graph even on execution error
+    try {
+      const mermaidSyntax = generateMermaidFromYaml(yamlContent);
+      await renderAgentGraph(mermaidSyntax);
+    } catch (graphError) {
+      console.warn('[TEA-DEMO] Could not render graph on error:', graphError);
+    }
   } finally {
     runYamlBtn.disabled = false;
     runYamlBtn.textContent = 'Run YAML Workflow';
@@ -422,3 +1047,24 @@ try {
 // Initialize editors first, then LLM
 initEditors();
 initializeLlm();
+
+// Restore graph panel state from localStorage
+restoreGraphPanelState();
+
+// Initialize tab navigation
+initTabNavigation();
+
+// Restore Opik configuration from localStorage
+restoreOpikConfig();
+
+// Set up Opik event handlers
+document.getElementById('opik-connect-btn').addEventListener('click', toggleOpikConnection);
+document.getElementById('clear-traces-btn').addEventListener('click', clearTraces);
+document.getElementById('close-trace-detail').addEventListener('click', hideTraceDetail);
+
+// Allow Enter key to connect in API key field
+document.getElementById('opik-api-key').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter' && !opikConnected) {
+    connectOpik();
+  }
+});

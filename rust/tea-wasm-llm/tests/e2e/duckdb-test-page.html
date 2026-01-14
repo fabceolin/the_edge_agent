@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB WASM Test Page</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.loading { background: #fff3cd; }
+        .status.ready { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .query-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            font-family: monospace;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px 5px 5px 0;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            max-height: 400px;
+        }
+        .log {
+            font-family: monospace;
+            font-size: 12px;
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .log-entry { margin: 2px 0; }
+        .log-entry.info { color: #0066cc; }
+        .log-entry.error { color: #cc0000; }
+        .log-entry.success { color: #00aa00; }
+    </style>
+</head>
+<body>
+    <h1>DuckDB WASM Test Page</h1>
+    <p>TEA-WASM-003.2: DuckDB Integration Tests</p>
+
+    <div id="status" class="status loading">Initializing...</div>
+
+    <div class="query-section">
+        <h3>Execute Query</h3>
+        <textarea id="sql-input" placeholder="Enter SQL query...">SELECT 1 + 1 as result, 'hello' as greeting</textarea>
+        <br>
+        <textarea id="params-input" placeholder="Parameters JSON array (optional)">[]</textarea>
+        <br>
+        <button id="query-btn" onclick="runQuery()" disabled>Run Query</button>
+        <button id="execute-btn" onclick="runExecute()" disabled>Execute (DDL/DML)</button>
+        <button onclick="clearResults()">Clear</button>
+
+        <h4>Result:</h4>
+        <pre id="result">No results yet</pre>
+    </div>
+
+    <div class="query-section">
+        <h3>Quick Actions</h3>
+        <button onclick="runDemo('version')">Get Version</button>
+        <button onclick="runDemo('extensions')">List Extensions</button>
+        <button onclick="runDemo('create-table')">Create Table</button>
+        <button onclick="runDemo('insert-data')">Insert Data</button>
+        <button onclick="runDemo('json-query')">JSON Query</button>
+        <button onclick="runDemo('transaction')">Transaction Demo</button>
+    </div>
+
+    <div class="query-section">
+        <h3>Log</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+        // Import from CDN for DuckDB WASM
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+
+        // Import TEA WASM module (assume built and served)
+        import init, {
+            set_duckdb_handler,
+            clear_duckdb_handler,
+            has_duckdb_handler,
+            duckdb_query_async,
+            duckdb_execute_async,
+            init_duckdb_async,
+            load_duckdb_extension_async,
+            get_duckdb_extensions_async,
+            duckdb_begin_async,
+            duckdb_commit_async,
+            duckdb_rollback_async,
+        } from '../../pkg/tea_wasm_llm.js';
+
+        // Make functions available globally for tests
+        window.set_duckdb_handler = set_duckdb_handler;
+        window.clear_duckdb_handler = clear_duckdb_handler;
+        window.has_duckdb_handler = has_duckdb_handler;
+        window.duckdb_query_async = duckdb_query_async;
+        window.duckdb_execute_async = duckdb_execute_async;
+        window.init_duckdb_async = init_duckdb_async;
+        window.load_duckdb_extension_async = load_duckdb_extension_async;
+        window.get_duckdb_extensions_async = get_duckdb_extensions_async;
+        window.duckdb_begin_async = duckdb_begin_async;
+        window.duckdb_commit_async = duckdb_commit_async;
+        window.duckdb_rollback_async = duckdb_rollback_async;
+
+        const statusEl = document.getElementById('status');
+        const resultEl = document.getElementById('result');
+        const logEl = document.getElementById('log');
+
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toISOString().split('T')[1].split('.')[0]}] ${message}`;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(`[${type.toUpperCase()}]`, message);
+        }
+
+        function setStatus(message, state = 'loading') {
+            statusEl.textContent = message;
+            statusEl.className = `status ${state}`;
+        }
+
+        function showResult(result) {
+            resultEl.textContent = JSON.stringify(result, null, 2);
+        }
+
+        // Store DuckDB connection
+        let db = null;
+        let conn = null;
+
+        async function initDuckDB() {
+            log('Loading DuckDB WASM...');
+            setStatus('Loading DuckDB WASM bundles...', 'loading');
+
+            try {
+                // Get bundles from jsDelivr
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+
+                log(`Selected bundle: ${bundle.mainWorker ? 'multi-thread' : 'single-thread'}`);
+
+                // Create worker
+                const worker = new Worker(bundle.mainWorker);
+                const logger = new duckdb.ConsoleLogger();
+                db = new duckdb.AsyncDuckDB(logger, worker);
+
+                // Instantiate
+                log('Instantiating DuckDB...');
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+
+                // Open database
+                log('Opening database...');
+                await db.open({
+                    path: ':memory:',
+                    query: {
+                        castBigIntToDouble: true,
+                    }
+                });
+
+                // Create connection
+                conn = await db.connect();
+                log('DuckDB connection established', 'success');
+
+                return { db, conn };
+            } catch (error) {
+                log(`DuckDB initialization error: ${error}`, 'error');
+                throw error;
+            }
+        }
+
+        function createDuckDbHandler(conn) {
+            return async (sql, paramsJson) => {
+                try {
+                    const params = JSON.parse(paramsJson);
+
+                    log(`Executing: ${sql.substring(0, 50)}...`);
+                    const result = await conn.query(sql, ...params);
+
+                    // Convert Arrow table to JSON
+                    const rows = [];
+                    const schema = result.schema.fields.map(f => ({
+                        name: f.name,
+                        type: f.type.toString()
+                    }));
+
+                    for (const row of result.toArray()) {
+                        const obj = {};
+                        for (const field of result.schema.fields) {
+                            let value = row[field.name];
+                            // Handle BigInt
+                            if (typeof value === 'bigint') {
+                                value = Number(value);
+                            } else if (value instanceof Date) {
+                                value = value.toISOString();
+                            }
+                            obj[field.name] = value;
+                        }
+                        rows.push(obj);
+                    }
+
+                    const response = {
+                        success: true,
+                        rows,
+                        row_count: rows.length,
+                        schema
+                    };
+
+                    log(`Query returned ${rows.length} rows`, 'success');
+                    return JSON.stringify(response);
+                } catch (error) {
+                    log(`Query error: ${error.message}`, 'error');
+                    return JSON.stringify({
+                        success: false,
+                        rows: [],
+                        row_count: 0,
+                        error: error.message,
+                        error_code: classifyError(error)
+                    });
+                }
+            };
+        }
+
+        function classifyError(error) {
+            const msg = error.message.toLowerCase();
+            if (msg.includes('syntax')) return 'SYNTAX_ERROR';
+            if (msg.includes('extension')) return 'EXTENSION_ERROR';
+            if (msg.includes('cors')) return 'CORS_ERROR';
+            if (msg.includes('memory')) return 'MEMORY_ERROR';
+            return 'UNKNOWN_ERROR';
+        }
+
+        // Initialize everything
+        async function initialize() {
+            try {
+                // Initialize WASM module
+                log('Initializing TEA WASM module...');
+                await init();
+                log('TEA WASM module initialized', 'success');
+
+                // Initialize DuckDB
+                const { conn: connection } = await initDuckDB();
+
+                // Register handler
+                const handler = createDuckDbHandler(connection);
+                set_duckdb_handler(handler);
+                log('DuckDB handler registered with WASM', 'success');
+
+                // Enable buttons
+                document.getElementById('query-btn').disabled = false;
+                document.getElementById('execute-btn').disabled = false;
+
+                // Signal ready
+                window.duckdbReady = true;
+                setStatus('DuckDB WASM Ready!', 'ready');
+
+            } catch (error) {
+                log(`Initialization failed: ${error}`, 'error');
+                setStatus(`Error: ${error.message}`, 'error');
+                window.duckdbReady = false;
+            }
+        }
+
+        // Run query via WASM
+        window.runQuery = async function() {
+            const sql = document.getElementById('sql-input').value;
+            const paramsJson = document.getElementById('params-input').value || '[]';
+
+            try {
+                log(`Running query: ${sql.substring(0, 50)}...`);
+                const result = await duckdb_query_async(sql, paramsJson);
+                const parsed = JSON.parse(result);
+                showResult(parsed);
+
+                if (parsed.success) {
+                    log(`Query completed: ${parsed.row_count} rows`, 'success');
+                } else {
+                    log(`Query failed: ${parsed.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Error: ${error}`, 'error');
+                showResult({ error: error.message });
+            }
+        };
+
+        // Run execute via WASM
+        window.runExecute = async function() {
+            const sql = document.getElementById('sql-input').value;
+
+            try {
+                log(`Executing: ${sql.substring(0, 50)}...`);
+                const result = await duckdb_execute_async(sql);
+                const parsed = JSON.parse(result);
+                showResult(parsed);
+
+                if (parsed.success) {
+                    log('Statement executed successfully', 'success');
+                } else {
+                    log(`Execution failed: ${parsed.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Error: ${error}`, 'error');
+                showResult({ error: error.message });
+            }
+        };
+
+        // Clear results
+        window.clearResults = function() {
+            resultEl.textContent = 'No results yet';
+        };
+
+        // Demo functions
+        window.runDemo = async function(demo) {
+            switch (demo) {
+                case 'version':
+                    document.getElementById('sql-input').value = 'SELECT version() as version';
+                    await runQuery();
+                    break;
+
+                case 'extensions':
+                    try {
+                        const result = await get_duckdb_extensions_async();
+                        showResult(JSON.parse(result));
+                        log('Extensions listed', 'success');
+                    } catch (e) {
+                        showResult({ error: e.message });
+                    }
+                    break;
+
+                case 'create-table':
+                    document.getElementById('sql-input').value = `
+CREATE TABLE IF NOT EXISTS demo_users (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    email VARCHAR,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`;
+                    await runExecute();
+                    break;
+
+                case 'insert-data':
+                    document.getElementById('sql-input').value = `INSERT INTO demo_users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`;
+                    await runExecute();
+                    document.getElementById('sql-input').value = 'SELECT * FROM demo_users';
+                    await runQuery();
+                    break;
+
+                case 'json-query':
+                    document.getElementById('sql-input').value = `SELECT json_extract('{"user": {"name": "Bob", "age": 30}}', '$.user.name') as extracted`;
+                    await runQuery();
+                    break;
+
+                case 'transaction':
+                    try {
+                        log('Starting transaction demo...');
+
+                        // Create table
+                        await duckdb_execute_async('CREATE TABLE IF NOT EXISTS tx_demo (val INTEGER)');
+                        await duckdb_execute_async('DELETE FROM tx_demo');
+
+                        // Begin transaction
+                        await duckdb_begin_async();
+                        log('Transaction started');
+
+                        // Insert
+                        await duckdb_execute_async('INSERT INTO tx_demo VALUES (100)');
+                        log('Inserted value 100');
+
+                        // Commit
+                        await duckdb_commit_async();
+                        log('Transaction committed', 'success');
+
+                        // Verify
+                        const result = await duckdb_query_async('SELECT * FROM tx_demo', '[]');
+                        showResult(JSON.parse(result));
+
+                    } catch (e) {
+                        log(`Transaction error: ${e}`, 'error');
+                        showResult({ error: e.message });
+                    }
+                    break;
+            }
+        };
+
+        // Start initialization
+        initialize();
+    </script>
+</body>
+</html>

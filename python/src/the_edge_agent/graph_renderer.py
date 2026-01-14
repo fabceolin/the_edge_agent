@@ -38,6 +38,9 @@ class GraphLayout:
     parallel_groups: Dict[str, List[str]] = field(default_factory=dict)
     fan_in_nodes: Set[str] = field(default_factory=set)
     node_info: Dict[str, RenderedNode] = field(default_factory=dict)
+    # TEA-CLI-006: Runtime-aware parallel tracking
+    dynamic_parallel_items: Dict[str, List[str]] = field(default_factory=dict)
+    parallel_item_states: Dict[Tuple[str, str], NodeState] = field(default_factory=dict)
 
 
 class GraphProgressTracker:
@@ -223,6 +226,61 @@ class GraphProgressTracker:
             if self.layout and node in self.layout.node_info:
                 self.layout.node_info[node].state = NodeState.COMPLETED
 
+    def register_parallel_items(self, parent_node: str, items: List[str]) -> None:
+        """
+        Dynamically register parallel items when they become known at runtime.
+
+        TEA-CLI-006: Runtime-aware parallel tracking for dynamic_parallel nodes.
+
+        Args:
+            parent_node: Name of the dynamic_parallel node
+            items: List of item identifiers for parallel execution
+        """
+        if not self.layout:
+            return
+
+        # Store items for this parent node
+        self.layout.dynamic_parallel_items[parent_node] = items
+
+        # Initialize state for each item
+        for item in items:
+            self.layout.parallel_item_states[(parent_node, item)] = NodeState.PENDING
+
+        # Update the node info to mark it as having parallel items
+        if parent_node in self.layout.node_info:
+            self.layout.node_info[parent_node].is_parallel_group = True
+            self.layout.node_info[parent_node].parallel_members = items
+
+    def mark_parallel_item_running(self, parent_node: str, item: str) -> None:
+        """
+        Mark a specific parallel item as running.
+
+        Args:
+            parent_node: Name of the dynamic_parallel node
+            item: Item identifier
+        """
+        if not self.layout:
+            return
+
+        key = (parent_node, item)
+        if key in self.layout.parallel_item_states:
+            self.layout.parallel_item_states[key] = NodeState.RUNNING
+
+    def mark_parallel_item_completed(self, parent_node: str, item: str) -> None:
+        """
+        Mark a specific parallel item as completed.
+
+        Args:
+            parent_node: Name of the dynamic_parallel node
+            item: Item identifier
+        """
+        if not self.layout:
+            return
+
+        key = (parent_node, item)
+        if key in self.layout.parallel_item_states:
+            self.layout.parallel_item_states[key] = NodeState.COMPLETED
+
     def render(self) -> str:
         """
         Render the current graph state as ASCII.
@@ -280,6 +338,13 @@ class GraphProgressTracker:
         if not node_info:
             return []
 
+        # TEA-CLI-006: Check if this node has dynamic parallel items
+        if node in self.layout.dynamic_parallel_items:
+            items = self.layout.dynamic_parallel_items[node]
+            if items:
+                # Render as parallel branches
+                return self._render_dynamic_parallel_node(node, items)
+
         state = self.node_states.get(node, NodeState.PENDING)
         state_marker = self._get_state_marker(state)
 
@@ -310,6 +375,96 @@ class GraphProgressTracker:
             bottom_line = "└" + "─" * box_width + "┘"
 
         return [top_line, content, bottom_line]
+
+    def _render_dynamic_parallel_node(
+        self, parent_node: str, items: List[str]
+    ) -> List[str]:
+        """
+        Render a dynamic_parallel node with its runtime items as horizontal branches.
+
+        TEA-CLI-006: Runtime-aware parallel tracking visualization.
+
+        Args:
+            parent_node: Name of the dynamic_parallel node
+            items: List of parallel item identifiers
+
+        Returns:
+            List of rendered lines showing items side-by-side
+        """
+        if not items:
+            return []
+
+        # Calculate widths for each item (account for state markers)
+        node_widths: List[int] = []
+        for item in items:
+            # Truncate long items for display
+            display_item = item if len(item) <= 15 else item[:12] + "..."
+            # Reserve space for state marker (max is " * running" = 10 chars)
+            width = max(len(display_item) + 12, 20)
+            node_widths.append(width)
+
+        # Build the combined box with parent node name at top
+        parent_display = parent_node
+        parent_width = sum(node_widths) + len(items) - 1
+
+        # Top line with parent node name
+        top_line = "┌" + "─" * parent_width + "┐"
+        parent_content = f"│ {parent_display}{' ' * (parent_width - len(parent_display) - 2)}│"
+
+        # Separator between parent and items
+        separator_parts = []
+        for i, width in enumerate(node_widths):
+            if i == 0:
+                separator_parts.append("├" + "─" * width)
+            else:
+                separator_parts.append("┬" + "─" * width)
+        separator_line = "".join(separator_parts) + "┤"
+
+        # Content line (each item with its state)
+        content_parts = []
+        for i, item in enumerate(items):
+            display_item = item if len(item) <= 15 else item[:12] + "..."
+            key = (parent_node, item)
+            state = self.layout.parallel_item_states.get(key, NodeState.PENDING)
+            state_marker = self._get_state_marker(state)
+
+            width = node_widths[i]
+            # Don't truncate marker - we sized the width to accommodate it
+            marker = state_marker if state_marker else ""
+            padding = width - len(display_item) - len(marker) - 2
+
+            # Ensure padding is non-negative
+            if padding < 0:
+                padding = 0
+
+            if i == 0:
+                content_parts.append(f"│ {display_item}{marker}{' ' * padding}")
+            else:
+                content_parts.append(f"│ {display_item}{marker}{' ' * padding}")
+
+        content_line = "".join(content_parts) + "│"
+
+        # Bottom line (with connector)
+        bottom_parts = []
+        mid_idx = len(items) // 2
+        for i, width in enumerate(node_widths):
+            if i == 0:
+                if i == mid_idx and len(items) == 1:
+                    bottom_parts.append(
+                        "└" + "─" * (width // 2) + "┬" + "─" * (width - width // 2 - 1)
+                    )
+                else:
+                    bottom_parts.append("└" + "─" * width)
+            else:
+                if i == mid_idx:
+                    bottom_parts.append(
+                        "┴" + "─" * (width // 2) + "┬" + "─" * (width - width // 2 - 1)
+                    )
+                else:
+                    bottom_parts.append("┴" + "─" * width)
+        bottom_line = "".join(bottom_parts) + "┘"
+
+        return [top_line, parent_content, separator_line, content_line, bottom_line]
 
     def _render_parallel_row(self, parallel_nodes: List[str]) -> List[str]:
         """Render parallel nodes side by side in a horizontal layout."""

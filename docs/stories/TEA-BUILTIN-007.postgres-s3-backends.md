@@ -2,7 +2,13 @@
 
 ## Status
 
-**Ready for Development** - Blocked by TEA-BUILTIN-006
+**✅ Implemented**
+
+_Status updated: 2026-01-13 - Implementation verified in codebase. TEA-BUILTIN-006 dependency resolved._
+- `python/src/the_edge_agent/memory/postgres.py` - PostgreSQL LTM backend
+- `python/src/the_edge_agent/memory/catalog_postgres.py` - PostgreSQL catalog backend
+- `python/src/the_edge_agent/memory/blob/` - S3/GCS blob storage module
+- `python/src/the_edge_agent/memory/blob/gcs.py` - GCS blob storage
 
 > **Validation Notes (2026-01-08)**:
 > - ✅ Story format complete with clear user story
@@ -10,8 +16,7 @@
 > - ✅ Tasks/subtasks with file paths specified
 > - ✅ Dev notes with schema and configuration examples
 > - ✅ QA test design completed (58 test scenarios)
-> - ✅ Dependencies and blockers identified
-> - ⚠️ Blocked by TEA-BUILTIN-006 (ABC interfaces) - cannot start until dependency completed
+> - ✅ Dependencies resolved - TEA-BUILTIN-006 implemented
 
 ## Story
 

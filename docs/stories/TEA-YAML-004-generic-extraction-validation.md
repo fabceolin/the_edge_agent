@@ -2,7 +2,15 @@
 
 ## Status
 
-Ready for Dev
+**✅ Implemented**
+
+_Status updated: 2026-01-13 - Implementation verified in codebase._
+- `python/src/the_edge_agent/extraction_validation.py` - Core extraction validation
+- `python/src/the_edge_agent/actions/schema_actions.py` - Schema validation actions
+- `python/src/the_edge_agent/actions/input_validation_actions.py` - Input validation
+- `python/tests/test_extraction_schema.py` - Schema tests
+- `python/tests/test_validation_actions_llm.py` - LLM validation tests
+- Supports: Layer 1 (structural), Layer 2 (Prolog semantic), Layer 3 (LLM grounding)
 
 ## Story
 

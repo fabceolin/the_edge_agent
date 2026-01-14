@@ -238,6 +238,139 @@ All storage actions are available via dual namespaces: `storage.*` and `actions.
 
 ---
 
+## WASM/Browser Storage (Rust Implementation)
+
+When running in browser/WASM environments, the Rust implementation (`tea-wasm-llm`) provides storage actions via Apache OpenDAL with additional browser-specific backends.
+
+### Browser-Specific URI Schemes
+
+| Scheme | Description | Persistence | Notes |
+|--------|-------------|-------------|-------|
+| `opfs://` | Origin Private File System | Per-origin | Chrome 102+, Edge 102+, partial Firefox/Safari |
+| `memory://` | In-memory storage | Session only | Testing/development |
+
+### OPFS (Origin Private File System)
+
+OPFS provides persistent browser-local storage that:
+- Persists across browser sessions
+- Is isolated per-origin (domain)
+- Can be read by DuckDB WASM for analytics
+- Supports binary files (parquet, images)
+
+**Initializing OPFS (JavaScript):**
+
+```javascript
+import { init_opfs, is_opfs_available } from 'tea-wasm-llm';
+
+// Initialize OPFS at startup
+await init_opfs();
+console.log('OPFS available:', is_opfs_available());
+```
+
+**Using OPFS in YAML:**
+
+```yaml
+name: browser-analytics
+nodes:
+  # Cache data from cloud to browser
+  - name: cache_data
+    action: storage.copy
+    with:
+      source: "s3://{{ state.bucket }}/{{ state.file }}"
+      destination: "opfs://cache/{{ state.file }}"
+
+  # Query cached data with DuckDB
+  - name: analyze
+    action: duckdb.query
+    with:
+      sql: |
+        SELECT region, SUM(sales)
+        FROM read_parquet('opfs://cache/{{ state.file }}')
+        GROUP BY region
+
+  # Upload results back to cloud
+  - name: upload
+    action: storage.copy
+    with:
+      source: "opfs://output/results.parquet"
+      destination: "s3://{{ state.bucket }}/results/{{ state.run_id }}.parquet"
+```
+
+### WASM Storage Actions
+
+All Python storage actions are available in WASM with the same API:
+
+| Action | WASM Support | Notes |
+|--------|--------------|-------|
+| `storage.read` | Yes | Binary via `binary: true` |
+| `storage.write` | Yes | Binary via `binary: true` |
+| `storage.exists` | Yes | |
+| `storage.delete` | Yes | |
+| `storage.list` | Yes | With `limit` option |
+| `storage.copy` | Yes | Cross-provider supported |
+
+### Credential Management (WASM)
+
+Credentials in WASM are:
+- Stored in-memory only
+- **Never** serialized to state or checkpoints
+- Must be set from JavaScript before use
+
+```javascript
+import { set_storage_credentials } from 'tea-wasm-llm';
+
+// Set S3 credentials
+set_storage_credentials('s3', JSON.stringify({
+    access_key_id: 'AKIA...',
+    secret_access_key: '...',
+    region: 'us-east-1',
+    endpoint: 'https://s3.amazonaws.com'  // optional, for MinIO/R2
+}));
+
+// Set GCS credentials
+set_storage_credentials('gcs', JSON.stringify({
+    credential: '{ service account JSON }'
+}));
+
+// Clear all credentials
+clear_storage_credentials();
+```
+
+### CORS Requirements
+
+For browser-based cloud storage access, CORS must be configured:
+
+**S3 CORS Configuration:**
+```json
+{
+    "CORSRules": [{
+        "AllowedOrigins": ["https://your-app.com"],
+        "AllowedMethods": ["GET", "PUT", "DELETE", "HEAD"],
+        "AllowedHeaders": ["*"],
+        "ExposeHeaders": ["ETag", "x-amz-meta-*"]
+    }]
+}
+```
+
+**Note:** OPFS does not require CORS as it's browser-local storage.
+
+### Feature Flags
+
+The WASM storage module uses feature flags to control bundle size:
+
+| Feature | Size Impact | Description |
+|---------|-------------|-------------|
+| `storage-memory` | +50KB | In-memory (testing) |
+| `storage-http` | +100KB | HTTP(S) read-only |
+| `storage-opfs` | +100KB | Browser OPFS |
+| `storage-s3` | +300KB | AWS S3, MinIO, R2 |
+| `storage-gcs` | +250KB | Google Cloud Storage |
+| `storage-azblob` | +280KB | Azure Blob Storage |
+
+Default features: `storage-memory`, `storage-http`
+
+---
+
 ## See Also
 
 - [Actions Overview](./README.md)

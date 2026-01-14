@@ -16,7 +16,9 @@ use std::sync::Arc;
 use crate::engine::checkpoint::{Checkpoint, Checkpointer};
 use crate::engine::graph::{CompiledGraph, EdgeType, Node, NodeType};
 use crate::engine::lua_runtime::LuaRuntime;
-use crate::engine::observability::{HandlerRegistry, ObsConfig, ObservabilityContext};
+use crate::engine::observability::{
+    push_span, set_trace_context, HandlerRegistry, ObsConfig, ObservabilityContext, TraceContext,
+};
 use crate::engine::parallel::{ParallelConfig, ParallelExecutor, ParallelFlowResult};
 #[cfg(feature = "prolog")]
 use crate::engine::prolog_runtime::PrologRuntime;
@@ -292,6 +294,9 @@ impl Executor {
         let (ctx, registry) =
             ObservabilityContext::with_handlers(uuid::Uuid::new_v4(), config.clone());
 
+        // TEA-RUST-044.1: Set mermaid graph on handler registry for Opik integration
+        registry.set_mermaid_graph(graph.to_mermaid());
+
         Ok(Self {
             graph: Arc::new(graph),
             lua: LuaRuntime::new()?,
@@ -336,8 +341,13 @@ impl Executor {
         actions: Arc<ActionRegistry>,
         config: ObsConfig,
     ) -> TeaResult<Self> {
+        // TEA-RUST-044.1: Generate mermaid graph before wrapping in Arc
+        let mermaid_graph = graph.to_mermaid();
+
         let (ctx, registry) = if config.enabled {
             let (c, r) = ObservabilityContext::with_handlers(uuid::Uuid::new_v4(), config);
+            // TEA-RUST-044.1: Set mermaid graph on handler registry for Opik integration
+            r.set_mermaid_graph(mermaid_graph);
             (Some(c), Some(r))
         } else {
             (None, None)
@@ -445,6 +455,17 @@ impl Executor {
         let mut state = initial_state;
         let mut current_node = START.to_string();
 
+        // TEA-RUST-044.2: Initialize root trace context for this execution
+        // This sets up the trace context that will be used for all spans in this execution
+        let root_trace_ctx = TraceContext::new_root();
+        set_trace_context(Some(root_trace_ctx.clone()));
+
+        log::debug!(
+            "[OPIK TRACE] Initialized root trace context: trace_id={}, span_id={}",
+            root_trace_ctx.trace_id,
+            root_trace_ctx.span_id
+        );
+
         // TEA-OBS-001.2: Inject flow_id into state if observability is enabled
         if let Some(ctx) = &self.observability_context {
             if let Some(obj) = state.as_object_mut() {
@@ -452,6 +473,15 @@ impl Executor {
                 obs_metadata.insert(
                     "flow_id".to_string(),
                     serde_json::json!(ctx.flow_id_string()),
+                );
+                // TEA-RUST-044.2: Also inject trace context into state for visibility
+                obs_metadata.insert(
+                    "trace_id".to_string(),
+                    serde_json::json!(root_trace_ctx.trace_id),
+                );
+                obs_metadata.insert(
+                    "span_id".to_string(),
+                    serde_json::json!(root_trace_ctx.span_id),
                 );
                 obj.insert(
                     "_observability".to_string(),
@@ -505,6 +535,10 @@ impl Executor {
 
             // Skip START node execution (just routing)
             if current_node != START {
+                // TEA-RUST-044.2: Push child span for this node execution
+                // This ensures all events within this node have proper parent-child linking
+                let _span_guard = push_span(&current_node);
+
                 // Execute current node
                 let start_time = std::time::Instant::now();
                 events.push(ExecutionEvent::new(
