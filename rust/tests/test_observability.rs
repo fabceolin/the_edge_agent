@@ -946,8 +946,7 @@ fn test_trace_context_serialization() {
     assert!(json.contains("span_id"));
 
     // Should deserialize back
-    let deserialized: TraceContext =
-        serde_json::from_str(&json).expect("Should deserialize");
+    let deserialized: TraceContext = serde_json::from_str(&json).expect("Should deserialize");
     assert_eq!(deserialized.trace_id, ctx.trace_id);
     assert_eq!(deserialized.span_id, ctx.span_id);
 }

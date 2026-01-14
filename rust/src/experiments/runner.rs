@@ -258,7 +258,8 @@ pub async fn run_experiment(config: ExperimentConfig) -> Result<ExperimentResult
         // Execute item with error handling
         match execute_item(&config, dataset_item, index).await {
             Ok((output, item_duration_ms)) => {
-                let scores = calculate_scores(&config.metrics, &output, &dataset_item.expected_output);
+                let scores =
+                    calculate_scores(&config.metrics, &output, &dataset_item.expected_output);
                 items.push(ItemResult {
                     index,
                     input: dataset_item.input.clone(),
@@ -408,14 +409,8 @@ mod tests {
 
     fn create_test_dataset() -> Dataset {
         Dataset::new("test")
-            .with_item(DatasetItem::new(
-                json!({"x": 1}),
-                json!({"result": "one"}),
-            ))
-            .with_item(DatasetItem::new(
-                json!({"x": 2}),
-                json!({"result": "two"}),
-            ))
+            .with_item(DatasetItem::new(json!({"x": 1}), json!({"result": "one"})))
+            .with_item(DatasetItem::new(json!({"x": 2}), json!({"result": "two"})))
     }
 
     fn create_mock_agent_yaml() -> String {
@@ -448,10 +443,8 @@ mod tests {
 
     #[test]
     fn test_calculate_scores() {
-        let metrics: Vec<Box<dyn Metric>> = vec![
-            Box::new(ExactMatch),
-            Box::new(ContainsMatch::new()),
-        ];
+        let metrics: Vec<Box<dyn Metric>> =
+            vec![Box::new(ExactMatch), Box::new(ContainsMatch::new())];
 
         let output = json!({"answer": "hello world"});
         let expected = json!({"answer": "hello world"});
@@ -533,11 +526,19 @@ mod tests {
         assert!(result.errors.is_empty());
         // The agent output should have result="one" which matches expected
         assert!(
-            result.items[0].scores.get("json_path_match").unwrap().passed,
+            result.items[0]
+                .scores
+                .get("json_path_match")
+                .unwrap()
+                .passed,
             "Expected json_path_match to pass. Output: {:?}, Expected: {:?}, Details: {:?}",
             result.items[0].output,
             result.items[0].expected,
-            result.items[0].scores.get("json_path_match").unwrap().details
+            result.items[0]
+                .scores
+                .get("json_path_match")
+                .unwrap()
+                .details
         );
     }
 
@@ -584,10 +585,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_experiment_multiple_metrics() {
         let yaml = create_mock_agent_yaml();
-        let dataset = Dataset::new("test").with_item(DatasetItem::new(
-            json!({}),
-            json!({"result": "one"}),
-        ));
+        let dataset =
+            Dataset::new("test").with_item(DatasetItem::new(json!({}), json!({"result": "one"})));
 
         let config = ExperimentConfig::new(&yaml, dataset)
             .with_metric(Box::new(ExactMatch))

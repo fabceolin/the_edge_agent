@@ -150,7 +150,11 @@ impl Dataset {
     /// ```
     pub fn from_json_file(path: &Path) -> Result<Self, TeaError> {
         let content = fs::read_to_string(path).map_err(|e| {
-            TeaError::InvalidConfig(format!("Failed to read dataset file '{}': {}", path.display(), e))
+            TeaError::InvalidConfig(format!(
+                "Failed to read dataset file '{}': {}",
+                path.display(),
+                e
+            ))
         })?;
         Self::from_json_str(&content)
     }
@@ -179,9 +183,8 @@ impl Dataset {
     /// let dataset = Dataset::from_json_str(json).unwrap();
     /// ```
     pub fn from_json_str(json: &str) -> Result<Self, TeaError> {
-        let parsed: DatasetJson = serde_json::from_str(json).map_err(|e| {
-            TeaError::InvalidConfig(format!("Failed to parse dataset JSON: {}", e))
-        })?;
+        let parsed: DatasetJson = serde_json::from_str(json)
+            .map_err(|e| TeaError::InvalidConfig(format!("Failed to parse dataset JSON: {}", e)))?;
 
         Ok(Self {
             name: parsed.name,
@@ -261,7 +264,10 @@ mod tests {
         assert_eq!(dataset.description, Some("Basic arithmetic".to_string()));
         assert_eq!(dataset.len(), 2);
         assert_eq!(dataset.items[0].input, json!({"x": 2}));
-        assert_eq!(dataset.items[1].metadata.get("difficulty"), Some(&json!("easy")));
+        assert_eq!(
+            dataset.items[1].metadata.get("difficulty"),
+            Some(&json!("easy"))
+        );
     }
 
     #[test]
@@ -287,7 +293,10 @@ mod tests {
 
         let dataset = Dataset::from_json_str(json).unwrap();
         assert_eq!(dataset.items[0].input["query"]["text"], "hello");
-        assert_eq!(dataset.items[0].expected_output["response"]["data"]["nested"], true);
+        assert_eq!(
+            dataset.items[0].expected_output["response"]["data"]["nested"],
+            true
+        );
     }
 
     #[test]

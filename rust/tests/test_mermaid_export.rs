@@ -356,7 +356,9 @@ edges:
     let _graph = engine.load_from_string(yaml).unwrap();
 
     // After loading, should return Mermaid syntax
-    let mermaid = engine.get_mermaid_graph().expect("Should have Mermaid graph");
+    let mermaid = engine
+        .get_mermaid_graph()
+        .expect("Should have Mermaid graph");
 
     assert!(mermaid.contains("graph TD"));
     assert!(mermaid.contains("__start__((Start))"));
@@ -381,17 +383,11 @@ fn test_mermaid_syntax_balanced_brackets() {
     // Check balanced brackets
     let open_parens = mermaid.matches('(').count();
     let close_parens = mermaid.matches(')').count();
-    assert_eq!(
-        open_parens, close_parens,
-        "Parentheses should be balanced"
-    );
+    assert_eq!(open_parens, close_parens, "Parentheses should be balanced");
 
     let open_brackets = mermaid.matches('[').count();
     let close_brackets = mermaid.matches(']').count();
-    assert_eq!(
-        open_brackets, close_brackets,
-        "Brackets should be balanced"
-    );
+    assert_eq!(open_brackets, close_brackets, "Brackets should be balanced");
 }
 
 #[test]

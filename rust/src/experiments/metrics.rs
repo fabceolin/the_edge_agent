@@ -198,7 +198,9 @@ impl Metric for ContainsMatch {
         let contains = if self.case_sensitive {
             output_str.contains(&expected_str)
         } else {
-            output_str.to_lowercase().contains(&expected_str.to_lowercase())
+            output_str
+                .to_lowercase()
+                .contains(&expected_str.to_lowercase())
         };
 
         if contains {
@@ -376,14 +378,12 @@ impl Metric for JsonPathMatch {
                     ))
                 }
             }
-            (None, Some(_)) => MetricResult::fail_with(format!(
-                "Path '{}' not found in output",
-                self.path
-            )),
-            (Some(_), None) => MetricResult::fail_with(format!(
-                "Path '{}' not found in expected",
-                self.path
-            )),
+            (None, Some(_)) => {
+                MetricResult::fail_with(format!("Path '{}' not found in output", self.path))
+            }
+            (Some(_), None) => {
+                MetricResult::fail_with(format!("Path '{}' not found in expected", self.path))
+            }
             (None, None) => {
                 // Both missing - this is a failure (path should exist for meaningful comparison)
                 MetricResult::fail_with(format!(
@@ -539,20 +539,14 @@ mod tests {
     #[test]
     fn test_json_path_match_mismatch() {
         let metric = JsonPathMatch::new("answer");
-        let result = metric.score(
-            &json!({"answer": "London"}),
-            &json!({"answer": "Paris"}),
-        );
+        let result = metric.score(&json!({"answer": "London"}), &json!({"answer": "Paris"}));
         assert!(!result.passed);
     }
 
     #[test]
     fn test_json_path_match_missing_path() {
         let metric = JsonPathMatch::new("missing");
-        let result = metric.score(
-            &json!({"answer": "Paris"}),
-            &json!({"answer": "Paris"}),
-        );
+        let result = metric.score(&json!({"answer": "Paris"}), &json!({"answer": "Paris"}));
         assert!(!result.passed);
     }
 

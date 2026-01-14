@@ -97,7 +97,10 @@ fn test_exact_match_metric() {
     let metric = ExactMatch;
 
     // Exact match - pass
-    let result = metric.score(&json!({"a": 1, "b": "hello"}), &json!({"a": 1, "b": "hello"}));
+    let result = metric.score(
+        &json!({"a": 1, "b": "hello"}),
+        &json!({"a": 1, "b": "hello"}),
+    );
     assert!(result.passed);
     assert_eq!(result.score, 1.0);
 
@@ -107,10 +110,7 @@ fn test_exact_match_metric() {
     assert_eq!(result.score, 0.0);
 
     // Extra fields - fail
-    let result = metric.score(
-        &json!({"a": 1, "extra": true}),
-        &json!({"a": 1}),
-    );
+    let result = metric.score(&json!({"a": 1, "extra": true}), &json!({"a": 1}));
     assert!(!result.passed);
 }
 
@@ -239,8 +239,8 @@ async fn test_experiment_runner_basic() {
             json!({"result": 4}),
         ));
 
-    let config = ExperimentConfig::new(&yaml, dataset)
-        .with_metric(Box::new(JsonPathMatch::new("result")));
+    let config =
+        ExperimentConfig::new(&yaml, dataset).with_metric(Box::new(JsonPathMatch::new("result")));
 
     let result = run_experiment(config).await.unwrap();
 
@@ -254,8 +254,7 @@ async fn test_experiment_runner_basic() {
         assert!(
             item.scores["json_path_match"].passed,
             "Item {} failed: {:?}",
-            item.index,
-            item.scores["json_path_match"].details
+            item.index, item.scores["json_path_match"].details
         );
     }
 
@@ -272,8 +271,7 @@ async fn test_experiment_handles_failures() {
         .with_item(DatasetItem::new(json!({}), json!({})))
         .with_item(DatasetItem::new(json!({}), json!({})));
 
-    let config = ExperimentConfig::new(invalid_yaml, dataset)
-        .with_metric(Box::new(ExactMatch));
+    let config = ExperimentConfig::new(invalid_yaml, dataset).with_metric(Box::new(ExactMatch));
 
     let result = run_experiment(config).await.unwrap();
 
@@ -387,7 +385,10 @@ fn test_aggregate_calculations() {
     assert!((mean - 0.6666666).abs() < 0.001);
 
     // Pass rate: 2/3 = 0.666...
-    let passes = items.iter().filter(|i| i.scores["exact_match"].passed).count();
+    let passes = items
+        .iter()
+        .filter(|i| i.scores["exact_match"].passed)
+        .count();
     let pass_rate = passes as f64 / items.len() as f64;
 
     assert!((pass_rate - 0.6666666).abs() < 0.001);
@@ -401,8 +402,8 @@ async fn test_async_execution() {
         json!({"result": "world"}),
     ));
 
-    let config = ExperimentConfig::new(&yaml, dataset)
-        .with_metric(Box::new(JsonPathMatch::new("result")));
+    let config =
+        ExperimentConfig::new(&yaml, dataset).with_metric(Box::new(JsonPathMatch::new("result")));
 
     // Run experiment asynchronously
     let result = run_experiment(config).await.unwrap();
