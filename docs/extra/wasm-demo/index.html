@@ -9,12 +9,14 @@
     <script src="coi-serviceworker.js"></script>
 
     <!-- CodeMirror 6 + js-yaml + wasmoon from CDN -->
+    <!-- Note: codemirror@6.0.1 transitively imports @codemirror/search which requires showDialog from @codemirror/view@6.37.0+ -->
     <script type="importmap">
     {
       "imports": {
-        "codemirror": "https://esm.sh/codemirror@6.0.1?external=@codemirror/state,@codemirror/view",
-        "@codemirror/state": "https://esm.sh/@codemirror/state@6.4.1",
-        "@codemirror/view": "https://esm.sh/@codemirror/view@6.26.0?external=@codemirror/state",
+        "codemirror": "https://esm.sh/codemirror@6.0.1?external=@codemirror/state,@codemirror/view,@codemirror/search",
+        "@codemirror/state": "https://esm.sh/@codemirror/state@6.5.3",
+        "@codemirror/view": "https://esm.sh/@codemirror/view@6.39.10?external=@codemirror/state",
+        "@codemirror/search": "https://esm.sh/@codemirror/search@6.6.0?external=@codemirror/state,@codemirror/view",
         "@codemirror/lang-yaml": "https://esm.sh/@codemirror/lang-yaml@6.1.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/lang-json": "https://esm.sh/@codemirror/lang-json@6.0.1?external=@codemirror/state,@codemirror/view",
         "@codemirror/theme-one-dark": "https://esm.sh/@codemirror/theme-one-dark@6.1.2?external=@codemirror/state,@codemirror/view",
