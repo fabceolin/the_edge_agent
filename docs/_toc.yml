@@ -142,6 +142,10 @@ parts:
         title: Docker Installation and Model Selection
       - file: articles/devops-yaml-overlay-agents
         title: DevOps-Friendly AI Agents with YAML Overlays
+      - file: articles/release-variants-guide
+        title: TEA Release Variants Guide
+      - file: articles/runtime-backend-selection
+        title: Runtime Backend Selection for Cloud Functions
 
   - caption: Contributing
     chapters:

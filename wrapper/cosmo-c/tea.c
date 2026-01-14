@@ -28,8 +28,9 @@
 /* Constants */
 #define DEFAULT_IMAGE "ghcr.io/fabceolin/tea"
 #define DEFAULT_VERSION "latest"
-#define WRAPPER_VERSION "0.1.0"
+#define WRAPPER_VERSION "0.2.0"
 #define MAX_ARGS 256
+#define DEFAULT_GPU "auto"
 #define MAX_ENV_VARS 64
 #define PATH_MAX_SIZE 4096
 #define CMD_MAX_SIZE 8192
@@ -56,6 +57,115 @@ static const char *ENV_PASSTHROUGH[] = {
 static const char *get_env_or(const char *name, const char *def) {
     const char *val = getenv(name);
     return val ? val : def;
+}
+
+/* GPU vendor types */
+typedef enum {
+    GPU_NONE = 0,
+    GPU_NVIDIA,
+    GPU_AMD,
+    GPU_INTEL
+} gpu_vendor_t;
+
+/* Helper: Run command and check exit code */
+static int cmd_succeeds(const char *cmd) {
+    int result = system(cmd);
+#ifdef _WIN32
+    return result == 0;
+#else
+    return WIFEXITED(result) && WEXITSTATUS(result) == 0;
+#endif
+}
+
+/* Helper: Check if NVIDIA GPU runtime is available */
+static int has_nvidia_gpu(void) {
+    return cmd_succeeds("nvidia-smi >/dev/null 2>&1");
+}
+
+/* Helper: Check if AMD ROCm GPU is available */
+static int has_amd_gpu(void) {
+#ifdef _WIN32
+    return 0;  /* ROCm not supported on Windows */
+#else
+    /* Check for ROCm device and rocm-smi */
+    struct stat st;
+    if (stat("/dev/kfd", &st) == 0) {
+        return 1;
+    }
+    return cmd_succeeds("rocm-smi >/dev/null 2>&1");
+#endif
+}
+
+/* Helper: Check if Intel/Vulkan GPU is available via DRI */
+static int has_intel_gpu(void) {
+#ifdef _WIN32
+    return 0;  /* DRI not available on Windows */
+#else
+    struct stat st;
+    return stat("/dev/dri", &st) == 0;
+#endif
+}
+
+/* Helper: Detect GPU vendor automatically */
+static gpu_vendor_t detect_gpu_vendor(void) {
+    /* Priority: NVIDIA > AMD > Intel/Vulkan */
+    if (has_nvidia_gpu()) {
+        return GPU_NVIDIA;
+    }
+    if (has_amd_gpu()) {
+        return GPU_AMD;
+    }
+    if (has_intel_gpu()) {
+        return GPU_INTEL;
+    }
+    return GPU_NONE;
+}
+
+/* Helper: Get GPU vendor from TEA_GPU environment variable */
+static gpu_vendor_t get_gpu_vendor_from_env(const char *gpu_env) {
+    if (strcmp(gpu_env, "nvidia") == 0 || strcmp(gpu_env, "all") == 0) {
+        return GPU_NVIDIA;
+    }
+    if (strcmp(gpu_env, "amd") == 0 || strcmp(gpu_env, "rocm") == 0) {
+        return GPU_AMD;
+    }
+    if (strcmp(gpu_env, "intel") == 0 || strcmp(gpu_env, "vulkan") == 0 || strcmp(gpu_env, "dri") == 0) {
+        return GPU_INTEL;
+    }
+    if (strcmp(gpu_env, "none") == 0 || strcmp(gpu_env, "off") == 0) {
+        return GPU_NONE;
+    }
+    /* Numeric value (e.g., "1", "2") implies NVIDIA */
+    if (gpu_env[0] >= '0' && gpu_env[0] <= '9') {
+        return GPU_NVIDIA;
+    }
+    return GPU_NONE;
+}
+
+/* Helper: Get GPU configuration */
+static gpu_vendor_t get_gpu_config(const char **gpu_param) {
+    const char *gpu_env = get_env_or("TEA_GPU", DEFAULT_GPU);
+
+    /* "auto" mode: detect GPU vendor automatically */
+    if (strcmp(gpu_env, "auto") == 0) {
+        gpu_vendor_t vendor = detect_gpu_vendor();
+        if (vendor == GPU_NVIDIA) {
+            *gpu_param = "all";
+        }
+        return vendor;
+    }
+
+    /* Store specific param for NVIDIA (e.g., "1", "2", "all") */
+    if (gpu_env[0] >= '0' && gpu_env[0] <= '9') {
+        *gpu_param = gpu_env;
+        return GPU_NVIDIA;
+    }
+    if (strcmp(gpu_env, "all") == 0) {
+        *gpu_param = "all";
+        return GPU_NVIDIA;
+    }
+
+    return get_gpu_vendor_from_env(gpu_env);
 }
 
 /* Helper: Check if stdout is a TTY */
@@ -149,9 +259,14 @@ static int run_docker(int argc, char *argv[]) {
     char *p = cmd;
     char *end = cmd + sizeof(cmd);
     int i;
+    const char *gpu_param = NULL;
+    gpu_vendor_t gpu_vendor;
 
     /* Get image name */
     get_image(image, sizeof(image));
+
+    /* Get GPU configuration */
+    gpu_vendor = get_gpu_config(&gpu_param);
 
     /* Get current working directory */
     if (get_cwd(cwd, sizeof(cwd)) != 0) {
@@ -165,6 +280,26 @@ static int run_docker(int argc, char *argv[]) {
 
     /* Start building docker command */
     p += snprintf(p, end - p, "docker run --rm");
+
+    /* GPU support - add appropriate flags based on vendor */
+    switch (gpu_vendor) {
+        case GPU_NVIDIA:
+            /* NVIDIA Container Toolkit: --gpus all (or specific count) */
+            p += snprintf(p, end - p, " --gpus %s", gpu_param ? gpu_param : "all");
+            break;
+        case GPU_AMD:
+            /* AMD ROCm: expose KFD and DRI devices */
+            p += snprintf(p, end - p, " --device=/dev/kfd --device=/dev/dri --group-add video");
+            break;
+        case GPU_INTEL:
+            /* Intel/Vulkan: expose DRI for GPU access */
+            p += snprintf(p, end - p, " --device=/dev/dri");
+            break;
+        case GPU_NONE:
+        default:
+            /* No GPU support */
+            break;
+    }
 
     /* Volume mounts */
     p += snprintf(p, end - p, " -v \"%s:/work\"", cwd);
@@ -253,10 +388,32 @@ static void show_help(void) {
     printf("Environment Variables:\n");
     printf("  TEA_IMAGE     Override Docker image (default: %s)\n", DEFAULT_IMAGE);
     printf("  TEA_VERSION   Override image tag (default: %s)\n", DEFAULT_VERSION);
+    printf("  TEA_GPU       GPU configuration (default: %s)\n", DEFAULT_GPU);
+    printf("                  auto   - Auto-detect GPU vendor (default)\n");
+    printf("                  nvidia - Force NVIDIA GPU (--gpus all)\n");
+    printf("                  all    - Same as nvidia (--gpus all)\n");
+    printf("                  amd    - AMD ROCm (--device=/dev/kfd,/dev/dri)\n");
+    printf("                  rocm   - Same as amd\n");
+    printf("                  intel  - Intel/Vulkan (--device=/dev/dri)\n");
+    printf("                  vulkan - Same as intel\n");
+    printf("                  dri    - Same as intel\n");
+    printf("                  none   - Disable GPU support\n");
+    printf("                  N      - Specific NVIDIA GPU count (--gpus N)\n");
+    printf("\nGPU Support:\n");
+    printf("  Auto-detection priority: NVIDIA > AMD > Intel/Vulkan\n");
+    printf("  NVIDIA: Requires NVIDIA Container Toolkit\n");
+    printf("          https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/\n");
+    printf("  AMD:    Requires ROCm and /dev/kfd device\n");
+    printf("          https://rocm.docs.amd.com/projects/install-on-linux/\n");
+    printf("  Intel:  Requires /dev/dri device (DRI support)\n");
     printf("\nExample:\n");
     printf("  tea run agent.yaml --input '{\"query\": \"test\"}'\n");
     printf("  tea validate workflow.yaml\n");
     printf("  TEA_VERSION=v0.9.42 tea --version\n");
+    printf("  TEA_GPU=nvidia tea run llm-agent.yaml       # Force NVIDIA GPU\n");
+    printf("  TEA_GPU=amd tea run llm-agent.yaml          # Force AMD ROCm\n");
+    printf("  TEA_GPU=vulkan tea run llm-agent.yaml       # Force Intel/Vulkan\n");
+    printf("  TEA_GPU=none tea run agent.yaml             # Disable GPU\n");
 }
 
 int main(int argc, char *argv[]) {
