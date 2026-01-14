@@ -325,7 +325,7 @@ impl JsonPathMatch {
     ///
     /// # Arguments
     ///
-    /// * `path` - JMESPath expression (e.g., "answer", "data.items[0].name")
+    /// * `path` - JMESPath expression (e.g., `"answer"`, `"data.items[0].name"`)
     pub fn new(path: impl Into<String>) -> Self {
         Self { path: path.into() }
     }
