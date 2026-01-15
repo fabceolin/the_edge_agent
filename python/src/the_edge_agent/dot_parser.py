@@ -843,6 +843,8 @@ def _generate_parallel_node(
             }
         ],
         "output": f"{phase_name}_results",
+        # TEA-CLI-006: Static items for --show-graph rendering
+        "_render_items": items,
     }
 
 

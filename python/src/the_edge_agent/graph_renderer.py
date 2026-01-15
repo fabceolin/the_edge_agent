@@ -99,6 +99,16 @@ class GraphProgressTracker:
                 targets = self._get_parallel_targets(node_name)
                 if targets:
                     parallel_sources[node_name] = targets
+                # TEA-CLI-006: Pre-register static items for --show-graph rendering
+                # DOT-generated workflows include _render_items for display purposes
+                render_items = node_cfg.get("_render_items", [])
+                if render_items:
+                    self.layout.dynamic_parallel_items[node_name] = render_items
+                    # Initialize state for each item
+                    for item in render_items:
+                        self.layout.parallel_item_states[(node_name, item)] = (
+                            NodeState.PENDING
+                        )
             if node_cfg.get("fan_in", False):
                 fan_in_nodes.add(node_name)
 
