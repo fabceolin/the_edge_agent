@@ -163,8 +163,6 @@ cython_debug/
 CHANGES_SUMMARY.md
 anonymized_graph.png
 output/
-.bmad-core/
-.claude/
 .envrc
 =0.4.0
 bin/

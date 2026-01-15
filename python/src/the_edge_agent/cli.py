@@ -1702,12 +1702,12 @@ def from_dot(
     validate_output: bool = typer.Option(
         False, "--validate", help="Validate generated YAML before output"
     ),
-    # TEA-TOOLS-002: Per-node command support
+    # TEA-TOOLS-002: Per-node command support (default: True)
     use_node_commands: bool = typer.Option(
-        False,
-        "--use-node-commands",
-        help="Use command attribute from DOT nodes. Each node MUST have "
-        'command="..." attribute. Mutually exclusive with --command.',
+        True,
+        "--use-node-commands/--no-use-node-commands",
+        help="Use command attribute from DOT nodes (default: enabled). Each node MUST have "
+        'command="..." attribute. Use --no-use-node-commands with --command for template mode.',
     ),
     allow_cycles: bool = typer.Option(
         False,
@@ -1735,20 +1735,20 @@ def from_dot(
 
     Two modes of operation:
 
-    1. Template mode (--command): Same command for all nodes, use {{ item }} for node label
+    1. Per-node mode (default): Each DOT node specifies its own command attribute
 
-    2. Per-node mode (--use-node-commands): Each node specifies its own command attribute
+    2. Template mode (--no-use-node-commands --command): Same command for all nodes
 
     Examples:
 
-        # Template mode - same command, different items
-        tea from dot workflow.dot -c "make build-{{ item }}" -o out.yaml
+        # Per-node mode (default) - each node has its own command attribute
+        tea from dot workflow.dot -o out.yaml
 
-        # Per-node mode - each node has its own command
-        tea from dot workflow.dot --use-node-commands -o out.yaml
+        # Template mode - same command, different items
+        tea from dot workflow.dot --no-use-node-commands -c "make build-{{ item }}" -o out.yaml
 
         # With tmux
-        tea from dot workflow.dot --use-node-commands --tmux -s my-session
+        tea from dot workflow.dot --tmux -s my-session
     """
     from the_edge_agent.dot_parser import (
         dot_to_yaml,
@@ -1770,14 +1770,14 @@ def from_dot(
     if use_node_commands and command:
         typer.echo(
             "Error: --use-node-commands and --command are mutually exclusive. "
-            "Use --command for template mode OR --use-node-commands for per-node mode.",
+            "Use --no-use-node-commands with --command for template mode.",
             err=True,
         )
         raise typer.Exit(1)
 
     if not use_node_commands and not command:
         typer.echo(
-            "Error: --command is required (or use --use-node-commands for per-node mode)",
+            "Error: --command is required when using --no-use-node-commands (template mode)",
             err=True,
         )
         raise typer.Exit(1)
