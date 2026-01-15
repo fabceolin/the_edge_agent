@@ -48,7 +48,7 @@ This story adds `shell` as a new explicit provider that executes local CLI comma
 ## Configuration Requirements
 
 6. **AC6**: Each shell provider supports: `command`, `args`, `prompt_flag`, `stdin_mode`
-7. **AC7**: Default providers pre-configured: `claude`, `gemini`, `qwen`
+7. **AC7**: Default providers pre-configured: `claude`, `codex`, `gemini`, `qwen`
 8. **AC8**: Environment variables can be used in command configuration (`${VAR}` syntax)
 9. **AC9**: Timeout configuration supported per provider (default: 300s)
 
@@ -395,6 +395,7 @@ cd python && pytest
 | 2024-12-28 | 1.0 | Initial story draft | Sarah (PO Agent) |
 | 2024-12-28 | 1.1 | Story approved | Fabricio (User) |
 | 2026-01-07 | 1.2 | Status updated to Done after QA approval | Sarah (PO Agent) |
+| 2026-01-14 | 1.3 | Fixed `codex` default config: use `exec -` with stdin_mode pipe (was incorrectly using `{prompt}` arg which requires TTY) | James (Dev Agent) |
 
 ---
 
@@ -419,7 +420,7 @@ Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 1. **Implementation Complete**: All 6 tasks completed successfully
    - Shell provider supports `llm.call` and `llm.stream` actions
-   - Three built-in providers: `claude`, `gemini`, `qwen`
+   - Four built-in providers: `claude`, `codex`, `gemini`, `qwen`
    - Custom providers configurable via `settings.llm.shell_providers`
    - Environment variable expansion with `${VAR}` syntax
    - Both `pipe` and `file` stdin modes supported
@@ -433,6 +434,11 @@ Claude Opus 4.5 (claude-opus-4-5-20251101)
    - subprocess.Popen with list arguments (no shell=True) for security
    - Error responses follow existing LLM action patterns
    - Default configs merged with user configs (user takes precedence)
+
+4. **Codex Provider Fix (2026-01-14)**:
+   - Issue: Original config used `args: ["{prompt}"]` which passes prompt as CLI argument, but `codex` requires TTY for interactive mode
+   - Fix: Changed to `args: ["exec", "-"]` with `stdin_mode: pipe` to use non-interactive `exec` subcommand
+   - The `-` argument tells `codex exec` to read prompt from stdin
 
 ## Debug Log References
 
@@ -485,7 +491,7 @@ No debug logs required - all tests passed on first run after minor mock adjustme
 | AC4: stdin pipe mode | ✅ Met | Messages sent via stdin |
 | AC5: Existing providers unchanged | ✅ Met | 39 existing LLM tests pass |
 | AC6: Provider config schema | ✅ Met | command, args, stdin_mode, timeout, env |
-| AC7: Default providers | ✅ Met | claude, gemini, qwen pre-configured |
+| AC7: Default providers | ✅ Met | claude, codex, gemini, qwen pre-configured |
 | AC8: Env var expansion | ✅ Met | `${VAR}` syntax implemented |
 | AC9: Timeout config | ✅ Met | Per-provider timeout with override |
 | AC10: Unit tests | ✅ Met | 20 tests in test_llm_shell_provider.py |
