@@ -732,6 +732,15 @@ def run(
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)
 
+    # Merge YAML's initial_state with CLI input (CLI input takes precedence)
+    # This allows workflows to define default state values in initial_state
+    engine_config = getattr(engine, "_config", {})
+    yaml_initial_state = engine_config.get("initial_state", {})
+    if yaml_initial_state:
+        # YAML initial_state provides defaults, CLI input overrides them
+        merged_initial_state = {**yaml_initial_state, **initial_state}
+        initial_state = merged_initial_state
+
     # TEA-KIROKU-005: graph is already compiled by load_from_file with inline interrupts
     # Only add CLI-specified interrupt points on top of inline ones
     compiled = graph
@@ -885,8 +894,9 @@ def run(
         if use_ansi_updates:
             typer.echo(graph_tracker.render())
         else:
-            # Non-TTY: just show initial header
+            # Non-TTY: show graph once at start, then use simple text progress
             typer.echo("[Graph Progress - Non-TTY mode]")
+            typer.echo(graph_tracker.render())
 
     if not quiet and not stream and not show_graph:
         typer.echo("=" * 80)
@@ -994,6 +1004,23 @@ def run(
                 event_type = event.get("type")
                 node = event.get("node")
 
+                # TEA-CLI-006: Process graph progress events from engine queue
+                # These events are emitted by dynamic_parallel nodes for --show-graph
+                if show_graph and hasattr(engine, "_graph_event_queue"):
+                    while engine._graph_event_queue:
+                        graph_event = engine._graph_event_queue.pop(0)
+                        graph_event_type = graph_event.get("type")
+                        if graph_event_type == "parallel_start":
+                            items = graph_event.get("items", [])
+                            parent = graph_event.get("node")
+                            if parent and items and graph_tracker:
+                                graph_tracker.register_parallel_items(parent, items)
+                                if use_ansi_updates:
+                                    typer.echo(graph_tracker.render_with_update())
+                                else:
+                                    typer.echo(f"\n[Parallel items for {parent}]")
+                                    typer.echo(graph_tracker.render())
+
                 if stream:
                     # Emit NDJSON events
                     if event_type == "state":
@@ -1033,6 +1060,10 @@ def run(
                             # Refresh display to show new parallel structure
                             if use_ansi_updates:
                                 typer.echo(graph_tracker.render_with_update())
+                            else:
+                                # Non-TTY: re-render to show expanded items
+                                typer.echo(f"\n[Parallel items for {parent}]")
+                                typer.echo(graph_tracker.render())
 
                     elif event_type == "parallel_item_start":
                         # Mark specific parallel item as running

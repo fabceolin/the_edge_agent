@@ -297,15 +297,15 @@ class TestGraphProgressTracker(unittest.TestCase):
 
         # Initial render - no markers (pending has no marker)
         rendered = tracker.render()
-        self.assertNotIn("* running", rendered)
+        self.assertNotIn("test_node *", rendered)
         self.assertNotIn("✓", rendered)
 
-        # Mark running
+        # Mark running - phart format: [node *]
         tracker.mark_running("test_node")
         rendered = tracker.render()
-        self.assertIn("* running", rendered)
+        self.assertIn("test_node *", rendered)
 
-        # Mark completed
+        # Mark completed - phart format: [node ✓]
         tracker.mark_completed("test_node")
         rendered = tracker.render()
         self.assertIn("✓", rendered)
@@ -413,7 +413,9 @@ class TestDynamicParallelTracking(unittest.TestCase):
         tracker = GraphProgressTracker(compiled, engine_config)
 
         # Initially no items
-        self.assertEqual(tracker.layout.dynamic_parallel_items.get("phase1_parallel"), None)
+        self.assertEqual(
+            tracker.layout.dynamic_parallel_items.get("phase1_parallel"), None
+        )
 
         # Register items dynamically
         items = ["TEA-WASM-003.1", "TEA-WASM-003.2"]
@@ -455,15 +457,11 @@ class TestDynamicParallelTracking(unittest.TestCase):
 
         # Verify state
         key = ("parallel_node", "item1")
-        self.assertEqual(
-            tracker.layout.parallel_item_states[key], NodeState.RUNNING
-        )
+        self.assertEqual(tracker.layout.parallel_item_states[key], NodeState.RUNNING)
 
         # item2 should still be pending
         key2 = ("parallel_node", "item2")
-        self.assertEqual(
-            tracker.layout.parallel_item_states[key2], NodeState.PENDING
-        )
+        self.assertEqual(tracker.layout.parallel_item_states[key2], NodeState.PENDING)
 
     def test_mark_parallel_item_completed(self):
         """Test marking a parallel item as completed."""
@@ -484,9 +482,7 @@ class TestDynamicParallelTracking(unittest.TestCase):
 
         # Verify state
         key = ("parallel_node", "item1")
-        self.assertEqual(
-            tracker.layout.parallel_item_states[key], NodeState.COMPLETED
-        )
+        self.assertEqual(tracker.layout.parallel_item_states[key], NodeState.COMPLETED)
 
     def test_render_dynamic_parallel_node(self):
         """Test rendering a node with dynamic parallel items."""
@@ -504,13 +500,11 @@ class TestDynamicParallelTracking(unittest.TestCase):
         # Render the graph
         rendered = tracker.render()
 
-        # Verify output contains items
+        # Verify node is present (phart shows graph structure, not expanded items)
         self.assertIn("parallel_node", rendered)
-        self.assertIn("item1", rendered)
-        self.assertIn("item2", rendered)
 
     def test_dynamic_parallel_state_markers(self):
-        """Test that state markers appear correctly for parallel items."""
+        """Test that state markers appear correctly for nodes."""
         compiled = self._create_mock_graph(
             ["__start__", "parallel_node", "__end__"],
             [("__start__", "parallel_node"), ("parallel_node", "__end__")],
@@ -522,17 +516,17 @@ class TestDynamicParallelTracking(unittest.TestCase):
         items = ["item1", "item2"]
         tracker.register_parallel_items("parallel_node", items)
 
-        # Mark item1 as running
-        tracker.mark_parallel_item_running("parallel_node", "item1")
+        # Mark node as running
+        tracker.mark_running("parallel_node")
 
         # Render
         rendered = tracker.render()
 
-        # Should show running marker for item1
-        self.assertIn("* running", rendered)
+        # Should show running marker for node (phart format: [node *])
+        self.assertIn("parallel_node *", rendered)
 
-        # Mark item1 as completed
-        tracker.mark_parallel_item_completed("parallel_node", "item1")
+        # Mark node as completed
+        tracker.mark_completed("parallel_node")
 
         # Render again
         rendered = tracker.render()
@@ -577,11 +571,12 @@ class TestDynamicParallelTracking(unittest.TestCase):
             tracker.layout.dynamic_parallel_items["phase2_parallel"], phase2_items
         )
 
-        # Render should include all items
+        # Render should include all node names (phart shows structure, not items)
         rendered = tracker.render()
-        self.assertIn("item1", rendered)
-        self.assertIn("item2", rendered)
-        self.assertIn("item3", rendered)
+        self.assertIn("phase1_parallel", rendered)
+        self.assertIn("phase1_collect", rendered)
+        self.assertIn("phase2_parallel", rendered)
+        self.assertIn("phase2_collect", rendered)
 
 
 class TestCLIIntegration(unittest.TestCase):

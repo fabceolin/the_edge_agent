@@ -259,6 +259,11 @@ class YAMLEngine:
         self._enable_tracing = enable_tracing
         self._trace_context: Optional[TraceContext] = None
 
+        # TEA-CLI-006: Event queue for graph progress events
+        # This queue is used by --show-graph to receive parallel_start/complete events
+        # without requiring full tracing infrastructure
+        self._graph_event_queue: List[Dict[str, Any]] = []
+
         if enable_tracing:
             exporters = []
 
