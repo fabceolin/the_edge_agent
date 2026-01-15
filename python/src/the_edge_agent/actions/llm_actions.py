@@ -156,19 +156,25 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             "claude": {
                 "command": "claude",
                 "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
-                "timeout": 600,
+                "timeout": 108000,  # 1800 minutes
+            },
+            "codex": {
+                "command": "codex",
+                "args": ["exec", "-"],
+                "stdin_mode": "pipe",
+                "timeout": 108000,  # 1800 minutes
             },
             "gemini": {
                 "command": "gemini",
                 "args": ["prompt"],
                 "stdin_mode": "pipe",
-                "timeout": 300,
+                "timeout": 108000,  # 1800 minutes
             },
             "qwen": {
                 "command": "qwen",
                 "args": [],
                 "stdin_mode": "pipe",
-                "timeout": 300,
+                "timeout": 108000,  # 1800 minutes
             },
         }
 

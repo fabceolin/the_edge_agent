@@ -1226,14 +1226,18 @@ class NodeFactory:
                         "mode": mode,
                     }
                 )
-                # TEA-CLI-006: Emit parallel_start for graph renderer
-                trace_context.log_event(
-                    event={
-                        "type": "parallel_start",
-                        "node": node_name,
-                        "items": [str(item) for item in items_list],
-                    }
-                )
+
+            # TEA-CLI-006: Always emit parallel_start to graph event queue
+            # This allows --show-graph to work without full tracing
+            parallel_start_event = {
+                "type": "parallel_start",
+                "node": node_name,
+                "items": [str(item) for item in items_list],
+            }
+            if hasattr(engine, "_graph_event_queue"):
+                engine._graph_event_queue.append(parallel_start_event)
+            if enable_tracing and trace_context is not None:
+                trace_context.log_event(event=parallel_start_event)
 
             # Handle empty items (AC: 1)
             if item_count == 0:

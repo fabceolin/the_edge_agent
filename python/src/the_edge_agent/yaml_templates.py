@@ -37,28 +37,96 @@ class DotDict(dict):
     nested dictionary values (e.g., {{ state.user.name }} instead of
     {{ state['user']['name'] }}).
 
+    IMPORTANT: Dictionary keys take precedence over dict's built-in methods.
+    This means {{ state.items }} returns the value of state["items"], NOT
+    the dict.items() method. This is essential for YAML workflows that use
+    common key names like "items", "keys", "values", etc.
+
     Missing keys return None instead of raising AttributeError, which allows
     Jinja2 templates to safely use patterns like {% if state.user_instruction %}
     without requiring | default(false) for every access.
 
     Example:
-        >>> d = DotDict({'user': {'name': 'Alice'}})
+        >>> d = DotDict({'user': {'name': 'Alice'}, 'items': ['a', 'b']})
         >>> d.user.name
         'Alice'
+        >>> d.items  # Returns ['a', 'b'], NOT the dict.items() method
+        ['a', 'b']
         >>> d.missing_key  # Returns None instead of raising
         None
     """
 
-    def __getattr__(self, key: str) -> Any:
-        try:
-            value = self[key]
+    # Dict methods that should NOT be shadowed by keys (internal Python use)
+    _INTERNAL_METHODS = frozenset(
+        {
+            "__class__",
+            "__contains__",
+            "__delattr__",
+            "__delitem__",
+            "__dict__",
+            "__doc__",
+            "__eq__",
+            "__format__",
+            "__ge__",
+            "__getattribute__",
+            "__getitem__",
+            "__gt__",
+            "__hash__",
+            "__init__",
+            "__init_subclass__",
+            "__iter__",
+            "__le__",
+            "__len__",
+            "__lt__",
+            "__ne__",
+            "__new__",
+            "__reduce__",
+            "__reduce_ex__",
+            "__repr__",
+            "__reversed__",
+            "__setattr__",
+            "__setitem__",
+            "__sizeof__",
+            "__str__",
+            "__subclasshook__",
+        }
+    )
+
+    def __getattribute__(self, key: str) -> Any:
+        # Always use default behavior for dunder methods (Python internals)
+        if key.startswith("_"):
+            return super().__getattribute__(key)
+
+        # Check if key exists in dictionary FIRST (keys shadow dict methods)
+        # Use dict.__contains__ to avoid recursion
+        if dict.__contains__(self, key):
+            value = dict.__getitem__(self, key)
             if isinstance(value, dict) and not isinstance(value, DotDict):
                 return DotDict(value)
             return value
-        except KeyError:
-            # Return None for missing keys instead of raising AttributeError
-            # This allows safe access in Jinja2 templates like {% if state.x %}
-            return None
+
+        # For non-existent keys: return None (NOT dict methods)
+        # This is essential for safe Jinja2 template access like {% if state.x %}
+        # Exception: explicitly requested dict methods via __getattr__ or direct call
+        # We only allow dict method access if NOT a common key name
+        # that might be used as a state key (items, keys, values, etc.)
+        _DICT_METHODS_TO_PRESERVE = frozenset(
+            {
+                "get",
+                "pop",
+                "update",
+                "copy",
+                "clear",
+                "setdefault",
+            }
+        )
+        if key in _DICT_METHODS_TO_PRESERVE:
+            return super().__getattribute__(key)
+
+        # Return None for all other missing keys (including 'items', 'keys', 'values')
+        # This ensures {{ state.items }} returns None when 'items' key doesn't exist,
+        # rather than returning the dict.items() method
+        return None
 
     def __setattr__(self, key: str, value: Any) -> None:
         self[key] = value
