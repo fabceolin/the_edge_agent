@@ -188,6 +188,7 @@ tea-python run workflow.yaml --show-graph --input '{"key": "value"}'
 | 2026-01-11 | 0.3 | Validation fixes: non-TTY fallback detail, test coverage, graph data source | PO (Sarah) |
 | 2026-01-11 | 1.0 | **Approved** - Ready for implementation | PO (Sarah) |
 | 2026-01-12 | 1.1 | **Implementation complete** - All tasks done, tests passing | Dev (James) |
+| 2026-01-15 | 1.2 | **Enhancement** - DOT-generated workflows now show parallel items side-by-side via `_render_items` field | Dev (Claude Opus 4.5) |
 
 ---
 
@@ -203,6 +204,7 @@ Claude Opus 4.5 (claude-opus-4-5-20251101)
 | `python/src/the_edge_agent/cli.py` | Modified | Added `--show-graph`/`-g` flag, mutual exclusivity check with `--stream`, integrated `GraphProgressTracker` into execution loop |
 | `python/src/the_edge_agent/graph_renderer.py` | Created | ASCII graph rendering module with `NodeState` enum, `RenderedNode`, `GraphLayout`, `GraphProgressTracker` class, and `render_simple_progress` helper |
 | `python/tests/test_graph_renderer.py` | Created | 20 unit tests covering linear topology, parallel branches, state transitions, edge cases, CLI integration |
+| `python/src/the_edge_agent/dot_parser.py` | Modified (v1.2) | Added `_render_items` field to `dynamic_parallel` nodes for static item rendering |
 
 ### Debug Log References
 - None (no blockers encountered)
@@ -214,3 +216,11 @@ Claude Opus 4.5 (claude-opus-4-5-20251101)
 - `GraphProgressTracker` class handles graph parsing, state management, ASCII rendering with ANSI escape codes for TTY, and simple text fallback for non-TTY
 - Integration with CLI execution loop: displays initial graph, updates on each `state` event, marks all complete on `final` event
 - Existing test failures in test suite are due to missing `pydantic` dependency in test environment, not related to this story's changes
+
+### Enhancement v1.2: DOT-Generated Parallel Item Rendering
+- **Issue**: DOT-generated workflows with `dynamic_parallel` nodes didn't show parallel items side-by-side in `--show-graph` until runtime
+- **Root cause**: Items were defined via template expression (`{{ state.phase1_items }}`) and only registered at runtime
+- **Fix**:
+  1. `dot_parser.py`: Added `_render_items` field to `dynamic_parallel` nodes containing static list of items known at generation time
+  2. `graph_renderer.py`: Modified `_parse_graph()` to read `_render_items` and pre-register items via `register_parallel_items()`
+- **Result**: Parallel items now display horizontally in the initial graph render before execution starts
