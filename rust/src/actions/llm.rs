@@ -1,6 +1,7 @@
-//! LLM actions (llm.call, llm.stream, llm.tools, llm.chat)
+//! LLM actions (llm.call, llm.stream, llm.tools, llm.chat, llm.embed)
 //!
 //! TEA-RELEASE-004.4: Added local LLM support via llm.chat action.
+//! TEA-RUST-045: Added llm.embed and memory.embed for vector embeddings.
 
 use crate::engine::executor::ActionRegistry;
 use crate::error::{TeaError, TeaResult};
@@ -15,6 +16,8 @@ pub fn register(registry: &ActionRegistry) {
     registry.register("llm.stream", llm_stream);
     registry.register("llm.tools", llm_tools);
     registry.register("llm.chat", llm_chat); // TEA-RELEASE-004.4: Local LLM support
+    registry.register("llm.embed", llm_embed); // TEA-RUST-045: Vector embeddings
+    registry.register("memory.embed", llm_embed); // TEA-RUST-045: Python parity alias
 }
 
 /// OpenAI-compatible message format
@@ -1192,6 +1195,104 @@ fn execute_api_chat(
     Ok(result)
 }
 
+/// Generate vector embeddings for text (TEA-RUST-045)
+///
+/// This action generates vector embeddings using the local LLM backend.
+/// Requires the `llm-local` feature to be enabled.
+///
+/// # Parameters
+/// - `text` (required): The text to generate embeddings for
+/// - `model_path` (optional): Path to GGUF model file (overrides TEA_MODEL_PATH)
+/// - `n_ctx` (optional): Context window size override
+/// - `n_threads` (optional): Number of CPU threads
+/// - `n_gpu_layers` (optional): Number of GPU layers to offload
+///
+/// # Returns
+/// - `embedding`: Vector of f32 values
+/// - `model`: Model name used
+/// - `dimensions`: Number of dimensions in the embedding
+/// - `tokens_used`: Number of tokens in the input (if available)
+///
+/// # Example YAML
+/// ```yaml
+/// - name: embed_query
+///   uses: llm.embed
+///   with:
+///     text: "{{ state.query }}"
+///   outputs:
+///     query_embedding: embedding
+/// ```
+pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
+    // Extract required text parameter
+    let text = params
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| TeaError::InvalidInput {
+            action: "llm.embed".to_string(),
+            message: "Missing required parameter: text".to_string(),
+        })?;
+
+    // Feature-gated implementation
+    #[cfg(feature = "llm-local")]
+    {
+        use super::llm_backend::{is_local_llm_available, is_local_llm_compiled, LlmBackend};
+        use super::llm_local::LocalLlmBackend;
+
+        if !is_local_llm_compiled() {
+            return Err(TeaError::InvalidInput {
+                action: "llm.embed".to_string(),
+                message: "Local LLM backend not available. Rebuild with --features llm-local"
+                    .to_string(),
+            });
+        }
+
+        let settings = build_llm_settings(params);
+
+        if !is_local_llm_available(&settings) {
+            return Err(TeaError::InvalidInput {
+                action: "llm.embed".to_string(),
+                message: "Local LLM: No model found. Set TEA_MODEL_PATH or settings.llm.model_path"
+                    .to_string(),
+            });
+        }
+
+        let backend =
+            LocalLlmBackend::from_settings(&settings).map_err(|e| TeaError::Execution {
+                node: "llm.embed".to_string(),
+                message: format!("Failed to load local model: {}", e),
+            })?;
+
+        let result = backend.embed(text).map_err(|e| TeaError::Execution {
+            node: "llm.embed".to_string(),
+            message: format!("Embedding generation failed: {}", e),
+        })?;
+
+        let mut output = state.clone();
+        if let Some(obj) = output.as_object_mut() {
+            obj.insert("embedding".to_string(), json!(result.embedding));
+            obj.insert("model".to_string(), json!(result.model));
+            obj.insert("dimensions".to_string(), json!(result.embedding.len()));
+            if let Some(tokens) = result.tokens_used {
+                obj.insert("tokens_used".to_string(), json!(tokens));
+            }
+        }
+
+        return Ok(output);
+    }
+
+    // Stub for builds without llm-local feature
+    #[cfg(not(feature = "llm-local"))]
+    {
+        // Suppress unused variable warning
+        let _ = text;
+        let _ = state;
+        Err(TeaError::InvalidInput {
+            action: "llm.embed".to_string(),
+            message: "Local LLM not available. Compile with --features llm-local".to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1260,6 +1361,91 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("system"));
         assert!(json.contains("helpful assistant"));
+    }
+
+    // =============================================================================
+    // LLM Embed Tests (TEA-RUST-045)
+    // =============================================================================
+
+    #[test]
+    fn test_llm_embed_missing_text() {
+        let state = json!({});
+        let params = HashMap::new();
+
+        let result = llm_embed(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("text"), "Error should mention missing 'text' parameter");
+    }
+
+    #[test]
+    fn test_llm_embed_missing_text_with_other_params() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("model_path".to_string(), json!("/some/model.gguf")),
+            ("n_ctx".to_string(), json!(4096)),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_embed(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("text"), "Error should mention missing 'text' parameter");
+    }
+
+    #[test]
+    fn test_llm_embed_text_param_extraction() {
+        // This test verifies parameter extraction works, but will fail at model loading
+        // since we don't have a model available. The error should NOT be about missing text.
+        let state = json!({"existing": "value"});
+        let params: HashMap<String, JsonValue> = [("text".to_string(), json!("Hello world"))]
+            .into_iter()
+            .collect();
+
+        let result = llm_embed(&state, &params);
+        // Without llm-local feature, it returns "Local LLM not available"
+        // With llm-local feature but no model, it returns "No model found"
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        // Error should NOT be about missing text parameter
+        assert!(
+            !err.contains("Missing required parameter: text"),
+            "Should not complain about missing text when text is provided"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "llm-local"))]
+    fn test_llm_embed_without_feature_returns_error() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> =
+            [("text".to_string(), json!("test text"))].into_iter().collect();
+
+        let result = llm_embed(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("llm-local") || err.contains("Local LLM not available"),
+            "Error should mention llm-local feature requirement"
+        );
+    }
+
+    #[test]
+    fn test_llm_embed_empty_text() {
+        // Empty text should still be accepted (it's the model's job to handle it)
+        let state = json!({});
+        let params: HashMap<String, JsonValue> =
+            [("text".to_string(), json!(""))].into_iter().collect();
+
+        let result = llm_embed(&state, &params);
+        // Will fail due to no model, but not due to empty text
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("Missing required parameter: text"),
+            "Empty string should still pass parameter validation"
+        );
     }
 
     // =============================================================================

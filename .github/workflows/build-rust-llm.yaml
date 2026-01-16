@@ -579,6 +579,51 @@ jobs:
             exit 1
           fi
 
+      # TEA-RUST-045: Smoke test for llm.embed action
+      - name: Smoke test embedding (TEA-RUST-045)
+        run: |
+          # Create a simple embedding workflow
+          cat > test-embed.yaml << 'EOF'
+          name: test-embedding
+          state_schema:
+            text: str
+            embedding: list
+            dimensions: int
+
+          initial_state:
+            text: "Hello world"
+
+          nodes:
+            - name: embed
+              uses: llm.embed
+              with:
+                text: "{{ state.text }}"
+              outputs:
+                embedding: embedding
+                dimensions: dimensions
+
+          edges:
+            - from: __start__
+              to: embed
+            - from: embed
+              to: __end__
+          EOF
+
+          # Run the workflow and capture output
+          output=$(./tea-rust-llm-gemma3-1b-*-x86_64.AppImage run test-embed.yaml 2>&1)
+          echo "$output"
+
+          # Verify embedding was generated (look for dimensions in output)
+          if echo "$output" | grep -q '"dimensions"'; then
+            echo "✓ Embedding smoke test passed"
+          else
+            echo "✗ Embedding smoke test failed - no dimensions found"
+            exit 1
+          fi
+
+          # Cleanup
+          rm -f test-embed.yaml
+
       - name: Check AppImage size
         run: |
           size=$(stat -c%s tea-rust-llm-gemma3-1b-*-x86_64.AppImage)
@@ -717,6 +762,51 @@ jobs:
             echo "Error: Expected 'rust', got '$impl'"
             exit 1
           fi
+
+      # TEA-RUST-045: Smoke test for llm.embed action
+      - name: Smoke test embedding (TEA-RUST-045)
+        run: |
+          # Create a simple embedding workflow
+          cat > test-embed.yaml << 'EOF'
+          name: test-embedding
+          state_schema:
+            text: str
+            embedding: list
+            dimensions: int
+
+          initial_state:
+            text: "Hello world"
+
+          nodes:
+            - name: embed
+              uses: llm.embed
+              with:
+                text: "{{ state.text }}"
+              outputs:
+                embedding: embedding
+                dimensions: dimensions
+
+          edges:
+            - from: __start__
+              to: embed
+            - from: embed
+              to: __end__
+          EOF
+
+          # Run the workflow and capture output
+          output=$(./tea-rust-llm-gemma3-1b-*-aarch64.AppImage run test-embed.yaml 2>&1)
+          echo "$output"
+
+          # Verify embedding was generated (look for dimensions in output)
+          if echo "$output" | grep -q '"dimensions"'; then
+            echo "✓ Embedding smoke test passed"
+          else
+            echo "✗ Embedding smoke test failed - no dimensions found"
+            exit 1
+          fi
+
+          # Cleanup
+          rm -f test-embed.yaml
 
       - name: Check AppImage size
         run: |

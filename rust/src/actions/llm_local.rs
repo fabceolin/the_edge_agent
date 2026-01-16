@@ -34,8 +34,6 @@ pub struct LocalLlmBackend {
     config: ModelConfig,
     /// Number of CPU threads to use
     n_threads: u32,
-    /// Number of GPU layers (0 = CPU only)
-    n_gpu_layers: u32,
 }
 
 impl LocalLlmBackend {
@@ -124,7 +122,6 @@ impl LocalLlmBackend {
             model_name,
             config,
             n_threads: thread_count,
-            n_gpu_layers: gpu_layers,
         })
     }
 
@@ -590,5 +587,120 @@ mod tests {
         let result = backend.chat(messages, 50, 0.8).expect("Chat failed");
         println!("Chat response: {}", result.content);
         assert!(!result.content.is_empty());
+    }
+
+    /// Integration test for embedding generation (TEA-RUST-045)
+    /// Requires a model file to run.
+    ///
+    /// Run with:
+    /// ```
+    /// TEA_MODEL_PATH=model.gguf cargo test --features llm-local test_embedding_generation -- --ignored
+    /// ```
+    #[test]
+    #[ignore]
+    fn test_embedding_generation() {
+        let model_path = std::env::var("TEA_MODEL_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("stories260K.gguf"));
+
+        if !model_path.exists() {
+            eprintln!(
+                "Test model not found: {}. Set TEA_MODEL_PATH environment variable.",
+                model_path.display()
+            );
+            return;
+        }
+
+        let backend = LocalLlmBackend::new(&model_path).expect("Failed to load model");
+
+        let result = backend
+            .embed("Hello, world!")
+            .expect("Embedding generation failed");
+
+        println!("Embedding model: {}", result.model);
+        println!("Embedding dimensions: {}", result.embedding.len());
+        println!("Tokens used: {:?}", result.tokens_used);
+        println!("First 5 values: {:?}", &result.embedding[..5.min(result.embedding.len())]);
+
+        // Verify embedding is valid
+        assert!(!result.embedding.is_empty(), "Embedding should not be empty");
+        assert!(result.embedding.len() > 0, "Embedding should have dimensions");
+        assert!(result.tokens_used.is_some(), "Tokens used should be reported");
+
+        // Verify embedding values are reasonable (not all zeros or NaN)
+        let has_non_zero = result.embedding.iter().any(|&v| v != 0.0);
+        assert!(has_non_zero, "Embedding should have non-zero values");
+
+        let has_nan = result.embedding.iter().any(|v| v.is_nan());
+        assert!(!has_nan, "Embedding should not contain NaN values");
+    }
+
+    /// Test embedding with longer text (TEA-RUST-045)
+    #[test]
+    #[ignore]
+    fn test_embedding_longer_text() {
+        let model_path = std::env::var("TEA_MODEL_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("stories260K.gguf"));
+
+        if !model_path.exists() {
+            return;
+        }
+
+        let backend = LocalLlmBackend::new(&model_path).expect("Failed to load model");
+
+        let long_text = "The quick brown fox jumps over the lazy dog. ".repeat(10);
+        let result = backend.embed(&long_text).expect("Embedding failed for longer text");
+
+        println!("Long text embedding dimensions: {}", result.embedding.len());
+        println!("Tokens used for longer text: {:?}", result.tokens_used);
+
+        assert!(!result.embedding.is_empty());
+        // Longer text should use more tokens
+        if let Some(tokens) = result.tokens_used {
+            assert!(tokens > 5, "Longer text should use more tokens");
+        }
+    }
+
+    /// Test that different texts produce different embeddings (TEA-RUST-045)
+    #[test]
+    #[ignore]
+    fn test_embedding_different_texts() {
+        let model_path = std::env::var("TEA_MODEL_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("stories260K.gguf"));
+
+        if !model_path.exists() {
+            return;
+        }
+
+        let backend = LocalLlmBackend::new(&model_path).expect("Failed to load model");
+
+        let embed1 = backend.embed("cats and dogs").expect("Embedding 1 failed");
+        let embed2 = backend.embed("programming languages").expect("Embedding 2 failed");
+
+        // Embeddings should have same dimensions
+        assert_eq!(
+            embed1.embedding.len(),
+            embed2.embedding.len(),
+            "Different texts should produce same dimensionality"
+        );
+
+        // Embeddings should be different (cosine similarity should not be 1.0)
+        let dot_product: f32 = embed1
+            .embedding
+            .iter()
+            .zip(embed2.embedding.iter())
+            .map(|(a, b)| a * b)
+            .sum();
+        let norm1: f32 = embed1.embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm2: f32 = embed2.embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cosine_similarity = dot_product / (norm1 * norm2);
+
+        println!("Cosine similarity between different texts: {}", cosine_similarity);
+        assert!(
+            cosine_similarity < 0.99,
+            "Different texts should have different embeddings (cosine < 0.99)"
+        );
     }
 }

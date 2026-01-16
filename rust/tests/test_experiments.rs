@@ -409,7 +409,7 @@ async fn test_async_execution() {
     let result = run_experiment(config).await.unwrap();
 
     assert_eq!(result.items.len(), 1);
-    assert!(result.duration_ms > 0);
+    // Note: duration_ms may be 0 if test runs in < 1ms, which is valid
 }
 
 // =============================================================================

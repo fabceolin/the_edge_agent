@@ -13,6 +13,9 @@ The Rust implementation currently provides 6 action modules with the following a
 | `llm.call` | Call OpenAI-compatible LLM API |
 | `llm.stream` | Stream LLM response via SSE |
 | `llm.tools` | LLM with function/tool calling support |
+| `llm.chat` | Local LLM chat (requires `llm-local` feature) |
+| `llm.embed` | Generate vector embeddings (requires `llm-local` feature) |
+| `memory.embed` | Alias for `llm.embed` (Python parity) |
 
 #### llm.call
 
@@ -213,31 +216,64 @@ settings:
     n_gpu_layers: 0         # GPU layers (0=CPU, -1=all GPU)
 ```
 
-##### llm.embed (Local Backend)
+##### llm.embed / memory.embed (Local Backend) - TEA-RUST-045
 
-Generate text embeddings using a local model.
+Generate vector embeddings using a local GGUF model. Both `llm.embed` and `memory.embed` are available for cross-runtime parity with Python.
+
+**Requires:** `--features llm-local` or an LLM-bundled AppImage.
 
 **Parameters:**
 
 ```yaml
-- name: embed
-  uses: llm.embed
+- name: embed_query
+  uses: llm.embed  # or memory.embed (alias)
   with:
-    backend: local
-    text: "{{ state.document }}"
+    text: "{{ state.query }}"           # Required: Text to embed
+    model_path: /path/to/model.gguf     # Optional: Override model path
+    n_ctx: 4096                         # Optional: Context window size
+    n_threads: 8                        # Optional: CPU threads
+    n_gpu_layers: 0                     # Optional: GPU layers (0=CPU)
+  outputs:
+    query_embedding: embedding
+    embedding_dim: dimensions
 ```
 
 **Returns:**
 
-```text
+```json
 {
-  "embedding": [0.123, -0.456, ...],
+  "embedding": [0.123, -0.456, 0.789, ...],
+  "model": "gemma-3-1b-it",
   "dimensions": 768,
-  "model": "nomic-embed-text"
+  "tokens_used": 42
 }
 ```
 
-**Note:** Not all models support embeddings. Use dedicated embedding models for best results.
+**Example - RAG Query Embedding:**
+
+```yaml
+nodes:
+  - name: embed_user_query
+    uses: memory.embed
+    with:
+      text: "{{ state.user_question }}"
+    outputs:
+      query_vector: embedding
+      vector_dim: dimensions
+
+  - name: embed_document
+    uses: llm.embed
+    with:
+      text: "{{ state.document_chunk }}"
+    outputs:
+      doc_vector: embedding
+```
+
+**Notes:**
+- Both `llm.embed` and `memory.embed` call the same underlying implementation
+- Embedding dimensions depend on the model (e.g., Gemma 3 1B: 768, Phi-4-mini: 3072)
+- Model must be loaded with embedding support (most GGUF models support this)
+- For best results, use the same model for query and document embeddings
 
 ##### llm.stream (Local Backend)
 
@@ -439,6 +475,7 @@ Rate limit timeout for limiter 'api_provider': wait would exceed 5000ms (estimat
 | `memory.retrieve` | Retrieve value from session memory |
 | `memory.delete` | Delete value from session memory |
 | `memory.list` | List all memory keys |
+| `memory.embed` | Generate vector embeddings (alias for `llm.embed`, requires `llm-local`) |
 
 **Parameters:**
 
