@@ -288,6 +288,20 @@ except ImportError:
     DuckDBCatalog = None  # type: ignore
     DUCKDB_CATALOG_AVAILABLE = False
 
+# SQLAlchemy backends (TEA-LTM-012)
+try:
+    from .sqlalchemy_backend import SQLAlchemyBackend, check_sqlalchemy_available
+
+    SQLALCHEMY_AVAILABLE = check_sqlalchemy_available()
+except ImportError:
+    SQLAlchemyBackend = None  # type: ignore
+    SQLALCHEMY_AVAILABLE = False
+
+try:
+    from .catalog_sqlalchemy import SQLAlchemyCatalog
+except ImportError:
+    SQLAlchemyCatalog = None  # type: ignore
+
 # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
 try:
     from .duckdb_ltm import DuckDBLTMBackend
@@ -401,4 +415,8 @@ __all__ = [
     "DUCKDB_CATALOG_AVAILABLE",
     # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
     "DuckDBLTMBackend",
+    # SQLAlchemy backends (TEA-LTM-012)
+    "SQLAlchemyBackend",
+    "SQLAlchemyCatalog",
+    "SQLALCHEMY_AVAILABLE",
 ]

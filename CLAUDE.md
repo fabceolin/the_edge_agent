@@ -161,6 +161,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 | Backend | Use Case | Install |
 |---------|----------|---------|
 | **sqlite** (default) | Local development, single-node | Built-in |
+| **sqlalchemy** | Database-agnostic (PostgreSQL, MySQL, SQLite, etc.) | `pip install sqlalchemy` |
 | **duckdb** | Analytics-heavy, catalog-aware, cloud storage | `pip install duckdb fsspec` |
 | **ducklake** | DuckDB with sensible defaults (TEA-LTM-010) | `pip install duckdb fsspec` |
 | **litestream** | SQLite with S3 replication | `pip install litestream` |
@@ -171,6 +172,7 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 | Catalog | Use Case | Install |
 |---------|----------|---------|
 | **sqlite** (default) | Local, development | Built-in |
+| **sqlalchemy** | Database-agnostic (PostgreSQL, MySQL, SQLite, etc.) | `pip install sqlalchemy` |
 | **duckdb** | Single-file, shared connection | `pip install duckdb` |
 | **firestore** | Serverless, Firebase ecosystem | `pip install firebase-admin` |
 | **postgres** | Self-hosted, SQL compatibility | `pip install psycopg2` |
@@ -236,6 +238,48 @@ settings:
     inline_threshold: 1024
 ```
 
+#### SQLAlchemy Backend (TEA-LTM-012)
+
+The `sqlalchemy` backend provides database-agnostic LTM storage using any SQLAlchemy-supported database:
+
+```yaml
+# PostgreSQL
+settings:
+  ltm:
+    backend: sqlalchemy
+    url: postgresql://user:pass@localhost/dbname
+    pool_size: 10
+    lazy: true
+    catalog:
+      type: sqlalchemy
+      url: postgresql://user:pass@localhost/dbname
+
+# MySQL/MariaDB
+settings:
+  ltm:
+    backend: sqlalchemy
+    url: mysql+pymysql://user:pass@localhost/dbname
+    pool_size: 5
+    catalog:
+      type: sqlalchemy
+      url: mysql+pymysql://user:pass@localhost/dbname
+
+# SQLite (local development)
+settings:
+  ltm:
+    backend: sqlalchemy
+    url: sqlite:///./ltm.db
+    catalog:
+      type: sqlalchemy
+      url: sqlite:///./ltm.db
+```
+
+Features:
+- Dialect-aware full-text search (PostgreSQL tsvector, MySQL FULLTEXT, SQLite LIKE fallback)
+- Connection pooling via SQLAlchemy's built-in pool
+- Lazy initialization for serverless cold starts
+- Thread-safe operations
+
 ### Factory Functions
 
 ```python
@@ -264,6 +308,20 @@ duckdb_catalog = create_catalog_backend("duckdb", path="./catalog.duckdb")
 config = expand_ltm_config({"ltm": {"backend": "ducklake"}})
 # config["backend"] == "duckdb"
 # config["catalog"]["type"] == "sqlite"
+
+# Create SQLAlchemy backend (TEA-LTM-012)
+sqlalchemy_backend = create_ltm_backend(
+    "sqlalchemy",
+    url="postgresql://user:pass@localhost/db",
+    pool_size=10,
+    lazy=True
+)
+
+# Create SQLAlchemy catalog
+sqlalchemy_catalog = create_catalog_backend(
+    "sqlalchemy",
+    url="postgresql://user:pass@localhost/db"
+)
 ```
 
 ## Experiment Framework (TEA-BUILTIN-005.4)
