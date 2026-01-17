@@ -539,7 +539,7 @@ mod tests {
 
         let result = data_validate(&state, &params).unwrap();
         assert_eq!(result["valid"], false);
-        assert!(result["errors"].as_array().unwrap().len() > 0);
+        assert!(!result["errors"].as_array().unwrap().is_empty());
     }
 
     // =============================================================================

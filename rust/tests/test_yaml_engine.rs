@@ -11,8 +11,7 @@ use the_edge_agent::engine::yaml::YamlEngine;
 #[test]
 fn test_yaml_engine_creation() {
     let _engine = YamlEngine::new();
-    // Engine should be created successfully
-    assert!(true);
+    // Engine should be created successfully (would panic if it failed)
 }
 
 // ============================================================================

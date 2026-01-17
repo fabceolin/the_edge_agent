@@ -793,7 +793,7 @@ fn test_trace_context_deep_nesting() {
     assert_eq!(level3.parent_span_id, Some(level2.span_id.clone()));
 
     // All span_ids should be unique
-    let ids = vec![
+    let ids = [
         &root.span_id,
         &level1.span_id,
         &level2.span_id,

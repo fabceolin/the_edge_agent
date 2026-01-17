@@ -49,7 +49,7 @@ fn bench_graph_construction(c: &mut Criterion) {
             let mut graph = StateGraph::new();
             for i in 0..5 {
                 let step = i;
-                graph.add_node(Node::new(&format!("node{}", i)).with_run(move |s| {
+                graph.add_node(Node::new(format!("node{}", i)).with_run(move |s| {
                     let mut state = s.clone();
                     state["step"] = json!(step);
                     Ok(state)
@@ -73,7 +73,7 @@ fn bench_graph_construction(c: &mut Criterion) {
 
             // Add 20 nodes
             for i in 0..20 {
-                graph.add_node(Node::new(&format!("node{}", i)).with_run(|s| Ok(s.clone())));
+                graph.add_node(Node::new(format!("node{}", i)).with_run(|s| Ok(s.clone())));
             }
 
             graph.set_entry_point("node0").unwrap();
@@ -156,7 +156,7 @@ fn bench_sequential_execution(c: &mut Criterion) {
 
         // Each node adds 10 to value
         for i in 0..5 {
-            graph.add_node(Node::new(&format!("step{}", i)).with_run(|s| {
+            graph.add_node(Node::new(format!("step{}", i)).with_run(|s| {
                 let mut state = s.clone();
                 let val = s.get("value").and_then(|v| v.as_i64()).unwrap_or(0);
                 state["value"] = json!(val + 10);

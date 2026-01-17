@@ -1153,10 +1153,9 @@ mod tests {
 
         // io should be nil in sandbox, so this should not allow file access
         let result = evaluate_with_lua(&state, &output, &evaluator, &lua_runtime);
-        // Either returns false (io is nil) or errors
-        match result {
-            Ok(eval) => assert!(!eval.valid),
-            Err(_) => {} // Also acceptable - error on nil access
+        // Either returns false (io is nil) or errors - both are acceptable
+        if let Ok(eval) = result {
+            assert!(!eval.valid);
         }
     }
 
@@ -1171,9 +1170,9 @@ mod tests {
         });
 
         let result = evaluate_with_lua(&state, &output, &evaluator, &lua_runtime);
-        match result {
-            Ok(eval) => assert!(!eval.valid),
-            Err(_) => {}
+        // Either returns false (os is blocked) or errors - both are acceptable
+        if let Ok(eval) = result {
+            assert!(!eval.valid);
         }
     }
 

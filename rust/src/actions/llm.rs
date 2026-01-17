@@ -1013,6 +1013,7 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
         .unwrap_or(0.7) as f32;
 
     // TEA-CLI-007: Get CLI model path for availability check and execution
+    #[allow(unused_variables)]
     let cli_model_path = cli_overrides.model_path.as_deref();
 
     // Determine which backend to use
@@ -1272,6 +1273,7 @@ fn execute_api_chat(
 pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
     // TEA-CLI-007: Extract CLI overrides from state
     let cli_overrides = get_cli_overrides(state);
+    #[allow(unused_variables)]
     let cli_model_path = cli_overrides.model_path.as_deref();
 
     // Extract required text parameter
