@@ -638,21 +638,32 @@ nodes:
         % Avoids false positives like "car" matching in "madagascar"
         % =========================================================
 
-        % Helper: get string length
-        str_len(Atom, Len) :-
+        % Helper: get atom length
+        atom_len(Atom, Len) :-
           atom_codes(Atom, Codes),
           length(Codes, Len).
 
+        % Helper: lowercase an atom (Trealla-compatible)
+        lower_atom(Atom, Lower) :-
+          atom_codes(Atom, Codes),
+          maplist(to_lower_code, Codes, LowerCodes),
+          atom_codes(Lower, LowerCodes).
+
+        to_lower_code(C, L) :-
+          C >= 65, C =< 90, !, L is C + 32.
+        to_lower_code(C, C).
+
         % Find all matching countries and pick longest match
         hint(Answer) :-
+          atom_string(QuestionAtom, "{{ state.question }}"),
+          lower_atom(QuestionAtom, LowerQ),
           findall(
             Len-Cap,
             (
               capital(Country, Cap),
-              atom_string(Country, CountryStr),
-              string_lower("{{ state.question }}", LowerQ),
-              sub_string(LowerQ, _, _, _, CountryStr),
-              str_len(Country, Len)
+              lower_atom(Country, LowerCountry),
+              sub_atom(LowerQ, _, _, _, LowerCountry),
+              atom_len(Country, Len)
             ),
             Matches
           ),
@@ -661,12 +672,14 @@ nodes:
           reverse(Sorted, [_-Answer|_]).
 
         % Fallback if no match found
-        hint(unknown) :- \+ (
-          capital(Country, _),
-          atom_string(Country, CountryStr),
-          string_lower("{{ state.question }}", LowerQ),
-          sub_string(LowerQ, _, _, _, CountryStr)
-        ).
+        hint(unknown) :-
+          atom_string(QuestionAtom, "{{ state.question }}"),
+          lower_atom(QuestionAtom, LowerQ),
+          \+ (
+            capital(Country, _),
+            lower_atom(Country, LowerCountry),
+            sub_atom(LowerQ, _, _, _, LowerCountry)
+          ).
 
   # ===========================================================================
   # Step 3: LLM generates response with structured format
