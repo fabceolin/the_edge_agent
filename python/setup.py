@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.58",
+    version="0.9.59",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
