@@ -39,6 +39,12 @@ thiserror = "2.0"
 # Regex (WASM compatible, no std dependency)
 regex-lite = "0.1"
 
+# Tera template engine (Jinja2-like syntax)
+tera = "1.19"
+
+# Lazy static for action definitions
+lazy_static = "1.4"
+
 # WASM-compatible random generation
 getrandom = { version = "0.2", features = ["js"] }
 
@@ -77,6 +83,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+tokio = { version = "1.49", features = ["rt", "macros"] }
 
 [profile.release]
 opt-level = "s"
