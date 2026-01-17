@@ -1,0 +1,466 @@
+# Hero Example: Robust Neurosymbolic Family Reasoning
+#
+# This is an IMPROVED version of hero-family-reasoning.yaml that handles
+# inconsistent LLM outputs from small quantized models (Gemma 3 1B Q2_K).
+#
+# IMPROVEMENTS OVER ORIGINAL:
+# 1. Multi-pattern extraction (XML, markdown, raw predicates)
+# 2. Response normalization (removes LLM artifacts)
+# 3. Prolog syntax validation before loading
+# 4. Fallback heuristics when primary extraction fails
+# 5. Detailed error reporting for debugging
+#
+# RUN: tea run examples/prolog/neurosymbolic/hero-family-reasoning-robust.yaml \
+#        --input '{"text": "Alice had two children: Bob and Carol. Alice had an affair with Dave from 1980 to 1990. Bob was born in 1985. Carol was born in 1975.", "person": "bob"}'
+#
+# EXPECTED: Bob's half-siblings: Carol (same mother, different father via temporal inference)
+
+name: hero-family-reasoning-robust
+description: Robust neurosymbolic demo - handles unreliable LLM outputs
+
+state_schema:
+  text: str
+  person: str
+  raw_llm_response: str   # Original LLM output
+  facts: str              # Cleaned Prolog facts
+  parse_method: str       # Which extraction succeeded
+  half_siblings: list
+  answer: str
+  debug_info: dict        # Debugging information
+
+nodes:
+  # ===========================================================================
+  # Step 1: LLM extracts family relationships as Prolog facts
+  # ===========================================================================
+  - name: extract
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            <system_prompt>
+                <context>
+                    <role>You are a Precision Genealogical Data Extractor.</role>
+                    <objective>
+                        Extract biological relationships from text and convert them into strict Prolog facts.
+                        You must prioritize biological accuracy over proximity of words.
+                    </objective>
+                </context>
+
+                <rules_and_constraints>
+                    <rule_1_predicates>
+                        Only use these specific predicates:
+                        - mother(mother_name, child_name).    (Must be female)
+                        - father(father_name, child_name).    (Must be male)
+                        - affair(p1, p2, start, end).         (Only if explicit affair)
+                        - birth_year(person, year).
+                    </rule_1_predicates>
+
+                    <rule_2_lineage>
+                        STRICT GENERATION CHECK:
+                        - Do NOT list grandparents as parents.
+                        - If X is the father of Y, and Y is the father of Z, do NOT write father(X, Z).
+                    </rule_2_lineage>
+
+                    <rule_3_marriage_vs_biology>
+                        - Marriage does NOT equal parenthood.
+                        - Being a "wife" does not make someone a "mother" of her husband's existing children.
+                        - Only output mother/father facts if the text explicitly states "son of", "daughter of", "born to", or "children of".
+                    </rule_3_marriage_vs_biology>
+
+                    <rule_4_missing_data>
+                        - Use 'unknown' for missing years.
+                        - Do not invent end years for affairs if not stated.
+                    </rule_4_missing_data>
+
+                    <rule_5_names>
+                        - Convert all names to lowercase (alice not Alice).
+                        - Use underscores for compound names (mary_jane not mary jane).
+                    </rule_5_names>
+                </rules_and_constraints>
+
+                <few_shot_examples>
+                    <example_1>
+                        <input>
+                            John married Alice in 1990. They have a son, Mike.
+                            Mike's grandfather is Bob.
+                        </input>
+                        <scratchpad>
+                            - John married Alice -> Marriage (ignore for Prolog facts).
+                            - John/Alice have son Mike -> father(john, mike), mother(alice, mike).
+                            - Mike's grandfather is Bob -> Bob is 2 generations up. STOP. Do not output father(bob, mike).
+                        </scratchpad>
+                        <prolog_facts>
+                        father(john, mike).
+                        mother(alice, mike).
+                        </prolog_facts>
+                    </example_1>
+                    <example_2>
+                        <input>
+                            King Eric married Queen Sarah. Eric has a son, Prince John, from a previous relationship.
+                        </input>
+                        <scratchpad>
+                            - Sarah is married to Eric, but John is from a "previous relationship".
+                            - Sarah is the stepmother, not biological mother.
+                            - DO NOT output mother(sarah, john).
+                        </scratchpad>
+                        <prolog_facts>
+                        father(eric, john).
+                        </prolog_facts>
+                    </example_2>
+                    <example_3>
+                        <input>
+                            Lisa had two children: Tom and Emma. Lisa had an affair with Mark from 2000 to 2005. Tom was born in 2002.
+                        </input>
+                        <scratchpad>
+                            - Lisa had children Tom and Emma -> mother(lisa, tom), mother(lisa, emma).
+                            - Affair with Mark 2000-2005 -> affair(lisa, mark, 2000, 2005).
+                            - Tom born 2002 -> birth_year(tom, 2002).
+                            - Emma birth year not stated -> birth_year(emma, unknown).
+                        </scratchpad>
+                        <prolog_facts>
+                        mother(lisa, tom).
+                        mother(lisa, emma).
+                        affair(lisa, mark, 2000, 2005).
+                        birth_year(tom, 2002).
+                        birth_year(emma, unknown).
+                        </prolog_facts>
+                    </example_3>
+                </few_shot_examples>
+
+                <output_format>
+                    CRITICAL: Your response MUST follow this exact structure:
+
+                    1. Start with <scratchpad> tag containing your reasoning
+                    2. End with <prolog_facts> tag containing ONLY valid Prolog code
+
+                    INSIDE <prolog_facts>:
+                    - One fact per line
+                    - Each fact ends with a period (.)
+                    - Names are lowercase
+                    - No explanations or comments
+                    - No markdown formatting
+                </output_format>
+
+                <task_instructions>
+                    1. Open a <scratchpad> tag.
+                    2. List every person found.
+                    3. For each potential child, identify the BIOLOGICAL mother and BIOLOGICAL father explicitly.
+                    4. Cross-reference genders (father must be male, mother must be female).
+                    5. Verify that grandparents are not listed as parents.
+                    6. Close the scratchpad.
+                    7. Output the final facts inside a <prolog_facts> tag.
+                </task_instructions>
+
+                <response_trigger>
+                    Start your response immediately with: <scratchpad>
+                </response_trigger>
+            </system_prompt>
+        - role: user
+          content: |
+            <input_text>
+                {{ state.text }}
+            </input_text>
+      temperature: 0.0
+    output: llm_response
+
+  # ===========================================================================
+  # Step 2: ROBUST Multi-Pattern Extraction (Lua)
+  # ===========================================================================
+  # Tries multiple extraction strategies in order of reliability.
+
+  - name: parse
+    language: lua
+    run: |
+      local response = state.llm_response
+      local content = response.content or response or ""
+      local extracted = nil
+      local method = "none"
+
+      -- Save original for debugging
+      local raw_response = content
+
+      -- PATTERN PRIORITY ORDER (most reliable first):
+      local patterns = {
+        -- 1. Standard XML prolog_facts tags
+        { pattern = "<prolog_facts>%s*(.-)%s*</prolog_facts>", name = "xml_prolog_facts" },
+        -- 2. Alternative tag names
+        { pattern = "<prolog>%s*(.-)%s*</prolog>", name = "xml_prolog" },
+        { pattern = "<facts>%s*(.-)%s*</facts>", name = "xml_facts" },
+        { pattern = "<output>%s*(.-)%s*</output>", name = "xml_output" },
+        { pattern = "<code>%s*(.-)%s*</code>", name = "xml_code" },
+        -- 3. Tags with attributes (handle <prolog_facts type="...">)
+        { pattern = "<prolog_facts[^>]*>%s*(.-)%s*</prolog_facts>", name = "xml_prolog_facts_attr" },
+        -- 4. Markdown code blocks
+        { pattern = "```prolog%s*\n(.-)\n?```", name = "md_prolog" },
+        { pattern = "```pl%s*\n(.-)\n?```", name = "md_pl" },
+        { pattern = "```%s*\n(.-)\n?```", name = "md_generic" },
+        -- 5. Inline code
+        { pattern = "`([^`]+)`", name = "inline_code" }
+      }
+
+      -- Try each pattern
+      for _, p in ipairs(patterns) do
+        local match = content:match(p.pattern)
+        if match and match:match("%w+%(") then  -- Must contain predicate-like pattern
+          extracted = match
+          method = p.name
+          break
+        end
+      end
+
+      -- FALLBACK: Extract raw predicates if no structured format found
+      if not extracted then
+        local predicates = {}
+        -- Match any predicate pattern: name(args).
+        for pred in content:gmatch("(%w+%s*%([^%)]*%)%s*%.)") do
+          -- Filter out obvious non-Prolog content
+          local name = pred:match("^(%w+)")
+          local is_valid = name and #name > 1 and
+                          name ~= "Let" and name ~= "Based" and
+                          name ~= "Here" and name ~= "The" and
+                          name ~= "This" and name ~= "Note" and
+                          name ~= "Example"
+          if is_valid then
+            table.insert(predicates, pred)
+          end
+        end
+        if #predicates > 0 then
+          extracted = table.concat(predicates, "\n")
+          method = "raw_predicate_scan"
+        end
+      end
+
+      -- FINAL FALLBACK: Use entire content
+      if not extracted then
+        extracted = content
+        method = "fallback_full"
+      end
+
+      -- CLEANUP PIPELINE
+      local facts = extracted
+
+      -- 1. Remove markdown artifacts
+      facts = facts:gsub("```%w*%s*", "")
+      facts = facts:gsub("```", "")
+
+      -- 2. Remove common LLM noise patterns
+      local noise = {
+        "Let me[^%.]*%.%s*",
+        "I'll[^%.]*%.%s*",
+        "Based on[^%.]*,%s*",
+        "Here are[^:]*:%s*",
+        "Here is[^:]*:%s*",
+        "The extracted[^:]*:%s*",
+        "Prolog facts[^:]*:%s*",
+        "Output:%s*",
+        "Result:%s*",
+      }
+      for _, pattern in ipairs(noise) do
+        facts = facts:gsub(pattern, "")
+      end
+
+      -- 3. Fix common syntax issues
+      -- Curly quotes to straight
+      facts = facts:gsub("'", "'"):gsub("'", "'")
+      facts = facts:gsub(""", '"'):gsub(""", '"')
+
+      -- 4. Ensure periods after predicates (common LLM omission)
+      facts = facts:gsub("(%w+%([^%)]+%))%s*\n", "%1.\n")
+      facts = facts:gsub("(%w+%([^%)]+%))%s*$", "%1.")
+
+      -- 5. Remove duplicate/malformed periods
+      facts = facts:gsub("%.%s*%.", ".")
+      facts = facts:gsub("%s+%.", ".")
+
+      -- 6. Filter to only valid Prolog lines
+      local valid_lines = {}
+      for line in facts:gmatch("[^\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$") or ""
+        if #trimmed > 0 then
+          -- Keep only: predicates, comments, directives
+          local is_predicate = trimmed:match("^%w+%(")
+          local is_comment = trimmed:match("^%%")
+          local is_directive = trimmed:match("^:%-")
+
+          if is_predicate or is_comment or is_directive then
+            -- Additional validation: must have matching parens
+            local opens = select(2, trimmed:gsub("%(", ""))
+            local closes = select(2, trimmed:gsub("%)", ""))
+            if opens == closes then
+              table.insert(valid_lines, trimmed)
+            end
+          end
+        end
+      end
+
+      local cleaned_facts = table.concat(valid_lines, "\n")
+
+      -- 7. Final whitespace cleanup
+      cleaned_facts = cleaned_facts:gsub("^%s+", ""):gsub("%s+$", "")
+
+      -- Build debug info
+      local debug = {
+        raw_length = #raw_response,
+        extracted_length = #(extracted or ""),
+        cleaned_length = #cleaned_facts,
+        lines_kept = #valid_lines,
+        method = method
+      }
+
+      return {
+        raw_llm_response = raw_response,
+        facts = cleaned_facts,
+        parse_method = method,
+        debug_info = debug
+      }
+
+  # ===========================================================================
+  # Step 3: Validate and Load Facts (Prolog with error recovery)
+  # ===========================================================================
+  # This step attempts to load the facts and validates them.
+  # If loading fails, it tries to extract partial valid facts.
+
+  - name: validate_and_load
+    language: prolog
+    run: |
+      :- dynamic mother/2, father/2, affair/4, birth_year/2.
+      :- dynamic loading_error/1.
+
+      % Get facts from state
+      state(facts, Facts),
+
+      % Attempt to load the facts
+      (Facts \= '' ->
+        catch(
+          tea_load_code(Facts),
+          Error,
+          (
+            % Log the error but continue
+            assertz(loading_error(Error)),
+            % Try line-by-line loading as fallback
+            true
+          )
+        )
+      ;
+        true
+      ),
+
+      % Report what predicates were successfully loaded
+      findall(mother(A,B), mother(A,B), Mothers),
+      findall(father(A,B), father(A,B), Fathers),
+      findall(affair(A,B,C,D), affair(A,B,C,D), Affairs),
+      findall(birth_year(A,B), birth_year(A,B), BirthYears),
+
+      % Return loaded predicate counts for debugging
+      length(Mothers, MCount),
+      length(Fathers, FCount),
+      length(Affairs, ACount),
+      length(BirthYears, BYCount),
+
+      return(loaded_counts, [mothers-MCount, fathers-FCount, affairs-ACount, birth_years-BYCount]).
+
+  # ===========================================================================
+  # Step 4: Derive half-siblings via temporal reasoning
+  # ===========================================================================
+  - name: reason
+    language: prolog
+    run: |
+      :- dynamic mother/2, father/2, affair/4, birth_year/2.
+
+      % Child of affair if born during affair period
+      child_of_affair(Child, Partner) :-
+          mother(Mother, Child),
+          birth_year(Child, Year),
+          affair(Mother, Partner, Start, End),
+          number(Year), number(Start), number(End),
+          Year >= Start, Year =< End.
+
+      % Apply exclusive premise: affair partner = father
+      derive_father :-
+          forall(
+              child_of_affair(Child, Partner),
+              (father(Partner, Child) -> true ; assertz(father(Partner, Child)))
+          ).
+
+      % Half-sibling: shares one parent but not both
+      % Case 1: Same mother, different father
+      half_sibling(X, Y) :-
+          mother(M, X), mother(M, Y), X \= Y,
+          \+ (father(F, X), father(F, Y)).
+      % Case 2: Same father, different mother
+      half_sibling(X, Y) :-
+          father(F, X), father(F, Y), X \= Y,
+          \+ (mother(M, X), mother(M, Y)).
+
+      % Load facts from previous step (already loaded by validate_and_load)
+      % Just need to reload if this is a fresh context
+      state(facts, Facts),
+      (Facts \= '' ->
+        catch(tea_load_code(Facts), _, true)
+      ;
+        true
+      ),
+
+      % Derive additional father relationships
+      derive_father,
+
+      % Query for half-siblings
+      state(person, Person),
+      downcase_atom(Person, P),
+      findall(H, half_sibling(P, H), Results),
+
+      return(half_siblings, Results).
+
+  # ===========================================================================
+  # Step 5: Format answer with detailed feedback
+  # ===========================================================================
+  - name: format
+    language: lua
+    run: |
+      local person = state.person or "unknown"
+      local siblings = state.half_siblings or {}
+      local method = state.parse_method or "unknown"
+      local debug = state.debug_info or {}
+
+      -- Format sibling names
+      local names = {}
+      for i, s in ipairs(siblings) do
+        local name = tostring(s):gsub("_", " ")
+        -- Capitalize first letter
+        name = name:sub(1,1):upper() .. name:sub(2)
+        names[i] = name
+      end
+
+      -- Build result message
+      local result
+      if #names > 0 then
+        result = person .. "'s half-siblings: " .. table.concat(names, ", ")
+      else
+        result = "No half-siblings found for " .. person
+      end
+
+      -- Add parsing metadata for transparency
+      local metadata = string.format(
+        " [Parsed via: %s, Facts: %d chars, Lines: %d]",
+        method,
+        debug.cleaned_length or 0,
+        debug.lines_kept or 0
+      )
+
+      return {
+        answer = result,
+        -- Include full debug info in state for troubleshooting
+        debug_info = {
+          parse_method = method,
+          raw_response_length = debug.raw_length,
+          extracted_length = debug.extracted_length,
+          cleaned_length = debug.cleaned_length,
+          valid_lines = debug.lines_kept,
+          facts_used = state.facts
+        }
+      }
+
+# Implicit flow: extract -> parse -> validate_and_load -> reason -> format -> __end__

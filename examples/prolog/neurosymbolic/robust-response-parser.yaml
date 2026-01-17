@@ -1,0 +1,360 @@
+# Robust Response Parser for Neurosymbolic AI
+#
+# This module demonstrates advanced Lua + Prolog techniques for handling
+# inconsistent LLM outputs from quantized models (e.g., Gemma 3 1B Q2_K).
+#
+# PROBLEM: Small quantized models produce unreliable output formats:
+# - Missing XML tags
+# - Inconsistent tag names (<prolog_facts> vs <prolog> vs <facts>)
+# - Markdown code blocks instead of XML
+# - Natural language mixed with code
+# - Incomplete or malformed structures
+#
+# SOLUTION: Multi-stage parsing with progressive fallbacks:
+# 1. Lua: Multi-pattern extraction with fuzzy matching
+# 2. Lua: Response normalization and cleanup
+# 3. Prolog: Syntax validation (try to parse as valid Prolog)
+# 4. Prolog: Semantic validation (check predicate signatures)
+# 5. Fallback: Heuristic extraction of any valid Prolog predicates
+#
+# RUN: tea run examples/prolog/neurosymbolic/robust-response-parser.yaml \
+#        --input '{"raw_response": "<prolog_facts>\nfather(john, mike).\nmother(alice, mike).\n</prolog_facts>"}'
+
+name: robust-response-parser
+description: Multi-stage parsing for unreliable LLM outputs with Prolog validation
+
+state_schema:
+  raw_response: str       # LLM output to parse
+  extracted_code: str     # Extracted Prolog/code content
+  cleaned_code: str       # Normalized and cleaned code
+  is_valid: bool          # Whether code passed validation
+  predicates_found: list  # List of predicate names found
+  parse_method: str       # Which extraction method succeeded
+  error_details: str      # Details if parsing failed
+
+nodes:
+  # ===========================================================================
+  # STAGE 1: Multi-Pattern Extraction (Lua)
+  # ===========================================================================
+  # Tries multiple extraction patterns in order of specificity.
+  # Returns the first successful match with metadata about which pattern worked.
+
+  - name: extract
+    language: lua
+    run: |
+      local content = state.raw_response or ""
+      local extracted = nil
+      local method = "none"
+
+      -- Pattern definitions: ordered from most specific to most general
+      -- Each pattern is { regex, name, cleanup_fn }
+      local patterns = {
+        -- 1. Exact XML tags (ideal format)
+        {
+          pattern = "<prolog_facts>(.-)</prolog_facts>",
+          name = "xml_prolog_facts",
+          cleanup = function(s) return s end
+        },
+        -- 2. Alternative XML tag names
+        {
+          pattern = "<prolog>(.-)</prolog>",
+          name = "xml_prolog",
+          cleanup = function(s) return s end
+        },
+        {
+          pattern = "<facts>(.-)</facts>",
+          name = "xml_facts",
+          cleanup = function(s) return s end
+        },
+        {
+          pattern = "<code>(.-)</code>",
+          name = "xml_code",
+          cleanup = function(s) return s end
+        },
+        {
+          pattern = "<output>(.-)</output>",
+          name = "xml_output",
+          cleanup = function(s) return s end
+        },
+        -- 3. Markdown code blocks with language tag
+        {
+          pattern = "```prolog%s*\n(.-)\n?```",
+          name = "md_prolog_block",
+          cleanup = function(s) return s end
+        },
+        {
+          pattern = "```pl%s*\n(.-)\n?```",
+          name = "md_pl_block",
+          cleanup = function(s) return s end
+        },
+        -- 4. Generic markdown code blocks (triple backticks)
+        {
+          pattern = "```%s*\n(.-)\n?```",
+          name = "md_generic_block",
+          cleanup = function(s) return s end
+        },
+        -- 5. Single backtick inline code
+        {
+          pattern = "`([^`]+)`",
+          name = "inline_code",
+          cleanup = function(s) return s end
+        },
+        -- 6. Look for lines that look like Prolog predicates
+        -- This catches when LLM just outputs raw Prolog
+        {
+          pattern = "(%w+%s*%(.-%)%s*%.)",
+          name = "raw_predicate",
+          cleanup = function(s)
+            -- Collect all predicate-like patterns in the content
+            local predicates = {}
+            for pred in content:gmatch("(%w+%s*%([^%)]*%)%s*%.)") do
+              table.insert(predicates, pred)
+            end
+            return table.concat(predicates, "\n")
+          end
+        }
+      }
+
+      -- Try each pattern in order
+      for _, p in ipairs(patterns) do
+        local match = content:match(p.pattern)
+        if match and match:match("%S") then  -- Non-empty, non-whitespace
+          extracted = p.cleanup(match)
+          method = p.name
+          break
+        end
+      end
+
+      -- Fallback: if nothing matched, use entire content
+      if not extracted then
+        extracted = content
+        method = "fallback_full"
+      end
+
+      return {
+        extracted_code = extracted,
+        parse_method = method
+      }
+
+  # ===========================================================================
+  # STAGE 2: Response Normalization (Lua)
+  # ===========================================================================
+  # Cleans up common LLM artifacts that break Prolog parsing:
+  # - Leading/trailing explanations
+  # - Mixed natural language
+  # - Malformed punctuation
+  # - Encoding issues
+
+  - name: normalize
+    language: lua
+    run: |
+      local code = state.extracted_code or ""
+
+      -- CLEANUP PIPELINE: Apply fixes in order
+
+      -- 1. Remove common LLM preambles and postambles
+      local noise_patterns = {
+        "^%s*Let me[^%.]*%.%s*",
+        "^%s*I'll[^%.]*%.%s*",
+        "^%s*Based on[^%.]*%.%s*",
+        "^%s*Here are[^%.]*:%s*",
+        "^%s*Here is[^%.]*:%s*",
+        "^%s*The [^:]*:%s*",
+        "^%s*I have[^%.]*%.%s*",
+        "^%s*I found[^%.]*:%s*",
+        "^%s*Extracting[^%.]*%.%s*",
+        "^%s*After analyzing[^%.]*,%s*",
+        "%s*Is there anything else[^%?]*%?%s*$",
+        "%s*Let me know if[^%.]*%.%s*$",
+        "%s*Hope this helps[^%.]*%.?%s*$",
+      }
+      for _, pattern in ipairs(noise_patterns) do
+        code = code:gsub(pattern, "")
+      end
+
+      -- 2. Remove markdown formatting artifacts
+      code = code:gsub("^%s*```%w*%s*", "")  -- Opening code fence
+      code = code:gsub("%s*```%s*$", "")      -- Closing code fence
+      code = code:gsub("\\n", "\n")           -- Escaped newlines
+      code = code:gsub("\\t", " ")            -- Escaped tabs
+
+      -- 3. Fix common Prolog syntax issues from LLMs
+      -- a) Curly quotes to straight quotes
+      code = code:gsub("'", "'"):gsub("'", "'")
+      code = code:gsub(""", '"'):gsub(""", '"')
+
+      -- b) Ensure periods after predicates
+      code = code:gsub("(%w+%([^%)]+%))%s*\n", "%1.\n")
+      code = code:gsub("(%w+%([^%)]+%))%s*$", "%1.")
+
+      -- c) Remove duplicate periods
+      code = code:gsub("%.%.", ".")
+      code = code:gsub("%.%s*%.", ".")
+
+      -- d) Fix spaces before periods
+      code = code:gsub("%s+%.", ".")
+
+      -- 4. Remove lines that don't look like Prolog
+      local valid_lines = {}
+      for line in code:gmatch("[^\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed and #trimmed > 0 then
+          -- Keep if: predicate, comment, directive, or operator
+          local is_predicate = trimmed:match("^%w+%(")
+          local is_comment = trimmed:match("^%%")
+          local is_directive = trimmed:match("^:%-")
+          local is_dcg = trimmed:match("^%w+%s*%-%->")
+          local is_rule = trimmed:match("^%w+%s*:%-")
+
+          if is_predicate or is_comment or is_directive or is_dcg or is_rule then
+            table.insert(valid_lines, trimmed)
+          end
+        end
+      end
+
+      -- Reconstruct code from valid lines
+      local cleaned = table.concat(valid_lines, "\n")
+
+      -- 5. Final whitespace cleanup
+      cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+      cleaned = cleaned:gsub("\n\n\n+", "\n\n")
+
+      return {
+        cleaned_code = cleaned
+      }
+
+  # ===========================================================================
+  # STAGE 3: Prolog Syntax Validation
+  # ===========================================================================
+  # Uses Prolog's own parser to validate syntax.
+  # This catches issues that regex-based cleanup might miss.
+
+  - name: validate_syntax
+    language: prolog
+    run: |
+      :- dynamic validation_result/1.
+
+      % Get the cleaned code from state
+      state(cleaned_code, Code),
+
+      % Try to parse as Prolog terms
+      % We use catch to handle syntax errors gracefully
+      (
+        % Attempt to read terms from the code
+        % This validates syntax without asserting
+        catch(
+          (
+            atom_codes(CodeAtom, Code),
+            term_to_atom(_, CodeAtom)
+          ),
+          Error,
+          (
+            % If there's an error, record it
+            assertz(validation_result(error(Error))),
+            fail
+          )
+        )
+      ->
+        assertz(validation_result(valid))
+      ;
+        % If parsing fails without exception, still try to use it
+        % (some valid Prolog may fail term_to_atom)
+        assertz(validation_result(partial))
+      ),
+
+      % Return validation status
+      (validation_result(valid) -> IsValid = true ; IsValid = false),
+      return(syntax_valid, IsValid).
+
+  # ===========================================================================
+  # STAGE 4: Predicate Extraction and Semantic Validation (Prolog)
+  # ===========================================================================
+  # Extracts predicate signatures and validates against expected patterns.
+  # Can detect if extracted code contains expected predicate types.
+
+  - name: extract_predicates
+    language: prolog
+    run: |
+      :- dynamic found_predicate/2.
+
+      % Get cleaned code
+      state(cleaned_code, Code),
+
+      % Define expected predicate patterns for family reasoning
+      expected_predicate(mother, 2).
+      expected_predicate(father, 2).
+      expected_predicate(affair, 4).
+      expected_predicate(birth_year, 2).
+      expected_predicate(sibling, 2).
+      expected_predicate(half_sibling, 2).
+      expected_predicate(parent, 2).
+      expected_predicate(child, 2).
+
+      % Load the code and extract predicates
+      (Code \= '' ->
+        (
+          catch(
+            tea_load_code(Code),
+            _,
+            true
+          ),
+          % Collect all user-defined predicates
+          findall(
+            Name/Arity,
+            (
+              expected_predicate(Name, Arity),
+              current_predicate(Name/Arity)
+            ),
+            FoundPreds
+          )
+        )
+      ;
+        FoundPreds = []
+      ),
+
+      return(predicates_found, FoundPreds).
+
+  # ===========================================================================
+  # STAGE 5: Final Result Assembly (Lua)
+  # ===========================================================================
+  # Combines all validation results and decides final outcome.
+
+  - name: assemble_result
+    language: lua
+    run: |
+      local code = state.cleaned_code or ""
+      local method = state.parse_method or "unknown"
+      local predicates = state.predicates_found or {}
+
+      -- Determine overall validity
+      local is_valid = false
+      local error_details = ""
+
+      if #code == 0 then
+        error_details = "No code could be extracted from LLM response"
+      elseif not code:match("%w+%(") then
+        error_details = "No valid Prolog predicates found after cleanup"
+      else
+        -- Check if we found any expected predicates
+        if #predicates > 0 then
+          is_valid = true
+        else
+          -- Still consider valid if we have predicate-like patterns
+          is_valid = code:match("%w+%([^%)]+%)%.") ~= nil
+          if not is_valid then
+            error_details = "Code does not contain recognizable predicates"
+          end
+        end
+      end
+
+      return {
+        is_valid = is_valid,
+        error_details = error_details,
+        -- Keep these for debugging/introspection
+        extracted_code = state.extracted_code,
+        cleaned_code = code,
+        parse_method = method,
+        predicates_found = predicates
+      }
+
+# Implicit flow: extract -> normalize -> validate_syntax -> extract_predicates -> assemble_result

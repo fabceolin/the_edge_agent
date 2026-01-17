@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use the_edge_agent::experiments::{
-    run_experiment, AggregateResults, ContainsMatch, Dataset, DatasetItem, ExactMatch,
-    ExperimentConfig, JsonPathMatch, Metric, MetricResult, NumericTolerance,
+    run_experiment, ContainsMatch, Dataset, DatasetItem, ExactMatch, ExperimentConfig,
+    JsonPathMatch, Metric, MetricResult, NumericTolerance,
 };
 
 // =============================================================================
@@ -336,7 +336,7 @@ async fn test_experiment_multiple_metrics() {
 #[test]
 fn test_aggregate_calculations() {
     // Test aggregate calculations with known values
-    let metrics: Vec<Box<dyn Metric>> = vec![Box::new(ExactMatch)];
+    let _metrics: Vec<Box<dyn Metric>> = vec![Box::new(ExactMatch)];
 
     // Create mock item results manually
     let items = vec![

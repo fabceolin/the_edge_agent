@@ -340,52 +340,482 @@ async function initPrologEngine() {
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
 
 // Default YAML workflow (implicit edges - no edges section needed)
-const DEFAULT_YAML = `name: multi-engine-workflow
+// ROBUST VERSION: Uses Lua + Prolog for reliable answer extraction from quantized LLMs
+// Features complete world capitals database (195 countries) with case-insensitive
+// matching and longest-match priority to avoid false positives.
+const DEFAULT_YAML = `name: robust-qa-workflow
+# Demonstrates: Robust answer extraction from small quantized models
+# The workflow uses Lua normalization + Prolog validation to ensure
+# consistent results even when LLM output format varies.
+#
+# Features:
+# - Complete world capitals database (195 countries)
+# - Case-insensitive question matching
+# - Longest match priority (avoids "car" matching in "madagascar")
+# - Multi-pattern answer extraction from unreliable LLM outputs
+# - Confidence scoring: verified, corrected, fallback
+
 nodes:
-  # Step 1: Use Lua to analyze the question
-  - name: lua_analyze
+  # ===========================================================================
+  # Step 1: Analyze question structure with Lua
+  # ===========================================================================
+  - name: analyze_question
     action: lua.eval
     with:
       code: |
+        local q = question or ""
         local words = 0
-        for _ in string.gmatch(question, "%S+") do
+        for _ in string.gmatch(q, "%S+") do
           words = words + 1
         end
-        return { word_count = words, is_short = words < 10 }
 
-  # Step 2: Use Prolog for logical classification
-  - name: prolog_classify
+        -- Detect question type via patterns
+        local qtype = "general"
+        local patterns = {
+          { pattern = "capital", type = "geography" },
+          { pattern = "country", type = "geography" },
+          { pattern = "city", type = "geography" },
+          { pattern = "where", type = "geography" },
+          { pattern = "calculate", type = "math" },
+          { pattern = "sum", type = "math" },
+          { pattern = "how many", type = "math" },
+          { pattern = "why", type = "science" },
+          { pattern = "how does", type = "science" },
+          { pattern = "what is", type = "definition" },
+          { pattern = "who is", type = "biography" },
+        }
+
+        local lower_q = q:lower()
+        for _, p in ipairs(patterns) do
+          if lower_q:find(p.pattern) then
+            qtype = p.type
+            break
+          end
+        end
+
+        return {
+          word_count = words,
+          question_type = qtype,
+          is_short = words < 10
+        }
+
+  # ===========================================================================
+  # Step 2: Use Prolog for knowledge-based hints (195 countries)
+  # ===========================================================================
+  - name: prolog_hints
     action: prolog.query
     with:
-      code: "category(X), X \\\\= unknown"
+      code: "hint(H)"
       facts: |
-        category(geography) :- sub_string("{{ state.question }}", _, _, _, "capital").
-        category(geography) :- sub_string("{{ state.question }}", _, _, _, "country").
-        category(math) :- sub_string("{{ state.question }}", _, _, _, "calculate").
-        category(math) :- sub_string("{{ state.question }}", _, _, _, "sum").
-        category(science) :- sub_string("{{ state.question }}", _, _, _, "why").
-        category(unknown).
+        % =========================================================
+        % COMPLETE WORLD CAPITALS DATABASE (195 countries)
+        % =========================================================
 
-  # Step 3: LLM thinks about the question
-  - name: think
+        % EUROPE (44 countries)
+        capital(albania, tirana).
+        capital(andorra, andorra_la_vella).
+        capital(austria, vienna).
+        capital(belarus, minsk).
+        capital(belgium, brussels).
+        capital(bosnia, sarajevo).
+        capital(bulgaria, sofia).
+        capital(croatia, zagreb).
+        capital(cyprus, nicosia).
+        capital(czech, prague).
+        capital(czechia, prague).
+        capital(denmark, copenhagen).
+        capital(estonia, tallinn).
+        capital(finland, helsinki).
+        capital(france, paris).
+        capital(germany, berlin).
+        capital(greece, athens).
+        capital(hungary, budapest).
+        capital(iceland, reykjavik).
+        capital(ireland, dublin).
+        capital(italy, rome).
+        capital(kosovo, pristina).
+        capital(latvia, riga).
+        capital(liechtenstein, vaduz).
+        capital(lithuania, vilnius).
+        capital(luxembourg, luxembourg).
+        capital(malta, valletta).
+        capital(moldova, chisinau).
+        capital(monaco, monaco).
+        capital(montenegro, podgorica).
+        capital(netherlands, amsterdam).
+        capital(holland, amsterdam).
+        capital(macedonia, skopje).
+        capital(norway, oslo).
+        capital(poland, warsaw).
+        capital(portugal, lisbon).
+        capital(romania, bucharest).
+        capital(russia, moscow).
+        capital(sanmarino, san_marino).
+        capital(serbia, belgrade).
+        capital(slovakia, bratislava).
+        capital(slovenia, ljubljana).
+        capital(spain, madrid).
+        capital(sweden, stockholm).
+        capital(switzerland, bern).
+        capital(ukraine, kyiv).
+        capital(uk, london).
+        capital(britain, london).
+        capital(england, london).
+        capital(vatican, vatican_city).
+
+        % ASIA (48 countries)
+        capital(afghanistan, kabul).
+        capital(armenia, yerevan).
+        capital(azerbaijan, baku).
+        capital(bahrain, manama).
+        capital(bangladesh, dhaka).
+        capital(bhutan, thimphu).
+        capital(brunei, bandar_seri_begawan).
+        capital(cambodia, phnom_penh).
+        capital(china, beijing).
+        capital(georgia, tbilisi).
+        capital(india, new_delhi).
+        capital(indonesia, jakarta).
+        capital(iran, tehran).
+        capital(iraq, baghdad).
+        capital(israel, jerusalem).
+        capital(japan, tokyo).
+        capital(jordan, amman).
+        capital(kazakhstan, astana).
+        capital(kuwait, kuwait_city).
+        capital(kyrgyzstan, bishkek).
+        capital(laos, vientiane).
+        capital(lebanon, beirut).
+        capital(malaysia, kuala_lumpur).
+        capital(maldives, male).
+        capital(mongolia, ulaanbaatar).
+        capital(myanmar, naypyidaw).
+        capital(burma, naypyidaw).
+        capital(nepal, kathmandu).
+        capital(northkorea, pyongyang).
+        capital(oman, muscat).
+        capital(pakistan, islamabad).
+        capital(palestine, ramallah).
+        capital(philippines, manila).
+        capital(qatar, doha).
+        capital(saudiarabia, riyadh).
+        capital(saudi, riyadh).
+        capital(singapore, singapore).
+        capital(southkorea, seoul).
+        capital(korea, seoul).
+        capital(srilanka, colombo).
+        capital(syria, damascus).
+        capital(taiwan, taipei).
+        capital(tajikistan, dushanbe).
+        capital(thailand, bangkok).
+        capital(timorleste, dili).
+        capital(turkey, ankara).
+        capital(turkmenistan, ashgabat).
+        capital(uae, abu_dhabi).
+        capital(emirates, abu_dhabi).
+        capital(uzbekistan, tashkent).
+        capital(vietnam, hanoi).
+        capital(yemen, sanaa).
+
+        % AFRICA (54 countries)
+        capital(algeria, algiers).
+        capital(angola, luanda).
+        capital(benin, porto_novo).
+        capital(botswana, gaborone).
+        capital(burkinafaso, ouagadougou).
+        capital(burundi, gitega).
+        capital(cameroon, yaounde).
+        capital(capeverde, praia).
+        capital(car, bangui).
+        capital(chad, ndjamena).
+        capital(comoros, moroni).
+        capital(congo, brazzaville).
+        capital(drc, kinshasa).
+        capital(djibouti, djibouti).
+        capital(egypt, cairo).
+        capital(equatorialguinea, malabo).
+        capital(eritrea, asmara).
+        capital(eswatini, mbabane).
+        capital(swaziland, mbabane).
+        capital(ethiopia, addis_ababa).
+        capital(gabon, libreville).
+        capital(gambia, banjul).
+        capital(ghana, accra).
+        capital(guinea, conakry).
+        capital(guineabissau, bissau).
+        capital(ivorycoast, yamoussoukro).
+        capital(kenya, nairobi).
+        capital(lesotho, maseru).
+        capital(liberia, monrovia).
+        capital(libya, tripoli).
+        capital(madagascar, antananarivo).
+        capital(malawi, lilongwe).
+        capital(mali, bamako).
+        capital(mauritania, nouakchott).
+        capital(mauritius, port_louis).
+        capital(morocco, rabat).
+        capital(mozambique, maputo).
+        capital(namibia, windhoek).
+        capital(niger, niamey).
+        capital(nigeria, abuja).
+        capital(rwanda, kigali).
+        capital(saotome, sao_tome).
+        capital(senegal, dakar).
+        capital(seychelles, victoria).
+        capital(sierraleone, freetown).
+        capital(somalia, mogadishu).
+        capital(southafrica, pretoria).
+        capital(southsudan, juba).
+        capital(sudan, khartoum).
+        capital(tanzania, dodoma).
+        capital(togo, lome).
+        capital(tunisia, tunis).
+        capital(uganda, kampala).
+        capital(zambia, lusaka).
+        capital(zimbabwe, harare).
+
+        % NORTH AMERICA (23 countries)
+        capital(antiguabarbuda, saint_johns).
+        capital(bahamas, nassau).
+        capital(barbados, bridgetown).
+        capital(belize, belmopan).
+        capital(canada, ottawa).
+        capital(costarica, san_jose).
+        capital(cuba, havana).
+        capital(dominica, roseau).
+        capital(dominicanrepublic, santo_domingo).
+        capital(elsalvador, san_salvador).
+        capital(grenada, saint_georges).
+        capital(guatemala, guatemala_city).
+        capital(haiti, port_au_prince).
+        capital(honduras, tegucigalpa).
+        capital(jamaica, kingston).
+        capital(mexico, mexico_city).
+        capital(nicaragua, managua).
+        capital(panama, panama_city).
+        capital(stkitts, basseterre).
+        capital(stlucia, castries).
+        capital(stvincent, kingstown).
+        capital(trinidadtobago, port_of_spain).
+        capital(trinidad, port_of_spain).
+        capital(usa, washington_dc).
+        capital(america, washington_dc).
+        capital(unitedstates, washington_dc).
+
+        % SOUTH AMERICA (12 countries)
+        capital(argentina, buenos_aires).
+        capital(bolivia, sucre).
+        capital(brazil, brasilia).
+        capital(brasil, brasilia).
+        capital(chile, santiago).
+        capital(colombia, bogota).
+        capital(ecuador, quito).
+        capital(guyana, georgetown).
+        capital(paraguay, asuncion).
+        capital(peru, lima).
+        capital(suriname, paramaribo).
+        capital(uruguay, montevideo).
+        capital(venezuela, caracas).
+
+        % OCEANIA (14 countries)
+        capital(australia, canberra).
+        capital(fiji, suva).
+        capital(kiribati, tarawa).
+        capital(marshallislands, majuro).
+        capital(micronesia, palikir).
+        capital(nauru, yaren).
+        capital(newzealand, wellington).
+        capital(palau, ngerulmud).
+        capital(papuanewguinea, port_moresby).
+        capital(samoa, apia).
+        capital(solomonislands, honiara).
+        capital(tonga, nukualofa).
+        capital(tuvalu, funafuti).
+        capital(vanuatu, port_vila).
+
+        % =========================================================
+        % HINT PREDICATE WITH LONGEST MATCH PRIORITY
+        % Avoids false positives like "car" matching in "madagascar"
+        % =========================================================
+
+        % Helper: get string length
+        str_len(Atom, Len) :-
+          atom_codes(Atom, Codes),
+          length(Codes, Len).
+
+        % Find all matching countries and pick longest match
+        hint(Answer) :-
+          findall(
+            Len-Cap,
+            (
+              capital(Country, Cap),
+              atom_string(Country, CountryStr),
+              string_lower("{{ state.question }}", LowerQ),
+              sub_string(LowerQ, _, _, _, CountryStr),
+              str_len(Country, Len)
+            ),
+            Matches
+          ),
+          Matches \= [],
+          msort(Matches, Sorted),
+          reverse(Sorted, [_-Answer|_]).
+
+        % Fallback if no match found
+        hint(unknown) :- \+ (
+          capital(Country, _),
+          atom_string(Country, CountryStr),
+          string_lower("{{ state.question }}", LowerQ),
+          sub_string(LowerQ, _, _, _, CountryStr)
+        ).
+
+  # ===========================================================================
+  # Step 3: LLM generates response with structured format
+  # ===========================================================================
+  - name: llm_think
     action: llm.call
     with:
       prompt: |
+        Answer this question directly and concisely.
+
         Question: {{ state.question }}
-        Word count: {{ state.lua_result.word_count }}
-        Think step by step about this question.
-      max_tokens: 150
-      temperature: 0.3
 
-  # Step 4: LLM provides final answer
-  - name: answer
-    action: llm.call
+        INSTRUCTIONS:
+        - Give ONLY the direct answer
+        - Do NOT include explanations unless asked
+        - For geography questions, just state the answer (e.g., "Paris")
+        - Keep your response under 50 words
+
+        Answer:
+      max_tokens: 80
+      temperature: 0.1
+
+  # ===========================================================================
+  # Step 4: Lua extracts and normalizes the answer
+  # ===========================================================================
+  - name: extract_answer
+    action: lua.eval
     with:
-      prompt: |
-        Based on: {{ state.think.content }}
-        Provide a concise answer.
-      max_tokens: 100
-      temperature: 0.7`;
+      code: |
+        local response = state.llm_think or {}
+        local content = response.content or ""
+        local prolog_result = state.prolog_result or {}
+        local bindings = prolog_result.bindings or {}
+        local qtype = state.lua_result and state.lua_result.question_type or "general"
+
+        -- EXTRACTION PIPELINE
+        local extracted = content
+
+        -- 1. Remove common LLM prefixes
+        local prefixes = {
+          "^The answer is:?%s*",
+          "^Answer:?%s*",
+          "^The capital of %w+ is%s*",
+          "^The capital is%s*",
+          "^It is%s*",
+          "^It's%s*",
+          "^That would be%s*",
+          "^Based on.-,%s*",
+        }
+        for _, prefix in ipairs(prefixes) do
+          extracted = extracted:gsub(prefix, "")
+        end
+
+        -- 2. Remove trailing punctuation and whitespace
+        extracted = extracted:gsub("[%.!?]+%s*$", "")
+        extracted = extracted:gsub("^%s+", ""):gsub("%s+$", "")
+
+        -- 3. Extract first sentence if multiple sentences
+        local first_sentence = extracted:match("^([^%.!?]+)")
+        if first_sentence and #first_sentence > 0 then
+          extracted = first_sentence:gsub("^%s+", ""):gsub("%s+$", "")
+        end
+
+        -- 4. For geography, try to extract just the city name
+        if qtype == "geography" then
+          -- Look for capitalized words (proper nouns)
+          local proper_noun = extracted:match("([A-Z][a-z]+)")
+          if proper_noun then
+            extracted = proper_noun
+          end
+        end
+
+        -- 5. VALIDATION: Check against Prolog knowledge base
+        local validated = extracted
+        local confidence = "llm"
+
+        -- Check if Prolog found an answer
+        for _, binding in ipairs(bindings) do
+          local hint = binding.H or binding
+          if hint and hint ~= "unknown" then
+            -- Prolog has authoritative answer
+            -- Convert underscore to space and capitalize
+            local prolog_answer = tostring(hint)
+            prolog_answer = prolog_answer:gsub("_", " ")
+            -- Capitalize each word
+            prolog_answer = prolog_answer:gsub("(%a)([%w]*)", function(first, rest)
+              return first:upper() .. rest:lower()
+            end)
+
+            -- Use Prolog answer if LLM answer seems different
+            local llm_lower = extracted:lower():gsub("%s+", "")
+            local prolog_lower = prolog_answer:lower():gsub("%s+", "")
+
+            if prolog_lower:find(llm_lower) or llm_lower:find(prolog_lower) then
+              -- LLM and Prolog agree
+              validated = prolog_answer
+              confidence = "verified"
+            else
+              -- Prefer Prolog for known facts
+              validated = prolog_answer
+              confidence = "corrected"
+            end
+            break
+          end
+        end
+
+        -- 6. Fallback if extraction failed
+        if #validated == 0 then
+          -- Return first 100 chars of original
+          validated = content:sub(1, 100)
+          confidence = "fallback"
+        end
+
+        return {
+          final_answer = validated,
+          confidence = confidence,
+          raw_llm = content,
+          question_type = qtype
+        }
+
+  # ===========================================================================
+  # Step 5: Format final response with metadata
+  # ===========================================================================
+  - name: format_output
+    action: lua.eval
+    with:
+      code: |
+        local answer = state.lua_result and state.lua_result.final_answer or "Unknown"
+        local confidence = state.lua_result and state.lua_result.confidence or "unknown"
+        local qtype = state.lua_result and state.lua_result.question_type or "general"
+
+        -- Build confidence indicator
+        local indicator = ""
+        if confidence == "verified" then
+          indicator = " [verified]"
+        elseif confidence == "corrected" then
+          indicator = " [from knowledge base]"
+        elseif confidence == "fallback" then
+          indicator = " [uncertain]"
+        end
+
+        return {
+          answer = answer .. indicator,
+          metadata = {
+            confidence = confidence,
+            question_type = qtype,
+            source = confidence == "corrected" and "prolog" or "llm"
+          }
+        }`;
 
 // Default state (YAML format)
 const DEFAULT_STATE_YAML = `question: What is the capital of France?`;
