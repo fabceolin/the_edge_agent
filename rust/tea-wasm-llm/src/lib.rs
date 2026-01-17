@@ -27,13 +27,19 @@
 //! const result = await executeLlmYaml(yaml, { input: "hello" });
 //! ```
 
+mod config;
 mod duckdb;
+mod executor;
 mod llm;
 mod ltm;
 mod lua;
 mod opik;
+mod parallel;
+mod params;
 mod prolog;
+mod routing;
 mod storage;
+mod templates;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -81,6 +87,39 @@ pub use ltm::{
     ltm_delete_async, ltm_list_async, ltm_retrieve_async, ltm_search_async, ltm_stats_async,
     ltm_store_async, set_ltm_handler, LtmConfig, LtmDeleteResult, LtmEntry, LtmListEntry,
     LtmListResult, LtmRetrieveResult, LtmSearchEntry, LtmSearchResult, LtmStoreResult,
+};
+
+pub use config::{
+    parse_yaml, parse_yaml_config, validate_yaml, ConfigError, ConfigResult, GotoBranch,
+    GotoConfig, LlmSettings, LtmSettings, MergeStrategy, OpikSettings, ParallelSettings, RunConfig,
+    SchemaField, StepConfig, WasmEdgeConfig, WasmNodeConfig, WasmSettings, WasmYamlConfig,
+};
+
+pub use parallel::{
+    apply_merge_strategy, detect_conflicts, detect_parallel_groups, execute_parallel_group,
+    execute_until, find_common_descendant, get_parallel_group, is_parallel_source, BranchResult,
+    ConflictInfo, ParallelError, ParallelGroup,
+};
+
+pub use params::{
+    apply_defaults, extract_params, get_action_def, get_at_path, set_at_path, validate_params,
+    ActionDef, ParamError, ParamResult,
+};
+
+pub use templates::{
+    render_template, render_template_wasm, render_template_with_config, sanitize_context_value,
+    TemplateError, TemplateResult, TemplateSecurityConfig,
+};
+
+pub use routing::{
+    build_execution_path, detect_cycles, evaluate_condition, evaluate_goto, find_entry_node,
+    resolve_next_node, ExecutionContext, RoutingError, RoutingResult, DEFAULT_MAX_ITERATIONS,
+    END_NODE, START_NODE,
+};
+
+pub use executor::{
+    execute_node_async, execute_workflow_async, execute_yaml_workflow,
+    execute_yaml_workflow_with_vars, ExecutionOptions, ExecutorError, ExecutorResult,
 };
 
 /// Error types for TEA WASM LLM operations

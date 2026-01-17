@@ -259,6 +259,7 @@ settings:
   ltm:
     backend: sqlalchemy
     url: mysql+pymysql://user:pass@localhost/dbname
+    pool_size: 5
     catalog:
       type: sqlalchemy
       url: mysql+pymysql://user:pass@localhost/dbname
@@ -321,7 +322,118 @@ sqlalchemy_catalog = create_catalog_backend(
 config = expand_ltm_config({"ltm": {"backend": "ducklake"}})
 # config["backend"] == "duckdb"
 # config["catalog"]["type"] == "sqlite"
+
+# Create SQLAlchemy backend (TEA-LTM-012)
+sqlalchemy_backend = create_ltm_backend(
+    "sqlalchemy",
+    url="postgresql://user:pass@localhost/db",
+    pool_size=10,
+    lazy=True
+)
+
+# Create SQLAlchemy catalog
+sqlalchemy_catalog = create_catalog_backend(
+    "sqlalchemy",
+    url="postgresql://user:pass@localhost/db"
+)
 ```
+
+## Entity Hierarchy (TEA-LTM-013)
+
+The `EntityHierarchy` class provides hierarchical organization for LTM data using a closure table pattern, enabling O(1) queries across multi-tenant hierarchies (e.g., org → project → user → session).
+
+### Why Closure Tables?
+
+Without proper indexing, hierarchical queries require expensive recursive CTEs or multiple round trips. The closure table pre-computes all ancestor-descendant relationships:
+
+```
+Entity: org:acme → project:alpha → user:alice → session:s1
+
+Closure Table:
+ancestor_id      | descendant_id   | depth
+-----------------|-----------------|-------
+org:acme         | org:acme        | 0
+org:acme         | project:alpha   | 1
+org:acme         | user:alice      | 2
+org:acme         | session:s1      | 3
+...
+```
+
+Query "all entries for org:acme" becomes a simple index lookup.
+
+### Quick Start
+
+```python
+from the_edge_agent.memory import EntityHierarchy
+
+# Create hierarchy with configured levels
+hierarchy = EntityHierarchy(
+    levels=["org", "project", "user", "session"],
+    url="sqlite:///hierarchy.db",  # or postgresql://...
+)
+
+# Register entities
+hierarchy.register_entity("org", "acme")
+hierarchy.register_entity("project", "alpha", parent=("org", "acme"))
+hierarchy.register_entity("user", "alice", parent=("project", "alpha"))
+hierarchy.register_entity("session", "s1", parent=("user", "alice"))
+
+# Associate LTM entries with entities
+hierarchy.associate_entry("entry_key_123", "session", "s1")
+
+# Query all entries for an org (includes all descendants)
+result = hierarchy.get_entries_for_entity("org", "acme")
+print(result["total_count"])  # All entries under org:acme
+
+# Get ancestors/descendants
+ancestors = hierarchy.get_ancestors("session", "s1")
+# [user:alice, project:alpha, org:acme]
+
+descendants = hierarchy.get_descendants("org", "acme")
+# [project:alpha, user:alice, session:s1]
+
+# Move entity to new parent (TEA-LTM-014)
+# User changes teams: move alice from project:alpha to project:beta
+hierarchy.register_entity("project", "beta", parent=("org", "acme"))
+hierarchy.move_entity("user", "alice", ("project", "beta"))
+# All descendants (sessions) move with alice, closure table is rebuilt atomically
+```
+
+### YAML Configuration
+
+```yaml
+settings:
+  ltm:
+    backend: sqlalchemy  # or any LTM backend
+    url: postgresql://user:pass@localhost/dbname
+
+    hierarchy:
+      enabled: true
+      levels: [org, project, user, session]
+      root_entity:
+        type: org
+        id: "${ORG_ID}"
+```
+
+### API Methods
+
+| Method | Description |
+|--------|-------------|
+| `register_entity(type, id, parent, metadata)` | Register entity in hierarchy |
+| `associate_entry(entry_key, entity_type, entity_id)` | Link LTM entry to entity |
+| `get_entries_for_entity(type, id, include_descendants)` | Query entries with O(1) lookup |
+| `list_entities(entity_type, parent, limit)` | List entities with filtering |
+| `get_ancestors(type, id)` | Get all ancestors (bottom-up) |
+| `get_descendants(type, id)` | Get all descendants (top-down) |
+| `move_entity(type, id, new_parent)` | Move entity to new parent, rebuilding closure |
+| `delete_entity(type, id, cascade)` | Delete entity and optionally cascade |
+
+### Level Validation
+
+- Entity type must be in configured `levels` list
+- Parent type must be exactly one level above child type
+- Root entities (first level) cannot have parents
+- Non-root entities must have parents
 
 ## Experiment Framework (TEA-BUILTIN-005.4)
 

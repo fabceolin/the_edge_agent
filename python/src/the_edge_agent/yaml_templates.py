@@ -105,11 +105,10 @@ class DotDict(dict):
                 return DotDict(value)
             return value
 
-        # For non-existent keys: return None (NOT dict methods)
-        # This is essential for safe Jinja2 template access like {% if state.x %}
-        # Exception: explicitly requested dict methods via __getattr__ or direct call
-        # We only allow dict method access if NOT a common key name
-        # that might be used as a state key (items, keys, values, etc.)
+        # For non-existent keys: preserve dict methods required for serialization
+        # This is essential for json.dumps() and other dict operations to work
+        # These methods are only accessible if the key doesn't exist in the dict
+        # (keys that exist in dict take precedence - checked above)
         _DICT_METHODS_TO_PRESERVE = frozenset(
             {
                 "get",
@@ -118,14 +117,18 @@ class DotDict(dict):
                 "copy",
                 "clear",
                 "setdefault",
+                # Required for json.dumps() and dict iteration to work
+                "keys",
+                "values",
+                "items",
             }
         )
         if key in _DICT_METHODS_TO_PRESERVE:
             return super().__getattribute__(key)
 
-        # Return None for all other missing keys (including 'items', 'keys', 'values')
-        # This ensures {{ state.items }} returns None when 'items' key doesn't exist,
-        # rather than returning the dict.items() method
+        # Return None for all other missing keys
+        # This allows safe Jinja2 template access like {% if state.x %}
+        # without requiring | default(false) for every access
         return None
 
     def __setattr__(self, key: str, value: Any) -> None:

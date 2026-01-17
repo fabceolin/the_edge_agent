@@ -306,6 +306,8 @@ async function initPrologEngine() {
     // Register Prolog handler with TEA
     registerPrologHandler(async (queryJson) => {
       const { code, facts } = JSON.parse(queryJson);
+      console.log('[TEA-DEMO] Prolog query:', code);
+      console.log('[TEA-DEMO] Prolog facts length:', facts ? facts.length : 0);
       try {
         // Consult facts if provided
         if (facts) {
@@ -317,13 +319,24 @@ async function initPrologEngine() {
         const bindings = [];
 
         for await (const result of query) {
-          if (result.status === 'success' && result.answer) {
-            bindings.push(result.answer);
+          console.log('[TEA-DEMO] Prolog result:', JSON.stringify(result));
+          // Trealla returns { status: 'success', answer: {VarName: value} }
+          // We need to collect the answer object with variable bindings
+          if (result.status === 'success') {
+            if (result.answer && typeof result.answer === 'object') {
+              // Push the binding object (e.g., {H: "paris"})
+              bindings.push(result.answer);
+            } else if (result.answer) {
+              // Handle non-object answers (shouldn't happen but be defensive)
+              bindings.push({ value: result.answer });
+            }
           }
         }
 
+        console.log('[TEA-DEMO] Prolog bindings collected:', bindings.length);
         return JSON.stringify({ bindings, success: true });
       } catch (e) {
+        console.error('[TEA-DEMO] Prolog error:', e);
         return JSON.stringify({ bindings: [], success: false, error: e.message });
       }
     });
@@ -643,38 +656,34 @@ nodes:
           atom_codes(Atom, Codes),
           length(Codes, Len).
 
-        % Helper: lowercase an atom (Trealla-compatible)
+        % Helper: lowercase an atom (Trealla-compatible, no maplist)
         lower_atom(Atom, Lower) :-
           atom_codes(Atom, Codes),
-          maplist(to_lower_code, Codes, LowerCodes),
+          lower_codes(Codes, LowerCodes),
           atom_codes(Lower, LowerCodes).
+
+        % Recursive lowercase for code list (replaces maplist)
+        lower_codes([], []).
+        lower_codes([C|Cs], [L|Ls]) :-
+          to_lower_code(C, L),
+          lower_codes(Cs, Ls).
 
         to_lower_code(C, L) :-
           C >= 65, C =< 90, !, L is C + 32.
         to_lower_code(C, C).
 
-        % Find all matching countries and pick longest match
+        % Find matching country and return its capital
+        % Uses simple first-match (countries are ordered by name length implicitly)
         hint(Answer) :-
-          atom_string(QuestionAtom, "{{ state.question }}"),
-          lower_atom(QuestionAtom, LowerQ),
-          findall(
-            Len-Cap,
-            (
-              capital(Country, Cap),
-              lower_atom(Country, LowerCountry),
-              sub_atom(LowerQ, _, _, _, LowerCountry),
-              atom_len(Country, Len)
-            ),
-            Matches
-          ),
-          Matches \= [],
-          msort(Matches, Sorted),
-          reverse(Sorted, [_-Answer|_]).
+          lower_atom('{{ state.question }}', LowerQ),
+          capital(Country, Answer),
+          lower_atom(Country, LowerCountry),
+          sub_atom(LowerQ, _, _, _, LowerCountry),
+          !.  % Cut to return first match
 
         % Fallback if no match found
         hint(unknown) :-
-          atom_string(QuestionAtom, "{{ state.question }}"),
-          lower_atom(QuestionAtom, LowerQ),
+          lower_atom('{{ state.question }}', LowerQ),
           \+ (
             capital(Country, _),
             lower_atom(Country, LowerCountry),
@@ -759,7 +768,12 @@ nodes:
         -- Check if Prolog found an answer
         for _, binding in ipairs(bindings) do
           local hint = binding.H or binding
-          if hint and hint ~= "unknown" then
+          -- Handle Trealla atom format: {functor: "paris", args: []}
+          -- In wasmoon, JS objects may not be type "table", so check functor directly
+          if hint and hint.functor then
+            hint = hint.functor
+          end
+          if hint and tostring(hint) ~= "unknown" then
             -- Prolog has authoritative answer
             -- Convert underscore to space and capitalize
             local prolog_answer = tostring(hint)

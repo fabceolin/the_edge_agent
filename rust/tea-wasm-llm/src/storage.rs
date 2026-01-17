@@ -320,7 +320,8 @@ fn create_operator(uri: &str) -> Result<(Operator, String), StorageError> {
     let host = parsed.host_str().unwrap_or("");
     let path = parsed.path().trim_start_matches('/');
 
-    // Get credentials if available
+    // Get credentials if available (only used with cloud storage features: s3, gcs, azblob)
+    #[allow(unused_variables)]
     let creds = CREDENTIALS.read().ok().and_then(|s| s.clone());
 
     let (operator, full_path) = match scheme {
@@ -687,7 +688,7 @@ pub async fn storage_exists_async(uri: &str) -> Result<String, JsValue> {
 
     let (operator, path) = create_operator(uri).map_err(|e| e.with_uri(uri).to_js_error())?;
 
-    let exists = operator.is_exist(&path).await.map_err(|e| {
+    let exists = operator.exists(&path).await.map_err(|e| {
         StorageError::new("EXISTS_CHECK_FAILED", &format!("Exists check failed: {}", e))
             .with_uri(uri)
             .to_js_error()

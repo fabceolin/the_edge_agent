@@ -288,11 +288,40 @@ except ImportError:
     DuckDBCatalog = None  # type: ignore
     DUCKDB_CATALOG_AVAILABLE = False
 
+# SQLAlchemy backends (TEA-LTM-012)
+try:
+    from .sqlalchemy_backend import SQLAlchemyBackend, check_sqlalchemy_available
+
+    SQLALCHEMY_AVAILABLE = check_sqlalchemy_available()
+except ImportError:
+    SQLAlchemyBackend = None  # type: ignore
+    SQLALCHEMY_AVAILABLE = False
+
+try:
+    from .catalog_sqlalchemy import SQLAlchemyCatalog
+except ImportError:
+    SQLAlchemyCatalog = None  # type: ignore
+
 # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
 try:
     from .duckdb_ltm import DuckDBLTMBackend
 except ImportError:
     DuckDBLTMBackend = None  # type: ignore
+
+# Entity Hierarchy (TEA-LTM-013)
+try:
+    from .entity_hierarchy import (
+        EntityHierarchy,
+        check_hierarchy_available,
+        SQLALCHEMY_AVAILABLE as ENTITY_HIERARCHY_AVAILABLE,
+    )
+except ImportError:
+    EntityHierarchy = None  # type: ignore
+    ENTITY_HIERARCHY_AVAILABLE = False
+
+    def check_hierarchy_available():
+        return False
+
 
 __all__ = [
     # Short-term memory (TEA-BUILTIN-001.1)
@@ -401,4 +430,12 @@ __all__ = [
     "DUCKDB_CATALOG_AVAILABLE",
     # DuckDB LTM Backend (TEA-BUILTIN-001.6.2)
     "DuckDBLTMBackend",
+    # SQLAlchemy backends (TEA-LTM-012)
+    "SQLAlchemyBackend",
+    "SQLAlchemyCatalog",
+    "SQLALCHEMY_AVAILABLE",
+    # Entity Hierarchy (TEA-LTM-013)
+    "EntityHierarchy",
+    "check_hierarchy_available",
+    "ENTITY_HIERARCHY_AVAILABLE",
 ]

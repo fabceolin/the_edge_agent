@@ -487,6 +487,13 @@ def parse_backend_config(config: Dict[str, Any]) -> tuple:
     if "lazy" in config:
         kwargs["lazy"] = config["lazy"]
 
+    # SQLAlchemy Backend (TEA-LTM-012)
+    # Note: url is already handled above for Turso/Postgres, reuse it
+    if "pool_size" in config:
+        kwargs["pool_size"] = config["pool_size"]
+    if "echo" in config:
+        kwargs["echo"] = config["echo"]
+
     return backend_type, kwargs
 
 

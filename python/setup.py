@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.56",
+    version="0.9.62",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -114,6 +114,8 @@ setup(
         "storage-gcs": ["gcsfs"],
         "storage-azure": ["adlfs"],
         "storage-all": ["s3fs", "gcsfs", "adlfs"],
+        # TEA-LTM-012: PostgreSQL support for SQLAlchemy LTM backend
+        "ltm-postgres": ["psycopg2-binary>=2.9.9", "sqlalchemy>=2.0.0"],
         # TEA-BUILTIN-012.2: Cloud secrets backends
         "aws": ["boto3>=1.26"],
         "azure": ["azure-identity>=1.12", "azure-keyvault-secrets>=4.7"],
@@ -163,6 +165,8 @@ setup(
             "janus-swi>=0.1.0",  # Requires SWI-Prolog 9.1+
             "scrapegraph-py>=1.0.0",  # TEA-BUILTIN-008.4: ScrapeGraphAI
             "pydantic>=2.0.0",
+            "psycopg2-binary>=2.9.9",  # TEA-LTM-012: PostgreSQL for SQLAlchemy LTM
+            "sqlalchemy>=2.0.0",  # TEA-LTM-012: SQLAlchemy LTM backend
         ],
     },
 )
