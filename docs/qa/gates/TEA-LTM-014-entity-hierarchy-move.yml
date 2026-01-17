@@ -1,0 +1,45 @@
+schema: 1
+story: TEA-LTM-014
+story_title: Entity Hierarchy Move Operation
+gate: PASS
+status_reason: All 6 acceptance criteria fully implemented and verified with 16 comprehensive tests. Clean implementation following established patterns.
+reviewer: Quinn (Test Architect)
+updated: 2026-01-17T00:00:00Z
+
+top_issues: []
+
+waiver:
+  active: false
+
+quality_score: 100
+expires: 2026-01-31T00:00:00Z
+
+evidence:
+  tests_reviewed: 16
+  tests_passing: 61  # Total entity_hierarchy tests (45 existing + 16 new)
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: ORM with parameterized queries; no injection vectors
+  performance:
+    status: PASS
+    notes: O(N × D) complexity documented and appropriate for closure rebuild operation
+  reliability:
+    status: PASS
+    notes: Atomic transaction with rollback on any failure
+  maintainability:
+    status: PASS
+    notes: Follows existing codebase patterns; well-documented method with docstring
+
+recommendations:
+  immediate: []
+  future:
+    - action: Consider adding explicit rollback test with simulated failure
+      refs: ['python/tests/test_entity_hierarchy.py']
+      suggested_owner: dev
+      priority: low
