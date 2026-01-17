@@ -1,0 +1,355 @@
+# Simple Q&A with Prolog Analysis
+#
+# Simplified version that works with Python TEA's Prolog runtime.
+# Uses basic Prolog predicates that are guaranteed to work.
+#
+# RUN:
+#   tea run examples/prolog/neurosymbolic/simple-qa-prolog.yaml \
+#       --input '{"question": "What is the capital of France?"}'
+
+name: simple-qa-prolog
+description: Simple Q&A with Prolog validation
+
+state_schema:
+  question: str
+  llm_answer: str
+  prolog_answer: str
+  is_correct: bool
+  final_answer: str
+
+nodes:
+  # ===========================================================================
+  # Step 1: LLM generates response
+  # ===========================================================================
+  - name: llm_respond
+    uses: llm.call
+    with:
+      provider: ollama
+      # Modelo idêntico ao usado no GitHub Actions:
+      # gemma-3-1b-it-Q8_0.gguf (1GB) de huggingface.co/unsloth
+      model: gemma3-1b-q8:tea
+      messages:
+        - role: system
+          content: "Answer questions with just the answer, no explanation. For capitals, just say the city name."
+        - role: user
+          content: "{{ state.question }}"
+      temperature: 0.1
+      max_tokens: 50
+    output: llm_response
+
+  # ===========================================================================
+  # Step 2: Extract LLM answer with Lua
+  # ===========================================================================
+  - name: extract_llm
+    language: lua
+    run: |
+      local response = state.llm_response or {}
+      local content = response.content or ""
+
+      -- Clean up
+      content = content:gsub("^%s+", ""):gsub("%s+$", "")
+      content = content:gsub("^The capital of %w+ is%s*", "")
+      content = content:gsub("^The capital is%s*", "")
+      content = content:gsub("^It is%s*", "")
+      content = content:gsub("[%.!,].*$", "")
+      content = content:gsub("^%s+", ""):gsub("%s+$", "")
+
+      return { llm_answer = content }
+
+  # ===========================================================================
+  # Step 3: Prolog checks against knowledge base
+  # ===========================================================================
+  - name: prolog_check
+    language: prolog
+    run: |
+      % =========================================================
+      % COMPLETE WORLD CAPITALS DATABASE (195 countries)
+      % =========================================================
+
+      % EUROPE (44 countries)
+      capital(albania, tirana).
+      capital(andorra, andorra_la_vella).
+      capital(austria, vienna).
+      capital(belarus, minsk).
+      capital(belgium, brussels).
+      capital(bosnia, sarajevo).
+      capital(bulgaria, sofia).
+      capital(croatia, zagreb).
+      capital(cyprus, nicosia).
+      capital(czech, prague).
+      capital(czechia, prague).
+      capital(denmark, copenhagen).
+      capital(estonia, tallinn).
+      capital(finland, helsinki).
+      capital(france, paris).
+      capital(germany, berlin).
+      capital(greece, athens).
+      capital(hungary, budapest).
+      capital(iceland, reykjavik).
+      capital(ireland, dublin).
+      capital(italy, rome).
+      capital(kosovo, pristina).
+      capital(latvia, riga).
+      capital(liechtenstein, vaduz).
+      capital(lithuania, vilnius).
+      capital(luxembourg, luxembourg).
+      capital(malta, valletta).
+      capital(moldova, chisinau).
+      capital(monaco, monaco).
+      capital(montenegro, podgorica).
+      capital(netherlands, amsterdam).
+      capital(holland, amsterdam).
+      capital(macedonia, skopje).
+      capital(norway, oslo).
+      capital(poland, warsaw).
+      capital(portugal, lisbon).
+      capital(romania, bucharest).
+      capital(russia, moscow).
+      capital(sanmarino, san_marino).
+      capital(serbia, belgrade).
+      capital(slovakia, bratislava).
+      capital(slovenia, ljubljana).
+      capital(spain, madrid).
+      capital(sweden, stockholm).
+      capital(switzerland, bern).
+      capital(ukraine, kyiv).
+      capital(uk, london).
+      capital(britain, london).
+      capital(england, london).
+      capital(vatican, vatican_city).
+
+      % ASIA (48 countries)
+      capital(afghanistan, kabul).
+      capital(armenia, yerevan).
+      capital(azerbaijan, baku).
+      capital(bahrain, manama).
+      capital(bangladesh, dhaka).
+      capital(bhutan, thimphu).
+      capital(brunei, bandar_seri_begawan).
+      capital(cambodia, phnom_penh).
+      capital(china, beijing).
+      capital(georgia, tbilisi).
+      capital(india, new_delhi).
+      capital(indonesia, jakarta).
+      capital(iran, tehran).
+      capital(iraq, baghdad).
+      capital(israel, jerusalem).
+      capital(japan, tokyo).
+      capital(jordan, amman).
+      capital(kazakhstan, astana).
+      capital(kuwait, kuwait_city).
+      capital(kyrgyzstan, bishkek).
+      capital(laos, vientiane).
+      capital(lebanon, beirut).
+      capital(malaysia, kuala_lumpur).
+      capital(maldives, male).
+      capital(mongolia, ulaanbaatar).
+      capital(myanmar, naypyidaw).
+      capital(burma, naypyidaw).
+      capital(nepal, kathmandu).
+      capital(northkorea, pyongyang).
+      capital(oman, muscat).
+      capital(pakistan, islamabad).
+      capital(palestine, ramallah).
+      capital(philippines, manila).
+      capital(qatar, doha).
+      capital(saudiarabia, riyadh).
+      capital(saudi, riyadh).
+      capital(singapore, singapore).
+      capital(southkorea, seoul).
+      capital(korea, seoul).
+      capital(srilanka, colombo).
+      capital(syria, damascus).
+      capital(taiwan, taipei).
+      capital(tajikistan, dushanbe).
+      capital(thailand, bangkok).
+      capital(timorleste, dili).
+      capital(turkey, ankara).
+      capital(turkmenistan, ashgabat).
+      capital(uae, abu_dhabi).
+      capital(emirates, abu_dhabi).
+      capital(uzbekistan, tashkent).
+      capital(vietnam, hanoi).
+      capital(yemen, sanaa).
+
+      % AFRICA (54 countries)
+      capital(algeria, algiers).
+      capital(angola, luanda).
+      capital(benin, porto_novo).
+      capital(botswana, gaborone).
+      capital(burkinafaso, ouagadougou).
+      capital(burundi, gitega).
+      capital(cameroon, yaounde).
+      capital(capeverde, praia).
+      capital(car, bangui).
+      capital(chad, ndjamena).
+      capital(comoros, moroni).
+      capital(congo, brazzaville).
+      capital(drc, kinshasa).
+      capital(djibouti, djibouti).
+      capital(egypt, cairo).
+      capital(equatorialguinea, malabo).
+      capital(eritrea, asmara).
+      capital(eswatini, mbabane).
+      capital(swaziland, mbabane).
+      capital(ethiopia, addis_ababa).
+      capital(gabon, libreville).
+      capital(gambia, banjul).
+      capital(ghana, accra).
+      capital(guinea, conakry).
+      capital(guineabissau, bissau).
+      capital(ivorycoast, yamoussoukro).
+      capital(kenya, nairobi).
+      capital(lesotho, maseru).
+      capital(liberia, monrovia).
+      capital(libya, tripoli).
+      capital(madagascar, antananarivo).
+      capital(malawi, lilongwe).
+      capital(mali, bamako).
+      capital(mauritania, nouakchott).
+      capital(mauritius, port_louis).
+      capital(morocco, rabat).
+      capital(mozambique, maputo).
+      capital(namibia, windhoek).
+      capital(niger, niamey).
+      capital(nigeria, abuja).
+      capital(rwanda, kigali).
+      capital(saotome, sao_tome).
+      capital(senegal, dakar).
+      capital(seychelles, victoria).
+      capital(sierraleone, freetown).
+      capital(somalia, mogadishu).
+      capital(southafrica, pretoria).
+      capital(southsudan, juba).
+      capital(sudan, khartoum).
+      capital(tanzania, dodoma).
+      capital(togo, lome).
+      capital(tunisia, tunis).
+      capital(uganda, kampala).
+      capital(zambia, lusaka).
+      capital(zimbabwe, harare).
+
+      % NORTH AMERICA (23 countries)
+      capital(antiguabarbuda, saint_johns).
+      capital(bahamas, nassau).
+      capital(barbados, bridgetown).
+      capital(belize, belmopan).
+      capital(canada, ottawa).
+      capital(costarica, san_jose).
+      capital(cuba, havana).
+      capital(dominica, roseau).
+      capital(dominicanrepublic, santo_domingo).
+      capital(elsalvador, san_salvador).
+      capital(grenada, saint_georges).
+      capital(guatemala, guatemala_city).
+      capital(haiti, port_au_prince).
+      capital(honduras, tegucigalpa).
+      capital(jamaica, kingston).
+      capital(mexico, mexico_city).
+      capital(nicaragua, managua).
+      capital(panama, panama_city).
+      capital(stkitts, basseterre).
+      capital(stlucia, castries).
+      capital(stvincent, kingstown).
+      capital(trinidadtobago, port_of_spain).
+      capital(trinidad, port_of_spain).
+      capital(usa, washington_dc).
+      capital(america, washington_dc).
+      capital(unitedstates, washington_dc).
+
+      % SOUTH AMERICA (12 countries)
+      capital(argentina, buenos_aires).
+      capital(bolivia, sucre).
+      capital(brazil, brasilia).
+      capital(brasil, brasilia).
+      capital(chile, santiago).
+      capital(colombia, bogota).
+      capital(ecuador, quito).
+      capital(guyana, georgetown).
+      capital(paraguay, asuncion).
+      capital(peru, lima).
+      capital(suriname, paramaribo).
+      capital(uruguay, montevideo).
+      capital(venezuela, caracas).
+
+      % OCEANIA (14 countries)
+      capital(australia, canberra).
+      capital(fiji, suva).
+      capital(kiribati, tarawa).
+      capital(marshallislands, majuro).
+      capital(micronesia, palikir).
+      capital(nauru, yaren).
+      capital(newzealand, wellington).
+      capital('new zealand', wellington).
+      capital(palau, ngerulmud).
+      capital(papuanewguinea, port_moresby).
+      capital(samoa, apia).
+      capital(solomonislands, honiara).
+      capital(tonga, nukualofa).
+      capital(tuvalu, funafuti).
+      capital(vanuatu, port_vila).
+
+      % Get question from state and convert to lowercase
+      state(question, Q),
+      downcase_atom(Q, QL),
+
+      % Dynamic search: find any country mentioned in question
+      % Uses findall with country name length to pick LONGEST match
+      % This avoids "car" matching in "madagascar"
+      findall(
+        Len-Cap,
+        (
+          capital(Country, Cap),
+          atom_string(Country, CountryStr),
+          sub_atom(QL, _, _, _, CountryStr),
+          atom_length(Country, Len)
+        ),
+        Matches
+      ),
+
+      % Sort by length descending (longest country name first)
+      (Matches \= [] ->
+        (
+          msort(Matches, Sorted),
+          reverse(Sorted, [_-Answer|_])
+        )
+      ;
+        Answer = unknown
+      ),
+
+      return(prolog_answer, Answer).
+
+  # ===========================================================================
+  # Step 4: Compare and format result
+  # ===========================================================================
+  - name: compare_and_format
+    language: lua
+    run: |
+      local llm = (state.llm_answer or ""):lower()
+      local prolog = tostring(state.prolog_answer or "unknown"):lower()
+
+      -- Check if they match
+      local is_correct = false
+      local final = ""
+
+      if prolog ~= "unknown" then
+        -- Prolog found an answer
+        if llm:find(prolog) or prolog:find(llm) then
+          is_correct = true
+          final = state.llm_answer .. " [verified by Prolog]"
+        else
+          is_correct = false
+          -- Capitalize prolog answer
+          local cap = prolog:gsub("^%l", string.upper)
+          cap = cap:gsub("_", " ")
+          final = cap .. " [corrected by Prolog - LLM said: " .. state.llm_answer .. "]"
+        end
+      else
+        -- Prolog doesn't know
+        final = state.llm_answer .. " [not verified - country not in KB]"
+      end
+
+      return {
+        is_correct = is_correct,
+        final_answer = final
+      }

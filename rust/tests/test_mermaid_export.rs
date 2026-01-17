@@ -9,11 +9,10 @@
 //! - Empty graphs
 //! - Cyclic graphs (while loops)
 
-use serde_json::json;
 use std::collections::HashMap;
-use the_edge_agent::engine::graph::{Edge, EdgeType, Node, StateGraph};
+use the_edge_agent::engine::graph::{Edge, Node, StateGraph};
 use the_edge_agent::engine::yaml::YamlEngine;
-use the_edge_agent::{END, START};
+use the_edge_agent::END;
 
 // =============================================================================
 // Task 1 Tests: Basic to_mermaid() functionality

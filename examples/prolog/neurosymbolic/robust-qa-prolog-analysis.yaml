@@ -1,0 +1,323 @@
+# Robust Q&A with Prolog Analysis of LLM Response
+#
+# This version ALWAYS analyzes the LLM response using Prolog.
+# The flow is: LLM responds → Prolog analyzes → Lua formats
+#
+# FEATURES:
+# - LLM generates answer first (no pre-computation)
+# - Prolog parses and validates the LLM response
+# - Prolog extracts entities and checks against knowledge base
+# - Detailed analysis metadata
+#
+# RUN:
+#   tea run examples/prolog/neurosymbolic/robust-qa-prolog-analysis.yaml \
+#       --input '{"question": "What is the capital of France?"}'
+#
+# DEBUG MODE (shows all analysis steps):
+#   tea run examples/prolog/neurosymbolic/robust-qa-prolog-analysis.yaml \
+#       --input '{"question": "What is the capital of France?", "debug": true}'
+
+name: robust-qa-prolog-analysis
+description: Prolog-based analysis of LLM responses for validation and correction
+
+state_schema:
+  question: str
+  debug: bool
+  llm_raw: str
+  extracted_answer: str
+  prolog_analysis: dict
+  final_answer: str
+  confidence: str
+  answer: str
+
+nodes:
+  # ===========================================================================
+  # Step 1: LLM generates response FIRST (no hints)
+  # ===========================================================================
+  - name: llm_respond
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            You are a helpful assistant. Answer questions directly and concisely.
+            Keep responses under 100 words.
+        - role: user
+          content: "{{ state.question }}"
+      temperature: 0.3
+      max_tokens: 150
+    output: llm_response
+
+  # ===========================================================================
+  # Step 2: Lua extracts the answer text from LLM response
+  # ===========================================================================
+  - name: extract_text
+    language: lua
+    run: |
+      local response = state.llm_response or {}
+      local content = response.content or response or ""
+
+      -- Store raw response for debugging
+      local raw = content
+
+      -- Basic cleanup
+      content = content:gsub("^%s+", ""):gsub("%s+$", "")
+
+      -- Remove common prefixes
+      local prefixes = {
+        "^The answer is:?%s*",
+        "^Answer:?%s*",
+        "^The capital of %w+ is%s*",
+        "^The capital is%s*",
+        "^It is%s*",
+        "^It's%s*",
+        "^Sure!%s*",
+        "^Of course!%s*",
+      }
+      for _, prefix in ipairs(prefixes) do
+        content = content:gsub(prefix, "")
+      end
+
+      -- Extract first sentence
+      local first = content:match("^([^%.!?]+)")
+      if first then
+        content = first:gsub("^%s+", ""):gsub("%s+$", "")
+      end
+
+      return {
+        llm_raw = raw,
+        extracted_answer = content
+      }
+
+  # ===========================================================================
+  # Step 3: Prolog ANALYZES the LLM response
+  # ===========================================================================
+  # This is where the magic happens - Prolog parses and validates
+  # what the LLM said, not what the question asked.
+
+  - name: prolog_analyze
+    language: prolog
+    run: |
+      :- dynamic capital/2, analysis_result/2.
+
+      % =========================================
+      % KNOWLEDGE BASE
+      % =========================================
+      capital(france, paris).
+      capital(germany, berlin).
+      capital(italy, rome).
+      capital(spain, madrid).
+      capital(portugal, lisbon).
+      capital(japan, tokyo).
+      capital(brazil, brasilia).
+      capital(argentina, buenos_aires).
+      capital(australia, canberra).
+      capital(canada, ottawa).
+      capital(usa, washington_dc).
+      capital(uk, london).
+      capital(china, beijing).
+      capital(india, new_delhi).
+      capital(russia, moscow).
+      capital(mexico, mexico_city).
+      capital(south_korea, seoul).
+      capital(netherlands, amsterdam).
+      capital(switzerland, bern).
+      capital(austria, vienna).
+      capital(poland, warsaw).
+      capital(sweden, stockholm).
+      capital(norway, oslo).
+      capital(greece, athens).
+      capital(turkey, ankara).
+      capital(egypt, cairo).
+      capital(chile, santiago).
+      capital(thailand, bangkok).
+      capital(vietnam, hanoi).
+      capital(indonesia, jakarta).
+      capital(new_zealand, wellington).
+      capital(ireland, dublin).
+
+      % =========================================
+      % ANALYSIS PREDICATES
+      % =========================================
+
+      % Check if a city is a known capital
+      is_known_capital(City) :-
+        downcase_atom(City, LowerCity),
+        capital(_, LowerCity).
+
+      % Find which country a city is capital of
+      capital_of(City, Country) :-
+        downcase_atom(City, LowerCity),
+        capital(Country, LowerCity).
+
+      % Check if answer matches expected for a country
+      verify_capital(Country, City, correct) :-
+        downcase_atom(Country, LC),
+        downcase_atom(City, LCity),
+        capital(LC, LCity), !.
+      verify_capital(Country, _, incorrect(Expected)) :-
+        downcase_atom(Country, LC),
+        capital(LC, Expected), !.
+      verify_capital(_, _, unknown).
+
+      % Extract country from question
+      extract_country(Question, Country) :-
+        downcase_atom(Question, LQ),
+        capital(Country, _),
+        atom_string(Country, CountryStr),
+        sub_atom(LQ, _, _, _, CountryStr), !.
+
+      % =========================================
+      % MAIN ANALYSIS
+      % =========================================
+
+      % Get inputs from state
+      state(question, Question),
+      state(extracted_answer, LlmAnswer),
+
+      % Convert to atoms for processing
+      (atom(Question) -> QAtom = Question ; atom_string(QAtom, Question)),
+      (atom(LlmAnswer) -> AAtom = LlmAnswer ; atom_string(AAtom, LlmAnswer)),
+      downcase_atom(AAtom, LowerAnswer),
+
+      % Step 1: Extract country from question
+      (extract_country(QAtom, Country) ->
+        true
+      ;
+        Country = unknown
+      ),
+
+      % Step 2: Check if LLM answer is a known capital
+      (is_known_capital(LowerAnswer) ->
+        (
+          capital_of(LowerAnswer, AnswerCountry),
+          IsKnownCapital = true
+        )
+      ;
+        (
+          AnswerCountry = unknown,
+          IsKnownCapital = false
+        )
+      ),
+
+      % Step 3: Verify correctness if we know the country
+      (Country \= unknown ->
+        verify_capital(Country, LowerAnswer, Verification)
+      ;
+        Verification = no_country_detected
+      ),
+
+      % Step 4: Get expected answer if available
+      (Country \= unknown, capital(Country, Expected) ->
+        ExpectedCapital = Expected
+      ;
+        ExpectedCapital = unknown
+      ),
+
+      % Step 5: Determine confidence level
+      (Verification = correct ->
+        Confidence = verified
+      ; Verification = incorrect(_) ->
+        Confidence = corrected
+      ; IsKnownCapital = true ->
+        Confidence = partial
+      ;
+        Confidence = unverified
+      ),
+
+      % Return comprehensive analysis
+      return(prolog_analysis, [
+        question_country = Country,
+        llm_answer = LowerAnswer,
+        is_known_capital = IsKnownCapital,
+        answer_is_capital_of = AnswerCountry,
+        expected_capital = ExpectedCapital,
+        verification = Verification,
+        confidence = Confidence
+      ]).
+
+  # ===========================================================================
+  # Step 4: Lua formats final output based on Prolog analysis
+  # ===========================================================================
+  - name: format_result
+    language: lua
+    run: |
+      local analysis = state.prolog_analysis or {}
+      local extracted = state.extracted_answer or ""
+      local raw = state.llm_raw or ""
+      local debug = state.debug or false
+
+      -- Parse analysis (it comes as a list of key=value pairs)
+      local parsed = {}
+      if type(analysis) == "table" then
+        for _, item in ipairs(analysis) do
+          if type(item) == "string" then
+            local k, v = item:match("([%w_]+)%s*=%s*(.+)")
+            if k then parsed[k] = v end
+          elseif type(item) == "table" then
+            -- Already parsed
+            for k, v in pairs(item) do
+              parsed[k] = v
+            end
+          end
+        end
+      end
+
+      -- Determine final answer
+      local final = extracted
+      local confidence = parsed.confidence or "unverified"
+      local verification = parsed.verification or "unknown"
+
+      -- If Prolog found the answer is incorrect, use the expected
+      if verification and type(verification) == "string" and verification:find("incorrect") then
+        local expected = parsed.expected_capital
+        if expected and expected ~= "unknown" then
+          -- Capitalize
+          final = expected:gsub("^%l", string.upper)
+          final = final:gsub("_", " ")
+        end
+      elseif parsed.is_known_capital == "true" or parsed.is_known_capital == true then
+        -- Use the validated answer
+        final = extracted:gsub("^%l", string.upper)
+      end
+
+      -- Build confidence indicator
+      local indicator = ""
+      if confidence == "verified" then
+        indicator = " [verified by Prolog]"
+      elseif confidence == "corrected" then
+        indicator = " [corrected by Prolog]"
+      elseif confidence == "partial" then
+        indicator = " [known capital]"
+      else
+        indicator = " [unverified]"
+      end
+
+      -- Build result
+      local result = {
+        answer = final .. indicator,
+        confidence = confidence
+      }
+
+      -- Add debug info if requested
+      if debug then
+        result.debug = {
+          llm_raw_response = raw,
+          extracted_answer = extracted,
+          prolog_analysis = {
+            question_country = parsed.question_country,
+            llm_answer = parsed.llm_answer,
+            is_known_capital = parsed.is_known_capital,
+            answer_is_capital_of = parsed.answer_is_capital_of,
+            expected_capital = parsed.expected_capital,
+            verification = tostring(verification),
+            confidence = confidence
+          }
+        }
+      end
+
+      return result
+
+# Flow: llm_respond -> extract_text -> prolog_analyze -> format_result -> __end__
