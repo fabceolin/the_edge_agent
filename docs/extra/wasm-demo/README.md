@@ -8,10 +8,49 @@ Visit: https://fabceolin.github.io/the_edge_agent/wasm-demo/
 
 ## Features
 
-- **Chat Interface**: Interactive chat with Gemma 3 1B running locally in your browser
-- **YAML Workflow**: Execute TEA YAML workflows with LLM actions
+- **YAML Workflow Engine**: Full TEA YAML workflow execution in the browser
+- **Tera Templates**: Jinja2-compatible template engine with filters
+- **Conditional Routing**: Dynamic workflow branching with `goto`/`when` conditions
+- **Simulated Parallel Execution**: Fan-out/fan-in patterns for concurrent workflows
+- **Browser LLM**: Gemma 3 1B running locally via WebGPU/WASM
 - **Model Caching**: IndexedDB-based caching for faster subsequent loads
-- **Multi-threading**: Automatic detection and use of multi-threaded WASM when available
+- **Multi-threading**: Automatic detection and use of multi-threaded WASM
+
+## Example Workflows
+
+The demo includes 5 example workflows showcasing different capabilities:
+
+### 1. Tera Templates & Filters (No LLM)
+Demonstrates the Jinja2-compatible template engine:
+- Variable interpolation: `{{ state.key }}`
+- Filters: `upper`, `lower`, `tojson`, `length`, `default`
+- Nested access: `{{ state.user.name }}`
+
+### 2. Conditional Routing (No LLM)
+Shows dynamic workflow branching:
+- `goto` with `when` conditions for branching
+- Score-based routing logic
+- Multiple conditions evaluated in order
+- Default fallback paths
+
+### 3. Variables & Loops (No LLM)
+Demonstrates advanced template features:
+- `settings.variables` for reusable values
+- Loop iteration with `{% for %}`
+- Conditional blocks with `{% if %}`
+
+### 4. Parallel Fan-Out (No LLM)
+Shows simulated parallel execution:
+- Fan-out: single node spawns multiple parallel paths
+- Fan-in: collect results from parallel paths
+- Merge strategies: `isolated`, `merge_deep`, `last_write_wins`
+
+### 5. Neurosymbolic Q&A (Requires LLM)
+Advanced workflow combining multiple engines:
+- LLM for natural language understanding
+- Lua for answer extraction and normalization
+- Prolog for knowledge base validation
+- Complete world capitals database (195 countries)
 
 ## Local Development
 

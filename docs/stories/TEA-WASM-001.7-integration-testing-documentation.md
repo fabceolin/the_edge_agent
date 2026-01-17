@@ -36,11 +36,11 @@ Ready for Review
   - [ ] ~~Add visual test output~~
   - [ ] ~~CI integration for browser tests~~
 
-- [ ] Update wasm-demo (AC: 3) (deferred - no wasm-demo directory exists)
-  - [ ] ~~Add conditional routing example~~
-  - [ ] ~~Add template filter examples~~
-  - [ ] ~~Add parallel workflow example~~
-  - [ ] ~~Update UI to show new features~~
+- [x] Update wasm-demo (AC: 3)
+  - [x] Add conditional routing example
+  - [x] Add template filter examples
+  - [x] Add parallel workflow example
+  - [x] Update UI to show new features (example selector dropdown)
 
 - [x] Write README documentation (AC: 4)
   - [x] Document new YAML parsing capability
@@ -309,7 +309,9 @@ Claude Opus 4.5
 - Added sections: YAML Workflow Engine, Template Syntax, Conditional Routing, Variables, Loops, Nested Output Paths, API Reference
 - Created CHANGELOG.md documenting all TEA-WASM-001 changes
 - Browser test harness deferred (existing test.html sufficient for manual testing)
-- wasm-demo deferred (directory doesn't exist, would require creating new infrastructure)
+- Updated wasm-demo with 5 example workflows showcasing all new YAML engine features
+- Added example selector dropdown to wasm-demo UI
+- Examples include: Tera Templates, Conditional Routing, Variables & Loops, Parallel Fan-Out, Neurosymbolic Q&A
 
 ### File List
 | File | Action | Description |
@@ -317,6 +319,10 @@ Claude Opus 4.5
 | `rust/tea-wasm-llm/tests/test_examples.rs` | Created | 13 example YAML workflow integration tests |
 | `rust/tea-wasm-llm/README.md` | Modified | Added YAML engine documentation |
 | `rust/tea-wasm-llm/CHANGELOG.md` | Created | Documented all TEA-WASM-001 changes |
+| `docs/extra/wasm-demo/app.js` | Modified | Added 5 example workflows with selector |
+| `docs/extra/wasm-demo/index.html` | Modified | Added example selector dropdown |
+| `docs/extra/wasm-demo/style.css` | Modified | Added styling for example selector |
+| `docs/extra/wasm-demo/README.md` | Modified | Documented new features and examples |
 
 ## QA Results
 
