@@ -55,11 +55,12 @@ RUN ls -lh target/release/tea && \
 # =============================================================================
 # Stage 3: Runtime - Image with bundled model
 # =============================================================================
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libssl3 \
+    libssl3t64 \
+    libgomp1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/cache/apt/archives/*
