@@ -166,6 +166,7 @@ jobs:
                --collect-all pydantic \
                --collect-all pydot \
                --collect-all llama_cpp \
+               --collect-all lupa \
                --exclude-module tkinter \
                --exclude-module matplotlib \
                --strip \
@@ -350,6 +351,7 @@ jobs:
             --collect-all pydantic \
             --collect-all pydot \
             --collect-all llama_cpp \
+            --collect-all lupa \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -510,6 +512,7 @@ jobs:
             --collect-all firebase_admin `
             --collect-all pydantic `
             --collect-all pydot `
+            --collect-all lupa `
             --exclude-module tkinter `
             --exclude-module matplotlib `
             src/the_edge_agent/cli.py
@@ -670,6 +673,7 @@ jobs:
             --collect-all firebase_admin \
             --collect-all pydantic \
             --collect-all pydot \
+            --collect-all lupa \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \

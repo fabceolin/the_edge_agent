@@ -450,6 +450,7 @@ jobs:
             --collect-all janus_swi \
             --collect-all pydantic \
             --collect-all pydot \
+            --collect-all lupa \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
@@ -648,6 +649,7 @@ jobs:
             --collect-all janus_swi \
             --collect-all pydantic \
             --collect-all pydot \
+            --collect-all lupa \
             --exclude-module tkinter \
             --exclude-module matplotlib \
             --strip \
