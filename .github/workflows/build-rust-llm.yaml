@@ -1,21 +1,25 @@
 # =============================================================================
 # Build Rust LLM - Reusable Workflow
 # =============================================================================
-# Purpose: Builds 6 Rust LLM binaries and AppImages
+# Purpose: Builds 8 Rust LLM binaries and AppImages
 #   - Linux x86_64 LLM binary (Vulkan + OpenMP)
 #   - Linux ARM64 LLM binary (Vulkan + OpenMP)
-#   - Linux x86_64 LLM AppImage (Phi-4 model)
-#   - Linux ARM64 LLM AppImage (Phi-4 model)
-#   - Linux x86_64 LLM AppImage (Gemma 3 1B model)
-#   - Linux ARM64 LLM AppImage (Gemma 3 1B model)
+#   - Linux x86_64 LLM AppImage (Phi-4 model) - chat/instruction
+#   - Linux ARM64 LLM AppImage (Phi-4 model) - chat/instruction
+#   - Linux x86_64 LLM AppImage (Gemma 3 1B model) - chat/instruction
+#   - Linux ARM64 LLM AppImage (Gemma 3 1B model) - chat/instruction
+#   - Linux x86_64 LLM AppImage (EmbeddingGemma 300M) - vector embeddings
+#   - Linux ARM64 LLM AppImage (EmbeddingGemma 300M) - vector embeddings
 #
 # Inputs:
 #   - ref: Git ref to build (default: github.ref)
 #
 # Outputs:
-#   - Artifacts: rust-tea-rust-linux-x86_64-llm, llm-appimage-phi4-x86_64, etc.
+#   - Artifacts: rust-tea-rust-linux-x86_64-llm, llm-appimage-phi4-x86_64,
+#                llm-appimage-embeddinggemma-x86_64, etc.
 #
 # Part of Story: TEA-RELEASE-005 (Workflow Modularization)
+# TEA-RUST-045: Added EmbeddingGemma builds for llm.embed action
 # =============================================================================
 
 name: Build Rust LLM
@@ -579,51 +583,6 @@ jobs:
             exit 1
           fi
 
-      # TEA-RUST-045: Smoke test for llm.embed action
-      - name: Smoke test embedding (TEA-RUST-045)
-        run: |
-          # Create a simple embedding workflow
-          cat > test-embed.yaml << 'EOF'
-          name: test-embedding
-          state_schema:
-            text: str
-            embedding: list
-            dimensions: int
-
-          initial_state:
-            text: "Hello world"
-
-          nodes:
-            - name: embed
-              uses: llm.embed
-              with:
-                text: "{{ state.text }}"
-              outputs:
-                embedding: embedding
-                dimensions: dimensions
-
-          edges:
-            - from: __start__
-              to: embed
-            - from: embed
-              to: __end__
-          EOF
-
-          # Run the workflow and capture output
-          output=$(./tea-rust-llm-gemma3-1b-*-x86_64.AppImage run test-embed.yaml 2>&1)
-          echo "$output"
-
-          # Verify embedding was generated (look for dimensions in output)
-          if echo "$output" | grep -q '"dimensions"'; then
-            echo "✓ Embedding smoke test passed"
-          else
-            echo "✗ Embedding smoke test failed - no dimensions found"
-            exit 1
-          fi
-
-          # Cleanup
-          rm -f test-embed.yaml
-
       - name: Check AppImage size
         run: |
           size=$(stat -c%s tea-rust-llm-gemma3-1b-*-x86_64.AppImage)
@@ -763,7 +722,147 @@ jobs:
             exit 1
           fi
 
-      # TEA-RUST-045: Smoke test for llm.embed action
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-rust-llm-gemma3-1b-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-appimage-gemma3-1b-aarch64
+          path: tea-rust-llm-gemma3-1b-*-aarch64.AppImage
+          retention-days: 1
+
+  # ============================================================
+  # EmbeddingGemma 300M AppImage for x86_64 (~500MB, embedding-focused)
+  # TEA-RUST-045: Dedicated embedding model for llm.embed action
+  # ============================================================
+  build-rust-llm-embeddinggemma-appimage-x86_64:
+    runs-on: ubuntu-24.04
+    needs: [build-rust-llm-linux-x86_64]
+    name: Rust LLM AppImage x86_64 (EmbeddingGemma)
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libgomp1
+
+      - name: Download LLM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-x86_64-llm
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+
+      - name: Download EmbeddingGemma 300M model from HuggingFace
+        run: |
+          mkdir -p models
+          echo "Downloading EmbeddingGemma 300M Q8_0 model (~329MB)..."
+          wget -q --show-progress \
+            "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf" \
+            -O models/embeddinggemma-300M-Q8_0.gguf
+          ls -lh models/
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=TEA LLM Rust EmbeddingGemma
+          Comment=Lightweight state graph workflow engine with embedding LLM
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea-llm.desktop
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-llm.AppDir/usr/bin
+          mkdir -p tea-llm.AppDir/usr/lib
+          mkdir -p tea-llm.AppDir/usr/share/models
+          chmod +x tea-rust-linux-x86_64-llm
+          cp tea-rust-linux-x86_64-llm tea-llm.AppDir/usr/bin/tea
+          cp models/embeddinggemma-300M-Q8_0.gguf tea-llm.AppDir/usr/share/models/
+
+          # Bundle libgomp for OpenMP portability
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          if [ -n "$LIBGOMP_PATH" ]; then
+            cp "$LIBGOMP_PATH" tea-llm.AppDir/usr/lib/
+            echo "Bundled libgomp from: $LIBGOMP_PATH"
+          else
+            echo "Warning: libgomp.so.1 not found"
+          fi
+
+      - name: Run linuxdeploy
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir tea-llm.AppDir \
+            --executable tea-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-llm.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          rm -f tea-llm.AppDir/AppRun
+          cat > tea-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          # Auto-detect model in bundled models directory
+          if [ -z "$TEA_MODEL_PATH" ]; then
+            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
+            if [ -n "$MODEL_FILE" ]; then
+              export TEA_MODEL_PATH="$MODEL_FILE"
+            fi
+          fi
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage tea-llm.AppDir "tea-rust-llm-embeddinggemma-${VERSION}-x86_64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-rust-llm-embeddinggemma-*-x86_64.AppImage
+          ./tea-rust-llm-embeddinggemma-*-x86_64.AppImage --version
+          impl=$(./tea-rust-llm-embeddinggemma-*-x86_64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      # TEA-RUST-045: Smoke test for llm.embed action (EmbeddingGemma supports embeddings)
       - name: Smoke test embedding (TEA-RUST-045)
         run: |
           # Create a simple embedding workflow
@@ -794,7 +893,7 @@ jobs:
           EOF
 
           # Run the workflow and capture output
-          output=$(./tea-rust-llm-gemma3-1b-*-aarch64.AppImage run test-embed.yaml 2>&1)
+          output=$(./tea-rust-llm-embeddinggemma-*-x86_64.AppImage run test-embed.yaml 2>&1)
           echo "$output"
 
           # Verify embedding was generated (look for dimensions in output)
@@ -810,13 +909,198 @@ jobs:
 
       - name: Check AppImage size
         run: |
-          size=$(stat -c%s tea-rust-llm-gemma3-1b-*-aarch64.AppImage)
+          size=$(stat -c%s tea-rust-llm-embeddinggemma-*-x86_64.AppImage)
           size_mb=$((size / 1024 / 1024))
           echo "AppImage size: ${size_mb}MB"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: llm-appimage-gemma3-1b-aarch64
-          path: tea-rust-llm-gemma3-1b-*-aarch64.AppImage
+          name: llm-appimage-embeddinggemma-x86_64
+          path: tea-rust-llm-embeddinggemma-*-x86_64.AppImage
+          retention-days: 1
+
+  # ============================================================
+  # EmbeddingGemma 300M AppImage for ARM64 (~500MB, embedding-focused)
+  # TEA-RUST-045: Dedicated embedding model for llm.embed action
+  # ============================================================
+  build-rust-llm-embeddinggemma-appimage-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: [build-rust-llm-linux-arm64]
+    name: Rust LLM AppImage aarch64 (EmbeddingGemma)
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file libfuse2 libgomp1
+
+      - name: Download LLM binary
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-tea-rust-linux-arm64-llm
+          path: .
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+
+      - name: Download EmbeddingGemma 300M model from HuggingFace
+        run: |
+          mkdir -p models
+          echo "Downloading EmbeddingGemma 300M Q8_0 model (~329MB)..."
+          wget -q --show-progress \
+            "https://huggingface.co/ggml-org/embeddinggemma-300M-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf" \
+            -O models/embeddinggemma-300M-Q8_0.gguf
+          ls -lh models/
+
+      - name: Create .desktop file
+        run: |
+          cat > tea-llm.desktop << 'EOF'
+          [Desktop Entry]
+          Name=TEA LLM Rust EmbeddingGemma
+          Comment=Lightweight state graph workflow engine with embedding LLM
+          Exec=tea
+          Icon=tea
+          Type=Application
+          Categories=Development;
+          Terminal=true
+          EOF
+          sed -i 's/^[[:space:]]*//' tea-llm.desktop
+
+      - name: Create placeholder icon
+        run: |
+          cat > tea.svg << 'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+            <rect width="256" height="256" fill="#2d3748"/>
+            <text x="128" y="160" font-family="monospace" font-size="120" fill="#48bb78" text-anchor="middle">t</text>
+          </svg>
+          EOF
+
+      - name: Create AppDir structure
+        run: |
+          mkdir -p tea-llm.AppDir/usr/bin
+          mkdir -p tea-llm.AppDir/usr/lib
+          mkdir -p tea-llm.AppDir/usr/share/models
+          chmod +x tea-rust-linux-arm64-llm
+          cp tea-rust-linux-arm64-llm tea-llm.AppDir/usr/bin/tea
+          cp models/embeddinggemma-300M-Q8_0.gguf tea-llm.AppDir/usr/share/models/
+
+          # Bundle libgomp for OpenMP portability
+          LIBGOMP_PATH=$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1)
+          if [ -n "$LIBGOMP_PATH" ]; then
+            cp "$LIBGOMP_PATH" tea-llm.AppDir/usr/lib/
+            echo "Bundled libgomp from: $LIBGOMP_PATH"
+          else
+            echo "Warning: libgomp.so.1 not found"
+          fi
+
+      - name: Run linuxdeploy
+        run: |
+          ./linuxdeploy-aarch64.AppImage \
+            --appdir tea-llm.AppDir \
+            --executable tea-llm.AppDir/usr/bin/tea \
+            --desktop-file tea-llm.desktop \
+            --icon-file tea.svg \
+            --output appimage
+
+      - name: Create custom AppRun
+        run: |
+          rm -f tea-llm.AppDir/AppRun
+          cat > tea-llm.AppDir/AppRun << 'EOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          # Auto-detect model in bundled models directory
+          if [ -z "$TEA_MODEL_PATH" ]; then
+            MODEL_FILE=$(find "${HERE}/usr/share/models" -name "*.gguf" -type f | head -1)
+            if [ -n "$MODEL_FILE" ]; then
+              export TEA_MODEL_PATH="$MODEL_FILE"
+            fi
+          fi
+          exec "${HERE}/usr/bin/tea" "$@"
+          EOF
+          chmod +x tea-llm.AppDir/AppRun
+
+      - name: Rebuild AppImage with custom AppRun
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="dev"
+          fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage
+          chmod +x appimagetool-aarch64.AppImage
+          ARCH=aarch64 ./appimagetool-aarch64.AppImage tea-llm.AppDir "tea-rust-llm-embeddinggemma-${VERSION}-aarch64.AppImage"
+
+      - name: Smoke test AppImage
+        run: |
+          chmod +x tea-rust-llm-embeddinggemma-*-aarch64.AppImage
+          ./tea-rust-llm-embeddinggemma-*-aarch64.AppImage --version
+          impl=$(./tea-rust-llm-embeddinggemma-*-aarch64.AppImage --impl)
+          if [ "$impl" != "rust" ]; then
+            echo "Error: Expected 'rust', got '$impl'"
+            exit 1
+          fi
+
+      # TEA-RUST-045: Smoke test for llm.embed action (EmbeddingGemma supports embeddings)
+      - name: Smoke test embedding (TEA-RUST-045)
+        run: |
+          # Create a simple embedding workflow
+          cat > test-embed.yaml << 'EOF'
+          name: test-embedding
+          state_schema:
+            text: str
+            embedding: list
+            dimensions: int
+
+          initial_state:
+            text: "Hello world"
+
+          nodes:
+            - name: embed
+              uses: llm.embed
+              with:
+                text: "{{ state.text }}"
+              outputs:
+                embedding: embedding
+                dimensions: dimensions
+
+          edges:
+            - from: __start__
+              to: embed
+            - from: embed
+              to: __end__
+          EOF
+
+          # Run the workflow and capture output
+          output=$(./tea-rust-llm-embeddinggemma-*-aarch64.AppImage run test-embed.yaml 2>&1)
+          echo "$output"
+
+          # Verify embedding was generated (look for dimensions in output)
+          if echo "$output" | grep -q '"dimensions"'; then
+            echo "✓ Embedding smoke test passed"
+          else
+            echo "✗ Embedding smoke test failed - no dimensions found"
+            exit 1
+          fi
+
+          # Cleanup
+          rm -f test-embed.yaml
+
+      - name: Check AppImage size
+        run: |
+          size=$(stat -c%s tea-rust-llm-embeddinggemma-*-aarch64.AppImage)
+          size_mb=$((size / 1024 / 1024))
+          echo "AppImage size: ${size_mb}MB"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-appimage-embeddinggemma-aarch64
+          path: tea-rust-llm-embeddinggemma-*-aarch64.AppImage
           retention-days: 1
