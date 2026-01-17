@@ -1,0 +1,101 @@
+# TEA-DIST-002: Docker Rust LLM Image - Phi-4 Mini
+#
+# Full TEA Rust image with bundled Phi-4 mini GGUF model (~2.5GB).
+# Self-contained for offline LLM inference without external model downloads.
+#
+# Build: docker build -t tea:rust-phi4-mini -f docker/Dockerfile.rust-phi4-mini .
+# Size: ~3.5GB target
+#
+# Model: microsoft/phi-4-mini
+# Source: Ollama Registry (https://ollama.com/library/phi4-mini)
+
+# =============================================================================
+# Stage 1: Model Downloader
+# =============================================================================
+FROM ubuntu:24.04 AS model-downloader
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download Phi-4 mini model from Ollama registry (~2.5GB)
+RUN mkdir -p /models && \
+    curl -L -o /models/phi4-mini.gguf \
+    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db"
+
+# Verify model was downloaded
+RUN ls -lh /models/ && \
+    test -f /models/phi4-mini.gguf
+
+# =============================================================================
+# Stage 2: Builder - Compile Rust binary with LLM support
+# =============================================================================
+FROM rust:latest AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY rust/ ./
+
+# Build with all features + scryer + llm-local for embedded inference
+RUN cargo build --release --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer,llm-local"
+
+RUN ls -lh target/release/tea && \
+    ./target/release/tea --version
+
+# =============================================================================
+# Stage 3: Runtime - Image with bundled model
+# =============================================================================
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/*
+
+# Copy the compiled binary
+COPY --from=builder /build/target/release/tea /usr/local/bin/tea
+
+# Copy bundled model
+COPY --from=model-downloader /models /opt/tea-models
+
+# Verify binary and model
+RUN tea --version && \
+    test -f /opt/tea-models/phi4-mini.gguf && \
+    ls -lh /opt/tea-models/
+
+# Set environment variables for model
+ENV TEA_MODEL_PATH="/opt/tea-models/phi4-mini.gguf"
+ENV TEA_MODEL_NAME="phi4-mini"
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+USER tea
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Rust Phi4-Mini - Full features with bundled Phi-4 mini model"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="rust-phi4-mini"
+LABEL tea.runtime="rust"
+LABEL tea.model="phi4-mini"
+LABEL tea.model.size="2.5GB"
+LABEL tea.model.source="ollama"
+
+ENTRYPOINT ["tea"]
+CMD ["--help"]

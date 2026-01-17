@@ -59,8 +59,9 @@ workflows
 *.yaml
 !docker-compose.yaml
 
-# Rust (separate build)
-rust
+# Rust build artifacts (source code needed for Rust Docker builds)
+rust/target
+rust/.cargo
 
 # Claude/AI files
 .claude

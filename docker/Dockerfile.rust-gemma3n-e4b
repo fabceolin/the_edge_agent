@@ -1,0 +1,101 @@
+# TEA-DIST-002: Docker Rust LLM Image - Gemma 3N E4B
+#
+# Full TEA Rust image with bundled Gemma 3N E4B GGUF model (~7.5GB).
+# Self-contained for offline LLM inference without external model downloads.
+#
+# Build: docker build -t tea:rust-gemma3n-e4b -f docker/Dockerfile.rust-gemma3n-e4b .
+# Size: ~8.5GB target
+#
+# Model: google/gemma-3n-e4b
+# Source: Ollama Registry (https://ollama.com/library/gemma3n)
+
+# =============================================================================
+# Stage 1: Model Downloader
+# =============================================================================
+FROM ubuntu:24.04 AS model-downloader
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download Gemma 3N E4B model from Ollama registry (~7.5GB)
+RUN mkdir -p /models && \
+    curl -L -o /models/gemma3n-e4b.gguf \
+    "https://registry.ollama.ai/v2/library/gemma3n/blobs/sha256:38e8dcc30df4eb0e29eaf5c74ba6ce3f2cd66badad50768fc14362acfb8b8cb6"
+
+# Verify model was downloaded
+RUN ls -lh /models/ && \
+    test -f /models/gemma3n-e4b.gguf
+
+# =============================================================================
+# Stage 2: Builder - Compile Rust binary with LLM support
+# =============================================================================
+FROM rust:latest AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY rust/ ./
+
+# Build with all features + scryer + llm-local for embedded inference
+RUN cargo build --release --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer,llm-local"
+
+RUN ls -lh target/release/tea && \
+    ./target/release/tea --version
+
+# =============================================================================
+# Stage 3: Runtime - Image with bundled model
+# =============================================================================
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/*
+
+# Copy the compiled binary
+COPY --from=builder /build/target/release/tea /usr/local/bin/tea
+
+# Copy bundled model
+COPY --from=model-downloader /models /opt/tea-models
+
+# Verify binary and model
+RUN tea --version && \
+    test -f /opt/tea-models/gemma3n-e4b.gguf && \
+    ls -lh /opt/tea-models/
+
+# Set environment variables for model
+ENV TEA_MODEL_PATH="/opt/tea-models/gemma3n-e4b.gguf"
+ENV TEA_MODEL_NAME="gemma3n-e4b"
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+USER tea
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Rust Gemma3N-E4B - Full features with bundled Gemma 3N E4B model"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="rust-gemma3n-e4b"
+LABEL tea.runtime="rust"
+LABEL tea.model="gemma3n-e4b"
+LABEL tea.model.size="7.5GB"
+LABEL tea.model.source="ollama"
+
+ENTRYPOINT ["tea"]
+CMD ["--help"]
