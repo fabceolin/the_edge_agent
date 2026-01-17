@@ -128,7 +128,7 @@ jobs:
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
-                         firebase-admin duckdb && \
+                         firebase-admin duckdb psycopg2-binary sqlalchemy && \
              CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF' FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
@@ -305,7 +305,7 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin duckdb psycopg2-binary sqlalchemy
 
           # Install llama-cpp-python from PyPI with Vulkan support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
@@ -474,7 +474,7 @@ jobs:
                       openai "numpy<2" chromadb requests RestrictedPython `
                       "pycozo[embedded]" pandas `
                       s3fs gcsfs adlfs lupa kuzu `
-                      firebase-admin duckdb
+                      firebase-admin duckdb psycopg2-binary sqlalchemy
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -635,7 +635,7 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin duckdb psycopg2-binary sqlalchemy
           pip install -e . --no-deps
           pip install pyinstaller
 

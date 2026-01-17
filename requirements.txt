@@ -31,3 +31,7 @@ jsonschema>=4.20.0
 
 # Optional: Graph database actions (TEA-BUILTIN-001.4)
 # pycozo[embedded]>=0.7.0
+
+# Optional: PostgreSQL support for SQLAlchemy LTM backend (TEA-LTM-012)
+# psycopg2-binary>=2.9.9
+# sqlalchemy>=2.0.0

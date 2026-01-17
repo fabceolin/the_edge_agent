@@ -15,6 +15,17 @@ Run local LLM inference directly in the browser with a single import. No npm pee
 - YAML workflow execution with LLM actions
 - Backward compatible with legacy callback API
 
+### YAML Engine Features (TEA-WASM-001)
+
+- **Full YAML parsing** - TEA format with nodes, edges, variables
+- **Tera template engine** - Jinja2-like syntax (`{{ state.key }}`)
+- **Template filters** - `upper`, `lower`, `tojson`, `length`, `first`, `last`
+- **Conditional routing** - `goto` blocks with `if` conditions
+- **Simulated parallel execution** - Fan-out/fan-in patterns
+- **State merge strategies** - Isolated, LastWriteWins, MergeDeep, FailOnConflict
+- **Action parameter standardization** - Validation, defaults, nested output paths
+- **17+ built-in actions** - LLM, storage, memory, scripting
+
 ## Quick Start (Batteries-Included API)
 
 ```typescript
@@ -615,6 +626,200 @@ edges:
 | Lua | [wasmoon](https://github.com/ceifa/wasmoon) | ~200KB | Validation, data transformation |
 | **Prolog** | [**swipl-wasm**](https://npmjs.com/package/swipl-wasm) | ~5-10MB | **Full SWI-Prolog with CLP(FD) (Recommended)** |
 | Prolog | [trealla](https://github.com/trealla-prolog/trealla) | ~500KB | Lightweight, basic logic |
+
+## YAML Workflow Engine
+
+The YAML engine provides a declarative way to define agent workflows with templates, conditionals, and state management.
+
+### Basic YAML Workflow
+
+```yaml
+name: greeting-agent
+state_schema:
+  name: str
+  greeting: str
+
+nodes:
+  - name: greet
+    action: return
+    with:
+      value:
+        message: "Hello, {{ state.name }}!"
+    output: greeting
+```
+
+```typescript
+import { execute_yaml_workflow, parse_yaml_config } from 'tea-wasm-llm';
+
+const result = await execute_yaml_workflow(yaml, '{"name": "World"}');
+console.log(JSON.parse(result));
+// { greeting: { message: "Hello, World!" } }
+```
+
+### Template Syntax (Tera)
+
+Uses Tera templates, which are Jinja2-compatible:
+
+| Feature | Syntax | Example |
+|---------|--------|---------|
+| Variable | `{{ state.key }}` | `{{ state.name }}` |
+| Filter | `{{ value \| filter }}` | `{{ state.name \| upper }}` |
+| Math | `{{ a + b }}` | `{{ state.count * 2 }}` |
+| Conditional | `{% if %}...{% endif %}` | `{% if state.active %}...{% endif %}` |
+| Loop | `{% for item in list %}...{% endfor %}` | `{% for x in state.items %}{{ x }}{% endfor %}` |
+
+**Available Filters:**
+- `upper`, `lower` - Case conversion
+- `tojson` - JSON serialization
+- `length` - Get array/string length
+- `first`, `last` - Get first/last element
+- `default(value)` - Default if undefined
+
+### Conditional Routing (Goto)
+
+Use `goto` blocks for conditional workflow routing:
+
+```yaml
+name: score-evaluator
+nodes:
+  - name: evaluate
+    action: return
+    with:
+      value: "evaluated"
+    output: status
+    goto:
+      - if: "state.score > 90"
+        to: excellent
+      - if: "state.score > 70"
+        to: good
+      - to: needs_improvement  # Default (no condition)
+
+  - name: excellent
+    action: return
+    with:
+      value: { tier: "A", message: "Outstanding!" }
+    output: result
+    goto: __end__
+
+  - name: good
+    action: return
+    with:
+      value: { tier: "B", message: "Well done!" }
+    output: result
+    goto: __end__
+
+  - name: needs_improvement
+    action: return
+    with:
+      value: { tier: "C", message: "Keep studying!" }
+    output: result
+```
+
+### Variables
+
+Define workflow-level variables:
+
+```yaml
+name: variable-demo
+variables:
+  greeting: "Welcome"
+  company: "TEA Inc."
+  max_retries: 3
+
+nodes:
+  - name: welcome
+    action: return
+    with:
+      value:
+        message: "{{ variables.greeting }} to {{ variables.company }}"
+        retries: "{{ variables.max_retries }}"
+    output: welcome_msg
+```
+
+### Loops with Goto
+
+Create loops using goto conditions:
+
+```yaml
+name: counter-loop
+nodes:
+  - name: init
+    action: return
+    with:
+      value: 0
+    output: counter
+
+  - name: increment
+    action: return
+    with:
+      value: "{{ state.counter + 1 }}"
+    output: counter
+    goto:
+      - if: "state.counter < 3"
+        to: increment
+      - to: done
+
+  - name: done
+    action: return
+    with:
+      value: "finished"
+    output: status
+```
+
+### Nested Output Paths
+
+Store results at nested paths using dot notation:
+
+```yaml
+nodes:
+  - name: process
+    action: return
+    with:
+      value: "data"
+    output: result.data.items  # Creates nested structure
+```
+
+Result: `{ "result": { "data": { "items": "data" } } }`
+
+### API Reference (YAML Engine)
+
+#### `parse_yaml_config(yaml: string) -> WasmYamlConfig`
+
+Parse a YAML string into a configuration object.
+
+```typescript
+const config = parse_yaml_config(yaml);
+console.log(config.name);       // Workflow name
+console.log(config.nodes);      // Array of nodes
+console.log(config.variables);  // Variables map
+```
+
+#### `execute_workflow_async(config, state, options) -> Promise<JsonValue>`
+
+Execute a parsed workflow configuration.
+
+```typescript
+import { parse_yaml_config, execute_workflow_async, ExecutionOptions } from 'tea-wasm-llm';
+
+const config = parse_yaml_config(yaml);
+const options = new ExecutionOptions().with_variables(config.variables);
+const result = await execute_workflow_async(config, initialState, options);
+```
+
+#### `render_template(template, state, variables) -> JsonValue`
+
+Render a Tera template string.
+
+```typescript
+import { render_template } from 'tea-wasm-llm';
+
+const result = render_template(
+  "Hello, {{ state.name | upper }}!",
+  { name: "world" },
+  {}
+);
+// "Hello, WORLD!"
+```
 
 ## Troubleshooting
 

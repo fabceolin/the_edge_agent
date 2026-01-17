@@ -17,6 +17,8 @@ storage-http = ["opendal/services-http"]
 storage-s3 = ["opendal/services-s3"]
 storage-gcs = ["opendal/services-gcs"]
 storage-azblob = ["opendal/services-azblob"]
+# OPFS (Origin Private File System) - WASM-only browser storage
+storage-opfs = []
 # Enable all cloud backends
 storage-all = ["storage-s3", "storage-gcs", "storage-azblob", "storage-http", "storage-memory"]
 
@@ -36,6 +38,12 @@ thiserror = "2.0"
 
 # Regex (WASM compatible, no std dependency)
 regex-lite = "0.1"
+
+# Tera template engine (Jinja2-like syntax)
+tera = "1.19"
+
+# Lazy static for action definitions
+lazy_static = "1.4"
 
 # WASM-compatible random generation
 getrandom = { version = "0.2", features = ["js"] }
@@ -75,6 +83,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+tokio = { version = "1.49", features = ["rt", "macros"] }
 
 [profile.release]
 opt-level = "s"
