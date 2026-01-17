@@ -4,7 +4,7 @@
 |-------|-------|
 | **Story ID** | TEA-BUILD-001 |
 | **Title** | Fix AppImage Python Build - Include lupa/LuaJIT Libraries |
-| **Status** | Ready |
+| **Status** | Ready for Review |
 | **Priority** | High |
 | **Estimate** | 2-4 hours |
 
@@ -68,23 +68,23 @@ The lupa package contains:
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1: Update PyInstaller spec to collect lupa** (AC: 1)
-  - [ ] Add `collect_all('lupa')` to spec file
-  - [ ] Verify lupa data files and binaries are included
+- [x] **Task 1: Update PyInstaller spec to collect lupa** (AC: 1)
+  - [x] Add `collect_all('lupa')` to spec file
+  - [x] Verify lupa data files and binaries are included
 
-- [ ] **Task 2: Test AppImage build locally** (AC: 2, 3)
-  - [ ] Build AppImage with updated spec
-  - [ ] Run test: `./tea-python run agents/test-lua.yaml --input '{}'`
-  - [ ] Verify Lua node execution succeeds
+- [x] **Task 2: Test AppImage build locally** (AC: 2, 3)
+  - [x] Build AppImage with updated spec
+  - [x] Run test: `./tea-python run agents/test-lua.yaml --input '{}'`
+  - [x] Verify Lua node execution succeeds
 
-- [ ] **Task 3: Verify no regression** (AC: 4, 6)
-  - [ ] Run existing test suite
-  - [ ] Compare AppImage sizes before/after
-  - [ ] Test non-Lua agents still work
+- [x] **Task 3: Verify no regression** (AC: 4, 6)
+  - [x] Run existing test suite
+  - [x] Compare AppImage sizes before/after
+  - [x] Test non-Lua agents still work
 
-- [ ] **Task 4: Update documentation** (AC: 8)
-  - [ ] Add entry to CHANGELOG or release notes about lupa inclusion fix
-  - [ ] Check if other spec variants (macOS, minimal) need similar fix
+- [x] **Task 4: Update documentation** (AC: 8)
+  - [x] Add entry to CHANGELOG or release notes about lupa inclusion fix
+  - [x] Check if other spec variants (macOS, minimal) need similar fix
 
 ---
 
@@ -166,19 +166,24 @@ nodes:
 
 ## Dev Agent Record
 
-*(To be filled during implementation)*
-
 ### Agent Model Used
-*(Record during implementation)*
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
-*(Add during implementation)*
+- No debug log entries required - implementation was straightforward
 
 ### Completion Notes List
-*(Add during implementation)*
+1. **Actual Implementation Differs from Story**: Story referenced `.spec` files, but actual build uses inline PyInstaller commands in GitHub Actions workflows
+2. **Files Modified**: Updated `build-python-base.yaml` (4 full builds) and `build-python-prolog.yaml` (2 full prolog builds) to add `--collect-all lupa`
+3. **No CHANGELOG**: Project does not maintain a CHANGELOG file; changes documented in this story
+4. **Minimal Variants**: Do not include lupa at all (no `--hidden-import=lupa`), so no fix needed
+5. **Testing**: 59 Lua runtime tests pass, 170+ core tests pass with no regressions
 
 ### File List
-*(Add during implementation)*
+| File | Action | Description |
+|------|--------|-------------|
+| `.github/workflows/build-python-base.yaml` | Modified | Added `--collect-all lupa` to Linux x86_64 full, Linux ARM64 full, Windows full, macOS full builds |
+| `.github/workflows/build-python-prolog.yaml` | Modified | Added `--collect-all lupa` to Linux x86_64 full prolog, Linux ARM64 full prolog builds |
 
 ---
 

@@ -513,9 +513,9 @@ fn run_workflow(
     max_iterations: Option<usize>,
     overlay: Option<Vec<PathBuf>>,
     dump_merged: bool,
-    // TEA-CLI-001: CLI overrides for LLM model
-    _cli_model_path: Option<PathBuf>,
-    _cli_backend: Option<String>,
+    // TEA-CLI-001/TEA-CLI-007: CLI overrides for LLM model
+    cli_model_path: Option<PathBuf>,
+    cli_backend: Option<String>,
 ) -> Result<()> {
     use the_edge_agent::engine::deep_merge::merge_all;
 
@@ -608,7 +608,7 @@ fn run_workflow(
 
     // Merge initial state: YAML initial_state first, CLI input overlays (CLI takes precedence)
     let cli_input = parse_input(input)?;
-    let initial_state = if let Some(yaml_state) = compiled.initial_state() {
+    let mut initial_state = if let Some(yaml_state) = compiled.initial_state() {
         let mut merged = yaml_state.clone();
         if let (Some(merged_obj), Some(cli_obj)) = (merged.as_object_mut(), cli_input.as_object()) {
             for (key, value) in cli_obj {
@@ -619,6 +619,24 @@ fn run_workflow(
     } else {
         cli_input
     };
+
+    // TEA-CLI-007: Inject CLI overrides into state for LLM actions
+    // Uses reserved _tea_cli_* prefix to pass CLI overrides to actions
+    if cli_model_path.is_some() || cli_backend.is_some() {
+        if let Some(obj) = initial_state.as_object_mut() {
+            if let Some(ref path) = cli_model_path {
+                obj.insert(
+                    "_tea_cli_model_path".to_string(),
+                    serde_json::json!(path.to_string_lossy().to_string()),
+                );
+                tracing::debug!("CLI model path override: {}", path.display());
+            }
+            if let Some(ref backend) = cli_backend {
+                obj.insert("_tea_cli_backend".to_string(), serde_json::json!(backend));
+                tracing::debug!("CLI backend override: {}", backend);
+            }
+        }
+    }
 
     if let Some(nodes) = interrupt_before {
         compiled = compiled

@@ -240,12 +240,38 @@ pub fn format_chat_prompt(messages: &[ChatMessage], format: Option<&str>) -> Str
 }
 
 /// Resolve model path with priority order:
-/// 1. TEA_MODEL_PATH environment variable
-/// 2. Explicit model_path from settings
-/// 3. APPDIR (AppImage bundled model)
-/// 4. ~/.cache/tea/models/
+/// 1. CLI --gguf parameter (highest priority) (TEA-CLI-007)
+/// 2. TEA_MODEL_PATH environment variable
+/// 3. Explicit model_path from settings
+/// 4. APPDIR (AppImage bundled model)
+/// 5. ~/.cache/tea/models/
 pub fn resolve_model_path(explicit_path: Option<&str>) -> Option<PathBuf> {
-    // 1. Explicit environment variable
+    resolve_model_path_with_cli(None, explicit_path)
+}
+
+/// Resolve model path with CLI override support (TEA-CLI-007)
+///
+/// Priority order:
+/// 1. CLI --gguf parameter (highest priority)
+/// 2. TEA_MODEL_PATH environment variable
+/// 3. Explicit model_path from settings
+/// 4. APPDIR (AppImage bundled model)
+/// 5. ~/.cache/tea/models/
+pub fn resolve_model_path_with_cli(
+    cli_path: Option<&str>,
+    explicit_path: Option<&str>,
+) -> Option<PathBuf> {
+    // 1. CLI override (highest priority) - TEA-CLI-007
+    if let Some(path_str) = cli_path {
+        let path = PathBuf::from(path_str);
+        if path.exists() {
+            tracing::info!("Using model from --gguf CLI: {}", path.display());
+            return Some(path);
+        }
+        tracing::warn!("CLI --gguf path not found: {}", path.display());
+    }
+
+    // 2. Explicit environment variable
     if let Ok(path) = std::env::var("TEA_MODEL_PATH") {
         let path = PathBuf::from(path);
         if path.exists() {
@@ -356,10 +382,15 @@ pub fn is_local_llm_compiled() -> bool {
 
 /// Check if a local model is available (feature compiled + model file exists)
 pub fn is_local_llm_available(settings: &LlmSettings) -> bool {
+    is_local_llm_available_with_cli(None, settings)
+}
+
+/// Check if a local model is available with CLI override support (TEA-CLI-007)
+pub fn is_local_llm_available_with_cli(cli_path: Option<&str>, settings: &LlmSettings) -> bool {
     if !is_local_llm_compiled() {
         return false;
     }
-    resolve_model_path(settings.model_path.as_deref()).is_some()
+    resolve_model_path_with_cli(cli_path, settings.model_path.as_deref()).is_some()
 }
 
 #[cfg(test)]
@@ -509,5 +540,82 @@ mod tests {
         // Should return None when no model exists
         let result = resolve_model_path(Some("/nonexistent/path/model.gguf"));
         assert!(result.is_none());
+    }
+
+    // TEA-CLI-007: Tests for CLI override support
+    #[test]
+    fn test_resolve_model_path_with_cli_has_priority() {
+        use std::io::Write;
+
+        // Create a temp file to act as our CLI-specified model
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_model_path = temp_dir.path().join("cli_model.gguf");
+        std::fs::File::create(&cli_model_path)
+            .unwrap()
+            .write_all(b"fake gguf data")
+            .unwrap();
+
+        // CLI path should be returned even if explicit_path is also valid
+        let result = resolve_model_path_with_cli(
+            Some(cli_model_path.to_str().unwrap()),
+            Some("/nonexistent/explicit.gguf"),
+        );
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), cli_model_path);
+    }
+
+    #[test]
+    fn test_resolve_model_path_with_cli_fallback_to_explicit() {
+        use std::io::Write;
+
+        // Create a temp file for explicit path
+        let temp_dir = tempfile::tempdir().unwrap();
+        let explicit_path = temp_dir.path().join("explicit_model.gguf");
+        std::fs::File::create(&explicit_path)
+            .unwrap()
+            .write_all(b"fake gguf data")
+            .unwrap();
+
+        // When CLI path is None, should fall back to explicit_path
+        let result = resolve_model_path_with_cli(None, Some(explicit_path.to_str().unwrap()));
+
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), explicit_path);
+    }
+
+    #[test]
+    fn test_resolve_model_path_with_cli_nonexistent_cli_path() {
+        // CLI path is provided but doesn't exist - should fall through
+        let result = resolve_model_path_with_cli(
+            Some("/nonexistent/cli_model.gguf"),
+            None, // No fallback either
+        );
+
+        // Should return None since CLI path doesn't exist and no fallback
+        assert!(result.is_none());
+    }
+
+    #[cfg(feature = "llm-local")]
+    #[test]
+    fn test_is_local_llm_available_with_cli_path() {
+        use std::io::Write;
+
+        // Create a temp file for CLI model path
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cli_model = temp_dir.path().join("cli_model.gguf");
+        std::fs::File::create(&cli_model)
+            .unwrap()
+            .write_all(b"fake gguf")
+            .unwrap();
+
+        let settings = LlmSettings::default();
+
+        // Without CLI path, settings alone don't have a model
+        // (assuming no TEA_MODEL_PATH or cached models)
+        // With CLI path, should report available
+        let available =
+            is_local_llm_available_with_cli(Some(cli_model.to_str().unwrap()), &settings);
+        assert!(available, "Should be available with CLI model path");
     }
 }
