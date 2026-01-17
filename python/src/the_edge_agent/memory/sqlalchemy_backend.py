@@ -255,7 +255,7 @@ class SQLAlchemyBackend(LTMBackend):
         self._ensure_initialized()
         return self._engine.dialect.name
 
-    def _get_session(self) -> Session:
+    def _get_session(self) -> "Session":
         """Get a new session for database operations."""
         self._ensure_initialized()
         return self._session_factory()
@@ -777,7 +777,7 @@ class SQLAlchemyTransaction(LTMTransaction):
         """
         super().__init__(backend)
         self._backend = backend
-        self._session: Optional[Session] = None
+        self._session: Optional["Session"] = None
         self._committed = False
         self._rolled_back = False
 

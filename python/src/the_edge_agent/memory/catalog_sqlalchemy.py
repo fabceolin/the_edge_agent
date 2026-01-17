@@ -289,7 +289,7 @@ class SQLAlchemyCatalog:
                 # Indexes might already exist or dialect doesn't support IF NOT EXISTS
                 conn.rollback()
 
-    def _get_session(self) -> Session:
+    def _get_session(self) -> "Session":
         """Get a new session for database operations."""
         self._ensure_initialized()
         return self._session_factory()
