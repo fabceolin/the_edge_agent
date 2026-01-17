@@ -1,0 +1,307 @@
+# Robust Q&A Workflow for Neurosymbolic AI
+#
+# This is a standalone version of the wasm-demo default workflow.
+# Demonstrates robust answer extraction from small quantized LLMs using
+# Lua normalization + Prolog validation.
+#
+# FEATURES:
+# - Multi-pattern answer extraction
+# - Prolog knowledge base for fact verification
+# - Confidence scoring (verified, corrected, fallback)
+# - Works with unreliable LLM outputs
+#
+# RUN:
+#   tea run examples/prolog/neurosymbolic/robust-qa-workflow.yaml \
+#       --input '{"question": "What is the capital of France?"}'
+#
+# OTHER EXAMPLES:
+#   --input '{"question": "What is the capital of Germany?"}'
+#   --input '{"question": "What is the capital of Japan?"}'
+#   --input '{"question": "What is the capital of Brazil?"}'
+#
+# EXPECTED OUTPUT:
+#   answer: Paris [verified]
+#   metadata:
+#     confidence: verified
+#     question_type: geography
+#     source: llm
+
+name: robust-qa-workflow
+description: Robust answer extraction from small quantized models using Lua + Prolog
+
+state_schema:
+  question: str
+  word_count: int
+  question_type: str
+  is_short: bool
+  prolog_hint: str
+  llm_response: str
+  final_answer: str
+  confidence: str
+  answer: str
+  metadata: dict
+
+nodes:
+  # ===========================================================================
+  # Step 1: Analyze question structure with Lua
+  # ===========================================================================
+  - name: analyze_question
+    language: lua
+    run: |
+      local q = state.question or ""
+      local words = 0
+      for _ in string.gmatch(q, "%S+") do
+        words = words + 1
+      end
+
+      -- Detect question type via patterns
+      local qtype = "general"
+      local patterns = {
+        { pattern = "capital", type = "geography" },
+        { pattern = "country", type = "geography" },
+        { pattern = "city", type = "geography" },
+        { pattern = "where", type = "geography" },
+        { pattern = "calculate", type = "math" },
+        { pattern = "sum", type = "math" },
+        { pattern = "how many", type = "math" },
+        { pattern = "why", type = "science" },
+        { pattern = "how does", type = "science" },
+        { pattern = "what is", type = "definition" },
+        { pattern = "who is", type = "biography" },
+      }
+
+      local lower_q = q:lower()
+      for _, p in ipairs(patterns) do
+        if lower_q:find(p.pattern) then
+          qtype = p.type
+          break
+        end
+      end
+
+      return {
+        word_count = words,
+        question_type = qtype,
+        is_short = words < 10
+      }
+
+  # ===========================================================================
+  # Step 2: Use Prolog for knowledge-based hints
+  # ===========================================================================
+  - name: prolog_hints
+    language: prolog
+    run: |
+      :- dynamic capital/2, hint/1.
+
+      % Knowledge base for common geography questions
+      capital(france, paris).
+      capital(germany, berlin).
+      capital(italy, rome).
+      capital(spain, madrid).
+      capital(portugal, lisbon).
+      capital(japan, tokyo).
+      capital(brazil, brasilia).
+      capital(argentina, buenos_aires).
+      capital(australia, canberra).
+      capital(canada, ottawa).
+      capital(usa, washington_dc).
+      capital(uk, london).
+      capital(china, beijing).
+      capital(india, new_delhi).
+      capital(russia, moscow).
+      capital(mexico, mexico_city).
+      capital(south_korea, seoul).
+      capital(egypt, cairo).
+      capital(south_africa, pretoria).
+      capital(netherlands, amsterdam).
+      capital(belgium, brussels).
+      capital(switzerland, bern).
+      capital(austria, vienna).
+      capital(poland, warsaw).
+      capital(sweden, stockholm).
+      capital(norway, oslo).
+      capital(denmark, copenhagen).
+      capital(finland, helsinki).
+      capital(greece, athens).
+      capital(turkey, ankara).
+      capital(ukraine, kyiv).
+      capital(chile, santiago).
+      capital(colombia, bogota).
+      capital(peru, lima).
+      capital(venezuela, caracas).
+      capital(thailand, bangkok).
+      capital(vietnam, hanoi).
+      capital(indonesia, jakarta).
+      capital(philippines, manila).
+      capital(malaysia, kuala_lumpur).
+      capital(singapore, singapore).
+      capital(new_zealand, wellington).
+      capital(ireland, dublin).
+      capital(czech_republic, prague).
+      capital(hungary, budapest).
+      capital(romania, bucharest).
+
+      % Get question from state
+      state(question, Question),
+      downcase_atom(Question, LowerQ),
+
+      % Try to find a matching capital
+      (
+        capital(Country, Answer),
+        atom_string(Country, CountryStr),
+        sub_atom(LowerQ, _, _, _, CountryStr)
+      ->
+        return(prolog_hint, Answer)
+      ;
+        return(prolog_hint, unknown)
+      ).
+
+  # ===========================================================================
+  # Step 3: LLM generates response with structured format
+  # ===========================================================================
+  - name: llm_think
+    uses: llm.call
+    with:
+      provider: ollama
+      model: gemma3n:e4b
+      messages:
+        - role: system
+          content: |
+            You are a helpful assistant that gives direct, concise answers.
+
+            RULES:
+            - Give ONLY the direct answer
+            - Do NOT include explanations unless asked
+            - For geography questions, just state the city name (e.g., "Paris")
+            - Keep your response under 50 words
+            - Do not start with "The answer is" or similar phrases
+        - role: user
+          content: "{{ state.question }}"
+      temperature: 0.1
+      max_tokens: 80
+    output: llm_response
+
+  # ===========================================================================
+  # Step 4: Lua extracts and normalizes the answer
+  # ===========================================================================
+  - name: extract_answer
+    language: lua
+    run: |
+      local response = state.llm_response or {}
+      local content = response.content or response or ""
+      local prolog_hint = state.prolog_hint or "unknown"
+      local qtype = state.question_type or "general"
+
+      -- EXTRACTION PIPELINE
+      local extracted = content
+
+      -- 1. Remove common LLM prefixes
+      local prefixes = {
+        "^The answer is:?%s*",
+        "^Answer:?%s*",
+        "^The capital of %w+ is%s*",
+        "^The capital is%s*",
+        "^It is%s*",
+        "^It's%s*",
+        "^That would be%s*",
+        "^Based on.-,%s*",
+        "^Sure!%s*",
+        "^Of course!%s*",
+        "^Well,%s*",
+      }
+      for _, prefix in ipairs(prefixes) do
+        extracted = extracted:gsub(prefix, "")
+      end
+
+      -- 2. Remove trailing punctuation and whitespace
+      extracted = extracted:gsub("[%.!?]+%s*$", "")
+      extracted = extracted:gsub("^%s+", ""):gsub("%s+$", "")
+
+      -- 3. Extract first sentence if multiple sentences
+      local first_sentence = extracted:match("^([^%.!?]+)")
+      if first_sentence and #first_sentence > 0 then
+        extracted = first_sentence:gsub("^%s+", ""):gsub("%s+$", "")
+      end
+
+      -- 4. For geography, try to extract just the city name
+      if qtype == "geography" then
+        -- Look for capitalized words (proper nouns)
+        local proper_noun = extracted:match("([A-Z][a-z]+)")
+        if proper_noun and #proper_noun > 2 then
+          extracted = proper_noun
+        end
+      end
+
+      -- 5. VALIDATION: Check against Prolog knowledge base
+      local validated = extracted
+      local confidence = "llm"
+
+      -- Check if Prolog found an answer
+      if prolog_hint and prolog_hint ~= "unknown" then
+        -- Prolog has authoritative answer
+        -- Convert underscore to space and capitalize
+        local prolog_answer = tostring(prolog_hint)
+        prolog_answer = prolog_answer:gsub("_", " ")
+        -- Capitalize each word
+        prolog_answer = prolog_answer:gsub("(%a)([%w]*)", function(first, rest)
+          return first:upper() .. rest:lower()
+        end)
+
+        -- Use Prolog answer if LLM answer seems different
+        local llm_lower = extracted:lower():gsub("%s+", "")
+        local prolog_lower = prolog_answer:lower():gsub("%s+", "")
+
+        if prolog_lower:find(llm_lower) or llm_lower:find(prolog_lower) then
+          -- LLM and Prolog agree
+          validated = prolog_answer
+          confidence = "verified"
+        else
+          -- Prefer Prolog for known facts
+          validated = prolog_answer
+          confidence = "corrected"
+        end
+      end
+
+      -- 6. Fallback if extraction failed
+      if #validated == 0 then
+        -- Return first 100 chars of original
+        validated = content:sub(1, 100)
+        confidence = "fallback"
+      end
+
+      return {
+        final_answer = validated,
+        confidence = confidence,
+        raw_llm = content,
+        question_type = qtype
+      }
+
+  # ===========================================================================
+  # Step 5: Format final response with metadata
+  # ===========================================================================
+  - name: format_output
+    language: lua
+    run: |
+      local answer = state.final_answer or "Unknown"
+      local confidence = state.confidence or "unknown"
+      local qtype = state.question_type or "general"
+
+      -- Build confidence indicator
+      local indicator = ""
+      if confidence == "verified" then
+        indicator = " [verified]"
+      elseif confidence == "corrected" then
+        indicator = " [from knowledge base]"
+      elseif confidence == "fallback" then
+        indicator = " [uncertain]"
+      end
+
+      return {
+        answer = answer .. indicator,
+        metadata = {
+          confidence = confidence,
+          question_type = qtype,
+          source = confidence == "corrected" and "prolog" or "llm"
+        }
+      }
+
+# Implicit flow: analyze_question -> prolog_hints -> llm_think -> extract_answer -> format_output -> __end__

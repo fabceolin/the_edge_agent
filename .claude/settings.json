@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true,
+    "canvas@claude-canvas": true
+  }
+}

@@ -404,7 +404,7 @@ fn calculate_aggregates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experiments::{ContainsMatch, ExactMatch, NumericTolerance};
+    use crate::experiments::{ContainsMatch, ExactMatch};
     use serde_json::json;
 
     fn create_test_dataset() -> Dataset {

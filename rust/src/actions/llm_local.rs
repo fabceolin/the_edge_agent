@@ -620,12 +620,24 @@ mod tests {
         println!("Embedding model: {}", result.model);
         println!("Embedding dimensions: {}", result.embedding.len());
         println!("Tokens used: {:?}", result.tokens_used);
-        println!("First 5 values: {:?}", &result.embedding[..5.min(result.embedding.len())]);
+        println!(
+            "First 5 values: {:?}",
+            &result.embedding[..5.min(result.embedding.len())]
+        );
 
         // Verify embedding is valid
-        assert!(!result.embedding.is_empty(), "Embedding should not be empty");
-        assert!(result.embedding.len() > 0, "Embedding should have dimensions");
-        assert!(result.tokens_used.is_some(), "Tokens used should be reported");
+        assert!(
+            !result.embedding.is_empty(),
+            "Embedding should not be empty"
+        );
+        assert!(
+            result.embedding.len() > 0,
+            "Embedding should have dimensions"
+        );
+        assert!(
+            result.tokens_used.is_some(),
+            "Tokens used should be reported"
+        );
 
         // Verify embedding values are reasonable (not all zeros or NaN)
         let has_non_zero = result.embedding.iter().any(|&v| v != 0.0);
@@ -650,7 +662,9 @@ mod tests {
         let backend = LocalLlmBackend::new(&model_path).expect("Failed to load model");
 
         let long_text = "The quick brown fox jumps over the lazy dog. ".repeat(10);
-        let result = backend.embed(&long_text).expect("Embedding failed for longer text");
+        let result = backend
+            .embed(&long_text)
+            .expect("Embedding failed for longer text");
 
         println!("Long text embedding dimensions: {}", result.embedding.len());
         println!("Tokens used for longer text: {:?}", result.tokens_used);
@@ -677,7 +691,9 @@ mod tests {
         let backend = LocalLlmBackend::new(&model_path).expect("Failed to load model");
 
         let embed1 = backend.embed("cats and dogs").expect("Embedding 1 failed");
-        let embed2 = backend.embed("programming languages").expect("Embedding 2 failed");
+        let embed2 = backend
+            .embed("programming languages")
+            .expect("Embedding 2 failed");
 
         // Embeddings should have same dimensions
         assert_eq!(
@@ -697,7 +713,10 @@ mod tests {
         let norm2: f32 = embed2.embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         let cosine_similarity = dot_product / (norm1 * norm2);
 
-        println!("Cosine similarity between different texts: {}", cosine_similarity);
+        println!(
+            "Cosine similarity between different texts: {}",
+            cosine_similarity
+        );
         assert!(
             cosine_similarity < 0.99,
             "Different texts should have different embeddings (cosine < 0.99)"
