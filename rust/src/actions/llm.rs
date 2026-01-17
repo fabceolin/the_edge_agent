@@ -1224,13 +1224,14 @@ fn execute_api_chat(
 /// ```
 pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
     // Extract required text parameter
-    let text = params
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| TeaError::InvalidInput {
-            action: "llm.embed".to_string(),
-            message: "Missing required parameter: text".to_string(),
-        })?;
+    let text =
+        params
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TeaError::InvalidInput {
+                action: "llm.embed".to_string(),
+                message: "Missing required parameter: text".to_string(),
+            })?;
 
     // Feature-gated implementation
     #[cfg(feature = "llm-local")]
@@ -1375,7 +1376,10 @@ mod tests {
         let result = llm_embed(&state, &params);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("text"), "Error should mention missing 'text' parameter");
+        assert!(
+            err.contains("text"),
+            "Error should mention missing 'text' parameter"
+        );
     }
 
     #[test]
@@ -1391,7 +1395,10 @@ mod tests {
         let result = llm_embed(&state, &params);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("text"), "Error should mention missing 'text' parameter");
+        assert!(
+            err.contains("text"),
+            "Error should mention missing 'text' parameter"
+        );
     }
 
     #[test]
@@ -1419,8 +1426,9 @@ mod tests {
     #[cfg(not(feature = "llm-local"))]
     fn test_llm_embed_without_feature_returns_error() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> =
-            [("text".to_string(), json!("test text"))].into_iter().collect();
+        let params: HashMap<String, JsonValue> = [("text".to_string(), json!("test text"))]
+            .into_iter()
+            .collect();
 
         let result = llm_embed(&state, &params);
         assert!(result.is_err());
