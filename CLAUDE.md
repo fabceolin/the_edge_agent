@@ -178,6 +178,8 @@ The Edge Agent supports multiple Long-Term Memory (LTM) backends for persistent 
 | **postgres** | Self-hosted, SQL compatibility | `pip install psycopg2` |
 | **supabase** | Edge, REST API, managed Postgres | `pip install requests` |
 
+> ⚠️ **Firestore Catalog Limitations:** See [tech-stack.md](docs/python/tech-stack.md#firestore-catalog-limitations) for write throughput and document size constraints.
+
 ### Example YAML Configuration
 
 ```yaml
@@ -434,6 +436,149 @@ settings:
 - Parent type must be exactly one level above child type
 - Root entities (first level) cannot have parents
 - Non-root entities must have parents
+
+## Hierarchical LTM Backend (TEA-LTM-015)
+
+The `HierarchicalLTMBackend` combines PostgreSQL catalog with hierarchical blob storage for 10GB-100GB+ scale with O(1) hierarchy queries.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         A3 ARCHITECTURE                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    PostgreSQL Catalog                           │   │
+│   │  ltm_catalog_entries (metadata, pointers to blob storage)       │   │
+│   │  ltm_entities (org, project, user, session)                     │   │
+│   │  ltm_entity_closure (hierarchy for O(1) queries)                │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                    │                                    │
+│                                    ▼                                    │
+│   ┌─────────────────────────────────────────────────────────────────┐   │
+│   │                    Blob Storage (fsspec)                        │   │
+│   │   gs://bucket/ltm/org:acme/project:alpha/user:alice/...         │   │
+│   └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### YAML Configuration
+
+```yaml
+settings:
+  ltm:
+    backend: hierarchical
+
+    catalog:
+      type: sqlalchemy
+      url: "${DATABASE_URL}"
+      pool_size: 10
+
+    storage:
+      uri: "gs://my-bucket/ltm/"  # or s3://, file://, az://
+
+    hierarchy:
+      levels: [org, project, user, session]
+      root_entity:
+        type: org
+        id: "${ORG_ID}"
+      defaults:
+        org: "default"
+        project: "_unassigned"
+
+    performance:
+      metadata_cache:
+        enabled: true
+        ttl_seconds: 600
+      parallel_reads:
+        threads: 8
+
+    index:
+      format: parquet
+      row_group_size: 122880
+      compression: zstd
+```
+
+### Python API
+
+```python
+from the_edge_agent.memory import create_ltm_backend
+
+# Create backend
+backend = create_ltm_backend(
+    "hierarchical",
+    catalog_url="postgresql://user:pass@localhost/db",
+    storage_uri="gs://bucket/ltm/",
+    hierarchy_levels=["org", "project", "user", "session"],
+    hierarchy_defaults={"org": "default", "project": "_unassigned"},
+)
+
+# Register entity hierarchy
+backend.register_entity_with_defaults(
+    "session", "s123",
+    parents={"user": "alice", "project": "alpha", "org": "acme"}
+)
+
+# Store with entity association
+backend.store(
+    key="conversation:001",
+    value={"messages": [...]},
+    entity=("session", "s123"),
+    metadata={"type": "chat"},
+)
+
+# Retrieve by key
+result = backend.retrieve("conversation:001")
+
+# Retrieve all entries for an entity and descendants
+result = backend.retrieve_by_entity("project", "alpha")
+# Returns all entries for project:alpha and all users/sessions
+
+# Batch retrieval (parallel)
+result = backend.retrieve_batch(["key1", "key2", "key3"])
+
+# Compact Parquet indexes
+backend.compact_indexes(max_deltas=100)
+
+# Cleanup orphaned blobs
+backend.cleanup_orphans(max_age_seconds=3600, dry_run=True)
+```
+
+### Performance Targets
+
+| Operation | Target Latency | Mechanism |
+|-----------|----------------|-----------|
+| Query session entries | <100ms | Direct blob path |
+| Query user entries | <200ms | PostgreSQL + blob storage |
+| Query project entries | <500ms | Closure table + blob storage |
+| Query org entries | <1s | Closure table + blob storage |
+| Write new entry | <100ms | Blob + PostgreSQL upsert |
+
+### Storage Flow
+
+**Write:**
+1. Resolve entity path from closure table
+2. Write blob to storage at hierarchical path (if > inline_threshold)
+3. Update PostgreSQL catalog
+4. Update Parquet indexes (delta files)
+
+**Read:**
+1. Query closure table for all descendants
+2. Query entry owners for matching entries
+3. Batch retrieve from catalog
+4. Fetch blobs from storage (parallel with metadata cache)
+
+### Error Handling
+
+| Exception | Cause | Recovery |
+|-----------|-------|----------|
+| `StorageError` | Blob write failed | Retry, no catalog update |
+| `CatalogError` | PostgreSQL failed after blob success | Log orphan for cleanup |
+| `ConnectionError` | Database connection failed | Retry with exponential backoff |
+
+Orphan cleanup job runs periodically to remove blobs without catalog entries.
 
 ## Experiment Framework (TEA-BUILTIN-005.4)
 

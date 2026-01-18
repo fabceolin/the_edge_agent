@@ -204,7 +204,7 @@ These are imported dynamically when used:
 | gcsfs | Google Cloud Storage | `gs://` URIs |
 | adlfs | Azure Blob Storage | `az://` URIs |
 | RestrictedPython | Sandboxed code execution | `code.execute` action |
-| firebase-admin | Firebase/Firestore | Cloud memory backends |
+| firebase-admin | Firebase/Firestore | Cloud memory backends (see [limitations](#firestore-catalog-limitations)) |
 | duckdb | SQL queries and vectors | Search and tabular actions |
 | opik | Observability | Opik trace exporter |
 | chromadb | Vector store | Persistent RAG storage |
@@ -340,3 +340,29 @@ src/the_edge_agent/memory/
     ├── base.py          # Abstract VectorIndex
     └── duckdb.py        # DuckDB VSS implementation
 ```
+
+## Firestore Catalog Limitations
+
+When using Firestore as a catalog backend for DuckLake LTM, be aware of these architectural constraints:
+
+| Limitation | Value | Impact |
+|------------|-------|--------|
+| **Write throughput** | ~1 write/s per document | The "current snapshot" document becomes a hotspot under concurrent writes |
+| **Document size** | 1 MB max | Large metadata entries will fail (rare in practice) |
+
+### Workload Suitability
+
+| Workload | Firestore Catalog | Recommendation |
+|----------|-------------------|----------------|
+| Batch ETL (single writer) | ✅ Works well | Good fit |
+| Multi-reader analytics | ✅ Excellent | Scales infinitely |
+| Streaming ingestion | ⚠️ Bottleneck | Use SQLAlchemy/PostgreSQL |
+| High-concurrency writes | ❌ ~1 TPS limit | Use SQLAlchemy/PostgreSQL |
+
+**Best for:** Read-heavy workloads, serverless deployments, Firebase ecosystem integration.
+
+**Avoid for:** Real-time streaming, concurrent data ingestion pipelines.
+
+### Why This Happens
+
+Firestore uses a consensus algorithm (Paxos/Raft) with synchronous indexing that limits sustained writes to ~1/second on any single document. The DuckLake protocol requires updating a "current snapshot" pointer on every commit, creating a serialization bottleneck when multiple writers compete for the same document.

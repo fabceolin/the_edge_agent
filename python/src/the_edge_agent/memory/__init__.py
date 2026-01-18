@@ -323,6 +323,26 @@ except ImportError:
         return False
 
 
+# Hierarchical LTM Backend (TEA-LTM-015)
+try:
+    from .hierarchical_ltm import (
+        HierarchicalLTMBackend,
+        check_hierarchical_available,
+        StorageError,
+        CatalogError,
+    )
+
+    HIERARCHICAL_AVAILABLE = check_hierarchical_available()
+except ImportError:
+    HierarchicalLTMBackend = None  # type: ignore
+    HIERARCHICAL_AVAILABLE = False
+    StorageError = Exception  # type: ignore
+    CatalogError = Exception  # type: ignore
+
+    def check_hierarchical_available():
+        return False
+
+
 __all__ = [
     # Short-term memory (TEA-BUILTIN-001.1)
     "MemoryBackend",
@@ -438,4 +458,10 @@ __all__ = [
     "EntityHierarchy",
     "check_hierarchy_available",
     "ENTITY_HIERARCHY_AVAILABLE",
+    # Hierarchical LTM Backend (TEA-LTM-015)
+    "HierarchicalLTMBackend",
+    "check_hierarchical_available",
+    "HIERARCHICAL_AVAILABLE",
+    "StorageError",
+    "CatalogError",
 ]

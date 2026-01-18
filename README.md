@@ -163,6 +163,8 @@ const result = await executeLlmYaml(yamlWorkflow, { question: "What is 2+2?" });
 - Multi-threaded inference via SharedArrayBuffer
 - Opik observability integration
 
+**Try it live:** [Interactive WASM Demo](https://fabceolin.github.io/the_edge_agent/articles/wasm-llm-browser-inference.html) - run LLM inference directly in your browser.
+
 See [WASM LLM Deployment Guide](docs/wasm/llm-deployment.md) for server configuration and examples.
 
 ## Examples
