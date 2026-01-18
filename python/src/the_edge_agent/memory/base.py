@@ -656,6 +656,7 @@ def _parse_hierarchical_ltm_config(config: Dict[str, Any]) -> Dict[str, Any]:
         "pool_size": catalog.get("pool_size", 10),
         "inline_threshold": config.get("inline_threshold", 1024),
         "lazy": catalog.get("lazy", False),
+        "cache_path": config.get("cache_path", "_cache/"),
     }
 
     # Transform index block to index_config dict

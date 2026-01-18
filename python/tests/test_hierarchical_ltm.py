@@ -564,5 +564,199 @@ class TestFactoryIntegration(TestCase):
         self.assertIn("hierarchical", backends)
 
 
+class TestCachePathWithoutEntity(TestCase):
+    """
+    Tests for TEA-FIX-001: cache.wrap entity parameter fix.
+
+    Verifies that large values stored without an entity are correctly
+    stored to blob storage using the cache path.
+    """
+
+    def setUp(self):
+        """Set up test fixtures."""
+        from the_edge_agent.memory import HierarchicalLTMBackend
+
+        # Create temp directory for storage
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage_uri = f"file://{self.temp_dir}/"
+
+        # Create backend with low inline_threshold to force blob storage
+        self.backend = HierarchicalLTMBackend(
+            catalog_url="sqlite:///:memory:",
+            storage_uri=self.storage_uri,
+            hierarchy_levels=["org", "project", "user", "session"],
+            inline_threshold=100,  # Low threshold for testing
+            cache_path="_cache/",
+            lazy=False,
+        )
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.backend.close()
+
+        import shutil
+
+        try:
+            shutil.rmtree(self.temp_dir)
+        except Exception:
+            pass
+
+    def test_store_large_value_without_entity_uses_cache_path(self):
+        """
+        TEA-FIX-001 AC-1, AC-2: Large values without entity use cache path.
+
+        Verifies that:
+        1. Large values (>inline_threshold) are stored to blob storage
+        2. The blob path uses _cache/ prefix
+        3. Values can be retrieved successfully
+        """
+        # Store large value without entity
+        large_value = {"data": "x" * 200}  # > inline_threshold (100)
+        result = self.backend.store(
+            key="cache_key_001",
+            value=large_value,
+        )
+
+        # Verify storage succeeded
+        self.assertTrue(result["success"])
+        self.assertFalse(result["inlined"])
+        self.assertIsNotNone(result["blob_path"])
+
+        # Verify blob path uses cache prefix
+        self.assertIn("_cache/", result["blob_path"])
+
+        # Verify blob exists
+        self.assertTrue(self.backend._fs.exists(result["blob_path"]))
+
+        # Verify retrieval works
+        retrieved = self.backend.retrieve("cache_key_001")
+        self.assertTrue(retrieved["success"])
+        self.assertTrue(retrieved["found"])
+        self.assertEqual(retrieved["value"], large_value)
+
+    def test_store_large_value_with_entity_uses_hierarchical_path(self):
+        """
+        TEA-FIX-001 AC-3: Large values WITH entity still use hierarchical path.
+
+        Regression test to ensure we didn't break existing behavior.
+        """
+        # Register hierarchy
+        self.backend._hierarchy.register_entity("org", "acme")
+        self.backend._hierarchy.register_entity(
+            "project", "alpha", parent=("org", "acme")
+        )
+        self.backend._hierarchy.register_entity(
+            "user", "alice", parent=("project", "alpha")
+        )
+        self.backend._hierarchy.register_entity(
+            "session", "s123", parent=("user", "alice")
+        )
+
+        # Store large value WITH entity
+        large_value = {"data": "x" * 200}  # > inline_threshold
+        result = self.backend.store(
+            key="entity_key_001",
+            value=large_value,
+            entity=("session", "s123"),
+        )
+
+        # Verify storage succeeded
+        self.assertTrue(result["success"])
+        self.assertFalse(result["inlined"])
+        self.assertIsNotNone(result["blob_path"])
+
+        # Verify blob path uses hierarchical structure (not cache path)
+        self.assertNotIn("_cache/", result["blob_path"])
+        self.assertIn("org:acme", result["blob_path"])
+        self.assertIn("session:s123", result["blob_path"])
+
+        # Verify retrieval works
+        retrieved = self.backend.retrieve("entity_key_001")
+        self.assertTrue(retrieved["success"])
+        self.assertEqual(retrieved["value"], large_value)
+
+    def test_store_small_value_without_entity_inlines(self):
+        """
+        TEA-FIX-001: Small values without entity are inlined (not using blob).
+
+        Verifies that values below inline_threshold are still inlined
+        regardless of entity presence.
+        """
+        # Store small value without entity
+        small_value = {"msg": "hi"}  # < inline_threshold (100)
+        result = self.backend.store(
+            key="small_key",
+            value=small_value,
+        )
+
+        # Verify inlining
+        self.assertTrue(result["success"])
+        self.assertTrue(result["inlined"])
+        self.assertIsNone(result.get("blob_path"))
+
+        # Verify retrieval
+        retrieved = self.backend.retrieve("small_key")
+        self.assertTrue(retrieved["success"])
+        self.assertEqual(retrieved["value"], small_value)
+
+    def test_cache_path_configuration(self):
+        """
+        TEA-FIX-001 AC-5: Custom cache_path is configurable.
+        """
+        from the_edge_agent.memory import HierarchicalLTMBackend
+
+        # Create backend with custom cache path
+        custom_backend = HierarchicalLTMBackend(
+            catalog_url="sqlite:///:memory:",
+            storage_uri=self.storage_uri,
+            hierarchy_levels=["org", "user"],
+            inline_threshold=100,
+            cache_path="my_custom_cache/",
+            lazy=False,
+        )
+
+        try:
+            # Store large value without entity
+            large_value = {"data": "y" * 200}
+            result = custom_backend.store(
+                key="custom_cache_key",
+                value=large_value,
+            )
+
+            # Verify custom cache path is used
+            self.assertTrue(result["success"])
+            self.assertIn("my_custom_cache/", result["blob_path"])
+            # Verify default _cache/ path is NOT used (check path structure)
+            self.assertNotIn("/_cache/", result["blob_path"])
+
+        finally:
+            custom_backend.close()
+
+    def test_cache_path_key_collision_prevention(self):
+        """
+        TEA-FIX-001: Different keys get different cache paths via SHA256 hash.
+        """
+        # Store two large values with different keys
+        large_value_1 = {"data": "a" * 200}
+        large_value_2 = {"data": "b" * 200}
+
+        result_1 = self.backend.store(key="key_one", value=large_value_1)
+        result_2 = self.backend.store(key="key_two", value=large_value_2)
+
+        # Both should succeed
+        self.assertTrue(result_1["success"])
+        self.assertTrue(result_2["success"])
+
+        # Paths should be different (different SHA256 hashes)
+        self.assertNotEqual(result_1["blob_path"], result_2["blob_path"])
+
+        # Both should be retrievable
+        retrieved_1 = self.backend.retrieve("key_one")
+        retrieved_2 = self.backend.retrieve("key_two")
+
+        self.assertEqual(retrieved_1["value"], large_value_1)
+        self.assertEqual(retrieved_2["value"], large_value_2)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

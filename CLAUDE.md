@@ -488,6 +488,9 @@ settings:
         org: "default"
         project: "_unassigned"
 
+    # Cache path for entries without entity (e.g., cache.wrap results)
+    cache_path: "_cache/"  # default: "_cache/"
+
     performance:
       metadata_cache:
         enabled: true
@@ -513,6 +516,7 @@ backend = create_ltm_backend(
     storage_uri="gs://bucket/ltm/",
     hierarchy_levels=["org", "project", "user", "session"],
     hierarchy_defaults={"org": "default", "project": "_unassigned"},
+    cache_path="_cache/",  # Path for entries without entity (default: "_cache/")
 )
 
 # Register entity hierarchy

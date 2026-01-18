@@ -186,8 +186,23 @@ class HierarchicalLTMBackend(LTMBackend):
         pool_size: int = 10,
         inline_threshold: int = 1024,
         lazy: bool = False,
+        cache_path: str = "_cache/",
     ):
-        """Initialize HierarchicalLTMBackend."""
+        """
+        Initialize HierarchicalLTMBackend.
+
+        Args:
+            catalog_url: PostgreSQL/SQLite connection string for catalog
+            storage_uri: Blob storage URI (gs://, s3://, file://)
+            hierarchy_levels: Ordered list of hierarchy levels
+            hierarchy_defaults: Default values for missing hierarchy levels
+            index_config: Parquet index configuration
+            performance_config: Performance tuning options
+            pool_size: SQLAlchemy connection pool size
+            inline_threshold: Max bytes to inline in catalog (default: 1024)
+            lazy: Defer initialization until first use
+            cache_path: Path prefix for cache entries without entity (default: "_cache/")
+        """
         if not FSSPEC_AVAILABLE:
             raise ImportError(
                 "fsspec is required for HierarchicalLTMBackend. "
@@ -207,6 +222,7 @@ class HierarchicalLTMBackend(LTMBackend):
         self._hierarchy_defaults = hierarchy_defaults or {}
         self._pool_size = pool_size
         self._inline_threshold = inline_threshold
+        self._cache_storage_path = cache_path.rstrip("/") + "/"
         self._lock = threading.Lock()
         self._closed = False
 
@@ -558,9 +574,16 @@ class HierarchicalLTMBackend(LTMBackend):
             should_inline = size_bytes <= self._inline_threshold
             blob_path = None
 
-            if not should_inline and entity:
+            if not should_inline:
                 # Write to blob storage first (AC-14)
-                blob_path = self._generate_hierarchical_path(entity, key_str)
+                if entity:
+                    blob_path = self._generate_hierarchical_path(entity, key_str)
+                else:
+                    # Use flat cache path for entries without entity (TEA-FIX-001)
+                    key_hash = hashlib.sha256(key_str.encode()).hexdigest()
+                    blob_path = (
+                        f"{self._storage_uri}{self._cache_storage_path}{key_hash}.json"
+                    )
                 try:
                     self._write_blob(blob_path, serialized)
                 except Exception as e:
