@@ -1006,8 +1006,24 @@ impl Executor {
         let mut evaluated_conditions: Vec<(String, String)> = Vec::new();
         let mut has_conditional_edges = false;
 
+        // TEA-RUST-GOTO-FIX: Sort edges to ensure conditional edges are evaluated before unconditional
+        // Edges with conditions should be checked first, then unconditional (fallback) edges
+        let mut sorted_edges: Vec<_> = edges.iter().collect();
+        sorted_edges.sort_by_key(|(_, edge)| {
+            match &edge.edge_type {
+                EdgeType::Simple => 0, // Simple edges first (will be returned immediately)
+                EdgeType::Conditional {
+                    condition: Some(_), ..
+                } => 1, // Conditional with condition
+                EdgeType::Conditional {
+                    condition: None, ..
+                } => 2, // Unconditional (fallback) last
+                EdgeType::Parallel { .. } => 0, // Already handled above
+            }
+        });
+
         // Check conditional edges - first matching wins
-        for (routing_target, edge) in &edges {
+        for (routing_target, edge) in sorted_edges {
             match &edge.edge_type {
                 EdgeType::Simple => {
                     return Ok(NextNode::Single(routing_target.to_string()));
@@ -1016,34 +1032,49 @@ impl Executor {
                     condition,
                     condition_fn,
                     target: expected_result,
+                    is_boolean_mode,
                 } => {
                     has_conditional_edges = true;
 
-                    // TEA-RUST-029: Evaluate condition using Tera
-                    // String-match mode: condition expression is evaluated and the result
-                    // is compared against the edge's expected target value.
-                    // Examples:
-                    //   - `state.value > 0 and 'positive' or 'negative'` → renders to "positive" or "negative"
-                    //   - `{% if state.x %}a{% else %}b{% endif %}` → renders to "a" or "b"
+                    // TEA-RUST-029 + TEA-RUST-GOTO-FIX: Evaluate condition using Tera
+                    //
+                    // Boolean mode (goto-style):
+                    //   Condition is evaluated as truthy/falsy. If truthy, take this edge.
+                    //   Used for `goto: [{if: "state.flag", to: next_node}]`
+                    //
+                    // String-match mode (targets-map):
+                    //   Condition is rendered as string and compared against expected_result.
+                    //   Used for `edges: [{when: "state.status", targets: {success: ..., failure: ...}}]`
+                    //
                     // AC-16: condition_fn (Rust callback) still supported
                     let matches = if let Some(expr) = condition {
-                        // Render the condition as a Tera template
-                        let template_expr = if expr.contains("{{") || expr.contains("{%") {
-                            expr.clone()
+                        if *is_boolean_mode {
+                            // Boolean mode: evaluate condition as truthy/falsy
+                            let result = self.yaml_engine.eval_condition(expr, state)?;
+                            evaluated_conditions.push((
+                                expr.clone(),
+                                if result { "true" } else { "false" }.to_string(),
+                            ));
+                            result
                         } else {
-                            format!("{{{{ {} }}}}", expr)
-                        };
+                            // String-match mode: render the condition as a Tera template
+                            let template_expr = if expr.contains("{{") || expr.contains("{%") {
+                                expr.clone()
+                            } else {
+                                format!("{{{{ {} }}}}", expr)
+                            };
 
-                        let rendered = self.yaml_engine.render_template(
-                            &template_expr,
-                            state,
-                            self.graph.variables(),
-                        )?;
-                        let rendered_trimmed = rendered.trim();
-                        evaluated_conditions.push((expr.clone(), rendered_trimmed.to_string()));
+                            let rendered = self.yaml_engine.render_template(
+                                &template_expr,
+                                state,
+                                self.graph.variables(),
+                            )?;
+                            let rendered_trimmed = rendered.trim();
+                            evaluated_conditions.push((expr.clone(), rendered_trimmed.to_string()));
 
-                        // String-match mode: compare rendered result against expected target
-                        rendered_trimmed == expected_result
+                            // Compare rendered result against expected target
+                            rendered_trimmed == expected_result
+                        }
                     } else if let Some(f) = condition_fn {
                         // Rust callback - compare result against expected
                         let callback_result = f(state)?;
