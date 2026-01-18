@@ -10,26 +10,10 @@
 # Source: Ollama Registry (https://ollama.com/library/gemma3)
 
 # =============================================================================
-# Stage 1: Model Downloader
+# Stage 1: Builder - Compile Rust binary with LLM support
 # =============================================================================
-FROM ubuntu:24.04 AS model-downloader
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Gemma 3 1B model from Ollama registry (~815MB)
-RUN mkdir -p /models && \
-    curl -L -o /models/gemma3-1b.gguf \
-    "https://registry.ollama.ai/v2/library/gemma3/blobs/sha256:7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01"
-
-# Verify model was downloaded
-RUN ls -lh /models/ && \
-    test -f /models/gemma3-1b.gguf
-
-# =============================================================================
-# Stage 2: Builder - Compile Rust binary with LLM support
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~1.6GB during build (815MB in downloader + 815MB in final)
 # =============================================================================
 FROM rust:latest AS builder
 
@@ -53,7 +37,7 @@ RUN ls -lh target/release/tea && \
     ./target/release/tea --version
 
 # =============================================================================
-# Stage 3: Runtime - Image with bundled model
+# Stage 2: Runtime - Image with bundled model
 # =============================================================================
 FROM debian:trixie-slim
 
@@ -61,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3t64 \
     libgomp1 \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/cache/apt/archives/*
@@ -68,13 +53,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the compiled binary
 COPY --from=builder /build/target/release/tea /usr/local/bin/tea
 
-# Copy bundled model
-COPY --from=model-downloader /models /opt/tea-models
+# Download model directly in final stage to avoid layer duplication
+# This saves ~815MB of overlay storage during build
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/gemma3-1b.gguf \
+    "https://registry.ollama.ai/v2/library/gemma3/blobs/sha256:7cd4618c1faf8b7233c6c906dac1694b6a47684b37b8895d470ac688520b9c01" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/gemma3-1b.gguf
 
-# Verify binary and model
-RUN tea --version && \
-    test -f /opt/tea-models/gemma3-1b.gguf && \
-    ls -lh /opt/tea-models/
+# Verify binary
+RUN tea --version
 
 # Set environment variables for model
 ENV TEA_MODEL_PATH="/opt/tea-models/gemma3-1b.gguf"
