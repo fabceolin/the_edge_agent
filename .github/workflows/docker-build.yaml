@@ -222,11 +222,48 @@ jobs:
         run: |
           echo "Before cleanup:"
           df -h
+          # Remove large pre-installed packages (saves ~40GB+ total)
+          # .NET SDK (~2GB)
           sudo rm -rf /usr/share/dotnet
+          # Android SDK (~10GB)
           sudo rm -rf /usr/local/lib/android
+          # GHC Haskell (~5GB)
           sudo rm -rf /opt/ghc
+          # Hosted tool cache (~10GB)
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
+          sudo rm -rf /opt/hostedtoolcache/Java*
+          sudo rm -rf /opt/hostedtoolcache/Ruby*
+          sudo rm -rf /opt/hostedtoolcache/Python*
+          sudo rm -rf /opt/hostedtoolcache/go*
+          sudo rm -rf /opt/hostedtoolcache/node*
+          sudo rm -rf /opt/hostedtoolcache/PyPy*
+          # Development tools (~5GB)
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/graalvm
+          # Cloud CLIs (~3GB)
+          sudo rm -rf /usr/share/az_*
+          sudo rm -rf /opt/az
+          sudo rm -rf /usr/share/google-cloud-sdk
+          sudo rm -rf /usr/lib/google-cloud-sdk
+          # Additional tools
+          sudo rm -rf /usr/share/gradle*
+          sudo rm -rf /usr/share/miniconda
+          sudo rm -rf /usr/share/kotlinc
+          sudo rm -rf /usr/share/sbt
+          sudo rm -rf /opt/pipx
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/share/rust
+          sudo rm -rf /home/runner/.rustup
+          sudo rm -rf /home/runner/.cargo
+          # Clean apt cache
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          # Remove ALL docker data (images, containers, volumes, build cache)
+          sudo docker system prune --all --force --volumes
+          # Remove snap packages if any
+          sudo rm -rf /var/lib/snapd
           echo "After cleanup:"
           df -h
 
@@ -271,6 +308,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Free disk space after build
+        if: always()
+        run: |
+          echo "Disk space after build:"
+          df -h
+          # Clean up buildx cache and intermediate layers to free space for testing
+          docker buildx prune --all --force || true
+          docker system prune --all --force --volumes || true
+          echo "Disk space after cleanup:"
+          df -h
 
       - name: Test Docker image (amd64)
         if: success()
