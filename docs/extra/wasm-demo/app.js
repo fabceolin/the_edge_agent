@@ -242,6 +242,7 @@ window.toggleGraphPanel = toggleGraphPanel;
 import {
   initLlm,
   initTeaLlm,
+  initYamlEngine,
   chat,
   executeLlmYaml,
   getLlmCacheStats,
@@ -378,30 +379,29 @@ nodes:
   - name: text_transforms
     action: return
     with:
-      # Apply text filters
-      uppercase: "{{ state.name | upper }}"
-      lowercase: "{{ state.name | lower }}"
-      with_default: "{{ state.missing | default(value='N/A') }}"
+      value:
+        uppercase: "{{ state.name | upper }}"
+        lowercase: "{{ state.name | lower }}"
+        with_default: "{{ state.missing | default(value='N/A') }}"
     output: transforms
 
   # Step 2: Work with data structures
   - name: data_ops
     action: return
     with:
-      # Serialize to JSON
-      user_json: "{{ state.user | tojson }}"
-      # Get array length
-      item_count: "{{ state.items | length }}"
-      # Access nested properties
-      greeting: "Hello, {{ state.user.name }}!"
+      value:
+        user_json: "{{ state.user | tojson }}"
+        item_count: "{{ state.items | length }}"
+        greeting: "Hello, {{ state.user.name }}!"
     output: data
 
   # Step 3: Combine results
   - name: summary
     action: return
     with:
-      message: "Processed {{ state.items | length }} items for {{ state.user.name | upper }}"
-      all_transforms: "{{ state.transforms | tojson }}"
+      value:
+        message: "Processed {{ state.items | length }} items for {{ state.user.name | upper }}"
+        all_transforms: "{{ state.transforms | tojson }}"
     output: summary`,
     state: `name: Alice
 user:
@@ -430,53 +430,59 @@ items:
 #   - Score-based routing logic
 #   - No LLM required - runs instantly!
 
-settings:
-  variables:
-    threshold_high: 80
-    threshold_low: 40
+variables:
+  threshold_high: 80
+  threshold_low: 40
 
 nodes:
   # Entry point: evaluate the score
   - name: evaluate
     action: return
     with:
-      score: "{{ state.score }}"
-      evaluated: true
+      value:
+        score: "{{ state.score }}"
+        evaluated: true
     output: evaluation
-    # Conditional routing based on score
+    # Conditional routing based on score (using if/to syntax like Rust)
     goto:
-      - when: state.score >= 80
-        then: high_tier
-      - when: state.score >= 40
-        then: mid_tier
-      - then: low_tier  # Default fallback
+      - if: state.score >= 80
+        to: high_tier
+      - if: state.score >= 40
+        to: mid_tier
+      - to: low_tier  # Default fallback
 
   # High tier path (score >= 80)
   - name: high_tier
     action: return
     with:
-      tier: "premium"
-      discount: 20
-      message: "🌟 Premium tier! Score: {{ state.score }}"
+      value:
+        tier: "premium"
+        discount: 20
+        message: "Premium tier! Score: {{ state.score }}"
     output: result
+    goto: __end__
 
   # Mid tier path (40 <= score < 80)
   - name: mid_tier
     action: return
     with:
-      tier: "standard"
-      discount: 10
-      message: "✓ Standard tier. Score: {{ state.score }}"
+      value:
+        tier: "standard"
+        discount: 10
+        message: "Standard tier. Score: {{ state.score }}"
     output: result
+    goto: __end__
 
   # Low tier path (score < 40)
   - name: low_tier
     action: return
     with:
-      tier: "basic"
-      discount: 0
-      message: "Basic tier. Score: {{ state.score }}. Keep trying!"
-    output: result`,
+      value:
+        tier: "basic"
+        discount: 0
+        message: "Basic tier. Score: {{ state.score }}. Keep trying!"
+    output: result
+    goto: __end__`,
     state: `score: 75`,
   },
 
@@ -491,53 +497,53 @@ nodes:
     yaml: `name: variables-loops-demo
 # Demonstrates advanced template features
 # Features:
-#   - settings.variables for reusable values
+#   - Top-level variables for reusable values
 #   - Loop iteration with {% for %}
 #   - Conditional blocks with {% if %}
 #   - Nested template expressions
 #   - No LLM required - runs instantly!
 
-settings:
-  variables:
-    app_name: "TEA Demo"
-    version: "1.0.0"
-    max_items: 5
+variables:
+  app_name: "TEA Demo"
+  version: "1.0.0"
+  max_items: 5
 
 nodes:
   # Generate a formatted list using loop
   - name: format_list
     action: return
     with:
-      header: "{{ variables.app_name }} v{{ variables.version }}"
-      # Build formatted item list
-      formatted: |
-        {% for item in state.products %}
-        - {{ item.name }}: ${{ item.price }}
-        {% endfor %}
+      value:
+        header: "{{ variables.app_name }} v{{ variables.version }}"
+        formatted: |
+          {% for item in state.products %}
+          - {{ item.name }}: {{ item.price }} USD
+          {% endfor %}
     output: list
 
   # Calculate totals and summary
   - name: calculate_summary
     action: return
     with:
-      item_count: "{{ state.products | length }}"
-      # Conditional message based on count
-      status: |
-        {% if state.products | length > 3 %}
-        Large order ({{ state.products | length }} items)
-        {% else %}
-        Small order
-        {% endif %}
+      value:
+        item_count: "{{ state.products | length }}"
+        status: |
+          {% if state.products | length > 3 %}
+          Large order ({{ state.products | length }} items)
+          {% else %}
+          Small order
+          {% endif %}
     output: summary
 
   # Final output with all data
   - name: finalize
     action: return
     with:
-      app: "{{ variables.app_name }}"
-      version: "{{ variables.version }}"
-      items: "{{ state.list.formatted }}"
-      order_status: "{{ state.summary.status }}"
+      value:
+        app: "{{ variables.app_name }}"
+        version: "{{ variables.version }}"
+        items: "{{ state.list.formatted }}"
+        order_status: "{{ state.summary.status }}"
     output: final`,
     state: `products:
   - name: Widget
@@ -578,41 +584,46 @@ nodes:
   - name: start
     action: return
     with:
-      input: "{{ state.text }}"
-      started_at: "now"
+      value:
+        input: "{{ state.text }}"
+        started_at: "now"
     output: metadata
 
   # Parallel path 1: Word analysis
   - name: word_analyzer
     action: return
     with:
-      word_count: "{{ state.text.split(' ') | length }}"
-      type: "word_analysis"
+      value:
+        text_sample: "{{ state.text | upper }}"
+        type: "word_analysis"
     output: analysis.words
 
   # Parallel path 2: Character analysis
   - name: char_analyzer
     action: return
     with:
-      char_count: "{{ state.text | length }}"
-      type: "char_analysis"
+      value:
+        char_count: "{{ state.text | length }}"
+        type: "char_analysis"
     output: analysis.chars
 
   # Parallel path 3: Pattern detection
   - name: pattern_detector
     action: return
     with:
-      has_numbers: "{{ state.text | lower }}"
-      type: "pattern_analysis"
+      value:
+        has_numbers: "{{ state.text | lower }}"
+        type: "pattern_analysis"
     output: analysis.patterns
 
   # Fan-in: Collect all parallel results
   - name: aggregate
     action: return
     with:
-      summary: "Analysis complete"
-      word_result: "{{ state.analysis.words | tojson }}"
-      char_result: "{{ state.analysis.chars | tojson }}"
+      value:
+        summary: "Analysis complete"
+        word_result: "{{ state.analysis.words | tojson }}"
+        char_result: "{{ state.analysis.chars | tojson }}"
     output: final
 
 edges:
@@ -1353,10 +1364,39 @@ function updateThreadingStatus() {
 
 // Initialize LLM
 async function initializeLlm() {
+  let yamlEngineReady = false;
+
+  // Step 1: Initialize YAML engine first (independent of LLM)
   try {
-    updateStatus('Loading model...', 'loading');
+    updateStatus('Initializing YAML engine...', 'loading');
     showProgress(true);
     updateThreadingStatus();
+
+    await initYamlEngine({ verbose: true });
+    yamlEngineReady = true;
+    runYamlBtn.disabled = false;
+    console.log('[TEA-DEMO] YAML engine initialized, non-LLM workflows ready');
+    updateStatus('YAML Ready (loading LLM...)', 'ready');
+  } catch (error) {
+    console.error('YAML engine initialization failed:', error);
+    updateStatus(`Error: ${error.message}`, 'error');
+    showProgress(false);
+    return; // Can't continue without YAML engine
+  }
+
+  // Step 2: Initialize additional engines (non-blocking)
+  Promise.all([initLuaEngine(), initPrologEngine()]).then(([lua, prolog]) => {
+    const engines = [];
+    if (lua) engines.push('Lua');
+    if (prolog) engines.push('Prolog');
+    if (engines.length > 0) {
+      console.log(`[TEA-DEMO] Additional engines: ${engines.join(', ')}`);
+    }
+  });
+
+  // Step 3: Try to load LLM (may fail, but YAML workflows will still work)
+  try {
+    updateStatus('Loading LLM model...', 'loading');
 
     await initLlm({
       modelUrl: MODEL_URL,
@@ -1368,13 +1408,12 @@ async function initializeLlm() {
         updateStatus(`Loading model: ${percent}%`, 'loading');
       },
       onReady: () => {
-        updateStatus('Ready', 'ready');
+        updateStatus('Ready (with LLM)', 'ready');
         showProgress(false);
-        runYamlBtn.disabled = false;
       },
     });
 
-    // Initialize TEA YAML engine with LLM handler
+    // Register LLM handler for llm.call actions
     await initTeaLlm({ verbose: true }, async (paramsJson) => {
       const params = JSON.parse(paramsJson);
       const response = await chat(params.prompt, {
@@ -1384,21 +1423,11 @@ async function initializeLlm() {
       return JSON.stringify({ content: response.content });
     });
 
-    // Initialize Lua and Prolog engines (non-blocking)
-    Promise.all([initLuaEngine(), initPrologEngine()]).then(([lua, prolog]) => {
-      const engines = [];
-      if (lua) engines.push('Lua');
-      if (prolog) engines.push('Prolog');
-      if (engines.length > 0) {
-        updateStatus(`Ready (with ${engines.join(' + ')})`, 'ready');
-      }
-    });
-
     await updateCacheStatus();
 
   } catch (error) {
-    console.error('Initialization failed:', error);
-    updateStatus(`Error: ${error.message}`, 'error');
+    console.error('LLM loading failed (YAML workflows still available):', error);
+    updateStatus(`YAML Ready (LLM unavailable: ${error.message})`, 'ready');
     showProgress(false);
   }
 }

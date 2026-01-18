@@ -450,6 +450,50 @@ export async function initTeaLlm(
 }
 
 /**
+ * Initialize just the YAML workflow engine without requiring an LLM handler.
+ *
+ * Use this when you only need to run non-LLM workflows (return, lua, prolog, etc.)
+ * and don't want to wait for or require an LLM to be available.
+ *
+ * @param config - Configuration options
+ *
+ * @example
+ * ```typescript
+ * // Initialize YAML engine only
+ * await initYamlEngine();
+ *
+ * // Now you can run non-LLM workflows
+ * const result = await executeLlmYaml(`
+ * name: simple
+ * nodes:
+ *   - name: greet
+ *     action: return
+ *     with:
+ *       value:
+ *         message: "Hello, {{ state.name }}!"
+ * edges:
+ *   - from: __start__
+ *     to: greet
+ *   - from: greet
+ *     to: __end__
+ * `, { name: "World" });
+ * ```
+ */
+export async function initYamlEngine(
+  config: { verbose?: boolean } = {}
+): Promise<void> {
+  if (!initialized) {
+    await init();
+    initialized = true;
+
+    if (config.verbose) {
+      console.log('[TEA-WASM-LLM] WASM module initialized (YAML engine only)');
+      console.log('[TEA-WASM-LLM] Version:', version());
+    }
+  }
+}
+
+/**
  * Execute a YAML workflow with LLM actions
  *
  * @deprecated Use chat() or chatStream() instead for the batteries-included API.

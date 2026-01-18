@@ -191,6 +191,10 @@ pub struct LlmNodeConfig {
     /// Output key to store result
     #[serde(default)]
     pub output: Option<String>,
+
+    /// Navigation after node execution (conditional or simple goto)
+    #[serde(default)]
+    pub goto: Option<GotoConfig>,
 }
 
 /// Edge configuration in YAML
@@ -208,6 +212,11 @@ pub fn main() {
 
 /// Execute a YAML workflow with LLM actions
 ///
+/// This function delegates to the full executor which supports:
+/// - Parallel fan-out/fan-in with configurable merge strategies
+/// - Conditional routing with goto expressions
+/// - All built-in actions (llm.call, return, storage, etc.)
+///
 /// # Arguments
 /// * `yaml` - YAML workflow definition
 /// * `initial_state` - Initial state as JSON string
@@ -218,42 +227,27 @@ pub fn main() {
 pub async fn execute_yaml(yaml: &str, initial_state: &str) -> Result<String, JsValue> {
     web_sys::console::log_1(&"[TEA-WASM-LLM] Parsing YAML...".into());
 
-    let config: LlmYamlConfig =
-        serde_yaml::from_str(yaml).map_err(|e| TeaWasmLlmError::YamlParse(e.to_string()))?;
+    // Parse with full WasmYamlConfig to support all features
+    let config = config::parse_yaml_config(yaml)
+        .map_err(|e| JsValue::from_str(&format!("YAML parse error: {}", e)))?;
 
-    let mut state: JsonValue = serde_json::from_str(initial_state)
+    let state: JsonValue = serde_json::from_str(initial_state)
         .map_err(|e| TeaWasmLlmError::Json(format!("Invalid initial state: {}", e)))?;
 
     web_sys::console::log_1(&format!("[TEA-WASM-LLM] Executing workflow: {}", config.name).into());
 
-    // Process nodes in order based on edges
-    let mut current_node = find_start_node(&config)?;
+    // Get variables from config for execution options
+    let variables = config.variables.clone();
+    let options = ExecutionOptions::new().with_variables(variables);
 
-    loop {
-        if current_node == "__end__" {
-            break;
-        }
-
-        if current_node != "__start__" {
-            // Find and execute the node
-            let node_config = config
-                .nodes
-                .iter()
-                .find(|n| n.name == current_node)
-                .ok_or_else(|| {
-                    TeaWasmLlmError::Execution(format!("Node not found: {}", current_node))
-                })?;
-
-            state = execute_node(node_config, state, &config.variables).await?;
-        }
-
-        // Find next node
-        current_node = find_next_node(&current_node, &config)?;
-    }
+    // Execute using full executor with parallel support
+    let final_state = execute_workflow_async(&config, state, options)
+        .await
+        .map_err(|e| JsValue::from_str(&format!("Execution error: {}", e)))?;
 
     web_sys::console::log_1(&"[TEA-WASM-LLM] Workflow complete".into());
 
-    serde_json::to_string(&state)
+    serde_json::to_string(&final_state)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
 }
 
@@ -272,10 +266,138 @@ fn find_start_node(config: &LlmYamlConfig) -> Result<String, JsValue> {
         .ok_or_else(|| JsValue::from_str("No nodes defined"))
 }
 
+/// Find the fan-in node where all parallel branches converge
+fn find_fan_in_node(branches: &[String], config: &LlmYamlConfig) -> Option<String> {
+    use std::collections::{HashMap, HashSet};
+
+    // Build incoming edge map: node -> sources
+    let mut incoming: HashMap<String, HashSet<String>> = HashMap::new();
+    for edge in &config.edges {
+        incoming
+            .entry(edge.to.clone())
+            .or_default()
+            .insert(edge.from.clone());
+    }
+
+    // Find a node that has incoming edges from all branches
+    let branch_set: HashSet<String> = branches.iter().cloned().collect();
+
+    for (node, sources) in &incoming {
+        // Check if this node receives from all branches
+        let from_branches: HashSet<&String> = sources.intersection(&branch_set).collect();
+        if from_branches.len() == branches.len() {
+            return Some(node.clone());
+        }
+    }
+
+    None
+}
+
+/// Execute a single branch until reaching the fan-in node
+async fn execute_branch(
+    start: &str,
+    fan_in: Option<&str>,
+    mut state: JsonValue,
+    config: &LlmYamlConfig,
+) -> Result<JsonValue, JsValue> {
+    let mut current = start.to_string();
+
+    loop {
+        // Stop if we reached the fan-in node or end
+        if current == "__end__" {
+            break;
+        }
+        if let Some(fin) = fan_in {
+            if current == fin {
+                break;
+            }
+        }
+
+        // Find and execute the node
+        let node_config = config
+            .nodes
+            .iter()
+            .find(|n| n.name == current)
+            .ok_or_else(|| {
+                JsValue::from_str(&format!("Branch node not found: {}", current))
+            })?;
+
+        web_sys::console::log_1(
+            &format!(
+                "[TEA-WASM-LLM] Executing node: {} (action: {})",
+                node_config.name,
+                node_config.action.as_deref().unwrap_or("passthrough")
+            )
+            .into(),
+        );
+
+        state = execute_node(node_config, state, &config.variables).await?;
+
+        // Find next node in this branch
+        current = find_next_node(&current, config, &state, &config.variables)?;
+    }
+
+    Ok(state)
+}
+
 /// Find the next node from current node
-/// Explicit edges take precedence, otherwise use implicit sequential order.
-fn find_next_node(current: &str, config: &LlmYamlConfig) -> Result<String, JsValue> {
-    // First, check for explicit edge from current node
+/// Priority: 1) Node's goto field, 2) Explicit edges, 3) Implicit sequential order
+fn find_next_node(
+    current: &str,
+    config: &LlmYamlConfig,
+    state: &JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> Result<String, JsValue> {
+    // First, check for goto field on the current node
+    if let Some(node) = config.nodes.iter().find(|n| n.name == current) {
+        if let Some(ref goto) = node.goto {
+            match goto {
+                GotoConfig::Simple(target) => {
+                    web_sys::console::log_1(
+                        &format!("[TEA-WASM-LLM] Node '{}' goto: {}", current, target).into(),
+                    );
+                    return Ok(target.clone());
+                }
+                GotoConfig::Conditional(branches) => {
+                    for branch in branches {
+                        if let Some(ref condition) = branch.condition {
+                            // Evaluate condition using template engine
+                            let result = evaluate_goto_condition(condition, state, variables);
+                            web_sys::console::log_1(
+                                &format!(
+                                    "[TEA-WASM-LLM] Condition '{}' evaluated to: {}",
+                                    condition, result
+                                )
+                                .into(),
+                            );
+                            if result {
+                                web_sys::console::log_1(
+                                    &format!(
+                                        "[TEA-WASM-LLM] Node '{}' conditional goto: {}",
+                                        current, branch.to
+                                    )
+                                    .into(),
+                                );
+                                return Ok(branch.to.clone());
+                            }
+                        } else {
+                            // No condition = default fallback (always matches)
+                            web_sys::console::log_1(
+                                &format!(
+                                    "[TEA-WASM-LLM] Node '{}' fallback goto: {}",
+                                    current, branch.to
+                                )
+                                .into(),
+                            );
+                            return Ok(branch.to.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Second, check for explicit edge from current node
     for edge in &config.edges {
         if edge.from == current {
             return Ok(edge.to.clone());
@@ -297,6 +419,45 @@ fn find_next_node(current: &str, config: &LlmYamlConfig) -> Result<String, JsVal
 
     // Current node not found in nodes list - end workflow
     Ok("__end__".to_string())
+}
+
+/// Evaluate a goto condition expression
+/// Follows the same pattern as routing.rs::evaluate_condition
+/// Supports expressions like "state.score >= 80" using Tera if/else block
+fn evaluate_goto_condition(
+    condition: &str,
+    state: &JsonValue,
+    variables: &std::collections::HashMap<String, JsonValue>,
+) -> bool {
+    // Wrap condition in Tera if block (matches routing.rs pattern)
+    // This properly evaluates boolean expressions
+    let template = format!(
+        "{{% if {} %}}true{{% else %}}false{{% endif %}}",
+        condition
+    );
+
+    // Use templates module for evaluation
+    match templates::render_template_with_config(
+        &template,
+        state,
+        variables,
+        templates::TemplateSecurityConfig::default(),
+    ) {
+        Ok(result) => {
+            // Check for truthy result
+            match result {
+                JsonValue::String(s) => s == "true",
+                JsonValue::Bool(b) => b,
+                _ => false,
+            }
+        }
+        Err(e) => {
+            web_sys::console::warn_1(
+                &format!("[TEA-WASM-LLM] Condition evaluation error: {}", e).into(),
+            );
+            false
+        }
+    }
 }
 
 /// Execute a single node
@@ -1123,7 +1284,9 @@ fn execute_return(
 ) -> Result<JsonValue, JsValue> {
     if let Some(params) = &node.params {
         if let Some(value) = params.get("value") {
-            let processed = process_template_value(value, &state, variables);
+            // Use the full Tera template engine from templates module
+            let processed = templates::process_template_value(value, &state, variables)
+                .map_err(|e| JsValue::from_str(&format!("Template error: {}", e)))?;
 
             if let Some(ref output_key) = node.output {
                 if let Some(obj) = state.as_object_mut() {

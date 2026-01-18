@@ -87,9 +87,12 @@ pub enum GotoConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GotoBranch {
     /// Condition expression (Lua/Tera syntax)
-    #[serde(rename = "if")]
+    /// Accepts both "if" and "when" keywords in YAML
+    #[serde(rename = "if", alias = "when")]
     pub condition: Option<String>,
     /// Target node name
+    /// Accepts both "to" and "then" keywords in YAML
+    #[serde(alias = "then")]
     pub to: String,
 }
 
@@ -169,7 +172,8 @@ pub enum MergeStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ParallelSettings {
     /// Merge strategy for combining parallel branch results (default: isolated)
-    #[serde(default)]
+    /// Accepts both "merge_strategy" and "strategy" in YAML
+    #[serde(default, alias = "strategy")]
     pub merge_strategy: MergeStrategy,
 }
 
@@ -763,6 +767,32 @@ nodes:
         let config = parse_yaml_config(yaml).unwrap();
         let schema = config.state_schema.unwrap();
         assert!(matches!(schema.get("name"), Some(SchemaField::Simple(_))));
+    }
+
+    #[test]
+    fn test_parse_goto_when_then_syntax() {
+        // Test that 'when' and 'then' keywords work as aliases for 'if' and 'to'
+        let yaml = r#"
+name: test
+nodes:
+  - name: check
+    goto:
+      - when: "state.value > 10"
+        then: high
+      - then: low
+  - name: high
+  - name: low
+"#;
+        let config = parse_yaml_config(yaml).unwrap();
+        if let Some(GotoConfig::Conditional(branches)) = &config.nodes[0].goto {
+            assert_eq!(branches.len(), 2);
+            assert_eq!(branches[0].condition, Some("state.value > 10".to_string()));
+            assert_eq!(branches[0].to, "high");
+            assert!(branches[1].condition.is_none());
+            assert_eq!(branches[1].to, "low");
+        } else {
+            panic!("Expected conditional goto with when/then syntax");
+        }
     }
 
     #[test]

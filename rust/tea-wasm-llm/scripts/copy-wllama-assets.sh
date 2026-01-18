@@ -11,7 +11,7 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-WLLAMA_DIR="node_modules/@anthropic-wllama/wllama"
+WLLAMA_DIR="node_modules/@wllama/wllama"
 ASSETS_DIR="assets"
 
 # Check if wllama is installed

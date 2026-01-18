@@ -17,6 +17,11 @@
 //! ```
 
 use crate::config::{WasmNodeConfig, WasmYamlConfig};
+use crate::llm::{llm_call_async, llm_embed_async, LlmParams};
+use crate::lua::lua_eval_async;
+use crate::params::set_at_path;
+use crate::parallel::{execute_parallel_group, get_parallel_group, is_parallel_source};
+use crate::prolog::prolog_query_async;
 use crate::routing::{find_entry_node, resolve_next_node, ExecutionContext, END_NODE};
 use crate::templates::{process_template_value, render_template};
 use js_sys::Promise;
@@ -169,38 +174,23 @@ pub async fn execute_node_async(
     let result = match action {
         "return" => execute_return_action(&params, &state)?,
         "passthrough" => state.clone(),
-        "llm.call" => {
-            // LLM calls are handled via JavaScript callback
-            // For now, return state with placeholder
-            execute_placeholder_action("llm.call", &params, &state)?
-        }
-        "llm.embed" => execute_placeholder_action("llm.embed", &params, &state)?,
+        "llm.call" => execute_llm_call_action(&params, &state, &options.variables).await?,
+        "llm.embed" => execute_llm_embed_action(&params, &state, &options.variables).await?,
+        "lua.eval" => execute_lua_eval_action(&params, &state, &options.variables).await?,
+        "prolog.query" => execute_prolog_query_action(&params, &state, &options.variables).await?,
         "llm.stream" => execute_placeholder_action("llm.stream", &params, &state)?,
         "storage.read" => execute_placeholder_action("storage.read", &params, &state)?,
         "storage.write" => execute_placeholder_action("storage.write", &params, &state)?,
-        "lua.eval" => execute_placeholder_action("lua.eval", &params, &state)?,
-        "prolog.query" => execute_placeholder_action("prolog.query", &params, &state)?,
         _ => {
-            // Unknown action - try to execute as custom action
-            execute_placeholder_action(action, &params, &state)?
+            // Unknown action - passthrough
+            state.clone()
         }
     };
 
-    // Store result in output key if specified
-    if let Some(ref output_key) = node.output {
-        if let JsonValue::Object(ref mut map) = state {
-            map.insert(output_key.clone(), result);
-        }
-    } else {
-        // Merge result into state if it's an object
-        if let (JsonValue::Object(ref mut state_map), JsonValue::Object(result_map)) =
-            (&mut state, result)
-        {
-            for (k, v) in result_map {
-                state_map.insert(k, v);
-            }
-        }
-    }
+    // Store result in output key if specified, otherwise use node name
+    // Supports dot-notation for nested paths (e.g., "analysis.words")
+    let output_key = node.output.as_ref().unwrap_or(&node.name);
+    set_at_path(&mut state, output_key, result);
 
     Ok(state)
 }
@@ -239,6 +229,199 @@ fn execute_placeholder_action(
         "__params__": params,
         "__placeholder__": true
     }))
+}
+
+/// Process a template string, replacing {{ state.key }} patterns
+fn process_template(
+    template: &str,
+    state: &JsonValue,
+    variables: &HashMap<String, JsonValue>,
+) -> String {
+    // Use templates module for proper template rendering
+    match render_template(template, state, variables) {
+        Ok(JsonValue::String(s)) => s,
+        Ok(v) => v.to_string(),
+        Err(_) => template.to_string(),
+    }
+}
+
+/// Execute llm.call action
+async fn execute_llm_call_action(
+    params: &JsonValue,
+    state: &JsonValue,
+    variables: &HashMap<String, JsonValue>,
+) -> ExecutorResult<JsonValue> {
+    // Extract prompt with template processing
+    let prompt = params
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .map(|p| process_template(p, state, variables))
+        .ok_or_else(|| ExecutorError::ActionError {
+            action: "llm.call".to_string(),
+            message: "Missing 'prompt' parameter".to_string(),
+        })?;
+
+    let max_tokens = params
+        .get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(100) as u32;
+
+    let temperature = params
+        .get("temperature")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.7) as f32;
+
+    let llm_params = LlmParams {
+        prompt,
+        system: params
+            .get("system")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        max_tokens,
+        temperature,
+        top_p: params.get("top_p").and_then(|v| v.as_f64()).unwrap_or(0.9) as f32,
+        top_k: params.get("top_k").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        model: params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        stop: params
+            .get("stop")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+
+    let params_json = serde_json::to_string(&llm_params)?;
+    let state_json = serde_json::to_string(state)?;
+
+    let result_json = llm_call_async(&params_json, &state_json)
+        .await
+        .map_err(|e| ExecutorError::ActionError {
+            action: "llm.call".to_string(),
+            message: e.as_string().unwrap_or_else(|| "LLM call failed".to_string()),
+        })?;
+
+    let result: JsonValue = serde_json::from_str(&result_json)?;
+
+    // Extract llm_response if present
+    if let Some(llm_response) = result.get("llm_response").cloned() {
+        Ok(llm_response)
+    } else {
+        Ok(result)
+    }
+}
+
+/// Execute llm.embed action
+async fn execute_llm_embed_action(
+    params: &JsonValue,
+    state: &JsonValue,
+    variables: &HashMap<String, JsonValue>,
+) -> ExecutorResult<JsonValue> {
+    let text = params
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|t| process_template(t, state, variables))
+        .ok_or_else(|| ExecutorError::ActionError {
+            action: "llm.embed".to_string(),
+            message: "Missing 'text' parameter".to_string(),
+        })?;
+
+    let state_json = serde_json::to_string(state)?;
+
+    let result_json = llm_embed_async(&text, &state_json)
+        .await
+        .map_err(|e| ExecutorError::ActionError {
+            action: "llm.embed".to_string(),
+            message: e.as_string().unwrap_or_else(|| "Embed call failed".to_string()),
+        })?;
+
+    let result: JsonValue = serde_json::from_str(&result_json)?;
+    Ok(result)
+}
+
+/// Execute lua.eval action
+async fn execute_lua_eval_action(
+    params: &JsonValue,
+    state: &JsonValue,
+    variables: &HashMap<String, JsonValue>,
+) -> ExecutorResult<JsonValue> {
+    let code = params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .map(|c| process_template(c, state, variables))
+        .ok_or_else(|| ExecutorError::ActionError {
+            action: "lua.eval".to_string(),
+            message: "Missing 'code' parameter".to_string(),
+        })?;
+
+    let state_json = serde_json::to_string(state)?;
+
+    let result_json = lua_eval_async(&code, &state_json)
+        .await
+        .map_err(|e| ExecutorError::ActionError {
+            action: "lua.eval".to_string(),
+            message: e.as_string().unwrap_or_else(|| "Lua eval failed".to_string()),
+        })?;
+
+    let result: JsonValue = serde_json::from_str(&result_json)?;
+
+    // Extract lua_result if present
+    if let Some(lua_result) = result.get("lua_result").cloned() {
+        Ok(lua_result)
+    } else {
+        Ok(result)
+    }
+}
+
+/// Execute prolog.query action
+async fn execute_prolog_query_action(
+    params: &JsonValue,
+    state: &JsonValue,
+    variables: &HashMap<String, JsonValue>,
+) -> ExecutorResult<JsonValue> {
+    let code = params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .map(|c| process_template(c, state, variables))
+        .ok_or_else(|| ExecutorError::ActionError {
+            action: "prolog.query".to_string(),
+            message: "Missing 'code' parameter".to_string(),
+        })?;
+
+    let facts = params
+        .get("facts")
+        .and_then(|v| v.as_str())
+        .map(|f| process_template(f, state, variables));
+
+    // Build query JSON
+    let query_params = serde_json::json!({
+        "code": code,
+        "facts": facts,
+    });
+
+    let query_json = serde_json::to_string(&query_params)?;
+    let state_json = serde_json::to_string(state)?;
+
+    let result_json = prolog_query_async(&query_json, &state_json)
+        .await
+        .map_err(|e| ExecutorError::ActionError {
+            action: "prolog.query".to_string(),
+            message: e.as_string().unwrap_or_else(|| "Prolog query failed".to_string()),
+        })?;
+
+    let result: JsonValue = serde_json::from_str(&result_json)?;
+
+    // Extract prolog_result if present
+    if let Some(prolog_result) = result.get("prolog_result").cloned() {
+        Ok(prolog_result)
+    } else {
+        Ok(result)
+    }
 }
 
 /// Execute a complete YAML workflow asynchronously
@@ -294,7 +477,36 @@ pub async fn execute_workflow_async(
             callback(&node_name, "completed");
         }
 
-        // Resolve next node
+        // Check for parallel fan-out from this node
+        if is_parallel_source(&node_name, config) {
+            if let Some(group) = get_parallel_group(&node_name, config) {
+                // Log parallel detection
+                web_sys::console::log_1(
+                    &format!(
+                        "[TEA-WASM] Parallel fan-out from '{}' to {} branches",
+                        node_name,
+                        group.branches.len()
+                    )
+                    .into(),
+                );
+
+                // Execute parallel group (all branches sequentially simulated)
+                state = execute_parallel_group(&group, state, config, &options).await?;
+
+                // Continue from fan-in node (or end if no fan-in)
+                current_node = group.fan_in.or_else(|| Some(END_NODE.to_string()));
+
+                // Log fan-in resumption
+                if let Some(ref next) = current_node {
+                    web_sys::console::log_1(
+                        &format!("[TEA-WASM] Continuing from fan-in node: {}", next).into(),
+                    );
+                }
+                continue;
+            }
+        }
+
+        // Resolve next node (normal sequential flow)
         current_node = resolve_next_node(&node_name, &state, config);
     }
 
