@@ -1,0 +1,15 @@
+# YE.9 Test Fixture: Deep nested object merge within matched node
+# Expected: Nested 'with' object properties merged (model changed, max_tokens preserved)
+
+nodes:
+  - name: process_llm
+    uses: llm.call
+    with:
+      model: claude-3-sonnet
+      # temperature should be preserved from base (0.7)
+      # max_tokens should be preserved from base (1000)
+      system_prompt: "You are a helpful assistant."
+      # New nested property added
+      options:
+        stream: true
+        retry_count: 3

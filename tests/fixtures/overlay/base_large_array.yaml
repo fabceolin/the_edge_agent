@@ -1,0 +1,103 @@
+# YE.9 Test Fixture: Large array for scale testing (15 nodes)
+name: large-agent
+description: Agent with many nodes for performance testing
+
+state_schema:
+  input: str
+  step: int
+  result: str
+
+nodes:
+  - name: step_01
+    run: |
+      return {"step": 1}
+
+  - name: step_02
+    run: |
+      return {"step": 2}
+
+  - name: step_03
+    run: |
+      return {"step": 3}
+
+  - name: step_04
+    run: |
+      return {"step": 4}
+
+  - name: step_05
+    run: |
+      return {"step": 5}
+
+  - name: step_06
+    run: |
+      return {"step": 6}
+
+  - name: step_07
+    run: |
+      return {"step": 7}
+
+  - name: step_08
+    run: |
+      return {"step": 8}
+
+  - name: step_09
+    run: |
+      return {"step": 9}
+
+  - name: step_10
+    run: |
+      return {"step": 10}
+
+  - name: step_11
+    run: |
+      return {"step": 11}
+
+  - name: step_12
+    run: |
+      return {"step": 12}
+
+  - name: step_13
+    run: |
+      return {"step": 13}
+
+  - name: step_14
+    run: |
+      return {"step": 14}
+
+  - name: step_15
+    run: |
+      return {"step": 15}
+
+edges:
+  - from: __start__
+    to: step_01
+  - from: step_01
+    to: step_02
+  - from: step_02
+    to: step_03
+  - from: step_03
+    to: step_04
+  - from: step_04
+    to: step_05
+  - from: step_05
+    to: step_06
+  - from: step_06
+    to: step_07
+  - from: step_07
+    to: step_08
+  - from: step_08
+    to: step_09
+  - from: step_09
+    to: step_10
+  - from: step_10
+    to: step_11
+  - from: step_11
+    to: step_12
+  - from: step_12
+    to: step_13
+  - from: step_13
+    to: step_14
+  - from: step_14
+    to: step_15
+  - from: step_15
+    to: __end__

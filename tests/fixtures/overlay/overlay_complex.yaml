@@ -1,0 +1,34 @@
+# YE.9 Test Fixture: Complex scenario with multiple operations
+# Operations:
+#   - Modify process_llm node (change model)
+#   - Add new logging_node
+#   - Delete validate_result node
+#   - Modify edge process_llm->validate_result
+#   - Add new edge
+# Expected: 5 nodes (5 base - 1 deleted + 1 added), 7 edges (6 base + 1 added)
+
+nodes:
+  - name: process_llm
+    with:
+      model: gpt-4o
+      temperature: 0.2
+
+  - name: logging_node
+    run: |
+      import logging
+      logging.info(f"State: {state}")
+      return {}
+
+  - name: validate_result
+    __delete__: true
+
+edges:
+  - from: process_llm
+    to: format_output
+    # Skip validate_result since it's deleted
+
+  - from: logging_node
+    to: __end__
+    condition:
+      type: expression
+      value: "state.get('debug', False)"

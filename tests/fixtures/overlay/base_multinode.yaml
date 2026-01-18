@@ -1,0 +1,64 @@
+# YE.9 Test Fixture: Base agent with multiple nodes for array merge testing
+name: multinode-agent
+description: Base agent with 5 nodes for testing array merge by key
+
+settings:
+  ltm:
+    backend: sqlite
+    path: /tmp/tea_memory/
+  model: gpt-4o-mini
+  temperature: 0.7
+
+variables:
+  api_url: https://api.example.com
+  max_retries: 3
+
+state_schema:
+  input: str
+  data: dict
+  result: str
+  validated: bool
+
+nodes:
+  - name: fetch_data
+    uses: http.get
+    with:
+      url: "{{ variables.api_url }}/data"
+      timeout: 30
+
+  - name: process_llm
+    uses: llm.call
+    with:
+      model: gpt-4o-mini
+      temperature: 0.7
+      max_tokens: 1000
+      prompt: "Process this data: {{ state.data }}"
+
+  - name: validate_result
+    run: |
+      result = state.get("result", "")
+      return {"validated": len(result) > 0}
+
+  - name: format_output
+    run: |
+      return {"formatted": f"Result: {state.get('result', '')}"}
+
+  - name: save_result
+    uses: memory.store
+    with:
+      key: "result_{{ state.input }}"
+      value: "{{ state.formatted }}"
+
+edges:
+  - from: __start__
+    to: fetch_data
+  - from: fetch_data
+    to: process_llm
+  - from: process_llm
+    to: validate_result
+  - from: validate_result
+    to: format_output
+  - from: format_output
+    to: save_result
+  - from: save_result
+    to: __end__
