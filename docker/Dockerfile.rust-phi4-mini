@@ -10,26 +10,10 @@
 # Source: Ollama Registry (https://ollama.com/library/phi4-mini)
 
 # =============================================================================
-# Stage 1: Model Downloader
+# Stage 1: Builder - Compile Rust binary with LLM support
 # =============================================================================
-FROM ubuntu:24.04 AS model-downloader
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Phi-4 mini model from Ollama registry (~2.5GB)
-RUN mkdir -p /models && \
-    curl -L -o /models/phi4-mini.gguf \
-    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db"
-
-# Verify model was downloaded
-RUN ls -lh /models/ && \
-    test -f /models/phi4-mini.gguf
-
-# =============================================================================
-# Stage 2: Builder - Compile Rust binary with LLM support
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~5GB during build (2.5GB in downloader + 2.5GB in final)
 # =============================================================================
 FROM rust:latest AS builder
 
@@ -53,7 +37,7 @@ RUN ls -lh target/release/tea && \
     ./target/release/tea --version
 
 # =============================================================================
-# Stage 3: Runtime - Image with bundled model
+# Stage 2: Runtime - Image with bundled model
 # =============================================================================
 FROM debian:trixie-slim
 
@@ -61,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3t64 \
     libgomp1 \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/cache/apt/archives/*
@@ -68,13 +53,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the compiled binary
 COPY --from=builder /build/target/release/tea /usr/local/bin/tea
 
-# Copy bundled model
-COPY --from=model-downloader /models /opt/tea-models
+# Download model directly in final stage to avoid layer duplication
+# This saves ~2.5GB of overlay storage during build
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/phi4-mini.gguf \
+    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/phi4-mini.gguf
 
-# Verify binary and model
-RUN tea --version && \
-    test -f /opt/tea-models/phi4-mini.gguf && \
-    ls -lh /opt/tea-models/
+# Verify binary
+RUN tea --version
 
 # Set environment variables for model
 ENV TEA_MODEL_PATH="/opt/tea-models/phi4-mini.gguf"
