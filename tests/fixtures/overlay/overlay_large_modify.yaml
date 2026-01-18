@@ -1,0 +1,15 @@
+# YE.9 Test Fixture: Overlay for large array - modify 3 nodes
+# Expected: 15 nodes preserved, 3 modified (step_05, step_10, step_15)
+
+nodes:
+  - name: step_05
+    run: |
+      return {"step": 5, "checkpoint": "quarter"}
+
+  - name: step_10
+    run: |
+      return {"step": 10, "checkpoint": "half"}
+
+  - name: step_15
+    run: |
+      return {"step": 15, "checkpoint": "complete", "result": "done"}

@@ -224,7 +224,7 @@ class TestMultipleOverlays(unittest.TestCase):
         self.assertEqual(parsed["variables"]["new_var"], "added_by_overlay")
 
     def test_later_overlay_overrides_earlier(self):
-        """Later overlay overrides earlier overlay values."""
+        """Later overlay merges nodes by key (YE.9 behavior)."""
         base = FIXTURES_DIR / "base.yaml"
         overlay_nodes = FIXTURES_DIR / "overlay_nodes.yaml"
         result = runner.invoke(
@@ -232,9 +232,12 @@ class TestMultipleOverlays(unittest.TestCase):
         )
         self.assertEqual(result.exit_code, 0)
         parsed = yaml.safe_load(result.output)
-        # Nodes array should be completely replaced
-        self.assertEqual(len(parsed["nodes"]), 1)
-        self.assertEqual(parsed["nodes"][0]["name"], "custom_process")
+        # YE.9: Nodes merge by name key - base has "process", overlay has "custom_process"
+        # Since names don't match, custom_process is appended
+        self.assertEqual(len(parsed["nodes"]), 2)
+        node_names = [n["name"] for n in parsed["nodes"]]
+        self.assertIn("process", node_names)  # Preserved from base
+        self.assertIn("custom_process", node_names)  # Added from overlay
 
 
 class TestErrorHandling(unittest.TestCase):

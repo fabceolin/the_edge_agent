@@ -1,0 +1,6 @@
+# YE.9 Test Fixture: Delete node using __delete__ marker
+# Expected: validate_result node removed (4 nodes remaining)
+
+nodes:
+  - name: validate_result
+    __delete__: true

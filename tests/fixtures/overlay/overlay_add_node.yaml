@@ -1,0 +1,9 @@
+# YE.9 Test Fixture: Add new node (non-matching name)
+# Expected: New node appended, all base nodes preserved (6 total)
+
+nodes:
+  - name: log_request
+    run: |
+      import logging
+      logging.info(f"Processing: {state.get('input', '')}")
+      return {}
