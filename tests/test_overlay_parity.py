@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-YE.8: Cross-Implementation Parity Tests for YAML Overlay Merge Support.
+YE.8/YE.9: Cross-Implementation Parity Tests for YAML Overlay Merge Support.
 
 This test suite verifies that both Python and Rust implementations produce
 identical merged YAML output for the same inputs.
+
+YE.8: Basic overlay merge (objects merged, arrays replaced)
+YE.9: Array merge by key (nodes by name, edges by from+to, goto by to)
 
 Run with:
     pytest tests/test_overlay_parity.py -v
@@ -225,6 +228,152 @@ class TestMergeSemanticsConsistency(unittest.TestCase):
         )
         # Settings overlay should change model
         self.assertEqual(result1.get("settings", {}).get("model"), "gpt-4o")
+
+
+class TestYE9ArrayMergeByKeyParity(unittest.TestCase):
+    """YE.9: Test array merge by key produces identical results across implementations."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not RUST_BIN.exists():
+            raise unittest.SkipTest(f"Rust binary not found at {RUST_BIN}")
+
+    def test_nodes_merge_by_name_parity(self):
+        """Nodes merge by name is identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_modify_single_node.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        # Both should have same number of nodes
+        self.assertEqual(
+            len(py_result.get("nodes", [])),
+            len(rs_result.get("nodes", []))
+        )
+
+        # Normalized comparison
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized.get("nodes"), rs_normalized.get("nodes"))
+
+    def test_nodes_modify_multiple_parity(self):
+        """Multiple node modifications are identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_modify_multiple_nodes.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized.get("nodes"), rs_normalized.get("nodes"))
+
+    def test_node_add_parity(self):
+        """Adding a new node is identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_add_node.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_nodes = py_result.get("nodes", [])
+        rs_nodes = rs_result.get("nodes", [])
+
+        # Should have same count (base + 1 added)
+        self.assertEqual(len(py_nodes), len(rs_nodes))
+
+        # Both should have the new node
+        py_names = [n.get("name") for n in py_nodes]
+        rs_names = [n.get("name") for n in rs_nodes]
+        self.assertEqual(set(py_names), set(rs_names))
+
+    def test_node_delete_parity(self):
+        """Deleting a node with __delete__ is identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_delete_node.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_nodes = py_result.get("nodes", [])
+        rs_nodes = rs_result.get("nodes", [])
+
+        # Should have same count (base - 1 deleted)
+        self.assertEqual(len(py_nodes), len(rs_nodes))
+
+        # Neither should have the deleted node
+        py_names = [n.get("name") for n in py_nodes]
+        rs_names = [n.get("name") for n in rs_nodes]
+        self.assertNotIn("validate_result", py_names)
+        self.assertNotIn("validate_result", rs_names)
+
+    def test_edges_merge_by_from_to_parity(self):
+        """Edge merge by from+to is identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_modify_edge.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized.get("edges"), rs_normalized.get("edges"))
+
+    def test_goto_merge_by_to_parity(self):
+        """Goto merge by 'to' is identical across implementations."""
+        base = FIXTURES_DIR / "base_with_goto.yaml"
+        overlay = FIXTURES_DIR / "overlay_modify_goto.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized.get("nodes"), rs_normalized.get("nodes"))
+
+    def test_nested_deep_merge_parity(self):
+        """Nested deep merge within matched elements is identical."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_nested_merge.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized, rs_normalized)
+
+    def test_complex_scenario_parity(self):
+        """Complex scenario (add, modify, delete) is identical across implementations."""
+        base = FIXTURES_DIR / "base_multinode.yaml"
+        overlay = FIXTURES_DIR / "overlay_complex.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized, rs_normalized)
+
+    def test_large_array_merge_parity(self):
+        """Large array merge performance parity (50+ nodes)."""
+        base = FIXTURES_DIR / "base_large_array.yaml"
+        overlay = FIXTURES_DIR / "overlay_large_modify.yaml"
+
+        py_result = run_python_dump_merged(base, [overlay])
+        rs_result = run_rust_dump_merged(base, [overlay])
+
+        # Count should match
+        self.assertEqual(
+            len(py_result.get("nodes", [])),
+            len(rs_result.get("nodes", []))
+        )
+
+        # Full normalized comparison
+        py_normalized = normalize_yaml(py_result)
+        rs_normalized = normalize_yaml(rs_result)
+        self.assertEqual(py_normalized, rs_normalized)
 
 
 if __name__ == "__main__":

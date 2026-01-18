@@ -1,0 +1,9 @@
+# YE.9 Test Fixture: Add new edge (non-matching from+to)
+# Expected: New edge appended, all base edges preserved (7 total)
+
+edges:
+  - from: validate_result
+    to: __end__
+    condition:
+      type: expression
+      value: "not state.get('validated', False)"

@@ -1,0 +1,7 @@
+# YE.9 Test Fixture: Delete edge using __delete__ marker
+# Expected: Edge from format_output->save_result removed (5 edges remaining)
+
+edges:
+  - from: format_output
+    to: save_result
+    __delete__: true

@@ -1,0 +1,9 @@
+# YE.9 Test Fixture: Modify goto routing by 'to' key
+# Expected: high_priority threshold changed, others preserved
+
+nodes:
+  - name: classify
+    goto:
+      - if: "state['score'] > 0.95"
+        to: high_priority
+      # medium_priority and low_priority routes preserved from base
