@@ -74,16 +74,22 @@ Implement a Ralphy-compatible autonomous AI coding loop as TEA YAML workflows, e
 
 | Story | Title | Priority | Dependencies |
 |-------|-------|----------|--------------|
-| TEA-RALPHY-001.1 | Python `markdown.parse` Action | P0 | None |
-| TEA-RALPHY-001.2 | Rust `markdown.parse` Action | P0 | None |
-| TEA-RALPHY-001.3 | GitHub Issues Integration | P1 | None |
-| TEA-RALPHY-001.4 | BMad Story Task Extraction | P1 | 001.1, 001.2 |
-| TEA-RALPHY-001.5 | Additional Shell Providers | P1 | None |
-| TEA-RALPHY-001.6 | Git Worktree Isolation | P1 | None |
-| TEA-RALPHY-001.7 | Token Tracking & Cost Estimation | P2 | None |
-| TEA-RALPHY-001.8 | Progress Reporting & Notifications | P2 | None |
-| TEA-RALPHY-001.9 | Integration Workflow Agent | P0 | 001.1-001.6 |
-| TEA-RALPHY-001.10 | Dynamic Dependency Analysis & DOT Generation | P1 | 001.1, 001.4 |
+| TEA-RALPHY-001.0 | [md-graph-parser Shared Crate](./TEA-RALPHY-001.0.md-graph-parser-crate.md) | P0 | None (external repo) |
+| TEA-RALPHY-001.1 | [Python `markdown.parse` Action](./TEA-RALPHY-001.1.python-markdown-parse.md) | P0 | 001.0 |
+| TEA-RALPHY-001.2 | [Rust `markdown.parse` Action](./TEA-RALPHY-001.2.rust-markdown-parse.md) | P0 | 001.0 |
+| TEA-RALPHY-001.3 | [GitHub Issues Integration](./TEA-RALPHY-001.3.github-issues-integration.md) | P1 | None |
+| TEA-RALPHY-001.4 | [BMad Story Task Extraction](./TEA-RALPHY-001.4.bmad-story-task-extraction.md) | P1 | 001.1, 001.2 |
+| TEA-RALPHY-001.5 | [Additional Shell Providers](./TEA-RALPHY-001.5.additional-shell-providers.md) | P1 | None |
+| TEA-RALPHY-001.6 | [Execution Modes (Sequential, Parallel, Graph)](./TEA-RALPHY-001.6.execution-modes.md) | P1 | 001.10 (for graph mode) |
+| TEA-RALPHY-001.7 | [Token Tracking & Cost Estimation](./TEA-RALPHY-001.7.token-tracking-cost-estimation.md) | P2 | None |
+| TEA-RALPHY-001.8 | [Progress Reporting & Notifications](./TEA-RALPHY-001.8.progress-reporting-notifications.md) | Backlog | None |
+| TEA-RALPHY-001.9 | [Integration Workflow Agent](./TEA-RALPHY-001.9.integration-workflow-agent.md) | P0 | 001.1-001.6 |
+| TEA-RALPHY-001.10 | [Dynamic Dependency Analysis & DOT Generation](./TEA-RALPHY-001.10.dynamic-dependency-analysis.md) | P1 | 001.1, 001.4 |
+
+### Shared Library Note
+
+> **TEA-RALPHY-001.0** is a separate Rust crate (`md-graph-parser`) hosted at https://github.com/fabceolin/md-graph-parser.
+> It provides structured Markdown parsing shared between TEA and agentfs, ensuring cross-runtime schema parity.
 
 ---
 
@@ -777,16 +783,17 @@ class TestShellProviders:
 
 ---
 
-## Story TEA-RALPHY-001.6: Git Worktree Isolation
+## Story TEA-RALPHY-001.6: Execution Modes (Sequential, Parallel, Graph)
 
 ### Story
 
 **As a** workflow developer,
-**I want** git worktree management for parallel task execution,
-**So that** multiple AI agents can work on different tasks without conflicts.
+**I want** configurable execution modes (sequential, parallel, graph) for multi-task workflows,
+**So that** I can choose the optimal strategy for task isolation, parallelization, and dependency management.
 
 ### Acceptance Criteria
 
+#### Core Worktree Operations (Parallel Mode)
 1. Create isolated worktree per parallel task
 2. Automatic branch creation from base branch
 3. Execute task within worktree context
@@ -794,41 +801,50 @@ class TestShellProviders:
 5. Cleanup worktree after merge
 6. Handle merge conflicts by delegating to AI
 
+#### Execution Mode Selection
+7. Support three execution modes via `settings.execution.mode`: `sequential`, `parallel`, `graph`
+8. Default mode is `sequential` when not specified
+9. Settings can be overridden at runtime via `--input` JSON/YAML or `--config` file
+
+#### Sequential Mode
+10. Tasks execute one at a time in order specified
+11. All tasks share single working directory (no worktrees)
+12. Single branch used for all changes
+
+#### Parallel Mode
+13. Each task gets isolated worktree with dedicated branch
+14. Tasks execute concurrently (limited by `max_parallel`)
+15. Results merged back in dependency order
+16. Merge conflicts halt execution and return conflict info
+
+#### Graph Mode
+17. LLM analyzes task dependencies and generates DOT file
+18. DOT file follows `DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md` format
+19. Execute via `tea from dot --use-node-commands` for maximum parallelization
+20. **Git worktree/branching is DISABLED** (DOT handles orchestration)
+21. All changes made directly to current working directory
+22. DOT file saved to configurable location for debugging/reuse
+
 ### Tasks / Subtasks
 
-- [ ] Implement `git.worktree_create` action (AC: 1, 2)
-- [ ] Implement `git.worktree_remove` action (AC: 5)
-- [ ] Implement `git.worktree_merge` action (AC: 4, 6)
-- [ ] Create workflow pattern for parallel isolation
-- [ ] Add integration tests
+- [ ] Create `ExecutionMode` enum and configuration
+- [ ] Implement `SequentialExecutor` (AC: 10-12)
+- [ ] Implement `ParallelExecutor` with git worktree (AC: 1-6, 13-16)
+- [ ] Implement `GraphExecutor` with DOT generation (AC: 17-22)
+- [ ] Support `--input` and `--config` overrides (AC: 9)
+- [ ] Add integration tests for all modes
 
 ### Dev Notes
 
-#### Workflow Pattern
+See full implementation details in the extracted story file: `TEA-RALPHY-001.6.execution-modes.md`
 
-```yaml
-nodes:
-  - name: create_worktrees
-    parallel_for: "{{ state.tasks }}"
-    run: |
-      import subprocess
-      task = item
-      branch = f"task/{task['id']}"
-      worktree_path = f".worktrees/{task['id']}"
-      subprocess.run(["git", "worktree", "add", "-b", branch, worktree_path])
-      return {"worktree_path": worktree_path, "branch": branch}
+#### Mode Comparison
 
-  - name: execute_in_worktree
-    parallel_for: "{{ state.worktrees }}"
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      working_dir: "{{ item.worktree_path }}"
-      messages:
-        - role: user
-          content: "{{ state.task_prompt }}"
-```
+| Mode | Git Worktrees | Parallelization | Best For |
+|------|---------------|-----------------|----------|
+| **sequential** | ❌ No | ❌ None | Simple tasks |
+| **parallel** | ✅ Yes | ✅ Concurrent | Isolated changes |
+| **graph** | ❌ Disabled | ✅ DOT-optimized | Complex dependencies |
 
 ---
 
@@ -2093,23 +2109,26 @@ class TestRalphyWorkflow:
 ## Implementation Order
 
 ```
+Phase 0: Shared Library (P0) - External Repo
+└── TEA-RALPHY-001.0 (md-graph-parser crate)
+    │
+    ▼
 Phase 1: Core Parsing (P0)
-├── TEA-RALPHY-001.1 (Python markdown.parse)
-└── TEA-RALPHY-001.2 (Rust markdown.parse)
-    ↓ parallel ↑
-
+├── TEA-RALPHY-001.1 (Python markdown.parse) ─┐
+└── TEA-RALPHY-001.2 (Rust markdown.parse) ───┴─ parallel, both depend on 001.0
+    │
+    ▼
 Phase 2: Task Sources (P1)
 ├── TEA-RALPHY-001.3 (GitHub Issues)
-├── TEA-RALPHY-001.4 (BMad Stories)
+├── TEA-RALPHY-001.4 (BMad Stories) ← depends on 001.1, 001.2
 ├── TEA-RALPHY-001.5 (Shell Providers)
-└── TEA-RALPHY-001.6 (Git Worktree)
-    ↓ can parallelize ↑
-
+└── TEA-RALPHY-001.6 (Execution Modes)
+    │ can parallelize ↑
+    ▼
 Phase 3: Observability (P2)
-├── TEA-RALPHY-001.7 (Token Tracking)
-└── TEA-RALPHY-001.8 (Notifications)
-    ↓
-
+└── TEA-RALPHY-001.7 (Token Tracking)
+    │
+    ▼
 Phase 4: Integration (P0)
 ├── TEA-RALPHY-001.9 (Full Workflow Agent)
 └── TEA-RALPHY-001.10 (Meta-Orchestrator: LLM → DOT → Parallel Execution)
@@ -2163,6 +2182,8 @@ Usage:
 | 2025-01-17 | 0.2 | Added detailed tasks for 001.7, 001.8, 001.9 | Sarah (PO) |
 | 2025-01-17 | 0.3 | Added story 001.10 (Meta-Orchestrator) | Sarah (PO) |
 | 2025-01-17 | 0.4 | Completed research for 001.5 (OpenCode/Cursor CLI) | Sarah (PO) |
+| 2025-01-18 | 0.5 | Added story 001.0 (md-graph-parser shared crate), updated dependencies for 001.1/001.2 | Sarah (PO) |
+| 2025-01-18 | 0.6 | Moved 001.8 (Notifications) to Backlog | Sarah (PO) |
 
 ---
 
