@@ -599,6 +599,11 @@ export function duckdb_rollback_async() {
 /**
  * Execute a YAML workflow with LLM actions
  *
+ * This function delegates to the full executor which supports:
+ * - Parallel fan-out/fan-in with configurable merge strategies
+ * - Conditional routing with goto expressions
+ * - All built-in actions (llm.call, return, storage, etc.)
+ *
  * # Arguments
  * * `yaml` - YAML workflow definition
  * * `initial_state` - Initial state as JSON string
@@ -615,6 +620,54 @@ export function execute_yaml(yaml, initial_state) {
     const ptr1 = passStringToWasm0(initial_state, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.execute_yaml(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
+ * WASM binding: Execute a YAML workflow
+ *
+ * # Arguments
+ * * `yaml` - YAML workflow configuration
+ * * `initial_state` - Initial state as JSON string
+ *
+ * # Returns
+ * * Promise resolving to final state JSON string
+ * @param {string} yaml
+ * @param {string} initial_state
+ * @returns {Promise<any>}
+ */
+export function execute_yaml_workflow(yaml, initial_state) {
+    const ptr0 = passStringToWasm0(yaml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(initial_state, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.execute_yaml_workflow(ptr0, len0, ptr1, len1);
+    return ret;
+}
+
+/**
+ * WASM binding: Execute a YAML workflow with variables
+ *
+ * # Arguments
+ * * `yaml` - YAML workflow configuration
+ * * `initial_state` - Initial state as JSON string
+ * * `variables` - Variables as JSON string
+ *
+ * # Returns
+ * * Promise resolving to final state JSON string
+ * @param {string} yaml
+ * @param {string} initial_state
+ * @param {string} variables
+ * @returns {Promise<any>}
+ */
+export function execute_yaml_workflow_with_vars(yaml, initial_state, variables) {
+    const ptr0 = passStringToWasm0(yaml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(initial_state, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(variables, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.execute_yaml_workflow_with_vars(ptr0, len0, ptr1, len1, ptr2, len2);
     return ret;
 }
 
@@ -1046,6 +1099,39 @@ export function main() {
 }
 
 /**
+ * Parse YAML and return JSON-serialized config (WASM binding)
+ *
+ * # Arguments
+ * * `yaml` - YAML configuration string
+ *
+ * # Returns
+ * * JSON string of WasmYamlConfig on success
+ * * JsValue error on failure
+ * @param {string} yaml
+ * @returns {string}
+ */
+export function parse_yaml(yaml) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(yaml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_yaml(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Execute a Prolog query asynchronously
  *
  * # Arguments
@@ -1065,6 +1151,38 @@ export function prolog_query_async(query_json, state_json) {
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.prolog_query_async(ptr0, len0, ptr1, len1);
     return ret;
+}
+
+/**
+ * WASM binding: Render a template string
+ * @param {string} template
+ * @param {string} state_json
+ * @param {string} variables_json
+ * @returns {string}
+ */
+export function render_template_wasm(template, state_json, variables_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(template, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(state_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(variables_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.render_template_wasm(ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
 }
 
 /**
@@ -1315,6 +1433,25 @@ export function set_storage_credentials(provider, credentials_json) {
 }
 
 /**
+ * @param {string} s
+ * @returns {string}
+ */
+export function slugify(s) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(s, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.slugify(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Copy content from one URI to another (cross-provider supported)
  *
  * This enables workflows like:
@@ -1477,6 +1614,28 @@ export function storage_write_binary_async(uri, content_base64) {
 }
 
 /**
+ * Validate a YAML configuration without returning the parsed result
+ *
+ * # Arguments
+ * * `yaml` - YAML configuration string
+ *
+ * # Returns
+ * * `true` if valid
+ * * JsValue error if invalid
+ * @param {string} yaml
+ * @returns {boolean}
+ */
+export function validate_yaml(yaml) {
+    const ptr0 = passStringToWasm0(yaml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.validate_yaml(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] !== 0;
+}
+
+/**
  * Get library version
  * @returns {string}
  */
@@ -1546,6 +1705,10 @@ function __wbg_get_imports() {
     imports.wbg.__wbg___wbindgen_is_object_ce774f3490692386 = function(arg0) {
         const val = arg0;
         const ret = typeof(val) === 'object' && val !== null;
+        return ret;
+    };
+    imports.wbg.__wbg___wbindgen_is_string_704ef9c8fc131030 = function(arg0) {
+        const ret = typeof(arg0) === 'string';
         return ret;
     };
     imports.wbg.__wbg___wbindgen_is_undefined_f6b95eab589e0269 = function(arg0) {
@@ -1629,6 +1792,10 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_close_3ec111e7b23d94d8 = function() { return handleError(function (arg0) {
         arg0.close();
     }, arguments) };
+    imports.wbg.__wbg_crypto_86f2631e91b51511 = function(arg0) {
+        const ret = arg0.crypto;
+        return ret;
+    };
     imports.wbg.__wbg_done_62ea16af4ce34b24 = function(arg0) {
         const ret = arg0.done;
         return ret;
@@ -1660,6 +1827,9 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbg_getRandomValues_9b655bdd369112f2 = function() { return handleError(function (arg0, arg1) {
         globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
+    }, arguments) };
+    imports.wbg.__wbg_getRandomValues_b3f15fcbfabb0f8b = function() { return handleError(function (arg0, arg1) {
+        arg0.getRandomValues(arg1);
     }, arguments) };
     imports.wbg.__wbg_getReader_48e00749fe3f6089 = function() { return handleError(function (arg0) {
         const ret = arg0.getReader();
@@ -1744,8 +1914,8 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_log_1d990106d99dacb7 = function(arg0) {
         console.log(arg0);
     };
-    imports.wbg.__wbg_new_0_23cedd11d9b40c9d = function() {
-        const ret = new Date();
+    imports.wbg.__wbg_msCrypto_d562bbe83e0d4b91 = function(arg0) {
+        const ret = arg0.msCrypto;
         return ret;
     };
     imports.wbg.__wbg_new_1ba21ce319a06297 = function() {
@@ -1806,6 +1976,10 @@ function __wbg_get_imports() {
         const ret = new Uint8Array(arg0, arg1 >>> 0, arg2 >>> 0);
         return ret;
     };
+    imports.wbg.__wbg_new_with_length_aa5eaf41d35235e5 = function(arg0) {
+        const ret = new Uint8Array(arg0 >>> 0);
+        return ret;
+    };
     imports.wbg.__wbg_new_with_str_and_init_c5748f76f5108934 = function() { return handleError(function (arg0, arg1, arg2) {
         const ret = new Request(getStringFromWasm0(arg0, arg1), arg2);
         return ret;
@@ -1818,8 +1992,16 @@ function __wbg_get_imports() {
         const ret = arg0.next();
         return ret;
     }, arguments) };
+    imports.wbg.__wbg_node_e1f24f89a7336c2e = function(arg0) {
+        const ret = arg0.node;
+        return ret;
+    };
     imports.wbg.__wbg_now_69d776cd24f5215b = function() {
         const ret = Date.now();
+        return ret;
+    };
+    imports.wbg.__wbg_process_3975fd6c72f520aa = function(arg0) {
+        const ret = arg0.process;
         return ret;
     };
     imports.wbg.__wbg_prototypesetcall_dfe9b766cdc1f1fd = function(arg0, arg1, arg2) {
@@ -1832,6 +2014,9 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_queueMicrotask_fca69f5bfad613a5 = function(arg0) {
         queueMicrotask(arg0);
     };
+    imports.wbg.__wbg_randomFillSync_f8c153b79f285817 = function() { return handleError(function (arg0, arg1) {
+        arg0.randomFillSync(arg1);
+    }, arguments) };
     imports.wbg.__wbg_read_39c4b35efcd03c25 = function(arg0) {
         const ret = arg0.read();
         return ret;
@@ -1839,6 +2024,10 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_releaseLock_a5912f590b185180 = function(arg0) {
         arg0.releaseLock();
     };
+    imports.wbg.__wbg_require_b74f47fc2d022fd6 = function() { return handleError(function () {
+        const ret = module.require;
+        return ret;
+    }, arguments) };
     imports.wbg.__wbg_resolve_fd5bfbaa4ce36e1e = function(arg0) {
         const ret = Promise.resolve(arg0);
         return ret;
@@ -1909,6 +2098,10 @@ function __wbg_get_imports() {
         const ret = JSON.stringify(arg0);
         return ret;
     }, arguments) };
+    imports.wbg.__wbg_subarray_845f2f5bce7d061a = function(arg0, arg1, arg2) {
+        const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+        return ret;
+    };
     imports.wbg.__wbg_then_429f7caf1026411d = function(arg0, arg1, arg2) {
         const ret = arg0.then(arg1, arg2);
         return ret;
@@ -1932,6 +2125,10 @@ function __wbg_get_imports() {
         const ret = arg0.value;
         return ret;
     };
+    imports.wbg.__wbg_versions_4e31226f5e8dc909 = function(arg0) {
+        const ret = arg0.versions;
+        return ret;
+    };
     imports.wbg.__wbg_view_788aaf149deefd2f = function(arg0) {
         const ret = arg0.view;
         return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
@@ -1939,19 +2136,24 @@ function __wbg_get_imports() {
     imports.wbg.__wbg_warn_6e567d0d926ff881 = function(arg0) {
         console.warn(arg0);
     };
-    imports.wbg.__wbindgen_cast_0fea8d4833757fb2 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 671, function: Function { arguments: [Externref], shim_idx: 682, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h42b32eebd7bbc581, wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b);
-        return ret;
-    };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(String) -> Externref`.
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_af9b55415f9f0e0c = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 621, function: Function { arguments: [], shim_idx: 622, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    imports.wbg.__wbindgen_cast_8b359520d534b0f2 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 1609, function: Function { arguments: [], shim_idx: 1610, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
         const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1caa76141f4717e5, wasm_bindgen__convert__closures_____invoke__h71251df66dc1e256);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_cb9088102bce6b30 = function(arg0, arg1) {
+        // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
+        const ret = getArrayU8FromWasm0(arg0, arg1);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_d66218ab81a1cb18 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 1792, function: Function { arguments: [Externref], shim_idx: 1803, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h42b32eebd7bbc581, wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b);
         return ret;
     };
     imports.wbg.__wbindgen_cast_d6cd19b81560fd6e = function(arg0) {

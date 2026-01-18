@@ -17,26 +17,10 @@
 # Source: Ollama Registry (https://ollama.com/library/phi4-mini)
 
 # =============================================================================
-# Stage 1: Model Downloader
+# Stage 1: Builder - Install build dependencies and compile packages
 # =============================================================================
-FROM ubuntu:24.04 AS model-downloader
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Phi-4 mini model from Ollama registry (~2.5GB)
-RUN mkdir -p /models && \
-    curl -L -o /models/phi4-mini.gguf \
-    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db"
-
-# Verify model was downloaded
-RUN ls -lh /models/ && \
-    test -f /models/phi4-mini.gguf
-
-# =============================================================================
-# Stage 2: Builder - Install build dependencies and compile packages
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~5GB during build (2.5GB in downloader + 2.5GB in final)
 # =============================================================================
 FROM ubuntu:24.04 AS builder
 
@@ -90,17 +74,18 @@ RUN python -c "import the_edge_agent; print(f'TEA version: {the_edge_agent.__ver
 RUN python -c "import llama_cpp; print('llama-cpp-python: OK')" || echo "llama-cpp will be verified at runtime"
 
 # =============================================================================
-# Stage 3: Runtime - Image with bundled model
+# Stage 2: Runtime - Image with bundled model
 # =============================================================================
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies only
+# Install runtime dependencies only (curl needed for model download)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     software-properties-common \
     ca-certificates \
+    curl \
     && add-apt-repository ppa:swi-prolog/stable -y \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -117,8 +102,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/tea-venv /opt/tea-venv
 ENV PATH="/opt/tea-venv/bin:$PATH"
 
-# Copy bundled model
-COPY --from=model-downloader /models /opt/tea-models
+# Download model directly in final stage to avoid layer duplication
+# This saves ~2.5GB of overlay storage during build
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/phi4-mini.gguf \
+    "https://registry.ollama.ai/v2/library/phi4-mini/blobs/sha256:3c168af1dea0a414299c7d9077e100ac763370e5a98b3c53801a958a47f0a5db" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/phi4-mini.gguf
 
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1

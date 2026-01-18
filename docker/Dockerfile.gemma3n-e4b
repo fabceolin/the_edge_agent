@@ -18,26 +18,10 @@
 # Source: Ollama Registry (https://ollama.com/library/gemma3n)
 
 # =============================================================================
-# Stage 1: Model Downloader
+# Stage 1: Builder - Install build dependencies and compile packages
 # =============================================================================
-FROM ubuntu:24.04 AS model-downloader
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download Gemma 3n E4B model from Ollama registry (~7.5GB)
-RUN mkdir -p /models && \
-    curl -L -o /models/gemma3n-e4b.gguf \
-    "https://registry.ollama.ai/v2/library/gemma3n/blobs/sha256:38e8dcc30df4eb0e29eaf5c74ba6ce3f2cd66badad50768fc14362acfb8b8cb6"
-
-# Verify model was downloaded
-RUN ls -lh /models/ && \
-    test -f /models/gemma3n-e4b.gguf
-
-# =============================================================================
-# Stage 2: Builder - Install build dependencies and compile packages
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~15GB during build (7.5GB in downloader + 7.5GB in final)
 # =============================================================================
 FROM ubuntu:24.04 AS builder
 
@@ -91,17 +75,18 @@ RUN python -c "import the_edge_agent; print(f'TEA version: {the_edge_agent.__ver
 RUN python -c "import llama_cpp; print('llama-cpp-python: OK')" || echo "llama-cpp will be verified at runtime"
 
 # =============================================================================
-# Stage 3: Runtime - Image with bundled model
+# Stage 2: Runtime - Image with bundled model
 # =============================================================================
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies only
+# Install runtime dependencies only (curl needed for model download, removed after)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     software-properties-common \
     ca-certificates \
+    curl \
     && add-apt-repository ppa:swi-prolog/stable -y \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -118,8 +103,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/tea-venv /opt/tea-venv
 ENV PATH="/opt/tea-venv/bin:$PATH"
 
-# Copy bundled model
-COPY --from=model-downloader /models /opt/tea-models
+# Download model directly in final stage to avoid layer duplication
+# This saves ~7.5GB of overlay storage during build
+# Note: curl (~10MB) is kept in image - negligible vs 7.5GB model
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/gemma3n-e4b.gguf \
+    "https://registry.ollama.ai/v2/library/gemma3n/blobs/sha256:38e8dcc30df4eb0e29eaf5c74ba6ce3f2cd66badad50768fc14362acfb8b8cb6" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/gemma3n-e4b.gguf
 
 # Set Python and model environment
 ENV PYTHONUNBUFFERED=1

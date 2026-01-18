@@ -99,6 +99,62 @@ header .subtitle {
 .status-loading { color: var(--warning-color); }
 .status-error { color: var(--danger-color); }
 
+/* Example Selector */
+.example-selector-container {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--card-bg);
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-color);
+    flex-wrap: wrap;
+}
+
+.example-selector-container label {
+    color: var(--text-bright);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+#example-selector {
+    padding: 0.5rem 1rem;
+    background: var(--bg-highlight);
+    border: 1px solid var(--border-color);
+    border-radius: 0.25rem;
+    color: var(--text-color);
+    font-size: 0.9rem;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+#example-selector:hover {
+    border-color: var(--primary-color);
+}
+
+#example-selector:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(97, 175, 239, 0.2);
+}
+
+.example-description {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    flex: 1;
+}
+
+.llm-badge {
+    background: var(--warning-color);
+    color: var(--bg-color);
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-left: 0.5rem;
+}
+
 /* Progress Bar */
 #progress-container {
     margin-bottom: 1rem;

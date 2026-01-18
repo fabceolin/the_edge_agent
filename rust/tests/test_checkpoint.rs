@@ -217,7 +217,7 @@ fn test_checkpoint_complex_state() {
     let state = json!({
         "string": "hello",
         "number": 42,
-        "float": 3.14,
+        "float": 3.15,
         "boolean": true,
         "null": null,
         "array": [1, 2, 3],
@@ -236,7 +236,7 @@ fn test_checkpoint_complex_state() {
 
     assert_eq!(loaded.state["string"], "hello");
     assert_eq!(loaded.state["number"], 42);
-    assert_eq!(loaded.state["float"], 3.14);
+    assert_eq!(loaded.state["float"], 3.15);
     assert_eq!(loaded.state["boolean"], true);
     assert!(loaded.state["null"].is_null());
     assert_eq!(loaded.state["array"], json!([1, 2, 3]));

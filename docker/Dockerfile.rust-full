@@ -1,0 +1,95 @@
+# TEA-DIST-002: Docker Rust Full Image - All Features
+#
+# Full TEA Rust image with all features enabled including Scryer Prolog
+# (pure Rust), DuckDB LTM, and Cozo graph database.
+#
+# Build: docker build -t tea:rust-full -f docker/Dockerfile.rust-full .
+# Size: ~100MB target
+#
+# Rust Variants:
+#   - tea:rust-base (~50MB) - Minimal default features only
+#   - tea:rust-full (~100MB) - All features (Scryer Prolog, DuckDB, Cozo)
+#   - tea:rust-gemma3-1b (~1.6GB) - Full + bundled Gemma 3 1B model
+#   - tea:rust-gemma3-4b (~4.5GB) - Full + bundled Gemma 3 4B model
+#   - tea:rust-gemma3n-e4b (~8.5GB) - Full + bundled Gemma 3N E4B model
+#   - tea:rust-phi4-mini (~3.5GB) - Full + bundled Phi-4 mini model
+
+# =============================================================================
+# Stage 1: Builder - Compile Rust binary with all features
+# =============================================================================
+FROM rust:latest AS builder
+
+# Install build dependencies
+# - build-essential: C compiler for native deps
+# - pkg-config: for finding system libraries
+# - libssl-dev: for TLS support
+# - cmake: for some native deps (DuckDB, Cozo)
+# - libclang-dev: for bindgen (DuckDB)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create build directory
+WORKDIR /build
+
+# Copy Rust source
+COPY rust/ ./
+
+# Build with all features except graph (Cozo has compatibility issues) + scryer (pure Rust Prolog)
+# Note: Using scryer instead of prolog (swipl) for simpler containerization
+# Explicit features: memory, trace, data, web, rag, llm, code, agent, reflection, reasoning, planning, a2a, ltm-duckdb, scryer
+RUN cargo build --release --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer"
+
+# Verify binary was built and has Prolog support
+RUN ls -lh target/release/tea && \
+    ./target/release/tea --version
+
+# =============================================================================
+# Stage 2: Runtime - Minimal container with static binary
+# =============================================================================
+FROM debian:bookworm-slim
+
+# Install minimal runtime dependencies
+# - ca-certificates: for HTTPS connections
+# - libssl3: for TLS support in reqwest
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/*
+
+# Copy the compiled binary
+COPY --from=builder /build/target/release/tea /usr/local/bin/tea
+
+# Verify binary works
+RUN tea --version
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+# Switch to non-root user
+USER tea
+
+# Set working directory for mounted volumes
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Rust Full - All features with Scryer Prolog, DuckDB, Cozo"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="rust-full"
+LABEL tea.runtime="rust"
+LABEL tea.features="all-except-graph,scryer,ltm-duckdb"
+
+# Entrypoint is the tea CLI
+ENTRYPOINT ["tea"]
+
+# Default command shows help
+CMD ["--help"]

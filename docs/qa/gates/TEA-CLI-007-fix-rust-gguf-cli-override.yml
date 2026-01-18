@@ -1,0 +1,48 @@
+# Quality Gate Decision - TEA-CLI-007
+schema: 1
+story: "TEA-CLI-007"
+story_title: "Fix Rust --gguf CLI Override Not Applied"
+gate: PASS
+status_reason: "All 9 acceptance criteria met. Implementation is clean, well-tested, and maintains Python parity. No security or performance concerns."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-17T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+expires: "2026-01-31T00:00:00Z"
+
+evidence:
+  tests_reviewed: 7
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No new attack vectors. Reserved _tea_cli_* prefix prevents user state collision."
+  performance:
+    status: PASS
+    notes: "O(1) state injection and lookup. No hot path impact."
+  reliability:
+    status: PASS
+    notes: "Proper error handling with tracing::warn for missing paths."
+  maintainability:
+    status: PASS
+    notes: "Clean delegation pattern. Comprehensive docstrings with story references."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding CLI integration test that runs tea binary with --gguf"
+      refs: ["tests/test_cli.rs"]
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []

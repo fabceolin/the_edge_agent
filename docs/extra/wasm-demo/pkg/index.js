@@ -16815,6 +16815,16 @@ async function initTeaLlm(config = {}, llmHandler) {
     console.log("[TEA-WASM-LLM] LLM handler registered");
   }
 }
+async function initYamlEngine(config = {}) {
+  if (!initialized) {
+    await init();
+    initialized = true;
+    if (config.verbose) {
+      console.log("[TEA-WASM-LLM] WASM module initialized (YAML engine only)");
+      console.log("[TEA-WASM-LLM] Version:", version());
+    }
+  }
+}
 async function executeLlmYaml(yaml, initialState = {}) {
   if (!initialized) {
     throw new Error("TEA LLM not initialized. Call initTeaLlm() first.");
@@ -17050,6 +17060,7 @@ export {
   initLtmWithHandler,
   initOpikTracing,
   initTeaLlm,
+  initYamlEngine,
   init_duckdb_async,
   isCached,
   isDuckDbInitialized,

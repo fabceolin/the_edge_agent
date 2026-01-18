@@ -127,8 +127,22 @@ impl LocalLlmBackend {
 
     /// Create from LlmSettings
     pub fn from_settings(settings: &LlmSettings) -> LlmResult<Self> {
-        let model_path = super::llm_backend::resolve_model_path(settings.model_path.as_deref())
-            .ok_or_else(|| LlmError::ModelNotFound("No model found in search paths".to_string()))?;
+        Self::from_settings_with_cli(None, settings)
+    }
+
+    /// Create from LlmSettings with CLI override support (TEA-CLI-007)
+    ///
+    /// The `cli_path` parameter takes highest priority for model resolution,
+    /// matching Python's CLI override behavior.
+    pub fn from_settings_with_cli(
+        cli_path: Option<&str>,
+        settings: &LlmSettings,
+    ) -> LlmResult<Self> {
+        let model_path = super::llm_backend::resolve_model_path_with_cli(
+            cli_path,
+            settings.model_path.as_deref(),
+        )
+        .ok_or_else(|| LlmError::ModelNotFound("No model found in search paths".to_string()))?;
 
         Self::with_config(
             &model_path,

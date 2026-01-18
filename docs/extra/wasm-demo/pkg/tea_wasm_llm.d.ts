@@ -173,6 +173,11 @@ export function duckdb_rollback_async(): Promise<string>;
 /**
  * Execute a YAML workflow with LLM actions
  *
+ * This function delegates to the full executor which supports:
+ * - Parallel fan-out/fan-in with configurable merge strategies
+ * - Conditional routing with goto expressions
+ * - All built-in actions (llm.call, return, storage, etc.)
+ *
  * # Arguments
  * * `yaml` - YAML workflow definition
  * * `initial_state` - Initial state as JSON string
@@ -181,6 +186,31 @@ export function duckdb_rollback_async(): Promise<string>;
  * * Result JSON string on success
  */
 export function execute_yaml(yaml: string, initial_state: string): Promise<string>;
+
+/**
+ * WASM binding: Execute a YAML workflow
+ *
+ * # Arguments
+ * * `yaml` - YAML workflow configuration
+ * * `initial_state` - Initial state as JSON string
+ *
+ * # Returns
+ * * Promise resolving to final state JSON string
+ */
+export function execute_yaml_workflow(yaml: string, initial_state: string): Promise<any>;
+
+/**
+ * WASM binding: Execute a YAML workflow with variables
+ *
+ * # Arguments
+ * * `yaml` - YAML workflow configuration
+ * * `initial_state` - Initial state as JSON string
+ * * `variables` - Variables as JSON string
+ *
+ * # Returns
+ * * Promise resolving to final state JSON string
+ */
+export function execute_yaml_workflow_with_vars(yaml: string, initial_state: string, variables: string): Promise<any>;
 
 /**
  * Get list of available/loaded extensions
@@ -410,6 +440,18 @@ export function lua_eval_async(code: string, state_json: string): Promise<string
 export function main(): void;
 
 /**
+ * Parse YAML and return JSON-serialized config (WASM binding)
+ *
+ * # Arguments
+ * * `yaml` - YAML configuration string
+ *
+ * # Returns
+ * * JSON string of WasmYamlConfig on success
+ * * JsValue error on failure
+ */
+export function parse_yaml(yaml: string): string;
+
+/**
  * Execute a Prolog query asynchronously
  *
  * # Arguments
@@ -420,6 +462,11 @@ export function main(): void;
  * * Updated state with prolog_result containing bindings
  */
 export function prolog_query_async(query_json: string, state_json: string): Promise<string>;
+
+/**
+ * WASM binding: Render a template string
+ */
+export function render_template_wasm(template: string, state_json: string, variables_json: string): string;
 
 /**
  * Send a trace asynchronously (waits for JS Promise)
@@ -632,6 +679,8 @@ export function set_prolog_handler(handler: Function): void;
  */
 export function set_storage_credentials(provider: string, credentials_json: string): void;
 
+export function slugify(s: string): string;
+
 /**
  * Copy content from one URI to another (cross-provider supported)
  *
@@ -709,6 +758,18 @@ export function storage_write_async(uri: string, content: string, _state_json: s
 export function storage_write_binary_async(uri: string, content_base64: string): Promise<string>;
 
 /**
+ * Validate a YAML configuration without returning the parsed result
+ *
+ * # Arguments
+ * * `yaml` - YAML configuration string
+ *
+ * # Returns
+ * * `true` if valid
+ * * JsValue error if invalid
+ */
+export function validate_yaml(yaml: string): boolean;
+
+/**
  * Get library version
  */
 export function version(): string;
@@ -717,26 +778,6 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly main: () => void;
-  readonly execute_yaml: (a: number, b: number, c: number, d: number) => any;
-  readonly has_shared_array_buffer: () => number;
-  readonly version: () => [number, number];
-  readonly set_storage_credentials: (a: number, b: number, c: number, d: number) => [number, number];
-  readonly clear_storage_credentials: () => void;
-  readonly has_storage_credentials: (a: number, b: number) => number;
-  readonly init_opfs: () => any;
-  readonly is_opfs_available: () => number;
-  readonly init_memory: () => [number, number, number, number];
-  readonly is_memory_available: () => number;
-  readonly storage_read_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_read_binary_async: (a: number, b: number) => any;
-  readonly storage_write_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly storage_write_binary_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_exists_async: (a: number, b: number) => any;
-  readonly storage_delete_async: (a: number, b: number) => any;
-  readonly storage_list_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_copy_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_supported_schemes: () => [number, number];
   readonly configure_ltm: (a: number, b: number) => [number, number, number, number];
   readonly get_ltm_config: () => [number, number];
   readonly set_ltm_handler: (a: any) => void;
@@ -749,6 +790,12 @@ export interface InitOutput {
   readonly ltm_list_async: (a: number, b: number, c: number) => any;
   readonly ltm_cleanup_expired_async: () => any;
   readonly ltm_stats_async: () => any;
+  readonly parse_yaml: (a: number, b: number) => [number, number, number, number];
+  readonly validate_yaml: (a: number, b: number) => [number, number, number];
+  readonly set_prolog_handler: (a: any) => void;
+  readonly clear_prolog_handler: () => void;
+  readonly has_prolog_handler: () => number;
+  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
   readonly set_duckdb_handler: (a: any) => void;
   readonly clear_duckdb_handler: () => void;
   readonly has_duckdb_handler: () => number;
@@ -772,19 +819,35 @@ export interface InitOutput {
   readonly is_opik_enabled: () => number;
   readonly send_opik_trace_async: (a: number, b: number) => any;
   readonly create_llm_trace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-  readonly set_prolog_handler: (a: any) => void;
-  readonly clear_prolog_handler: () => void;
-  readonly has_prolog_handler: () => number;
-  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
   readonly set_llm_handler: (a: any) => void;
   readonly clear_llm_handler: () => void;
   readonly has_llm_handler: () => number;
   readonly llm_call_async: (a: number, b: number, c: number, d: number) => any;
   readonly llm_embed_async: (a: number, b: number, c: number, d: number) => any;
-  readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
-  readonly intounderlyingsink_write: (a: number, b: any) => any;
-  readonly intounderlyingsink_close: (a: number) => any;
-  readonly intounderlyingsink_abort: (a: number, b: any) => any;
+  readonly render_template_wasm: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+  readonly set_storage_credentials: (a: number, b: number, c: number, d: number) => [number, number];
+  readonly clear_storage_credentials: () => void;
+  readonly has_storage_credentials: (a: number, b: number) => number;
+  readonly init_opfs: () => any;
+  readonly is_opfs_available: () => number;
+  readonly init_memory: () => [number, number, number, number];
+  readonly is_memory_available: () => number;
+  readonly storage_read_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_read_binary_async: (a: number, b: number) => any;
+  readonly storage_write_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly storage_write_binary_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_exists_async: (a: number, b: number) => any;
+  readonly storage_delete_async: (a: number, b: number) => any;
+  readonly storage_list_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_copy_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_supported_schemes: () => [number, number];
+  readonly main: () => void;
+  readonly execute_yaml: (a: number, b: number, c: number, d: number) => any;
+  readonly has_shared_array_buffer: () => number;
+  readonly version: () => [number, number];
+  readonly execute_yaml_workflow: (a: number, b: number, c: number, d: number) => any;
+  readonly execute_yaml_workflow_with_vars: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly slugify: (a: number, b: number) => [number, number];
   readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
   readonly intounderlyingbytesource_type: (a: number) => number;
   readonly intounderlyingbytesource_autoAllocateChunkSize: (a: number) => number;
@@ -794,11 +857,16 @@ export interface InitOutput {
   readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
   readonly intounderlyingsource_pull: (a: number, b: any) => any;
   readonly intounderlyingsource_cancel: (a: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__closure__destroy__h42b32eebd7bbc581: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h71251df66dc1e256: (a: number, b: number) => void;
-  readonly wasm_bindgen__closure__destroy__h1caa76141f4717e5: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h3636c9768a077c38: (a: number, b: number, c: any, d: any) => void;
+  readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
+  readonly intounderlyingsink_write: (a: number, b: any) => any;
+  readonly intounderlyingsink_close: (a: number) => any;
+  readonly intounderlyingsink_abort: (a: number, b: any) => any;
+  readonly wasm_bindgen__convert__closures_____invoke__h6419b8df6f0ffaa5: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__hd3991ff33f061b2c: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__hb3352bc28e4e4955: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__h1b1de572005f6a4b: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h0c3d797cdbea5ac4: (a: number, b: number) => number;
+  readonly wasm_bindgen__convert__closures_____invoke__h07cfb4353a163837: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;

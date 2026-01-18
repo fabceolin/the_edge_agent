@@ -17,6 +17,7 @@ fn fixtures_dir() -> PathBuf {
 
 /// Get the tea binary
 fn tea_cmd() -> Command {
+    #[allow(deprecated)]
     Command::cargo_bin("tea").unwrap()
 }
 

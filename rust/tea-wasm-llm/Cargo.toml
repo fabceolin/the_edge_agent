@@ -88,3 +88,11 @@ tokio = { version = "1.49", features = ["rt", "macros"] }
 [profile.release]
 opt-level = "s"
 lto = true
+
+# Disable wasm-opt to prevent "failed to grow table" errors
+# Root cause: wasm-opt v108-118 incorrectly seals WebAssembly table size,
+# blocking wasm-bindgen's runtime table.grow() calls.
+# See: https://github.com/WebAssembly/binaryen/issues/4711
+# Long-term fix: upgrade wasm-opt to v119+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

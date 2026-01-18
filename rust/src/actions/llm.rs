@@ -958,11 +958,16 @@ struct ChatMsg {
 /// - `tokens_used`: Token count (if available)
 /// - `finish_reason`: Reason for stopping
 pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    // Parse backend preference
-    let backend_str = params
-        .get("backend")
-        .and_then(|v| v.as_str())
-        .unwrap_or("auto");
+    // TEA-CLI-007: Extract CLI overrides from state
+    let cli_overrides = get_cli_overrides(state);
+
+    // Parse backend preference (CLI override takes precedence)
+    let backend_str = cli_overrides.backend.as_deref().unwrap_or_else(|| {
+        params
+            .get("backend")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+    });
 
     // Build messages from params
     let messages: Vec<ChatMsg> =
@@ -1007,12 +1012,16 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
         .and_then(|v| v.as_f64())
         .unwrap_or(0.7) as f32;
 
+    // TEA-CLI-007: Get CLI model path for availability check and execution
+    #[allow(unused_variables)]
+    let cli_model_path = cli_overrides.model_path.as_deref();
+
     // Determine which backend to use
     let use_local = match backend_str {
         "local" => {
             #[cfg(feature = "llm-local")]
             {
-                use super::llm_backend::{is_local_llm_available, is_local_llm_compiled};
+                use super::llm_backend::{is_local_llm_available_with_cli, is_local_llm_compiled};
                 let settings = build_llm_settings(params);
                 if !is_local_llm_compiled() {
                     return Err(TeaError::InvalidInput {
@@ -1022,10 +1031,11 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
                                 .to_string(),
                     });
                 }
-                if !is_local_llm_available(&settings) {
+                // TEA-CLI-007: Use CLI model path in availability check
+                if !is_local_llm_available_with_cli(cli_model_path, &settings) {
                     return Err(TeaError::InvalidInput {
                         action: "llm.chat".to_string(),
-                        message: "Local LLM: No model found. Set TEA_MODEL_PATH or settings.llm.model_path".to_string(),
+                        message: "Local LLM: No model found. Set --gguf, TEA_MODEL_PATH, or settings.llm.model_path".to_string(),
                     });
                 }
                 true
@@ -1044,9 +1054,11 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
             // "auto" or any other value: try local first if available, otherwise fall back to API
             #[cfg(feature = "llm-local")]
             {
-                use super::llm_backend::{is_local_llm_available, is_local_llm_compiled};
+                use super::llm_backend::{is_local_llm_available_with_cli, is_local_llm_compiled};
                 let settings = build_llm_settings(params);
-                is_local_llm_compiled() && is_local_llm_available(&settings)
+                // TEA-CLI-007: Use CLI model path in availability check
+                is_local_llm_compiled()
+                    && is_local_llm_available_with_cli(cli_model_path, &settings)
             }
             #[cfg(not(feature = "llm-local"))]
             {
@@ -1059,7 +1071,15 @@ pub fn llm_chat(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
         #[cfg(feature = "llm-local")]
         {
             let settings = build_llm_settings(params);
-            return execute_local_chat(state, &settings, messages, max_tokens, temperature);
+            // TEA-CLI-007: Pass CLI model path to execute_local_chat
+            return execute_local_chat(
+                state,
+                &settings,
+                cli_model_path,
+                messages,
+                max_tokens,
+                temperature,
+            );
         }
 
         #[cfg(not(feature = "llm-local"))]
@@ -1112,11 +1132,35 @@ fn build_llm_settings(params: &HashMap<String, JsonValue>) -> super::llm_backend
     }
 }
 
+/// TEA-CLI-007: CLI overrides extracted from state
+#[derive(Debug, Default)]
+struct CliOverrides {
+    model_path: Option<String>,
+    backend: Option<String>,
+}
+
+/// Extract CLI overrides from state (TEA-CLI-007)
+///
+/// Reads reserved `_tea_cli_*` keys injected by CLI.
+fn get_cli_overrides(state: &JsonValue) -> CliOverrides {
+    CliOverrides {
+        model_path: state
+            .get("_tea_cli_model_path")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        backend: state
+            .get("_tea_cli_backend")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
+}
+
 /// Execute chat via local llama.cpp backend
 #[cfg(feature = "llm-local")]
 fn execute_local_chat(
     state: &JsonValue,
     settings: &super::llm_backend::LlmSettings,
+    cli_model_path: Option<&str>,
     messages: Vec<ChatMsg>,
     max_tokens: usize,
     temperature: f32,
@@ -1133,10 +1177,14 @@ fn execute_local_chat(
         })
         .collect();
 
-    let backend = LocalLlmBackend::from_settings(settings).map_err(|e| TeaError::Execution {
-        node: "llm.chat".to_string(),
-        message: format!("Failed to load local model: {}", e),
-    })?;
+    // TEA-CLI-007: Use CLI model path override if provided
+    let backend =
+        LocalLlmBackend::from_settings_with_cli(cli_model_path, settings).map_err(|e| {
+            TeaError::Execution {
+                node: "llm.chat".to_string(),
+                message: format!("Failed to load local model: {}", e),
+            }
+        })?;
 
     let result = backend
         .chat(backend_messages, max_tokens, temperature)
@@ -1223,6 +1271,11 @@ fn execute_api_chat(
 ///     query_embedding: embedding
 /// ```
 pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
+    // TEA-CLI-007: Extract CLI overrides from state
+    let cli_overrides = get_cli_overrides(state);
+    #[allow(unused_variables)]
+    let cli_model_path = cli_overrides.model_path.as_deref();
+
     // Extract required text parameter
     let text =
         params
@@ -1236,7 +1289,9 @@ pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaR
     // Feature-gated implementation
     #[cfg(feature = "llm-local")]
     {
-        use super::llm_backend::{is_local_llm_available, is_local_llm_compiled, LlmBackend};
+        use super::llm_backend::{
+            is_local_llm_available_with_cli, is_local_llm_compiled, LlmBackend,
+        };
         use super::llm_local::LocalLlmBackend;
 
         if !is_local_llm_compiled() {
@@ -1249,18 +1304,22 @@ pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaR
 
         let settings = build_llm_settings(params);
 
-        if !is_local_llm_available(&settings) {
+        // TEA-CLI-007: Use CLI model path in availability check
+        if !is_local_llm_available_with_cli(cli_model_path, &settings) {
             return Err(TeaError::InvalidInput {
                 action: "llm.embed".to_string(),
-                message: "Local LLM: No model found. Set TEA_MODEL_PATH or settings.llm.model_path"
+                message: "Local LLM: No model found. Set --gguf, TEA_MODEL_PATH, or settings.llm.model_path"
                     .to_string(),
             });
         }
 
+        // TEA-CLI-007: Use CLI model path when creating backend
         let backend =
-            LocalLlmBackend::from_settings(&settings).map_err(|e| TeaError::Execution {
-                node: "llm.embed".to_string(),
-                message: format!("Failed to load local model: {}", e),
+            LocalLlmBackend::from_settings_with_cli(cli_model_path, &settings).map_err(|e| {
+                TeaError::Execution {
+                    node: "llm.embed".to_string(),
+                    message: format!("Failed to load local model: {}", e),
+                }
             })?;
 
         let result = backend.embed(text).map_err(|e| TeaError::Execution {
@@ -1297,6 +1356,65 @@ pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // =============================================================================
+    // TEA-CLI-007: CLI Overrides Tests
+    // =============================================================================
+
+    #[test]
+    fn test_get_cli_overrides_extracts_values() {
+        let state = json!({
+            "_tea_cli_model_path": "/path/to/model.gguf",
+            "_tea_cli_backend": "local",
+            "other_key": "should_be_ignored"
+        });
+
+        let overrides = get_cli_overrides(&state);
+
+        assert_eq!(
+            overrides.model_path,
+            Some("/path/to/model.gguf".to_string())
+        );
+        assert_eq!(overrides.backend, Some("local".to_string()));
+    }
+
+    #[test]
+    fn test_get_cli_overrides_handles_missing_values() {
+        let state = json!({
+            "some_other_key": "value"
+        });
+
+        let overrides = get_cli_overrides(&state);
+
+        assert_eq!(overrides.model_path, None);
+        assert_eq!(overrides.backend, None);
+    }
+
+    #[test]
+    fn test_get_cli_overrides_handles_partial_values() {
+        // Only model_path set
+        let state = json!({
+            "_tea_cli_model_path": "/path/to/model.gguf"
+        });
+
+        let overrides = get_cli_overrides(&state);
+
+        assert_eq!(
+            overrides.model_path,
+            Some("/path/to/model.gguf".to_string())
+        );
+        assert_eq!(overrides.backend, None);
+
+        // Only backend set
+        let state = json!({
+            "_tea_cli_backend": "api"
+        });
+
+        let overrides = get_cli_overrides(&state);
+
+        assert_eq!(overrides.model_path, None);
+        assert_eq!(overrides.backend, Some("api".to_string()));
+    }
 
     // =============================================================================
     // Input Validation Tests

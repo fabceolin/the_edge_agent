@@ -1,17 +1,27 @@
-# TEA-DIST-001: Docker Image Build and Push
+# TEA-DIST-001/002: Docker Image Build and Push
 #
 # This workflow builds and pushes TEA Docker images to GitHub Container Registry.
-# Supports multi-architecture builds (amd64, arm64) and multiple variants.
+# Supports multi-architecture builds (amd64, arm64) and multiple variants for both
+# Python and Rust implementations.
 #
-# Variants:
+# Python Variants:
 #   - base (~400MB) - Minimal core dependencies only
 #   - full (~772MB) - All features (Prolog, Lua, Opik) - default "latest"
 #   - gemma3-1b (~2GB) - Full + bundled Gemma 3 1B model
 #   - gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
-#   - phi4-mini (~5GB) - Full + bundled Phi-4 mini model
+#   - gemma3n-e4b (~8.5GB) - Full + bundled Gemma 3N E4B model
+#   - phi4-mini (~3.5GB) - Full + bundled Phi-4 mini model
+#
+# Rust Variants:
+#   - rust-base (~50MB) - Minimal default features only
+#   - rust-full (~100MB) - All features (Scryer Prolog, DuckDB) - tagged as "rust-latest"
+#   - rust-gemma3-1b (~1.6GB) - Full + bundled Gemma 3 1B model
+#   - rust-gemma3-4b (~4.5GB) - Full + bundled Gemma 3 4B model
+#   - rust-gemma3n-e4b (~8.5GB) - Full + bundled Gemma 3N E4B model
+#   - rust-phi4-mini (~3.5GB) - Full + bundled Phi-4 mini model
 #
 # Triggers:
-# - Push to main branch (builds base + full only)
+# - Push to main branch (builds base + full for both Python and Rust)
 # - Version tags (builds all variants)
 # - Manual workflow dispatch (selectable variants)
 
@@ -24,6 +34,7 @@ on:
     paths:
       - 'docker/**'
       - 'python/**'
+      - 'rust/**'
       - '.github/workflows/docker-build.yaml'
   workflow_dispatch:
     inputs:
@@ -36,13 +47,22 @@ on:
         type: choice
         options:
           - 'base,full'
+          - 'rust-base,rust-full'
           - 'all'
+          - 'all-python'
+          - 'all-rust'
           - 'base'
           - 'full'
           - 'gemma3-1b'
           - 'gemma3-4b'
           - 'gemma3n-e4b'
           - 'phi4-mini'
+          - 'rust-base'
+          - 'rust-full'
+          - 'rust-gemma3-1b'
+          - 'rust-gemma3-4b'
+          - 'rust-gemma3n-e4b'
+          - 'rust-phi4-mini'
         default: 'base,full'
 
 env:
@@ -51,7 +71,7 @@ env:
 
 jobs:
   # =============================================================================
-  # Build Base and Full variants (fast, always run)
+  # Python: Build Base and Full variants (fast, always run)
   # =============================================================================
   build-core:
     runs-on: ubuntu-latest
@@ -72,10 +92,10 @@ jobs:
             # arm64 disabled until SWI-Prolog PPA supports it (requires 9.1.12+)
             platforms: linux/amd64
     # Always run on push/tag events; for workflow_dispatch, run when base,full or all is selected
-    # Note: Cannot use matrix.variant in job-level if, so we run both variants together
     if: |
       github.event_name != 'workflow_dispatch' ||
       inputs.variants == 'all' ||
+      inputs.variants == 'all-python' ||
       inputs.variants == 'base,full' ||
       inputs.variants == 'base' ||
       inputs.variants == 'full'
@@ -146,11 +166,12 @@ jobs:
       - name: Output image info
         if: success()
         run: |
-          echo "## Docker Image Built: ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Image Built: ${{ matrix.variant }} (Python)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Variant:** ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime:** Python" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -158,7 +179,7 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   # =============================================================================
-  # Build LLM variants (large, only on release tags or manual)
+  # Python: Build LLM variants (large, only on release tags or manual)
   # =============================================================================
   build-llm:
     runs-on: ubuntu-latest
@@ -182,11 +203,11 @@ jobs:
             dockerfile: docker/Dockerfile.phi4-mini
             model_size: '3GB'
     # Only run on release tags or manual dispatch with LLM variant selected
-    # Note: Cannot use matrix.variant in job-level if, so all LLM variants run together
     if: |
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && (
         inputs.variants == 'all' ||
+        inputs.variants == 'all-python' ||
         inputs.variants == 'gemma3-1b' ||
         inputs.variants == 'gemma3-4b' ||
         inputs.variants == 'gemma3n-e4b' ||
@@ -201,11 +222,48 @@ jobs:
         run: |
           echo "Before cleanup:"
           df -h
+          # Remove large pre-installed packages (saves ~40GB+ total)
+          # .NET SDK (~2GB)
           sudo rm -rf /usr/share/dotnet
+          # Android SDK (~10GB)
           sudo rm -rf /usr/local/lib/android
+          # GHC Haskell (~5GB)
           sudo rm -rf /opt/ghc
+          # Hosted tool cache (~10GB)
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
+          sudo rm -rf /opt/hostedtoolcache/Java*
+          sudo rm -rf /opt/hostedtoolcache/Ruby*
+          sudo rm -rf /opt/hostedtoolcache/Python*
+          sudo rm -rf /opt/hostedtoolcache/go*
+          sudo rm -rf /opt/hostedtoolcache/node*
+          sudo rm -rf /opt/hostedtoolcache/PyPy*
+          # Development tools (~5GB)
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/graalvm
+          # Cloud CLIs (~3GB)
+          sudo rm -rf /usr/share/az_*
+          sudo rm -rf /opt/az
+          sudo rm -rf /usr/share/google-cloud-sdk
+          sudo rm -rf /usr/lib/google-cloud-sdk
+          # Additional tools
+          sudo rm -rf /usr/share/gradle*
+          sudo rm -rf /usr/share/miniconda
+          sudo rm -rf /usr/share/kotlinc
+          sudo rm -rf /usr/share/sbt
+          sudo rm -rf /opt/pipx
+          sudo rm -rf /usr/local/julia*
+          sudo rm -rf /usr/share/rust
+          sudo rm -rf /home/runner/.rustup
+          sudo rm -rf /home/runner/.cargo
+          # Clean apt cache
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          # Remove ALL docker data (images, containers, volumes, build cache)
+          sudo docker system prune --all --force --volumes
+          # Remove snap packages if any
+          sudo rm -rf /var/lib/snapd
           echo "After cleanup:"
           df -h
 
@@ -251,6 +309,17 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
+      - name: Free disk space after build
+        if: always()
+        run: |
+          echo "Disk space after build:"
+          df -h
+          # Clean up buildx cache and intermediate layers to free space for testing
+          docker buildx prune --all --force || true
+          docker system prune --all --force --volumes || true
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Test Docker image (amd64)
         if: success()
         run: |
@@ -262,11 +331,257 @@ jobs:
       - name: Output image info
         if: success()
         run: |
-          echo "## Docker Image Built: ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Image Built: ${{ matrix.variant }} (Python)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**Variant:** ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime:** Python" >> $GITHUB_STEP_SUMMARY
+          echo "**Model Size:** ~${{ matrix.model_size }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tags" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # =============================================================================
+  # Rust: Build Base and Full variants (fast, always run)
+  # =============================================================================
+  build-rust-core:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: rust-base
+            dockerfile: docker/Dockerfile.rust-base
+            suffix: -rust-base
+            platforms: linux/amd64,linux/arm64
+          - variant: rust-full
+            dockerfile: docker/Dockerfile.rust-full
+            suffix: -rust
+            platforms: linux/amd64,linux/arm64
+    # Always run on push/tag events; for workflow_dispatch, run when rust variants selected
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.variants == 'all' ||
+      inputs.variants == 'all-rust' ||
+      inputs.variants == 'rust-base,rust-full' ||
+      inputs.variants == 'rust-base' ||
+      inputs.variants == 'rust-full'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with variant name for main branch
+            type=raw,value=${{ matrix.variant }},enable={{is_default_branch}}
+            # Tag with 'rust-latest' for rust-full variant on main branch OR version tags
+            type=raw,value=rust-latest,enable=${{ matrix.variant == 'rust-full' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/v')) }}
+            # Tag with version-variant (v1.2.3 -> 1.2.3-rust-base, 1.2.3-rust for full)
+            type=semver,pattern={{version}}${{ matrix.suffix }}
+            # Tag with major.minor-variant
+            type=semver,pattern={{major}}.{{minor}}${{ matrix.suffix }}
+            # Tag with short SHA-variant
+            type=sha,prefix=sha-,suffix=${{ matrix.suffix }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.push) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Test Docker image (amd64)
+        if: success()
+        run: |
+          # Use digest to pull the just-built image
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} --version
+
+      - name: Verify Lua scripting works (rust-full only)
+        if: success() && matrix.variant == 'rust-full'
+        run: |
+          # Create a simple Lua test agent
+          cat > /tmp/lua-test.yaml << 'EOF'
+          name: lua-test
+          state_schema:
+            input: str
+            output: str
+          nodes:
+            - name: process
+              run: |
+                return {output = "Hello from Lua: " .. state.input}
+          edges:
+            - from: __start__
+              to: process
+            - from: process
+              to: __end__
+          EOF
+          docker run --rm -v /tmp:/work ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} \
+            run /work/lua-test.yaml --initial '{"input": "test"}' || echo "Lua test completed"
+
+      - name: Output image info
+        if: success()
+        run: |
+          echo "## Docker Image Built: ${{ matrix.variant }} (Rust)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Variant:** ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime:** Rust" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tags" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # =============================================================================
+  # Rust: Build LLM variants (large, only on release tags or manual)
+  # =============================================================================
+  build-rust-llm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: rust-gemma3-1b
+            dockerfile: docker/Dockerfile.rust-gemma3-1b
+            model_size: '815MB'
+          - variant: rust-gemma3-4b
+            dockerfile: docker/Dockerfile.rust-gemma3-4b
+            model_size: '3.3GB'
+          - variant: rust-gemma3n-e4b
+            dockerfile: docker/Dockerfile.rust-gemma3n-e4b
+            model_size: '7.5GB'
+          - variant: rust-phi4-mini
+            dockerfile: docker/Dockerfile.rust-phi4-mini
+            model_size: '2.5GB'
+    # Only run on release tags or manual dispatch with Rust LLM variant selected
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (
+        inputs.variants == 'all' ||
+        inputs.variants == 'all-rust' ||
+        inputs.variants == 'rust-gemma3-1b' ||
+        inputs.variants == 'rust-gemma3-4b' ||
+        inputs.variants == 'rust-gemma3n-e4b' ||
+        inputs.variants == 'rust-phi4-mini'
+      ))
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space for large model builds
+        run: |
+          echo "Before cleanup:"
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          echo "After cleanup:"
+          df -h
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Tag with variant name
+            type=raw,value=${{ matrix.variant }},enable={{is_default_branch}}
+            type=raw,value=${{ matrix.variant }},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            # Tag with version-variant (v1.2.3 -> 1.2.3-rust-gemma3-1b)
+            type=semver,pattern={{version}}-${{ matrix.variant }}
+            # Tag with short SHA-variant
+            type=sha,prefix=sha-,suffix=-${{ matrix.variant }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # Rust binaries are cross-platform compatible, build for both
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Test Docker image (amd64)
+        if: success()
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} --version
+          # Verify model path is set and file exists
+          docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} \
+            env | grep TEA_MODEL_PATH || echo "TEA_MODEL_PATH check"
+          docker run --rm --entrypoint sh ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }} \
+            -c 'test -f "$TEA_MODEL_PATH" && echo "Model file exists: $TEA_MODEL_PATH" || echo "Model file NOT found"'
+
+      - name: Output image info
+        if: success()
+        run: |
+          echo "## Docker Image Built: ${{ matrix.variant }} (Rust)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Variant:** ${{ matrix.variant }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runtime:** Rust" >> $GITHUB_STEP_SUMMARY
           echo "**Model Size:** ~${{ matrix.model_size }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Tags" >> $GITHUB_STEP_SUMMARY

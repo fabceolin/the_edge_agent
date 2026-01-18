@@ -58,8 +58,8 @@
     "build:demo": "npm run build:wasm && npm run build:ts && node scripts/bundle-for-demo.cjs"
   },
   "dependencies": {
-    "@wllama/wllama": "^2.3.7",
-    "@duckdb/duckdb-wasm": "^1.29.0"
+    "@duckdb/duckdb-wasm": "^1.29.0",
+    "@wllama/wllama": "^2.3.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0",

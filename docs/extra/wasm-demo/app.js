@@ -242,6 +242,7 @@ window.toggleGraphPanel = toggleGraphPanel;
 import {
   initLlm,
   initTeaLlm,
+  initYamlEngine,
   chat,
   executeLlmYaml,
   getLlmCacheStats,
@@ -352,11 +353,310 @@ async function initPrologEngine() {
 // Configuration
 const MODEL_URL = 'https://huggingface.co/unsloth/gemma-3-1b-it-GGUF/resolve/main/gemma-3-1b-it-Q2_K.gguf';
 
-// Default YAML workflow (implicit edges - no edges section needed)
-// ROBUST VERSION: Uses Lua + Prolog for reliable answer extraction from quantized LLMs
-// Features complete world capitals database (195 countries) with case-insensitive
-// matching and longest-match priority to avoid false positives.
-const DEFAULT_YAML = `name: robust-qa-workflow
+// ============================================================================
+// Example YAML Workflows
+// ============================================================================
+
+const EXAMPLES = {
+  // ---------------------------------------------------------------------------
+  // Example 1: Tera Template Filters (No LLM Required)
+  // Demonstrates: {{ state.var }}, filters (upper, lower, tojson, length, default)
+  // ---------------------------------------------------------------------------
+  'tera-templates': {
+    name: 'Tera Templates & Filters',
+    description: 'Demonstrates Jinja2-like template syntax with filters',
+    requiresLlm: false,
+    yaml: `name: template-filters-demo
+# Demonstrates Tera template engine (Jinja2-compatible)
+# Features:
+#   - Variable interpolation: {{ state.key }}
+#   - Filters: upper, lower, tojson, length, default
+#   - Nested access: {{ state.user.name }}
+#   - No LLM required - runs instantly!
+
+nodes:
+  # Step 1: Transform text with filters
+  - name: text_transforms
+    action: return
+    with:
+      value:
+        uppercase: "{{ state.name | upper }}"
+        lowercase: "{{ state.name | lower }}"
+        with_default: "{{ state.missing | default(value='N/A') }}"
+    output: transforms
+
+  # Step 2: Work with data structures
+  - name: data_ops
+    action: return
+    with:
+      value:
+        user_json: "{{ state.user | tojson }}"
+        item_count: "{{ state.items | length }}"
+        greeting: "Hello, {{ state.user.name }}!"
+    output: data
+
+  # Step 3: Combine results
+  - name: summary
+    action: return
+    with:
+      value:
+        message: "Processed {{ state.items | length }} items for {{ state.user.name | upper }}"
+        all_transforms: "{{ state.transforms | tojson }}"
+    output: summary`,
+    state: `name: Alice
+user:
+  name: Bob
+  email: bob@example.com
+items:
+  - apple
+  - banana
+  - cherry`,
+  },
+
+  // ---------------------------------------------------------------------------
+  // Example 2: Conditional Routing with goto/when (No LLM Required)
+  // Demonstrates: goto with when conditions, score-based routing
+  // ---------------------------------------------------------------------------
+  'conditional-routing': {
+    name: 'Conditional Routing',
+    description: 'Demonstrates goto with when conditions for branching workflows',
+    requiresLlm: false,
+    yaml: `name: conditional-routing-demo
+# Demonstrates conditional edge routing with goto/when
+# Features:
+#   - goto: simple unconditional jumps
+#   - goto with when: conditional branching
+#   - Multiple conditions evaluated in order
+#   - Score-based routing logic
+#   - No LLM required - runs instantly!
+
+variables:
+  threshold_high: 80
+  threshold_low: 40
+
+nodes:
+  # Entry point: evaluate the score
+  - name: evaluate
+    action: return
+    with:
+      value:
+        score: "{{ state.score }}"
+        evaluated: true
+    output: evaluation
+    # Conditional routing based on score (using if/to syntax like Rust)
+    goto:
+      - if: state.score >= 80
+        to: high_tier
+      - if: state.score >= 40
+        to: mid_tier
+      - to: low_tier  # Default fallback
+
+  # High tier path (score >= 80)
+  - name: high_tier
+    action: return
+    with:
+      value:
+        tier: "premium"
+        discount: 20
+        message: "Premium tier! Score: {{ state.score }}"
+    output: result
+    goto: __end__
+
+  # Mid tier path (40 <= score < 80)
+  - name: mid_tier
+    action: return
+    with:
+      value:
+        tier: "standard"
+        discount: 10
+        message: "Standard tier. Score: {{ state.score }}"
+    output: result
+    goto: __end__
+
+  # Low tier path (score < 40)
+  - name: low_tier
+    action: return
+    with:
+      value:
+        tier: "basic"
+        discount: 0
+        message: "Basic tier. Score: {{ state.score }}. Keep trying!"
+    output: result
+    goto: __end__`,
+    state: `score: 75`,
+  },
+
+  // ---------------------------------------------------------------------------
+  // Example 3: Variables & Complex Expressions (No LLM Required)
+  // Demonstrates: settings.variables, nested templates, loops
+  // ---------------------------------------------------------------------------
+  'variables-expressions': {
+    name: 'Variables & Loops',
+    description: 'Demonstrates variables, nested templates, and loop iteration',
+    requiresLlm: false,
+    yaml: `name: variables-loops-demo
+# Demonstrates advanced template features
+# Features:
+#   - Top-level variables for reusable values
+#   - Loop iteration with {% for %}
+#   - Conditional blocks with {% if %}
+#   - Nested template expressions
+#   - No LLM required - runs instantly!
+
+variables:
+  app_name: "TEA Demo"
+  version: "1.0.0"
+  max_items: 5
+
+nodes:
+  # Generate a formatted list using loop
+  - name: format_list
+    action: return
+    with:
+      value:
+        header: "{{ variables.app_name }} v{{ variables.version }}"
+        formatted: |
+          {% for item in state.products %}
+          - {{ item.name }}: {{ item.price }} USD
+          {% endfor %}
+    output: list
+
+  # Calculate totals and summary
+  - name: calculate_summary
+    action: return
+    with:
+      value:
+        item_count: "{{ state.products | length }}"
+        status: |
+          {% if state.products | length > 3 %}
+          Large order ({{ state.products | length }} items)
+          {% else %}
+          Small order
+          {% endif %}
+    output: summary
+
+  # Final output with all data
+  - name: finalize
+    action: return
+    with:
+      value:
+        app: "{{ variables.app_name }}"
+        version: "{{ variables.version }}"
+        items: "{{ state.list.formatted }}"
+        order_status: "{{ state.summary.status }}"
+    output: final`,
+    state: `products:
+  - name: Widget
+    price: 29.99
+  - name: Gadget
+    price: 49.99
+  - name: Gizmo
+    price: 19.99
+  - name: Doohickey
+    price: 39.99`,
+  },
+
+  // ---------------------------------------------------------------------------
+  // Example 4: Simulated Parallel Execution (No LLM Required)
+  // Demonstrates: Fan-out pattern with multiple paths
+  // ---------------------------------------------------------------------------
+  'parallel-fanout': {
+    name: 'Parallel Fan-Out',
+    description: 'Demonstrates simulated parallel execution with fan-out pattern',
+    requiresLlm: false,
+    yaml: `name: parallel-fanout-demo
+# Demonstrates simulated parallel execution
+# Features:
+#   - Fan-out: single node spawns multiple parallel paths
+#   - Fan-in: collect results from parallel paths
+#   - Merge strategies: isolated, merge_deep, last_write_wins
+#   - No LLM required - runs instantly!
+#
+# Note: In WASM, parallel execution is simulated sequentially
+# but maintains correct fan-in semantics.
+
+settings:
+  parallel:
+    strategy: merge_deep  # Merge parallel results
+
+nodes:
+  # Entry point - will fan out to analyzers
+  - name: start
+    action: return
+    with:
+      value:
+        input: "{{ state.text }}"
+        started_at: "now"
+    output: metadata
+
+  # Parallel path 1: Word analysis
+  - name: word_analyzer
+    action: return
+    with:
+      value:
+        text_sample: "{{ state.text | upper }}"
+        type: "word_analysis"
+    output: analysis.words
+
+  # Parallel path 2: Character analysis
+  - name: char_analyzer
+    action: return
+    with:
+      value:
+        char_count: "{{ state.text | length }}"
+        type: "char_analysis"
+    output: analysis.chars
+
+  # Parallel path 3: Pattern detection
+  - name: pattern_detector
+    action: return
+    with:
+      value:
+        has_numbers: "{{ state.text | lower }}"
+        type: "pattern_analysis"
+    output: analysis.patterns
+
+  # Fan-in: Collect all parallel results
+  - name: aggregate
+    action: return
+    with:
+      value:
+        summary: "Analysis complete"
+        word_result: "{{ state.analysis.words | tojson }}"
+        char_result: "{{ state.analysis.chars | tojson }}"
+    output: final
+
+edges:
+  - from: __start__
+    to: start
+  # Fan-out edges (start spawns parallel analyzers)
+  - from: start
+    to: word_analyzer
+  - from: start
+    to: char_analyzer
+  - from: start
+    to: pattern_detector
+  # Fan-in edges (all analyzers feed into aggregate)
+  - from: word_analyzer
+    to: aggregate
+  - from: char_analyzer
+    to: aggregate
+  - from: pattern_detector
+    to: aggregate
+  - from: aggregate
+    to: __end__`,
+    state: `text: "Hello World from TEA WASM 2024!"`,
+  },
+
+  // ---------------------------------------------------------------------------
+  // Example 5: Neurosymbolic QA (Requires LLM + Lua + Prolog)
+  // The original robust workflow with knowledge base validation
+  // ---------------------------------------------------------------------------
+  'neurosymbolic-qa': {
+    name: 'Neurosymbolic Q&A (LLM)',
+    description: 'Advanced: LLM + Lua + Prolog for verified knowledge retrieval',
+    requiresLlm: true,
+    yaml: `name: robust-qa-workflow
 # Demonstrates: Robust answer extraction from small quantized models
 # The workflow uses Lua normalization + Prolog validation to ensure
 # consistent results even when LLM output format varies.
@@ -842,10 +1142,17 @@ nodes:
             question_type = qtype,
             source = confidence == "corrected" and "prolog" or "llm"
           }
-        }`;
+        }`,
+    state: `question: What is the capital of France?`,
+  },
+};
 
-// Default state (YAML format)
-const DEFAULT_STATE_YAML = `question: What is the capital of France?`;
+// Default example to show on load
+const DEFAULT_EXAMPLE = 'tera-templates';
+
+// Get default YAML and state from examples
+const DEFAULT_YAML = EXAMPLES[DEFAULT_EXAMPLE].yaml;
+const DEFAULT_STATE_YAML = EXAMPLES[DEFAULT_EXAMPLE].state;
 
 // DOM Elements
 const statusEl = document.getElementById('status');
@@ -931,6 +1238,87 @@ function setOutputContent(content) {
   });
 }
 
+// Set YAML editor content
+function setYamlContent(content) {
+  yamlEditor.dispatch({
+    changes: {
+      from: 0,
+      to: yamlEditor.state.doc.length,
+      insert: content,
+    },
+  });
+}
+
+// Set state editor content
+function setStateContent(content) {
+  stateEditor.dispatch({
+    changes: {
+      from: 0,
+      to: stateEditor.state.doc.length,
+      insert: content,
+    },
+  });
+}
+
+// Load example by key
+function loadExample(exampleKey) {
+  const example = EXAMPLES[exampleKey];
+  if (!example) {
+    console.warn(`[TEA-DEMO] Example not found: ${exampleKey}`);
+    return;
+  }
+
+  setYamlContent(example.yaml);
+  setStateContent(example.state);
+
+  // Update description display
+  const descEl = document.getElementById('example-description');
+  if (descEl) {
+    descEl.textContent = example.description;
+    if (example.requiresLlm) {
+      descEl.innerHTML += ' <span class="llm-badge">Requires LLM</span>';
+    }
+  }
+
+  // Clear previous output
+  setOutputContent('');
+  const outputContainer = document.getElementById('yaml-output');
+  if (outputContainer) {
+    outputContainer.classList.add('hidden');
+  }
+
+  // Regenerate graph preview
+  const mermaidSyntax = generateMermaidFromYaml(example.yaml);
+  renderAgentGraph(mermaidSyntax);
+
+  console.log(`[TEA-DEMO] Loaded example: ${example.name}`);
+}
+
+// Populate example selector dropdown
+function populateExampleSelector() {
+  const selector = document.getElementById('example-selector');
+  if (!selector) return;
+
+  // Clear existing options
+  selector.innerHTML = '';
+
+  // Add options for each example
+  for (const [key, example] of Object.entries(EXAMPLES)) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = example.name;
+    if (key === DEFAULT_EXAMPLE) {
+      option.selected = true;
+    }
+    selector.appendChild(option);
+  }
+
+  // Add change handler
+  selector.addEventListener('change', (e) => {
+    loadExample(e.target.value);
+  });
+}
+
 // Update status display
 function updateStatus(text, type = 'loading') {
   statusEl.textContent = text;
@@ -976,10 +1364,39 @@ function updateThreadingStatus() {
 
 // Initialize LLM
 async function initializeLlm() {
+  let yamlEngineReady = false;
+
+  // Step 1: Initialize YAML engine first (independent of LLM)
   try {
-    updateStatus('Loading model...', 'loading');
+    updateStatus('Initializing YAML engine...', 'loading');
     showProgress(true);
     updateThreadingStatus();
+
+    await initYamlEngine({ verbose: true });
+    yamlEngineReady = true;
+    runYamlBtn.disabled = false;
+    console.log('[TEA-DEMO] YAML engine initialized, non-LLM workflows ready');
+    updateStatus('YAML Ready (loading LLM...)', 'ready');
+  } catch (error) {
+    console.error('YAML engine initialization failed:', error);
+    updateStatus(`Error: ${error.message}`, 'error');
+    showProgress(false);
+    return; // Can't continue without YAML engine
+  }
+
+  // Step 2: Initialize additional engines (non-blocking)
+  Promise.all([initLuaEngine(), initPrologEngine()]).then(([lua, prolog]) => {
+    const engines = [];
+    if (lua) engines.push('Lua');
+    if (prolog) engines.push('Prolog');
+    if (engines.length > 0) {
+      console.log(`[TEA-DEMO] Additional engines: ${engines.join(', ')}`);
+    }
+  });
+
+  // Step 3: Try to load LLM (may fail, but YAML workflows will still work)
+  try {
+    updateStatus('Loading LLM model...', 'loading');
 
     await initLlm({
       modelUrl: MODEL_URL,
@@ -991,13 +1408,12 @@ async function initializeLlm() {
         updateStatus(`Loading model: ${percent}%`, 'loading');
       },
       onReady: () => {
-        updateStatus('Ready', 'ready');
+        updateStatus('Ready (with LLM)', 'ready');
         showProgress(false);
-        runYamlBtn.disabled = false;
       },
     });
 
-    // Initialize TEA YAML engine with LLM handler
+    // Register LLM handler for llm.call actions
     await initTeaLlm({ verbose: true }, async (paramsJson) => {
       const params = JSON.parse(paramsJson);
       const response = await chat(params.prompt, {
@@ -1007,21 +1423,11 @@ async function initializeLlm() {
       return JSON.stringify({ content: response.content });
     });
 
-    // Initialize Lua and Prolog engines (non-blocking)
-    Promise.all([initLuaEngine(), initPrologEngine()]).then(([lua, prolog]) => {
-      const engines = [];
-      if (lua) engines.push('Lua');
-      if (prolog) engines.push('Prolog');
-      if (engines.length > 0) {
-        updateStatus(`Ready (with ${engines.join(' + ')})`, 'ready');
-      }
-    });
-
     await updateCacheStatus();
 
   } catch (error) {
-    console.error('Initialization failed:', error);
-    updateStatus(`Error: ${error.message}`, 'error');
+    console.error('LLM loading failed (YAML workflows still available):', error);
+    updateStatus(`YAML Ready (LLM unavailable: ${error.message})`, 'ready');
     showProgress(false);
   }
 }
@@ -1111,8 +1517,9 @@ try {
   versionEl.textContent = '';
 }
 
-// Initialize editors first, then LLM
+// Initialize editors first, then example selector, then LLM
 initEditors();
+populateExampleSelector();
 initializeLlm();
 
 // Restore graph panel state from localStorage

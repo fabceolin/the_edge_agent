@@ -1,5 +1,4 @@
 // test to verify HTTP client works
-use reqwest;
 use serde_json::json;
 
 #[test]
