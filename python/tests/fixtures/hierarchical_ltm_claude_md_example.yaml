@@ -1,0 +1,67 @@
+# BUG.001 Test Fixture: CLAUDE.md Documented Example
+#
+# This fixture is an EXACT copy of the A3 mode configuration documented
+# in CLAUDE.md. Used to verify documentation accuracy per AC-5.
+#
+# Source: CLAUDE.md "Hierarchical LTM Backend (TEA-LTM-015)" section
+#
+# NOTE: Uses placeholder env vars that must be set for testing:
+#   - SUPABASE_DATABASE_URL or uses sqlite fallback
+#   - LTM_GCS_BUCKET_URI or uses local fallback
+#   - AGENCY_ID or uses "rankellix" default
+
+name: claude-md-example-agent
+description: Exact copy of CLAUDE.md A3 example for documentation accuracy test
+
+state_schema:
+  input: str
+  output: str
+
+settings:
+  ltm:
+    backend: hierarchical
+
+    catalog:
+      type: sqlalchemy
+      url: "${SUPABASE_DATABASE_URL:-sqlite:///:memory:}"
+      pool_size: 10
+
+    storage:
+      uri: "${LTM_GCS_BUCKET_URI:-./ltm_data/}"
+
+    hierarchy:
+      enabled: true
+      levels:
+        - agency
+        - firm
+        - user
+        - session
+      root_entity:
+        type: agency
+        id: "${AGENCY_ID:-rankellix}"
+      defaults:
+        agency: "none"
+        firm: "_unassigned"
+
+    performance:
+      metadata_cache:
+        enabled: true
+        ttl_seconds: 600
+      parallel_reads:
+        threads: 8
+
+    index:
+      format: parquet
+      row_group_size: 122880
+      compression: zstd
+
+nodes:
+  - name: process
+    run: |
+      return {"output": f"Processed: {state['input']}"}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

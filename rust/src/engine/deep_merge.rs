@@ -710,12 +710,15 @@ nodes:
         let nodes = base["nodes"].as_sequence().unwrap();
         let node = &nodes[0];
 
+        assert_eq!(node["with"]["model"], Value::String("claude-3".to_string())); // Updated
         assert_eq!(
-            node["with"]["model"],
-            Value::String("claude-3".to_string())
+            node["with"]["temperature"],
+            Value::Number(serde_yaml::Number::from(0.7))
+        ); // Preserved
+        assert_eq!(
+            node["with"]["params"]["max_tokens"],
+            Value::Number(2000.into())
         ); // Updated
-        assert_eq!(node["with"]["temperature"], Value::Number(serde_yaml::Number::from(0.7))); // Preserved
-        assert_eq!(node["with"]["params"]["max_tokens"], Value::Number(2000.into())); // Updated
         assert_eq!(
             node["with"]["params"]["top_p"],
             Value::Number(serde_yaml::Number::from(0.9))
@@ -807,7 +810,10 @@ nodes:
         assert!(names.contains(&"e".to_string())); // Added
 
         // Check a was modified
-        let a_node = nodes.iter().find(|n| n["name"].as_str() == Some("a")).unwrap();
+        let a_node = nodes
+            .iter()
+            .find(|n| n["name"].as_str() == Some("a"))
+            .unwrap();
         assert_eq!(a_node["val"], Value::Number(10.into()));
     }
 }

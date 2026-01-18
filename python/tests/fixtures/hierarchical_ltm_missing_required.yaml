@@ -1,0 +1,29 @@
+# BUG.001 Test Fixture: Missing Required Config
+#
+# This fixture is intentionally missing required configuration to test
+# error handling. Should produce clear error messages per AC-3.
+#
+# Missing: catalog.url, storage.uri, hierarchy.levels
+
+name: hierarchical-ltm-missing-config
+description: Intentionally invalid config for error message testing
+
+state_schema:
+  input: str
+  output: str
+
+settings:
+  ltm:
+    backend: hierarchical
+    # Missing required fields - should produce clear error
+
+nodes:
+  - name: noop
+    run: |
+      return {}
+
+edges:
+  - from: __start__
+    to: noop
+  - from: noop
+    to: __end__
