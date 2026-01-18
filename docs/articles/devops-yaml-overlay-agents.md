@@ -539,7 +539,8 @@ nodes:
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | Setting not overridden | Typo in path | Use `--dump-merged` to verify |
-| Array not merged | Arrays replace by design | Keep arrays in base, use variables for differences |
+| Node/edge not merged | Missing `name` or `from`/`to` key | Ensure identifying keys are present (YE.9) |
+| Unknown array replaced | Arrays without identifying keys replace | Only `nodes`, `edges`, `goto` merge by key |
 | Env var not expanded | Wrong syntax | Use `${VAR}` not `$VAR` or `{{VAR}}` |
 
 ### 8.2 Debugging Workflow
@@ -557,6 +558,55 @@ tea run agents/document-processor.yaml -f overlays/production.overlay.yaml --dum
 # Step 4: Compare environments
 diff <(tea run agents/document-processor.yaml -f overlays/staging.overlay.yaml --dump-merged) \
      <(tea run agents/document-processor.yaml -f overlays/production.overlay.yaml --dump-merged)
+```
+
+### 8.3 Migration from YE.8 to YE.9
+
+YE.9 introduces **array merge by key** for `nodes`, `edges`, and `goto` arrays. This is a **breaking change** from YE.8's array replacement behavior.
+
+**What Changed:**
+
+| Before (YE.8) | After (YE.9) |
+|---------------|--------------|
+| All arrays replaced entirely | `nodes`, `edges`, `goto` merge by identifying key |
+| Overlay must include full array | Overlay specifies only changed elements |
+| No element deletion support | `__delete__: true` removes elements |
+
+**Migration Guide:**
+
+1. **If your overlays replace entire `nodes` or `edges` arrays:**
+   - Your overlay will now **merge** with base instead of replacing
+   - New nodes in overlay are appended, not replaced
+   - Use `--dump-merged` to verify the result
+
+2. **If your overlay duplicates nodes from base to ensure they exist:**
+   - You no longer need to duplicate them
+   - Remove redundant node definitions from overlays
+   - Only specify the properties you want to change
+
+3. **If you relied on array replacement to remove nodes:**
+   - Use `__delete__: true` to explicitly remove nodes
+   - Example:
+     ```yaml
+     nodes:
+       - name: deprecated_node
+         __delete__: true
+     ```
+
+4. **If you have custom arrays that should still replace:**
+   - Arrays not named `nodes`, `edges`, or `goto` still replace entirely
+   - No changes needed for custom arrays
+
+**Verification:**
+```bash
+# Compare old vs new behavior
+tea run base.yaml -f overlay.yaml --dump-merged > merged.yaml
+
+# Check node count
+yq '.nodes | length' merged.yaml
+
+# Verify specific node exists
+yq '.nodes[] | select(.name == "my-node")' merged.yaml
 ```
 
 ## 9. Conclusion

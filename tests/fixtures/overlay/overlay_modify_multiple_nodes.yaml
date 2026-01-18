@@ -1,0 +1,13 @@
+# YE.9 Test Fixture: Modify multiple nodes by name
+# Expected: Both process_llm and fetch_data updated, others preserved
+
+nodes:
+  - name: process_llm
+    with:
+      model: gpt-4o
+      temperature: 0.1
+
+  - name: fetch_data
+    with:
+      url: "{{ variables.api_url }}/v2/data"
+      timeout: 60

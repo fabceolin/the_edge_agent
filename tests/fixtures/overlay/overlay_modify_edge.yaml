@@ -1,0 +1,9 @@
+# YE.9 Test Fixture: Modify edge by from+to composite key
+# Expected: Edge from process_llm->validate_result updated with condition
+
+edges:
+  - from: process_llm
+    to: validate_result
+    condition:
+      type: expression
+      value: "state.get('result') is not None"

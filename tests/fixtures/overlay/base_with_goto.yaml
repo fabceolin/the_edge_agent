@@ -1,0 +1,41 @@
+# YE.9 Test Fixture: Base agent with goto arrays for routing merge testing
+name: router-agent
+description: Base agent with goto conditional routing
+
+state_schema:
+  input: str
+  score: float
+  category: str
+  result: str
+
+nodes:
+  - name: classify
+    run: |
+      text = state.get("input", "")
+      score = 0.5 if "important" in text.lower() else 0.3
+      return {"score": score}
+    goto:
+      - if: "state['score'] > 0.9"
+        to: high_priority
+      - if: "state['score'] > 0.5"
+        to: medium_priority
+      - to: low_priority
+
+  - name: high_priority
+    run: |
+      return {"category": "high", "result": "Urgent processing"}
+    goto: finalize
+
+  - name: medium_priority
+    run: |
+      return {"category": "medium", "result": "Standard processing"}
+    goto: finalize
+
+  - name: low_priority
+    run: |
+      return {"category": "low", "result": "Batch processing"}
+    goto: finalize
+
+  - name: finalize
+    run: |
+      return {"result": f"[{state['category']}] {state['result']}"}

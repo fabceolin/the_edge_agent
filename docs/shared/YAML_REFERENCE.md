@@ -1124,7 +1124,7 @@ for event in engine.resume_from_checkpoint(
 
 ## YAML Overlay Merging
 
-YE.8: The Edge Agent supports kubectl-style overlay merging for composing YAML configurations.
+YE.8/YE.9: The Edge Agent supports kubectl-style overlay merging for composing YAML configurations, with intelligent array merge by key for `nodes`, `edges`, and `goto` arrays.
 
 ### Overview
 
@@ -1133,6 +1133,7 @@ Overlay merging allows you to:
 - Apply environment-specific overrides (dev, staging, prod)
 - Keep sensitive settings in separate files
 - Compose configurations from reusable components
+- **YE.9: Modify individual nodes/edges without duplicating entire arrays**
 
 ### CLI Usage
 
@@ -1156,9 +1157,98 @@ The merge follows **kubectl-style strategic merge patch** semantics:
 | Type | Behavior | Example |
 |------|----------|---------|
 | **Objects** | Recursively merged | Base `{a: 1}` + Overlay `{b: 2}` = `{a: 1, b: 2}` |
-| **Arrays** | Replaced (not concatenated) | Base `[1,2,3]` + Overlay `[4,5]` = `[4,5]` |
 | **Scalars** | Last wins | Base `count: 10` + Overlay `count: 20` = `count: 20` |
 | **Null** | Can override non-null | Base `enabled: true` + Overlay `enabled: null` = `enabled: null` |
+| **Unknown Arrays** | Replaced (not concatenated) | Base `[1,2,3]` + Overlay `[4,5]` = `[4,5]` |
+
+### Array Merge by Key (YE.9)
+
+For TEA-specific arrays, elements are **merged by identifying key** instead of replaced:
+
+| Array | Merge Key | Behavior |
+|-------|-----------|----------|
+| `nodes` | `name` | Matching nodes are deep-merged, non-matching are appended |
+| `edges` | `from` + `to` | Matching edges are deep-merged, non-matching are appended |
+| `goto` | `to` | Matching routes are deep-merged, non-matching are appended |
+
+This allows you to **override individual nodes or edges** without duplicating the entire array.
+
+#### Example: Modify a Single Node
+
+**base.yaml** (5 nodes):
+```yaml
+nodes:
+  - name: fetch
+    uses: http.get
+  - name: process
+    uses: llm.call
+    with:
+      model: gpt-4o-mini
+      temperature: 0.7
+  - name: validate
+    run: |
+      return {"valid": True}
+  - name: format
+    run: |
+      return {"output": state.result}
+  - name: save
+    uses: memory.store
+```
+
+**overlay.yaml** (modify only process node):
+```yaml
+nodes:
+  - name: process
+    with:
+      model: claude-3-opus
+      temperature: 0.3
+```
+
+**Result:** All 5 nodes preserved, `process` node updated with new model and temperature.
+
+### Element Deletion
+
+Use `__delete__: true` to remove an element:
+
+```yaml
+# Remove a node
+nodes:
+  - name: validate
+    __delete__: true
+
+# Remove an edge
+edges:
+  - from: fetch
+    to: validate
+    __delete__: true
+```
+
+### Goto Array Merging
+
+`goto` arrays inside nodes merge by the `to` field:
+
+**base.yaml:**
+```yaml
+nodes:
+  - name: router
+    goto:
+      - if: "score > 0.9"
+        to: high_priority
+      - if: "score > 0.5"
+        to: medium_priority
+      - to: low_priority
+```
+
+**overlay.yaml** (change condition for high_priority):
+```yaml
+nodes:
+  - name: router
+    goto:
+      - if: "score > 0.95"
+        to: high_priority
+```
+
+**Result:** `high_priority` route condition updated, other routes preserved.
 
 ### Example: Environment Overlays
 
@@ -1207,7 +1297,7 @@ settings:
       uri: gs://my-bucket/ltm/
   model: gpt-4o          # From overlay (replaces)
   temperature: 0.3       # From overlay (replaces)
-nodes:                   # Preserved from base (arrays replace, but no nodes in overlay)
+nodes:                   # Preserved from base (YE.9: nodes merge by name)
   - name: process
     uses: llm
 ```

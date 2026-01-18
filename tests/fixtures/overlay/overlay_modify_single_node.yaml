@@ -1,0 +1,9 @@
+# YE.9 Test Fixture: Modify single node by name
+# Expected: process_llm node updated, all other nodes preserved
+
+nodes:
+  - name: process_llm
+    with:
+      model: claude-3-opus
+      temperature: 0.3
+      # max_tokens should be preserved from base (1000)
