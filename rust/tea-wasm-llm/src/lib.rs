@@ -33,6 +33,7 @@ mod executor;
 mod llm;
 mod ltm;
 mod lua;
+mod markdown;
 mod opik;
 mod parallel;
 mod params;
@@ -109,6 +110,11 @@ pub use params::{
 pub use templates::{
     render_template, render_template_wasm, render_template_with_config, sanitize_context_value,
     TemplateError, TemplateResult, TemplateSecurityConfig,
+};
+
+pub use markdown::{
+    markdown_extract_tasks, markdown_extract_variables, markdown_parse, markdown_parse_json,
+    MarkdownParseResult,
 };
 
 pub use routing::{

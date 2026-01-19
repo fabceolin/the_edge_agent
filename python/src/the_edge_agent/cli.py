@@ -1890,6 +1890,254 @@ def schema_merge(
         typer.echo(f"✓ Merged schema written to {output}", err=True)
 
 
+def get_git_remote_repo() -> Optional[str]:
+    """Get the repository owner/name from git remote origin."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            # Parse GitHub URL formats:
+            # https://github.com/owner/repo.git
+            # git@github.com:owner/repo.git
+            if "github.com" in url:
+                if url.startswith("git@"):
+                    # git@github.com:owner/repo.git
+                    path = url.split(":")[-1]
+                else:
+                    # https://github.com/owner/repo.git
+                    path = url.split("github.com/")[-1]
+                # Remove .git suffix
+                if path.endswith(".git"):
+                    path = path[:-4]
+                return path
+    except Exception:
+        pass
+    return None
+
+
+@app.command("report-bug")
+def report_bug(
+    description: str = typer.Argument(..., help="Bug description"),
+    workflow: Optional[Path] = typer.Option(
+        None,
+        "--workflow",
+        "-w",
+        help="Workflow YAML file for extended context (node names, actions, schema)",
+    ),
+    search_first: bool = typer.Option(
+        False,
+        "--search-first",
+        "-s",
+        help="Search for similar issues before creating",
+    ),
+    create_issue: bool = typer.Option(
+        False,
+        "--create-issue",
+        "-c",
+        help="Create GitHub issue directly (requires GITHUB_TOKEN)",
+    ),
+    repo: Optional[str] = typer.Option(
+        None,
+        "--repo",
+        "-r",
+        help="Repository owner/name (default: detected from git remote)",
+    ),
+    labels: Optional[str] = typer.Option(
+        None,
+        "--labels",
+        "-l",
+        help="Comma-separated labels (default: bug,auto-reported)",
+    ),
+):
+    """
+    Report a bug with optional GitHub integration.
+
+    By default, generates a bug report URL (TEA-REPORT-001 style) for manual filing.
+    With --create-issue, creates a GitHub issue directly.
+
+    Examples:
+
+        tea report-bug "Parser fails on nested lists"
+
+        tea report-bug "LLM timeout" --workflow agent.yaml
+
+        tea report-bug "Memory leak" --search-first --create-issue
+    """
+    from the_edge_agent.report import ErrorReport, ErrorType
+    from the_edge_agent.report_encoder import encode_error_report
+    from the_edge_agent.report_cli import REPORT_BASE_URL, add_extended_context
+
+    # Parse labels
+    label_list = ["bug", "auto-reported"]
+    if labels:
+        label_list = [l.strip() for l in labels.split(",")]
+
+    # Determine repository
+    target_repo = repo or get_git_remote_repo()
+    if not target_repo and (create_issue or search_first):
+        typer.echo(
+            "Error: --repo is required when using --create-issue or --search-first "
+            "(could not detect from git remote)",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # Create base error report from description
+    report = ErrorReport(
+        error_type=ErrorType.ACTION_ERROR,
+        message=description,
+        stack=[],  # No stack trace for manual reports
+    )
+
+    # Extract extended context from workflow if provided
+    workflow_config = None
+    if workflow:
+        if not workflow.exists():
+            typer.echo(f"Error: Workflow file not found: {workflow}", err=True)
+            raise typer.Exit(1)
+        try:
+            import yaml
+
+            with open(workflow) as f:
+                workflow_config = yaml.safe_load(f)
+            report = add_extended_context(report, workflow_config)
+        except Exception as e:
+            typer.echo(f"Warning: Could not parse workflow file: {e}", err=True)
+
+    # Search for similar issues first if requested
+    if search_first and target_repo:
+        try:
+            # Get search action from registry
+            from the_edge_agent.actions.github_actions import register_actions
+
+            action_registry: Dict[str, Callable] = {}
+            register_actions(action_registry, engine=None)
+            github_search_issues = action_registry.get("github.search_issues")
+
+            if not github_search_issues:
+                raise ImportError("github.search_issues action not registered")
+
+            typer.echo("Searching for similar issues...", err=True)
+            search_result = github_search_issues(
+                state={},  # Required first arg for actions
+                query=f"{description[:50]} in:body label:bug",
+                repo=target_repo,
+                issue_state="all",  # Renamed to avoid conflict with state param
+                per_page=5,
+            )
+
+            if search_result.get("total_count", 0) > 0:
+                typer.echo("\n" + "━" * 68)
+                typer.echo("🔍 Similar issues found:")
+                for item in search_result.get("items", [])[:5]:
+                    state = item.get("state", "unknown")
+                    number = item.get("number")
+                    title = item.get("title", "")[:60]
+                    url = item.get("html_url") or item.get("url", "")
+                    typer.echo(f'   #{number}: "{title}" ({state})')
+                    typer.echo(f"        {url}")
+                typer.echo("")
+                typer.echo(
+                    f"   Consider adding a comment to #{search_result['items'][0]['number']} "
+                    "instead of filing a new issue."
+                )
+                typer.echo("━" * 68)
+
+                if not create_issue:
+                    # Don't create, just show similar issues
+                    return
+        except Exception as e:
+            typer.echo(f"Warning: Could not search for similar issues: {e}", err=True)
+
+    # Create GitHub issue if requested
+    if create_issue and target_repo:
+        try:
+            # Get create action from registry
+            from the_edge_agent.actions.github_actions import register_actions
+
+            action_registry: Dict[str, Callable] = {}
+            register_actions(action_registry, engine=None)
+            github_create_issue = action_registry.get("github.create_issue")
+
+            if not github_create_issue:
+                raise ImportError("github.create_issue action not registered")
+
+            # Build issue body
+            body_parts = [f"## Bug Report\n\n{description}\n"]
+
+            body_parts.append(f"\n**Version:** {report.version}")
+            body_parts.append(f"**Platform:** {report.platform}")
+
+            if report.extended:
+                ext = report.extended
+                if ext.workflow_name:
+                    body_parts.append(f"**Workflow:** {ext.workflow_name}")
+                if ext.nodes:
+                    node_names = [n.name for n in ext.nodes[:10]]
+                    body_parts.append(f"**Nodes:** {', '.join(node_names)}")
+                if ext.active_node:
+                    body_parts.append(f"**Active Node:** {ext.active_node}")
+
+            body_parts.append("\n---\n*Auto-generated by TEA bug reporter*")
+
+            body = "\n".join(body_parts)
+
+            result = github_create_issue(
+                state={},  # Required first arg for actions
+                repo=target_repo,
+                title=f"Bug: {description[:80]}",
+                body=body,
+                labels=label_list,
+            )
+
+            typer.echo("\n" + "━" * 68)
+            typer.echo(f"✅ Issue created: #{result.get('number')}")
+            typer.echo(f"   {result.get('html_url') or result.get('url')}")
+            typer.echo("")
+            typer.echo(f"   Title: Bug: {description[:80]}")
+            typer.echo(f"   Labels: {', '.join(label_list)}")
+            typer.echo("━" * 68)
+            return
+
+        except Exception as e:
+            typer.echo(f"Error creating issue: {e}", err=True)
+            typer.echo("Falling back to URL generation...", err=True)
+
+    # Default: generate bug report URL (TEA-REPORT-001 style)
+    try:
+        url = encode_error_report(report, REPORT_BASE_URL)
+
+        typer.echo("\n" + "━" * 68)
+        typer.echo("🐛 Bug Report URL:")
+        typer.echo(f"   {url}")
+        typer.echo("")
+        typer.echo("   This URL contains: description, version, platform.")
+        if report.extended:
+            typer.echo("   Extended context: workflow structure (node names, actions).")
+        typer.echo("   Click to open in browser and file issue on GitHub.")
+        typer.echo("━" * 68)
+
+        # Try to copy to clipboard
+        try:
+            from the_edge_agent.report_cli import copy_to_clipboard
+
+            if copy_to_clipboard(url):
+                typer.echo("   📋 URL copied to clipboard")
+        except Exception:
+            pass
+
+    except Exception as e:
+        typer.echo(f"Error generating bug report URL: {e}", err=True)
+        raise typer.Exit(1)
+
+
 def version_callback(value: bool):
     """Handle --version flag."""
     if value:
@@ -1938,6 +2186,7 @@ def main_callback(
             "inspect",
             "schema",
             "from",
+            "report-bug",
         ]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):

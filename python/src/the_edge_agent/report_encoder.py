@@ -349,8 +349,11 @@ def _encode_with_truncation(
     # 3. Base64url encode (no padding)
     encoded = base64url_encode(compressed)
 
-    # 4. Build URL
-    url = f"{base_url}/{report_to_encode.version}/{report_to_encode.runtime}_{encoded}"
+    # 4. Build URL with hash-based routing for GitHub Pages compatibility
+    # Format: {base_url}/#/{version}/{runtime}_{encoded}
+    url = (
+        f"{base_url}/#/{report_to_encode.version}/{report_to_encode.runtime}_{encoded}"
+    )
 
     # 5. Validate length
     if len(url) > MAX_URL_LENGTH:

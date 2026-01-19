@@ -1,7 +1,7 @@
 # Story TEA-RALPHY-001.3: GitHub Issues Integration
 
 ## Status
-Draft
+Done
 
 ## Epic Reference
 [TEA-RALPHY-001: Autonomous AI Coding Loop](./TEA-RALPHY-001-autonomous-coding-loop.md)
@@ -10,6 +10,10 @@ Draft
 
 - TEA-RALPHY-001.1 (Python `markdown.parse` Action) - for parsing issue body checklists
   - Transitively depends on TEA-RALPHY-001.0 (md-graph-parser crate)
+
+## Related Stories
+
+- **TEA-RALPHY-001.3b** ([GitHub Issues Write Actions](./TEA-RALPHY-001.3b.github-issues-write.md)) - write operations (create, update, search) that build on this story's read operations and shared infrastructure
 
 ## Story
 
@@ -28,18 +32,18 @@ Draft
 
 ## Tasks / Subtasks
 
-- [ ] Implement `github.list_issues` action (AC: 1, 2)
-  - [ ] Use `gh api` CLI or `requests` library
-  - [ ] Filter by labels, state, milestone
-- [ ] Add checkbox extraction from issue body (AC: 3)
-  - [ ] Reuse `markdown.parse` for body parsing
-- [ ] Add pagination support (AC: 4)
-  - [ ] `per_page` and `page` parameters
-  - [ ] Auto-pagination option
-- [ ] Authentication handling (AC: 5)
-  - [ ] Read from env or secrets
-- [ ] Rate limit handling (AC: 6)
-  - [ ] Retry with backoff on 429
+- [x] Implement `github.list_issues` action (AC: 1, 2)
+  - [x] Use `gh api` CLI or `requests` library
+  - [x] Filter by labels, state, milestone
+- [x] Add checkbox extraction from issue body (AC: 3)
+  - [x] Reuse `markdown.parse` for body parsing
+- [x] Add pagination support (AC: 4)
+  - [x] `per_page` and `page` parameters
+  - [x] Auto-pagination option
+- [x] Authentication handling (AC: 5)
+  - [x] Read from env or secrets
+- [x] Rate limit handling (AC: 6)
+  - [x] Retry with backoff on 429
 
 ## Dev Notes
 
@@ -187,6 +191,7 @@ def test_rate_limit_retry():
 |------|---------|-------------|--------|
 | 2025-01-17 | 0.1 | Extracted from epic TEA-RALPHY-001 | Sarah (PO) |
 | 2025-01-18 | 0.2 | Added dependency on 001.1 (markdown.parse) for issue body parsing | Sarah (PO) |
+| 2026-01-19 | 1.0 | Implemented github.list_issues action with all AC criteria met | James (Dev) |
 
 ---
 
@@ -194,22 +199,145 @@ def test_rate_limit_retry():
 
 ### Agent Model Used
 
-_To be filled by development agent_
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
 
-_To be filled by development agent_
+No debug logs required - all tests passed on first implementation.
 
 ### Completion Notes List
 
-_To be filled by development agent_
+- Implemented `github.list_issues` action using the `requests` library for HTTP API calls
+- Action supports filtering by labels, state, milestone, assignee, creator, mentioned
+- Pagination implemented with `per_page`, `page` parameters and `auto_paginate` option with `max_pages` limit
+- Authentication via `GITHUB_TOKEN` environment variable with clear error messages
+- Rate limiting handled with `with_rate_limit_retry` decorator implementing exponential backoff
+- Pull requests are filtered out from issue results (they appear in GitHub Issues API)
+- Checkbox extraction from issue body uses the existing `markdown.parse` action from TEA-RALPHY-001.1
+- Graceful fallback when `markdown.parse` action is not available or returns errors
+- All 20 tests pass including unit tests for rate limit retry decorator and markdown integration tests
 
 ### File List
 
-_To be filled by development agent_
+| File | Status | Description |
+|------|--------|-------------|
+| `python/src/the_edge_agent/actions/github_actions.py` | NEW | GitHub API actions (github.list_issues) |
+| `python/src/the_edge_agent/actions/__init__.py` | MODIFIED | Added github_actions import and registration |
+| `python/tests/test_github_actions.py` | NEW | Unit tests for github_actions (20 tests) |
 
 ---
 
 ## QA Results
 
-_To be filled by QA agent after implementation review_
+### Review Date: 2026-01-19
+
+### Reviewed By: Quinn (Test Architect)
+
+### Risk Assessment
+
+**Risk Level: LOW** - Standard CRUD action with external API integration
+- No auth/payment/security files modified (uses existing pattern)
+- Tests added: 20 unit tests covering all AC
+- Diff size: ~500 lines (moderate, within threshold)
+- First review for this story
+- 6 acceptance criteria (moderate complexity)
+
+### Code Quality Assessment
+
+**Overall: EXCELLENT** ✓
+
+The implementation demonstrates strong software engineering practices:
+
+1. **Architecture**: Clean separation of concerns with decorator pattern for retry logic, helper functions for issue processing, and proper action registration
+2. **Error Handling**: Comprehensive error categorization (configuration, authentication, rate_limit, not_found, api_error, network) with actionable error messages
+3. **Documentation**: Thorough docstrings with examples, parameter descriptions, and return value documentation
+4. **Defensive Coding**: Input validation (repo format, per_page clamping), graceful fallback when markdown.parse unavailable
+
+### Requirements Traceability (Given-When-Then)
+
+| AC | Test Coverage | Status |
+|----|---------------|--------|
+| AC1: List issues with label filter | `test_list_issues_basic`, `test_filter_by_labels` | ✓ |
+| AC2: Extract title, body, labels, assignees | `test_extract_issue_fields` | ✓ |
+| AC3: Parse body for task checkboxes | `test_parse_body_tasks`, `test_parse_body_without_markdown_action`, `test_parse_body_with_failed_markdown` | ✓ |
+| AC4: Support pagination | `test_pagination`, `test_per_page_clamping` | ✓ |
+| AC5: Authenticate via GITHUB_TOKEN | `test_missing_github_token`, `test_auth_401_error` | ✓ |
+| AC6: Handle rate limiting gracefully | `test_rate_limit_429`, retry decorator tests (3 tests) | ✓ |
+
+**Coverage Gaps: NONE** - All acceptance criteria have corresponding test cases
+
+### Test Architecture Assessment
+
+**Test Quality: EXCELLENT** ✓
+
+- **Unit Tests**: 15 tests covering action functionality
+- **Integration Tests**: 2 tests for markdown.parse integration
+- **Decorator Tests**: 3 tests for retry mechanism
+- **Mock Strategy**: Appropriate use of `unittest.mock` for HTTP requests
+- **Edge Cases**: Covered (invalid repo, missing token, 401, 404, 429, PR filtering, per_page clamping)
+- **Test Organization**: Well-structured with 3 test classes by concern
+
+### Refactoring Performed
+
+None required - code quality meets standards.
+
+### Compliance Check
+
+- Coding Standards: ✓ Follows existing action patterns
+- Project Structure: ✓ Files in correct locations (`actions/`, `tests/`)
+- Testing Strategy: ✓ Unit tests with mocking, no external API calls
+- All ACs Met: ✓ All 6 acceptance criteria verified with tests
+
+### Improvements Checklist
+
+All items already handled by developer:
+
+- [x] Comprehensive docstrings with examples
+- [x] Error categorization for debuggability
+- [x] Rate limit retry with exponential backoff
+- [x] PR filtering (GitHub API returns PRs in issues endpoint)
+- [x] Graceful fallback when markdown.parse unavailable
+- [x] Input validation and clamping
+
+**Future Considerations** (not blocking):
+- [ ] Consider adding `since` parameter test for date filtering
+- [ ] Consider adding timeout/network error tests (currently implicit via exception handling)
+
+### Security Review
+
+**Status: PASS** ✓
+
+- Token read from environment variable only (no hardcoding risk)
+- Bearer token pattern follows GitHub API best practices
+- No token logging or exposure in error messages
+- Clear guidance in error messages for token creation
+
+### Performance Considerations
+
+**Status: PASS** ✓
+
+- 30-second timeout on HTTP requests (configurable)
+- Pagination limits (max_pages=10 default) prevent infinite loops
+- Rate limit respects X-RateLimit-Reset header
+- Exponential backoff prevents API hammering
+
+### NFR Validation
+
+| NFR | Status | Notes |
+|-----|--------|-------|
+| Security | ✓ PASS | Token handling follows best practices |
+| Performance | ✓ PASS | Appropriate timeouts and limits |
+| Reliability | ✓ PASS | Retry mechanism with backoff |
+| Maintainability | ✓ PASS | Clean code with comprehensive docs |
+
+### Files Modified During Review
+
+None - no refactoring required.
+
+### Gate Status
+
+**Gate: PASS** → docs/qa/gates/TEA-RALPHY-001.3-github-issues-integration.yml
+
+### Recommended Status
+
+✓ **Ready for Done** - All acceptance criteria met, comprehensive test coverage, no issues found.

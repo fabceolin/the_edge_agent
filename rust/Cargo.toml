@@ -78,6 +78,9 @@ csv = "1.3"
 jmespath = "0.3"
 jsonschema = "0.24"
 
+# Markdown parsing (TEA-RALPHY-001.2)
+md-parser = { git = "https://github.com/fabceolin/md-parser", features = ["serde", "frontmatter"], optional = true }
+
 # Async runtime (for HTTP)
 tokio = { version = "1", features = ["rt", "macros"] }
 
@@ -90,7 +93,7 @@ assert_cmd = "2.0"
 predicates = "3.1"
 
 [features]
-default = ["memory", "trace", "data", "llm", "agent", "reflection", "reasoning", "planning"]
+default = ["memory", "trace", "data", "llm", "agent", "reflection", "reasoning", "planning", "markdown"]
 memory = []
 trace = []
 data = []
@@ -103,6 +106,7 @@ reflection = []  # Reflection loop primitives (TEA-AGENT-001.2-rust)
 reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, self-correct, decompose
 planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
 a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
+markdown = ["dep:md-parser"]  # Markdown parsing action (TEA-RALPHY-001.2)
 prolog = ["dep:swipl"]
 scryer = ["dep:scryer-prolog"]  # Pure Rust Prolog (TEA-RELEASE-005.1)
 ltm-duckdb = ["dep:duckdb"]

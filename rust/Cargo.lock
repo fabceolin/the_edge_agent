@@ -2996,6 +2996,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "md-parser"
+version = "0.1.0"
+source = "git+https://github.com/fabceolin/md-parser#2b5430ad1ed9db42b5bb7afbb56515eb64f5f9a3"
+dependencies = [
+ "pulldown-cmark",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.17",
+ "uuid",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3914,6 +3928,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
+dependencies = [
+ "bitflags 2.10.0",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
@@ -5468,6 +5493,7 @@ dependencies = [
  "jsonschema",
  "llama-cpp-2",
  "log",
+ "md-parser",
  "mlua",
  "parking_lot",
  "petgraph",
