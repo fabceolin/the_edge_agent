@@ -14,14 +14,14 @@ Draft
 
 ## Shared Library Strategy
 
-> **Decision**: Use the shared `md-graph-parser` crate as a git dependency.
+> **Decision**: Use the shared `md-parser` crate as a git dependency with PyO3 bindings.
 >
-> - **Repository**: https://github.com/fabceolin/md-graph-parser
+> - **Repository**: https://github.com/fabceolin/md-parser
 > - **Rationale**: Avoid duplication with agentfs GraphDocs parser, ensure cross-runtime parity
 > - **Rust**: Direct dependency on the crate
-> - **Python**: PyO3 bindings or pure Python port following the same schema
+> - **Python**: PyO3 bindings (feature-gated in md-parser crate)
 
-### md-graph-parser Crate Plan
+### md-parser Crate Plan
 
 The shared crate will be implemented in a separate project before this story:
 
@@ -42,13 +42,13 @@ The shared crate will be implemented in a separate project before this story:
 **Git Dependency (Rust):**
 ```toml
 [dependencies]
-md-graph-parser = { git = "https://github.com/fabceolin/md-graph-parser", features = ["frontmatter"] }
+md-parser = { git = "https://github.com/fabceolin/md-parser", features = ["frontmatter"] }
 ```
 
-**Python Integration Options:**
-1. **PyO3 bindings** - Wrap Rust crate for Python (best performance)
-2. **Pure Python port** - Implement same schema in Python (simpler distribution)
-3. **Subprocess** - Call Rust binary (least coupling)
+**Python Integration:**
+- **PyO3 bindings** via `pyo3` feature in md-parser crate
+- Pre-built wheels available via GitHub Release (no PyPI)
+- Install: `pip install https://github.com/fabceolin/md-parser/releases/download/v0.1.0/md_parser-0.1.0-cp311-cp311-manylinux_2_17_x86_64.whl`
 
 ## Acceptance Criteria
 
@@ -57,30 +57,30 @@ md-graph-parser = { git = "https://github.com/fabceolin/md-graph-parser", featur
 3. Detect `{{variable}}` template variables
 4. Parse YAML frontmatter if present
 5. Support nested list items with indent tracking
-6. Return standardized schema compatible with Rust implementation (from md-graph-parser)
+6. Return standardized schema compatible with Rust implementation (from md-parser)
 7. Handle malformed Markdown gracefully with partial results
 
 ## Tasks / Subtasks
 
 ### Phase 0: Shared Crate (Prerequisite)
 
-- [ ] Implement md-graph-parser crate (separate project)
-  - [ ] Create repository at https://github.com/fabceolin/md-graph-parser
+- [ ] Implement md-parser crate with PyO3 bindings (TEA-RALPHY-001.0)
+  - [ ] Create repository at https://github.com/fabceolin/md-parser
   - [ ] Port `parser.rs` from agentfs GraphDocs
   - [ ] Add `checklist.rs` with AC reference extraction
   - [ ] Add `frontmatter.rs` with YAML parsing
+  - [ ] Add `pyo3` feature with Python bindings
   - [ ] Add comprehensive tests
-  - [ ] Tag v0.1.0 release
+  - [ ] Tag v0.1.0 release (GitHub Release with wheels)
 
 ### Phase 1: Python Action
 
-- [ ] Define Python output schema matching Rust (AC: 6)
-  - [ ] `ParsedDocument` dataclass with title, sections, variables, frontmatter
-  - [ ] `ParsedSection` with type, level, content, items
-  - [ ] `ChecklistItem` with text, checked, indent, ac_refs
-- [ ] Implement Python parser (AC: 1, 2, 3, 4, 5)
-  - [ ] Option A: PyO3 bindings to md-graph-parser
-  - [ ] Option B: Pure Python using `mistune` following same schema
+- [ ] Install md-parser PyO3 bindings from GitHub Release
+  - [ ] Add `md-parser` wheel URL to `setup.py` dependencies
+  - [ ] Verify import works: `from md_parser import MarkdownParser`
+- [ ] Create thin wrapper action (AC: 1, 2, 3, 4, 5, 6)
+  - [ ] Wrap PyO3 classes in TEA action interface
+  - [ ] Convert Rust types to Python dicts for state compatibility
 - [ ] Register as built-in action (AC: 1)
   - [ ] Add to `actions/markdown_actions.py`
   - [ ] Export in action registry
@@ -92,12 +92,12 @@ md-graph-parser = { git = "https://github.com/fabceolin/md-graph-parser", featur
 
 ## Dev Notes
 
-### Shared Crate Schema (from md-graph-parser)
+### Shared Crate Schema (from md-parser)
 
 The Python implementation must match this Rust schema exactly:
 
 ```rust
-// From md-graph-parser crate
+// From md-parser crate
 pub enum SectionType {
     Heading, Paragraph, List, Code, Table,
     Blockquote, HorizontalRule, Checklist, Choice,
@@ -216,9 +216,9 @@ python/src/the_edge_agent/
 
 | Source | Location | Notes |
 |--------|----------|-------|
-| **md-graph-parser** | https://github.com/fabceolin/md-graph-parser | Shared crate (canonical) |
+| **md-parser** | https://github.com/fabceolin/md-parser | Shared crate with PyO3 bindings (canonical) |
 | **agentfs GraphDocs** | `/home/fabricio/src/agentfs/sdk/rust/src/graphdocs/parser.rs` | Original implementation |
-| **Local scaffold** | `/home/fabricio/src/md-graph-parser/` | Initial structure created |
+| **Local scaffold** | `/home/fabricio/src/md-parser/` | Initial structure created |
 
 ## Testing
 
@@ -257,6 +257,8 @@ def test_parse_checklist():
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
 | 2025-01-17 | 0.1 | Extracted from epic TEA-RALPHY-001 | Sarah (PO) |
+| 2025-01-19 | 0.2 | Updated to use md-parser with PyO3 bindings (was md-graph-parser) | Sarah (PO) |
+| 2025-01-19 | 0.3 | Updated to install from GitHub Release (no PyPI) | Sarah (PO) |
 
 ---
 
