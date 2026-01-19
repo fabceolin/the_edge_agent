@@ -1,10 +1,12 @@
 # BUG.002: cache.wrap Does Not Pass Entity to HierarchicalLTMBackend
 
-**Status:** Open
+**Status:** Resolved
 **Priority:** High
 **Created:** 2026-01-18
+**Resolved:** 2026-01-18
 **Type:** Bug
 **Component:** actions/cache_actions.py
+**Fixed By:** [TEA-FIX-001](TEA-FIX-001.cache-wrap-entity.md) (Option B - flat cache path)
 
 ---
 
@@ -131,7 +133,9 @@ This conditional skips blob storage entirely when `entity` is not provided.
 
 ---
 
-## Workaround
+## Workaround (No Longer Needed)
+
+> **Note:** This workaround is no longer needed. The bug has been fixed in TEA-FIX-001.
 
 Increase `inline_threshold` to store cache values directly in the catalog:
 
@@ -152,10 +156,10 @@ settings:
 
 ## Acceptance Criteria
 
-- [ ] **AC-1:** `cache.wrap` can store and retrieve values larger than `inline_threshold`
-- [ ] **AC-2:** HierarchicalLTMBackend handles cache entries without explicit entity
-- [ ] **AC-3:** Existing cache keys with entity continue to work (no regression)
-- [ ] **AC-4:** Add unit test for cache.wrap with HierarchicalLTMBackend
+- [x] **AC-1:** `cache.wrap` can store and retrieve values larger than `inline_threshold`
+- [x] **AC-2:** HierarchicalLTMBackend handles cache entries without explicit entity
+- [x] **AC-3:** Existing cache keys with entity continue to work (no regression)
+- [x] **AC-4:** Add unit test for cache.wrap with HierarchicalLTMBackend
 
 ---
 
@@ -164,11 +168,13 @@ settings:
 - **Severity:** High (cache completely non-functional for large values)
 - **Affected Users:** Anyone using HierarchicalLTMBackend with cache.wrap
 - **Data Loss:** No permanent data loss, but repeated LLM/API calls waste resources
+- **Resolution:** Fixed in TEA-FIX-001 - cache entries now use `_cache/` path for blob storage
 
 ---
 
 ## Related
 
+- **TEA-FIX-001:** [Fix cache.wrap Entity Parameter](TEA-FIX-001.cache-wrap-entity.md) (the fix for this bug)
 - **TEA-BUILTIN-010:** Cache and Memoization Actions
 - **TEA-LTM-015:** Hierarchical LTM Backend
 - **BUG.001:** HierarchicalLTMBackend YAML config parsing (fixed)
@@ -180,3 +186,4 @@ settings:
 | Date | Description | Author |
 |------|-------------|--------|
 | 2026-01-18 | Bug discovered during RX.43 deployment testing | Dev Agent |
+| 2026-01-18 | Bug resolved via TEA-FIX-001 (Option B implementation) | PO Agent (Sarah) |
