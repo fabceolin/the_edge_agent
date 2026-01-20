@@ -107,6 +107,7 @@ reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, 
 planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
 a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
 markdown = ["dep:md-parser"]  # Markdown parsing action (TEA-RALPHY-001.2)
+game = []  # Game engine module (TEA-GAME-001.1)
 prolog = ["dep:swipl"]
 scryer = ["dep:scryer-prolog"]  # Pure Rust Prolog (TEA-RELEASE-005.1)
 ltm-duckdb = ["dep:duckdb"]
