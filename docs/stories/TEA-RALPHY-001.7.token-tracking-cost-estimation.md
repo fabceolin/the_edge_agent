@@ -1,7 +1,9 @@
 # Story TEA-RALPHY-001.7: Token Tracking & Cost Estimation
 
 ## Status
-Draft
+Deferred
+
+> **Reason:** Functionality already covered by Opik experiment framework integration.
 
 ## Epic Reference
 [TEA-RALPHY-001: Autonomous AI Coding Loop](./TEA-RALPHY-001-autonomous-coding-loop.md)

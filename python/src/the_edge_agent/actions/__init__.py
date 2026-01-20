@@ -182,6 +182,12 @@ from .markdown_actions import register_actions as register_markdown
 # TEA-RALPHY-001.3: GitHub Issues Integration
 from .github_actions import register_actions as register_github
 
+# TEA-RALPHY-001.4: BMad Story Task Extraction
+from .bmad_actions import register_actions as register_bmad
+
+# TEA-RALPHY-001.6: Git Worktree Actions (Execution Modes)
+from .git_actions import register_actions as register_git
+
 
 def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     """
@@ -316,6 +322,12 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-RALPHY-001.3: GitHub Issues Integration
     register_github(registry, engine)
+
+    # TEA-RALPHY-001.4: BMad Story Task Extraction
+    register_bmad(registry, engine)
+
+    # TEA-RALPHY-001.6: Git Worktree Actions (Execution Modes)
+    register_git(registry, engine)
 
     return registry
 
