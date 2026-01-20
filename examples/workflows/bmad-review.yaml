@@ -1,0 +1,201 @@
+name: bmad-review
+description: |
+  Autonomous BMad QA Review Pipeline using Context Injection Pattern.
+  Orchestrates: QA agent for comprehensive story review.
+
+  Usage: tea run examples/workflows/bmad-review.yaml --arg="TEA-KIROKU-006"
+
+state_schema:
+  arg: str                    # Story ID (e.g., "TEA-KIROKU-006")
+  bmad_root: str              # Auto-detected BMad directory
+  qa_persona: str             # QA agent persona
+  review_story_task: str      # review-story task definition
+  qa_output: str              # Output from qa agent
+  qa_gate_status: str         # QA gate status: PASS | CONCERNS | FAIL | WAIVED
+  final_status: str           # Final review status
+
+nodes:
+  - name: detect_bmad_version
+    description: Auto-detect BMad directory structure
+    run: |
+      import os
+      if os.path.isdir(".bmad-core/agents"):
+          bmad_root = ".bmad-core"
+      elif os.path.isdir("_bmad/bmm/agents"):
+          bmad_root = "_bmad/bmm"
+      else:
+          bmad_root = ".bmad-core"
+      return {"bmad_root": bmad_root}
+
+  - name: load_qa_context
+    description: Load QA agent persona and review-story task
+    run: |
+      import os
+      bmad_root = state.get("bmad_root", ".bmad-core")
+
+      # Load QA agent persona
+      agent_file = os.path.join(bmad_root, "agents", "qa.md")
+      qa_persona = ""
+      if os.path.exists(agent_file):
+          with open(agent_file, "r") as f:
+              qa_persona = f.read()
+
+      # Load review-story task
+      task_file = os.path.join(bmad_root, "tasks", "review-story.md")
+      review_story_task = ""
+      if os.path.exists(task_file):
+          with open(task_file, "r") as f:
+              review_story_task = f.read()
+
+      return {"qa_persona": qa_persona, "review_story_task": review_story_task}
+
+  - name: run_qa_review
+    description: Execute QA agent review command
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 1200  # 20 minutes for thorough review
+      messages:
+        - role: user
+          content: |
+            CRITICAL: ACTIVATE PERSONA MODE.
+
+            {{ state.qa_persona }}
+
+            TASK: Execute *review for story {{ state.arg }}.
+
+            {{ state.review_story_task }}
+
+            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+
+            INSTRUCTIONS:
+            1. Find the story file in docs/stories/ matching {{ state.arg }}
+            2. Perform comprehensive review following the review-story task:
+               - Risk Assessment (determines review depth)
+               - Requirements Traceability
+               - Code Quality Review
+               - Test Architecture Assessment
+               - NFR Validation
+               - Standards Compliance Check
+            3. Update ONLY the "## QA Results" section in the story file
+            4. Create quality gate file in docs/qa/gates/
+            5. Determine gate status: PASS | CONCERNS | FAIL | WAIVED
+
+            CRITICAL: Only modify the QA Results section of the story.
+            CRITICAL: Create the gate file with proper status.
+
+            When done print: QA_REVIEW_COMPLETED
+    output: qa_output
+
+  - name: check_qa_gate
+    description: Parse QA gate status from story file using grep
+    run: |
+      import subprocess
+      import os
+      import glob
+
+      arg = state.get("arg", "")
+      qa_gate_status = "UNKNOWN"
+
+      # Find story file
+      story_file = None
+      patterns = [f"docs/stories/{arg}.md", f"docs/stories/{arg.upper()}.md"]
+      for p in patterns:
+          matches = glob.glob(p)
+          if matches:
+              story_file = matches[0]
+              break
+
+      if story_file and os.path.exists(story_file):
+          # Use grep to find "Gate:" lines, then filter out "Previous QA Gate:"
+          # grep -E "Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)" | grep -v "Previous"
+          try:
+              result = subprocess.run(
+                  ["grep", "-E", r"Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", story_file],
+                  capture_output=True,
+                  text=True
+              )
+              if result.returncode == 0:
+                  lines = result.stdout.strip().split('\n')
+                  for line in lines:
+                      # Skip historical entries like "Previous QA Gate:"
+                      if "Previous" in line:
+                          continue
+                      # Extract gate status
+                      for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                          if status in line.upper():
+                              qa_gate_status = status
+                              break
+                      if qa_gate_status != "UNKNOWN":
+                          break
+          except Exception as e:
+              print(f"grep error: {e}")
+
+      # Fallback: check gate YAML file
+      if qa_gate_status == "UNKNOWN":
+          gate_patterns = [
+              f"docs/qa/gates/{arg}.yml",
+              f"docs/qa/gates/{arg}.yaml",
+          ]
+          for pattern in gate_patterns:
+              if os.path.exists(pattern):
+                  try:
+                      result = subprocess.run(
+                          ["grep", "-E", r"^gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", pattern],
+                          capture_output=True,
+                          text=True
+                      )
+                      if result.returncode == 0:
+                          line = result.stdout.strip()
+                          for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
+                              if status in line.upper():
+                                  qa_gate_status = status
+                                  break
+                  except Exception:
+                      pass
+                  break
+
+      print(f"QA Gate Status: {qa_gate_status}")
+      return {"qa_gate_status": qa_gate_status}
+
+  - name: summary
+    description: Generate final summary of the QA review
+    run: |
+      arg = state.get("arg", "unknown")
+      qa_output = state.get("qa_output", "")
+      qa_gate_status = state.get("qa_gate_status", "UNKNOWN")
+
+      # Extract completion marker
+      qa_done = "QA_REVIEW_COMPLETED" in qa_output
+
+      summary = f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              BMad QA Review Pipeline Complete              ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {arg:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Phase           │ Status                                   ║
+      ╠═════════════════╪══════════════════════════════════════════╣
+      ║ QA Agent        │ {'✓ Completed' if qa_done else '✗ Failed':<40} ║
+      ║ Gate Status     │ {qa_gate_status:<40} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """
+
+      print(summary)
+      return {"final_status": "completed" if qa_done else "incomplete"}
+
+edges:
+  - from: __start__
+    to: detect_bmad_version
+  - from: detect_bmad_version
+    to: load_qa_context
+  - from: load_qa_context
+    to: run_qa_review
+  - from: run_qa_review
+    to: check_qa_gate
+  - from: check_qa_gate
+    to: summary
+  - from: summary
+    to: __end__

@@ -1,0 +1,129 @@
+# Graph Execution Mode Example
+# Story: TEA-RALPHY-001.6
+#
+# This workflow uses LLM to analyze task dependencies and generates
+# a DOT file for optimal parallelization. Git worktree/branching
+# is DISABLED in graph mode - the DOT graph handles orchestration.
+#
+# Process:
+# 1. LLM analyzes tasks and identifies dependencies
+# 2. DOT file is generated with optimal parallel phases
+# 3. tea from dot converts DOT to YAML workflow
+# 4. Generated workflow is executed
+#
+# Benefits:
+# - Maximum parallelization based on actual dependencies
+# - DOT file can be inspected for debugging
+# - Automatic circular dependency detection
+#
+# Usage:
+#   tea run examples/workflows/graph-orchestrated-pattern.yaml
+#
+# Override settings:
+#   tea run examples/workflows/graph-orchestrated-pattern.yaml \
+#     --input '{"settings": {"execution": {"graph": {"shell_provider": "openai"}}}}'
+
+name: graph-task-runner
+description: LLM analyzes dependencies, generates DOT, maximizes parallelization
+
+settings:
+  execution:
+    mode: graph
+
+    graph:
+      # Where to save the generated DOT file (for debugging/reuse)
+      dot_output_path: "./generated-workflow.dot"
+
+      # Where to save the converted YAML workflow
+      yaml_output_path: "./generated-workflow.yaml"
+
+      # LLM provider for dependency analysis
+      shell_provider: claude
+
+      # Custom prompt template (optional)
+      prompt_template: "examples/prompts/analyze-task-dependencies.md"
+
+      # Keep generated files for inspection (set to true for debugging)
+      cleanup_generated_files: false
+
+state_schema:
+  tasks:
+    type: array
+    description: List of tasks with potential dependencies
+  results:
+    type: object
+    description: Execution results including dependency graph
+
+initial_state:
+  tasks:
+    # These tasks have implicit dependencies that LLM will detect:
+    # - setup-db must run first (creates database schema)
+    # - api-auth and api-products can run in parallel (both need db)
+    # - api-users needs auth module
+    # - frontend needs all APIs
+
+    - id: setup-db
+      description: "Create database schema and seed data"
+      command: |
+        echo 'CREATE TABLE users (id INT, name TEXT);' > schema.sql
+        echo 'CREATE TABLE products (id INT, name TEXT, price DECIMAL);' >> schema.sql
+        echo 'Database schema created'
+
+    - id: api-auth
+      description: "Implement authentication API (needs database)"
+      command: |
+        mkdir -p src/api
+        echo 'from db import get_user; def login(u,p): return get_user(u)' > src/api/auth.py
+        echo 'Auth API created'
+
+    - id: api-products
+      description: "Implement products API (needs database)"
+      command: |
+        mkdir -p src/api
+        echo 'from db import query; def list_products(): return query("SELECT * FROM products")' > src/api/products.py
+        echo 'Products API created'
+
+    - id: api-users
+      description: "Implement users API (needs auth module for permissions)"
+      command: |
+        mkdir -p src/api
+        echo 'from api.auth import check_permission; def list_users(): pass' > src/api/users.py
+        echo 'Users API created'
+
+    - id: frontend
+      description: "Build frontend (needs all APIs to be ready)"
+      command: |
+        mkdir -p src/frontend
+        echo 'import { authApi, productsApi, usersApi } from "./api"' > src/frontend/app.js
+        echo 'Frontend app created'
+
+nodes:
+  - name: run_graph
+    description: Execute tasks with LLM-analyzed dependencies
+    uses: execution.run
+    with:
+      tasks: "{{ state.tasks }}"
+    output: results
+
+  - name: report
+    description: Report execution results
+    run: |
+      results = state.get("results", {})
+      graph = results.get("dependency_graph", {})
+
+      return {
+          "status": results.get("status", "unknown"),
+          "dot_file": results.get("dot_path"),
+          "yaml_file": results.get("yaml_path"),
+          "phases_executed": len(graph.get("nodes", [])),
+          "dependencies_detected": len(graph.get("edges", [])),
+          "analysis": graph.get("analysis", "No analysis available")
+      }
+
+edges:
+  - from: __start__
+    to: run_graph
+  - from: run_graph
+    to: report
+  - from: report
+    to: __end__

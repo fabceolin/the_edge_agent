@@ -1,0 +1,70 @@
+# Sequential Execution Mode Example
+# Story: TEA-RALPHY-001.6
+#
+# This workflow executes tasks one at a time in the order specified.
+# All tasks share the single working directory (no worktrees created).
+# State accumulates across tasks - each task can access previous results.
+#
+# Usage:
+#   tea run examples/workflows/sequential-execution.yaml
+#
+# Override mode at runtime:
+#   tea run examples/workflows/sequential-execution.yaml \
+#     --input '{"settings": {"execution": {"mode": "parallel"}}}'
+
+name: sequential-task-runner
+description: Execute tasks sequentially in current directory
+
+settings:
+  execution:
+    mode: sequential
+    target_branch: main
+
+state_schema:
+  tasks:
+    type: array
+    description: List of tasks to execute
+  results:
+    type: object
+    description: Aggregated execution results
+
+initial_state:
+  tasks:
+    - id: task-1
+      description: "Set up project structure"
+      command: "mkdir -p src tests && echo 'Project initialized' > .initialized"
+
+    - id: task-2
+      description: "Create main module"
+      command: "echo 'def main(): pass' > src/main.py"
+
+    - id: task-3
+      description: "Create test file"
+      command: "echo 'def test_main(): assert True' > tests/test_main.py"
+
+nodes:
+  - name: run_tasks
+    description: Execute all tasks sequentially
+    uses: execution.run
+    with:
+      tasks: "{{ state.tasks }}"
+    output: results
+
+  - name: summarize
+    description: Summarize execution results
+    run: |
+      results = state.get("results", {})
+      completed = results.get("tasks_completed", 0)
+      total = results.get("tasks_total", 0)
+      return {
+          "summary": f"Completed {completed}/{total} tasks",
+          "status": results.get("status", "unknown"),
+      }
+
+edges:
+  - from: __start__
+    to: run_tasks
+  - from: run_tasks
+    to: summarize
+  - from: summarize
+    to: __end__
