@@ -157,7 +157,11 @@ impl Default for GameRound {
 
 impl GameRound {
     /// Create a new game round with the given phrase, choices, and correct word
-    pub fn new(phrase: impl Into<String>, choices: Vec<String>, correct_word: impl Into<String>) -> Self {
+    pub fn new(
+        phrase: impl Into<String>,
+        choices: Vec<String>,
+        correct_word: impl Into<String>,
+    ) -> Self {
         Self {
             phrase: phrase.into(),
             choices,
@@ -228,7 +232,9 @@ pub fn adjust_difficulty(session: &mut GameSession, window_size: usize) {
     // If accuracy is between 40% and 80%, no change
 
     // Clamp difficulty to valid range [0.1, 0.95] (AC-6)
-    session.current_difficulty = session.current_difficulty.clamp(MIN_DIFFICULTY, MAX_DIFFICULTY);
+    session.current_difficulty = session
+        .current_difficulty
+        .clamp(MIN_DIFFICULTY, MAX_DIFFICULTY);
 }
 
 #[cfg(test)]
@@ -246,8 +252,14 @@ mod tests {
         let session = GameSession::default();
 
         // Verify all required fields exist and have appropriate types
-        assert!(!session.id.is_empty(), "id should be a non-empty UUID string");
-        assert!(session.username.is_empty(), "username should default to empty");
+        assert!(
+            !session.id.is_empty(),
+            "id should be a non-empty UUID string"
+        );
+        assert!(
+            session.username.is_empty(),
+            "username should default to empty"
+        );
         assert_eq!(session.total_answers, 0);
         assert_eq!(session.correct_answers, 0);
         assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON);
@@ -444,8 +456,11 @@ mod tests {
 
         adjust_difficulty(&mut session, 5);
 
-        assert!((session.current_difficulty - 0.55).abs() < f64::EPSILON,
-            "Expected 0.55, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.55).abs() < f64::EPSILON,
+            "Expected 0.55, got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -459,8 +474,11 @@ mod tests {
 
         adjust_difficulty(&mut session, 5);
 
-        assert!((session.current_difficulty - 0.45).abs() < f64::EPSILON,
-            "Expected 0.45, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.45).abs() < f64::EPSILON,
+            "Expected 0.45, got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -474,8 +492,11 @@ mod tests {
 
         adjust_difficulty(&mut session, 5);
 
-        assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON,
-            "Expected 0.5 (no change), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.5).abs() < f64::EPSILON,
+            "Expected 0.5 (no change), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -489,8 +510,11 @@ mod tests {
 
         adjust_difficulty(&mut session, 5);
 
-        assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON,
-            "Expected 0.5 (no change at exactly 80%), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.5).abs() < f64::EPSILON,
+            "Expected 0.5 (no change at exactly 80%), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -504,8 +528,11 @@ mod tests {
 
         adjust_difficulty(&mut session, 5);
 
-        assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON,
-            "Expected 0.5 (no change at exactly 40%), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.5).abs() < f64::EPSILON,
+            "Expected 0.5 (no change at exactly 40%), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -518,14 +545,17 @@ mod tests {
         // First 5: all wrong, Last 5: all correct
         session.recent_answers = vec![
             false, false, false, false, false, // ignored
-            true, true, true, true, true,      // window: 100%
+            true, true, true, true, true, // window: 100%
         ];
 
         adjust_difficulty(&mut session, 5);
 
         // Should increase because last 5 are 100% correct
-        assert!((session.current_difficulty - 0.55).abs() < f64::EPSILON,
-            "Expected 0.55 (window considers only last 5), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.55).abs() < f64::EPSILON,
+            "Expected 0.55 (window considers only last 5), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -540,8 +570,11 @@ mod tests {
         adjust_difficulty(&mut session, 10);
 
         // Should use all 3 answers (100% accuracy)
-        assert!((session.current_difficulty - 0.55).abs() < f64::EPSILON,
-            "Expected 0.55, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.55).abs() < f64::EPSILON,
+            "Expected 0.55, got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -554,8 +587,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should not change difficulty
-        assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON,
-            "Expected 0.5 (no change with empty answers), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.5).abs() < f64::EPSILON,
+            "Expected 0.5 (no change with empty answers), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -568,8 +604,11 @@ mod tests {
         adjust_difficulty(&mut session, 0);
 
         // Should not change difficulty
-        assert!((session.current_difficulty - 0.5).abs() < f64::EPSILON,
-            "Expected 0.5 (no change with window_size=0), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.5).abs() < f64::EPSILON,
+            "Expected 0.5 (no change with window_size=0), got {}",
+            session.current_difficulty
+        );
     }
 
     // ============================================================
@@ -588,8 +627,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should be clamped to 0.95
-        assert!((session.current_difficulty - 0.95).abs() < f64::EPSILON,
-            "Expected 0.95 (clamped at max), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.95).abs() < f64::EPSILON,
+            "Expected 0.95 (clamped at max), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -604,8 +646,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should be clamped to 0.1
-        assert!((session.current_difficulty - 0.1).abs() < f64::EPSILON,
-            "Expected 0.1 (clamped at min), got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.1).abs() < f64::EPSILON,
+            "Expected 0.1 (clamped at min), got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -619,8 +664,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should stay at 0.95
-        assert!((session.current_difficulty - 0.95).abs() < f64::EPSILON,
-            "Expected 0.95, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.95).abs() < f64::EPSILON,
+            "Expected 0.95, got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -634,8 +682,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should stay at 0.1
-        assert!((session.current_difficulty - 0.1).abs() < f64::EPSILON,
-            "Expected 0.1, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.1).abs() < f64::EPSILON,
+            "Expected 0.1, got {}",
+            session.current_difficulty
+        );
     }
 
     #[test]
@@ -672,8 +723,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should be clamped to 0.95
-        assert!((session.current_difficulty - 0.95).abs() < f64::EPSILON,
-            "Expected 0.95, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.95).abs() < f64::EPSILON,
+            "Expected 0.95, got {}",
+            session.current_difficulty
+        );
 
         // Test negative difficulty
         session.current_difficulty = -0.5; // Below min
@@ -682,8 +736,11 @@ mod tests {
         adjust_difficulty(&mut session, 5);
 
         // Should be clamped to 0.1
-        assert!((session.current_difficulty - 0.1).abs() < f64::EPSILON,
-            "Expected 0.1, got {}", session.current_difficulty);
+        assert!(
+            (session.current_difficulty - 0.1).abs() < f64::EPSILON,
+            "Expected 0.1, got {}",
+            session.current_difficulty
+        );
     }
 
     // ============================================================
@@ -695,13 +752,7 @@ mod tests {
         let mut session = GameSession::with_username("TestPlayer");
         let mut round = GameRound::new(
             "Test phrase",
-            vec![
-                "a".into(),
-                "b".into(),
-                "c".into(),
-                "d".into(),
-                "e".into(),
-            ],
+            vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()],
             "c",
         );
 
@@ -714,7 +765,9 @@ mod tests {
             session.correct_answers += 1;
         }
         session.sum_difficulty += session.current_difficulty;
-        session.recent_answers.push(round.is_correct.unwrap_or(false));
+        session
+            .recent_answers
+            .push(round.is_correct.unwrap_or(false));
 
         assert_eq!(session.total_answers, 1);
         assert_eq!(session.correct_answers, 1);
@@ -738,8 +791,10 @@ mod tests {
         let old_difficulty = session.current_difficulty;
         adjust_difficulty(&mut session, 5);
 
-        assert!(session.current_difficulty > old_difficulty,
-            "Difficulty should increase after 100% accuracy");
+        assert!(
+            session.current_difficulty > old_difficulty,
+            "Difficulty should increase after 100% accuracy"
+        );
         assert_eq!(session.total_answers, 5);
         assert_eq!(session.correct_answers, 5);
     }
