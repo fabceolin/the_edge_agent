@@ -25,8 +25,8 @@ from the_edge_agent.actions.github_actions import (
 )
 
 
-# Mock path for requests module within github_actions
-REQUESTS_GET_PATCH = "the_edge_agent.actions.github_actions.requests.get"
+# Mock path for requests module - patch directly since github_actions uses lazy import
+REQUESTS_GET_PATCH = "requests.get"
 
 
 class TestGitHubListIssuesAction(unittest.TestCase):
@@ -701,7 +701,7 @@ class TestGitHubCreateIssueAction(unittest.TestCase):
             self.assertEqual(result["error_type"], "configuration")
             self.assertIn("GITHUB_TOKEN", result["error"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.post")
     def test_create_issue_basic(self, mock_post):
         """Test basic issue creation (AC: 1)."""
         mock_response = Mock()
@@ -724,7 +724,7 @@ class TestGitHubCreateIssueAction(unittest.TestCase):
         self.assertEqual(result["url"], "https://github.com/owner/repo/issues/123")
         self.assertEqual(result["state"], "open")
 
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.post")
     def test_create_issue_with_labels_and_assignees(self, mock_post):
         """Test issue creation with labels and assignees (AC: 1)."""
         mock_response = Mock()
@@ -758,7 +758,7 @@ class TestGitHubCreateIssueAction(unittest.TestCase):
         self.assertEqual(payload["assignees"], ["alice", "bob"])
         self.assertEqual(payload["milestone"], 5)
 
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.post")
     def test_create_issue_returns_url(self, mock_post):
         """Test that created issue URL is returned (AC: 3)."""
         mock_response = Mock()
@@ -779,7 +779,7 @@ class TestGitHubCreateIssueAction(unittest.TestCase):
         self.assertIn("html_url", result)
         self.assertEqual(result["url"], result["html_url"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.post")
     def test_create_issue_422_validation_error(self, mock_post):
         """Test handling of 422 validation error."""
         mock_response = Mock()
@@ -834,7 +834,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
             self.assertEqual(result["error_type"], "validation")
             self.assertIn("positive integer", result["error"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
+    @patch("requests.patch")
     def test_update_issue_state_closed(self, mock_patch):
         """Test changing issue state to closed (AC: 5)."""
         mock_response = Mock()
@@ -853,8 +853,8 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         self.assertEqual(result["state"], "closed")
         self.assertTrue(result["updated"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.patch")
+    @patch("requests.get")
     def test_update_labels_add_mode(self, mock_get, mock_patch):
         """Test adding labels to existing ones (AC: 6)."""
         # Mock GET to fetch current labels
@@ -889,8 +889,8 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         self.assertIn("bug", payload["labels"])
         self.assertIn("priority:high", payload["labels"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.patch")
+    @patch("requests.get")
     def test_update_labels_remove_mode(self, mock_get, mock_patch):
         """Test removing labels (AC: 6)."""
         # Mock GET to fetch current labels
@@ -927,7 +927,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         self.assertIn("bug", payload["labels"])
         self.assertNotIn("wontfix", payload["labels"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
+    @patch("requests.patch")
     def test_update_labels_replace_mode(self, mock_patch):
         """Test replacing all labels (AC: 6)."""
         mock_response = Mock()
@@ -951,7 +951,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         payload = call_args[1]["json"]
         self.assertEqual(payload["labels"], ["new-label"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.post")
     def test_update_add_comment(self, mock_post):
         """Test adding comment to issue (AC: 7)."""
         mock_response = Mock()
@@ -973,7 +973,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         self.assertEqual(result["comment_id"], 456)
         self.assertTrue(result["updated"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
+    @patch("requests.patch")
     def test_update_title_and_body(self, mock_patch):
         """Test updating title and body (AC: 8)."""
         mock_response = Mock()
@@ -998,7 +998,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         self.assertEqual(payload["title"], "Updated Title")
         self.assertEqual(payload["body"], "Updated body content")
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
+    @patch("requests.patch")
     def test_update_assignees(self, mock_patch):
         """Test updating assignees (AC: 8)."""
         mock_response = Mock()
@@ -1021,7 +1021,7 @@ class TestGitHubUpdateIssueAction(unittest.TestCase):
         payload = call_args[1]["json"]
         self.assertEqual(payload["assignees"], ["alice", "bob"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.patch")
+    @patch("requests.patch")
     def test_update_milestone_clear(self, mock_patch):
         """Test clearing milestone by passing 0 (AC: 8)."""
         mock_response = Mock()
@@ -1072,7 +1072,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
             self.assertFalse(result["success"])
             self.assertEqual(result["error_type"], "configuration")
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_with_query(self, mock_get):
         """Test searching issues with query string (AC: 9)."""
         mock_response = Mock()
@@ -1116,7 +1116,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
         self.assertEqual(result["items"][0]["number"], 1)
         self.assertEqual(result["items"][0]["score"], 15.5)
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_with_filters(self, mock_get):
         """Test searching with label/state/author filters (AC: 10)."""
         mock_response = Mock()
@@ -1150,7 +1150,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
         self.assertIn("author:alice", query)
         self.assertIn("assignee:bob", query)
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_relevance_score(self, mock_get):
         """Test that results include relevance score (AC: 11)."""
         mock_response = Mock()
@@ -1194,7 +1194,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
         # GitHub search returns results sorted by score by default
         self.assertGreater(result["items"][0]["score"], result["items"][1]["score"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_pagination(self, mock_get):
         """Test pagination parameters (AC: 12)."""
         mock_response = Mock()
@@ -1211,7 +1211,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
         self.assertEqual(params["per_page"], 50)
         self.assertEqual(params["page"], 3)
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_per_page_clamping(self, mock_get):
         """Test that per_page is clamped to valid range."""
         mock_response = Mock()
@@ -1228,7 +1228,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
             params = call_args[1]["params"]
             self.assertEqual(params["per_page"], 100)  # Clamped to max
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_sort_parameter(self, mock_get):
         """Test sort parameter options."""
         mock_response = Mock()
@@ -1247,7 +1247,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
             self.assertEqual(params["sort"], "updated")
             self.assertEqual(params["order"], "asc")
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_state_all(self, mock_get):
         """Test that state='all' doesn't add state filter."""
         mock_response = Mock()
@@ -1264,7 +1264,7 @@ class TestGitHubSearchIssuesAction(unittest.TestCase):
             # state:all should not be in query
             self.assertNotIn("state:", params["q"])
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
+    @patch("requests.get")
     def test_search_issues_rate_limit_retry(self, mock_get):
         """Test retry on rate limit (AC: 14)."""
         rate_limit_response = Mock()
@@ -1321,8 +1321,8 @@ class TestGitHubActionsSharedInfrastructure(unittest.TestCase):
                     "GITHUB_TOKEN", result["error"], f"{action_name} error message"
                 )
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.get")
+    @patch("requests.post")
     def test_all_actions_handle_rate_limit(self, mock_post, mock_get):
         """Test that all actions handle 429 rate limit (AC: 14)."""
         rate_limit_response = Mock()
@@ -1355,8 +1355,8 @@ class TestGitHubActionsSharedInfrastructure(unittest.TestCase):
                         result["error_type"], "rate_limit", f"{action_name} error type"
                     )
 
-    @patch("the_edge_agent.actions.github_actions.requests.get")
-    @patch("the_edge_agent.actions.github_actions.requests.post")
+    @patch("requests.get")
+    @patch("requests.post")
     def test_all_actions_handle_auth_error(self, mock_post, mock_get):
         """Test that all actions return descriptive auth errors (AC: 15)."""
         auth_error_response = Mock()
