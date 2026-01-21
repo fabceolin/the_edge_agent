@@ -600,6 +600,107 @@ def expand_ltm_config(settings: Dict[str, Any]) -> Dict[str, Any]:
     return ltm_config
 
 
+def _parse_hierarchical_ltm_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform nested YAML config to flat HierarchicalLTMBackend params (BUG.001).
+
+    This function converts the documented YAML configuration format to the flat
+    parameter format expected by HierarchicalLTMBackend.__init__().
+
+    Args:
+        config: Nested config dict with keys: catalog, storage, hierarchy, etc.
+
+    Returns:
+        Dict of flat kwargs for HierarchicalLTMBackend constructor
+
+    Raises:
+        ValueError: If required fields are missing
+
+    Example:
+        >>> config = {
+        ...     "catalog": {"url": "postgresql://...", "pool_size": 10},
+        ...     "storage": {"uri": "gs://bucket/ltm/"},
+        ...     "hierarchy": {"levels": ["org", "user", "session"]},
+        ... }
+        >>> flat = _parse_hierarchical_ltm_config(config)
+        >>> flat["catalog_url"]
+        'postgresql://...'
+    """
+    catalog = config.get("catalog", {})
+    storage = config.get("storage", {})
+    hierarchy = config.get("hierarchy", {})
+    index = config.get("index", {})
+    performance = config.get("performance", {})
+
+    # Validate required fields (AC-3)
+    catalog_url = catalog.get("url")
+    if not catalog_url:
+        raise ValueError("HierarchicalLTMBackend requires 'catalog.url' in YAML config")
+
+    storage_uri = storage.get("uri") if isinstance(storage, dict) else storage
+    if not storage_uri:
+        raise ValueError("HierarchicalLTMBackend requires 'storage.uri' in YAML config")
+
+    hierarchy_levels = hierarchy.get("levels", [])
+    if not hierarchy_levels:
+        raise ValueError(
+            "HierarchicalLTMBackend requires non-empty 'hierarchy.levels' list"
+        )
+
+    # Build flat kwargs
+    kwargs = {
+        "catalog_url": catalog_url,
+        "storage_uri": storage_uri,
+        "hierarchy_levels": list(hierarchy_levels),
+        "hierarchy_defaults": hierarchy.get("defaults", {}),
+        "pool_size": catalog.get("pool_size", 10),
+        "inline_threshold": config.get("inline_threshold", 1024),
+        "lazy": catalog.get("lazy", False),
+        "cache_path": config.get("cache_path", "_cache/"),
+    }
+
+    # Transform index block to index_config dict
+    if index:
+        kwargs["index_config"] = {
+            "format": index.get("format", "parquet"),
+            "row_group_size": index.get("row_group_size", 122880),
+            "compression": index.get("compression", "zstd"),
+        }
+
+    # Transform performance block to performance_config dict
+    if performance:
+        metadata_cache = performance.get("metadata_cache", {})
+        parallel_reads = performance.get("parallel_reads", {})
+        kwargs["performance_config"] = {
+            "metadata_cache_ttl": metadata_cache.get("ttl_seconds", 600),
+            "threads": parallel_reads.get("threads", 8),
+        }
+
+    return kwargs
+
+
+def _is_hierarchical_nested_config(config: Dict[str, Any]) -> bool:
+    """
+    Detect if config uses nested YAML format for hierarchical backend.
+
+    Nested config has catalog/storage/hierarchy keys instead of flat params.
+
+    Args:
+        config: Configuration dict
+
+    Returns:
+        True if config appears to be nested format
+    """
+    nested_keys = {"catalog", "storage", "hierarchy"}
+    flat_keys = {"catalog_url", "storage_uri", "hierarchy_levels"}
+
+    has_nested = bool(nested_keys & set(config.keys()))
+    has_flat = bool(flat_keys & set(config.keys()))
+
+    # If has nested keys but not flat keys, it's nested format
+    return has_nested and not has_flat
+
+
 def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
     """
     Parse LTM configuration from YAML settings and create backend.
@@ -626,6 +727,17 @@ def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
         # Ducklake alias (TEA-LTM-010):
         >>> settings = {"ltm": {"backend": "ducklake"}}
         >>> backend = parse_ltm_config(settings)  # Expands to duckdb + defaults
+
+        # Hierarchical backend (BUG.001):
+        >>> settings = {
+        ...     "ltm": {
+        ...         "backend": "hierarchical",
+        ...         "catalog": {"url": "postgresql://..."},
+        ...         "storage": {"uri": "gs://bucket/ltm/"},
+        ...         "hierarchy": {"levels": ["org", "user", "session"]},
+        ...     }
+        ... }
+        >>> backend = parse_ltm_config(settings)
     """
     # Expand config including ducklake alias (TEA-LTM-010)
     ltm_config = expand_ltm_config(settings)
@@ -633,7 +745,14 @@ def parse_ltm_config(settings: Dict[str, Any]) -> "LTMBackend":
     # Extract backend type
     backend_type = ltm_config.pop("backend", "sqlite")
 
-    # Parse remaining config
+    # Handle hierarchical backend with nested config (BUG.001)
+    if backend_type.lower() == "hierarchical" and _is_hierarchical_nested_config(
+        ltm_config
+    ):
+        kwargs = _parse_hierarchical_ltm_config(ltm_config)
+        return create_ltm_backend(backend_type, **kwargs)
+
+    # Parse remaining config for other backends
     _, kwargs = parse_backend_config({"ltm_backend": backend_type, **ltm_config})
 
     return create_ltm_backend(backend_type, **kwargs)

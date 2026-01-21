@@ -1,0 +1,43 @@
+# BUG.001 Test Fixture: Minimal Hierarchical LTM Configuration
+#
+# This fixture contains only the required configuration options for the
+# HierarchicalLTMBackend. Tests that minimum viable config works correctly.
+#
+# Required parameters:
+#   - catalog.url: Database connection string
+#   - storage.uri: Blob storage path
+#   - hierarchy.levels: Ordered list of hierarchy levels
+
+name: hierarchical-ltm-minimal-agent
+description: Minimal config test for BUG.001
+
+state_schema:
+  input: str
+  output: str
+
+settings:
+  ltm:
+    backend: hierarchical
+
+    catalog:
+      url: "sqlite:///:memory:"
+
+    storage:
+      uri: "./test_ltm_data/"
+
+    hierarchy:
+      levels:
+        - org
+        - user
+        - session
+
+nodes:
+  - name: echo
+    run: |
+      return {"output": state["input"]}
+
+edges:
+  - from: __start__
+    to: echo
+  - from: echo
+    to: __end__

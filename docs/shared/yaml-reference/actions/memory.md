@@ -479,6 +479,27 @@ All catalog types are supported: `sqlite` (default), `duckdb`, `firestore`, `pos
 | `postgres` | PostgreSQL | Self-hosted, SQL compatibility |
 | `supabase` | Supabase REST API | Edge, managed Postgres |
 
+#### ⚠️ Firestore Catalog Limitations
+
+Firestore has architectural constraints that affect its suitability as a DuckLake catalog:
+
+| Limitation | Value | Impact |
+|------------|-------|--------|
+| **Write throughput** | ~1 write/s per document | The "current snapshot" document becomes a hotspot under concurrent writes |
+| **Document size** | 1 MB max | Large metadata entries will fail (rare in practice) |
+
+**Workload Suitability:**
+
+| Workload | Firestore Catalog | Recommendation |
+|----------|-------------------|----------------|
+| Batch ETL (single writer) | ✅ Works well | Good fit |
+| Multi-reader analytics | ✅ Excellent | Scales infinitely |
+| Streaming ingestion | ⚠️ Bottleneck | Use SQLAlchemy/PostgreSQL |
+| High-concurrency writes | ❌ ~1 TPS limit | Use SQLAlchemy/PostgreSQL |
+
+**Best for:** Read-heavy workloads, serverless deployments, Firebase ecosystem integration.
+**Avoid for:** Real-time streaming, concurrent data ingestion pipelines.
+
 ### Environment Variable Expansion
 
 LTM configuration supports `${VAR}` and `${VAR:-default}` syntax:

@@ -1,0 +1,60 @@
+# BUG.001 Test Fixture: Environment Variable Expansion
+#
+# This fixture uses environment variables with defaults to test
+# that ${VAR:-default} syntax works in nested config blocks.
+#
+# Tests:
+#   - ${VAR} expansion in catalog.url
+#   - ${VAR:-default} expansion in storage.uri
+#   - ${VAR} expansion in hierarchy.root_entity.id
+
+name: hierarchical-ltm-env-vars-agent
+description: Environment variable expansion test for BUG.001
+
+state_schema:
+  input: str
+  output: str
+
+settings:
+  ltm:
+    backend: hierarchical
+
+    catalog:
+      # Uses env var with no default - must be set
+      url: "${HIERARCHICAL_TEST_DB_URL}"
+      pool_size: "${HIERARCHICAL_TEST_POOL_SIZE:-10}"
+      lazy: true
+
+    storage:
+      # Uses env var with default fallback
+      uri: "${HIERARCHICAL_TEST_STORAGE_URI:-./default_test_storage/}"
+
+    hierarchy:
+      levels:
+        - tenant
+        - workspace
+        - user
+      root_entity:
+        type: tenant
+        id: "${HIERARCHICAL_TEST_TENANT_ID:-default_tenant}"
+      defaults:
+        tenant: "${HIERARCHICAL_DEFAULT_TENANT:-fallback_tenant}"
+        workspace: "_default"
+
+    performance:
+      metadata_cache:
+        enabled: true
+        ttl_seconds: "${HIERARCHICAL_CACHE_TTL:-600}"
+      parallel_reads:
+        threads: "${HIERARCHICAL_READ_THREADS:-8}"
+
+nodes:
+  - name: process
+    run: |
+      return {"output": state["input"]}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

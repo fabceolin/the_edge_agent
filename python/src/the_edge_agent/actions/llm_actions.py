@@ -176,6 +176,18 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "stdin_mode": "pipe",
                 "timeout": 108000,  # 1800 minutes
             },
+            # TEA-RALPHY-001.5: OpenCode provider
+            "opencode": {
+                "command": "opencode",
+                "args": ["-p", "{prompt}", "-q"],  # -q suppresses spinner
+                "timeout": 108000,  # 1800 minutes
+            },
+            # TEA-RALPHY-001.5: Cursor provider (CLI command is 'agent')
+            "cursor": {
+                "command": "agent",  # Cursor CLI is named 'agent'
+                "args": ["-p", "{prompt}", "--output-format", "text"],
+                "timeout": 108000,  # 1800 minutes
+            },
         }
 
     def _expand_env_vars(value: str) -> str:

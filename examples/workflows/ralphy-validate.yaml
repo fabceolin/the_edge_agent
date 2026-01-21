@@ -1,0 +1,323 @@
+# =============================================================================
+# Ralphy Validate - Story Validation Workflow (TEA-RALPHY-001.9)
+# =============================================================================
+# Validates BMad stories before development:
+# 1. Checks story structure (required sections)
+# 2. Validates acceptance criteria
+# 3. Checks task-to-AC linkage
+# 4. Calculates completion metrics
+# 5. Outputs validation report
+# =============================================================================
+
+name: ralphy-validate
+description: Validation workflow - Validates BMad stories before development
+
+state_schema:
+  # Input parameters
+  source: str                    # Story file path or glob pattern
+  strict: bool                   # Fail on warnings (default: false)
+  output_format: str             # Output format: text, json, markdown (default: text)
+
+  # Internal state
+  source_type: str               # Detected source type
+  stories: list                  # Parsed stories
+  validation_results: list       # Validation results per story
+  summary: dict                  # Summary of all validations
+
+initial_state:
+  strict: false
+  output_format: text
+  stories: []
+  validation_results: []
+  summary:
+    total: 0
+    passed: 0
+    failed: 0
+    warnings: 0
+
+settings:
+  opik:
+    enabled: false
+  progress:
+    track: true
+
+# =============================================================================
+# NODES
+# =============================================================================
+
+nodes:
+  # ============================================
+  # Phase 1: Source Detection
+  # ============================================
+  - name: detect_source_type
+    description: Detect if source is single file or glob pattern
+    run: |
+      source = state.get("source", "")
+
+      if not source:
+          return {"error": "No source provided", "source_type": "error"}
+
+      if "*" in source:
+          source_type = "glob"
+      else:
+          source_type = "file"
+
+      return {"source_type": source_type}
+
+  # ============================================
+  # Phase 2: Load Stories
+  # ============================================
+  - name: load_single_story
+    description: Load a single story file
+    condition: "{{ state.source_type == 'file' }}"
+    run: |
+      import os
+      source = state.get("source", "")
+      stories = []
+
+      if os.path.exists(source):
+          with open(source, 'r') as f:
+              content = f.read()
+          stories.append({
+              "file": source,
+              "content": content,
+              "filename": os.path.basename(source)
+          })
+      else:
+          return {"error": f"File not found: {source}"}
+
+      return {"stories": stories}
+
+  - name: load_glob_stories
+    description: Load multiple stories from glob pattern
+    condition: "{{ state.source_type == 'glob' }}"
+    run: |
+      import glob as glob_module
+      import os
+      source = state.get("source", "")
+      stories = []
+
+      files = glob_module.glob(source, recursive=True)
+
+      for f in sorted(files):
+          if os.path.isfile(f) and f.endswith('.md'):
+              with open(f, 'r') as fp:
+                  content = fp.read()
+              stories.append({
+                  "file": f,
+                  "content": content,
+                  "filename": os.path.basename(f)
+              })
+
+      return {"stories": stories}
+
+  # ============================================
+  # Phase 3: Validate Stories
+  # ============================================
+  - name: validate_stories
+    description: Validate each story against BMad requirements
+    run: |
+      import re
+      stories = state.get("stories", [])
+      results = []
+
+      required_sections = [
+          "## Status",
+          "## Story",
+          "## Acceptance Criteria",
+          "## Tasks / Subtasks"
+      ]
+
+      optional_sections = [
+          "## Dependencies",
+          "## Dev Notes",
+          "## Dev Agent Record",
+          "## QA Results"
+      ]
+
+      valid_statuses = [
+          "Draft", "Ready", "In Progress",
+          "Ready for Review", "Done", "Blocked", "Deferred"
+      ]
+
+      for story in stories:
+          content = story.get("content", "")
+          filename = story.get("filename", "unknown")
+
+          errors = []
+          warnings = []
+          info = []
+
+          # Check required sections
+          for section in required_sections:
+              if section not in content:
+                  errors.append(f"Missing required section: {section}")
+
+          # Check optional sections
+          for section in optional_sections:
+              if section not in content:
+                  info.append(f"Optional section not present: {section}")
+
+          # Extract and validate status
+          status_match = re.search(r'## Status\s*\n+([^\n#]+)', content)
+          if status_match:
+              status = status_match.group(1).strip()
+              if status not in valid_statuses:
+                  warnings.append(f"Non-standard status: '{status}' (expected one of: {', '.join(valid_statuses)})")
+              info.append(f"Status: {status}")
+          else:
+              errors.append("Could not parse status")
+
+          # Extract acceptance criteria
+          ac_match = re.search(r'## Acceptance Criteria\s*\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
+          ac_count = 0
+          if ac_match:
+              ac_text = ac_match.group(1)
+              ac_items = re.findall(r'^\d+\.', ac_text, re.MULTILINE)
+              ac_count = len(ac_items)
+              if ac_count == 0:
+                  warnings.append("No numbered acceptance criteria found")
+              else:
+                  info.append(f"Acceptance Criteria: {ac_count}")
+
+          # Extract tasks
+          tasks_match = re.search(r'## Tasks / Subtasks\s*\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
+          total_tasks = 0
+          completed_tasks = 0
+          tasks_with_ac = 0
+
+          if tasks_match:
+              tasks_text = tasks_match.group(1)
+              all_tasks = re.findall(r'^- \[([ x])\](.+)$', tasks_text, re.MULTILINE)
+              total_tasks = len(all_tasks)
+              completed_tasks = sum(1 for t in all_tasks if t[0] == 'x')
+
+              # Check AC references
+              for _, task_text in all_tasks:
+                  if re.search(r'\(AC:\s*[\d,\s]+\)', task_text):
+                      tasks_with_ac += 1
+
+              if total_tasks > 0:
+                  completion_pct = round(completed_tasks / total_tasks * 100, 1)
+                  info.append(f"Tasks: {completed_tasks}/{total_tasks} ({completion_pct}%)")
+
+                  if tasks_with_ac < total_tasks:
+                      warnings.append(f"Only {tasks_with_ac}/{total_tasks} tasks have AC references")
+              else:
+                  warnings.append("No tasks found in Tasks / Subtasks section")
+
+          # Determine pass/fail
+          passed = len(errors) == 0
+          if state.get("strict", False) and len(warnings) > 0:
+              passed = False
+
+          results.append({
+              "filename": filename,
+              "file": story.get("file"),
+              "passed": passed,
+              "errors": errors,
+              "warnings": warnings,
+              "info": info,
+              "metrics": {
+                  "ac_count": ac_count,
+                  "total_tasks": total_tasks,
+                  "completed_tasks": completed_tasks,
+                  "tasks_with_ac": tasks_with_ac
+              }
+          })
+
+      return {"validation_results": results}
+
+  # ============================================
+  # Phase 4: Generate Summary
+  # ============================================
+  - name: generate_summary
+    description: Generate validation summary
+    run: |
+      results = state.get("validation_results", [])
+
+      total = len(results)
+      passed = sum(1 for r in results if r.get("passed"))
+      failed = total - passed
+      total_warnings = sum(len(r.get("warnings", [])) for r in results)
+      total_errors = sum(len(r.get("errors", [])) for r in results)
+
+      return {
+          "summary": {
+              "total": total,
+              "passed": passed,
+              "failed": failed,
+              "warnings": total_warnings,
+              "errors": total_errors
+          }
+      }
+
+  # ============================================
+  # Phase 5: Output Report
+  # ============================================
+  - name: output_report
+    description: Output validation report
+    run: |
+      results = state.get("validation_results", [])
+      summary = state.get("summary", {})
+      output_format = state.get("output_format", "text")
+
+      if output_format == "json":
+          import json
+          print(json.dumps({"summary": summary, "results": results}, indent=2))
+      else:
+          sep = "=" * 79
+          print(f"\n{sep}")
+          print("                    RALPHY VALIDATE - Story Validation Report")
+          print(sep)
+          print(f"Stories: {summary.get('total', 0)} | Passed: {summary.get('passed', 0)} | Failed: {summary.get('failed', 0)}")
+          print(f"Errors: {summary.get('errors', 0)} | Warnings: {summary.get('warnings', 0)}")
+          print(sep)
+
+          for r in results:
+              status = "PASS" if r.get("passed") else "FAIL"
+              print(f"\n[{status}] {r.get('filename')}")
+
+              for info in r.get("info", []):
+                  print(f"  ℹ {info}")
+
+              for warn in r.get("warnings", []):
+                  print(f"  ⚠ {warn}")
+
+              for err in r.get("errors", []):
+                  print(f"  ✗ {err}")
+
+          print(f"\n{sep}\n")
+
+      return {"report_generated": True}
+
+# =============================================================================
+# EDGES
+# =============================================================================
+
+edges:
+  - from: __start__
+    to: detect_source_type
+
+  - from: detect_source_type
+    to: load_single_story
+    condition: "{{ state.source_type == 'file' }}"
+
+  - from: detect_source_type
+    to: load_glob_stories
+    condition: "{{ state.source_type == 'glob' }}"
+
+  - from: load_single_story
+    to: validate_stories
+
+  - from: load_glob_stories
+    to: validate_stories
+
+  - from: validate_stories
+    to: generate_summary
+
+  - from: generate_summary
+    to: output_report
+
+  - from: output_report
+    to: __end__

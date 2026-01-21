@@ -1,0 +1,79 @@
+# BUG.001 Test Fixture: Full A3 Hierarchical LTM Configuration
+#
+# This fixture contains all documented configuration options for the
+# HierarchicalLTMBackend as specified in CLAUDE.md. Used to verify
+# that nested YAML config is correctly transformed to flat parameters.
+#
+# Usage:
+#   from the_edge_agent import YAMLEngine
+#   engine = YAMLEngine(enable_ltm=True)
+#   graph = engine.load_from_file("tests/fixtures/hierarchical_ltm_config.yaml")
+#   assert engine.ltm_backend.__class__.__name__ == "HierarchicalLTMBackend"
+
+name: hierarchical-ltm-test-agent
+description: Test agent for BUG.001 - HierarchicalLTMBackend YAML config
+
+state_schema:
+  input: str
+  output: str
+
+settings:
+  ltm:
+    backend: hierarchical
+
+    # Catalog configuration (PostgreSQL via SQLAlchemy)
+    # For testing, we use in-memory SQLite
+    catalog:
+      type: sqlalchemy
+      url: "${TEST_DATABASE_URL:-sqlite:///:memory:}"
+      pool_size: 5
+      lazy: true
+
+    # Blob storage configuration
+    # For testing, use local filesystem
+    storage:
+      uri: "${TEST_LTM_STORAGE:-./test_ltm_data/}"
+
+    # Entity hierarchy configuration
+    hierarchy:
+      enabled: true
+      levels:
+        - org
+        - project
+        - user
+        - session
+      root_entity:
+        type: org
+        id: "${TEST_ORG_ID:-test_org}"
+      defaults:
+        org: "default_org"
+        project: "_unassigned"
+        user: "_anonymous"
+
+    # Performance tuning options
+    performance:
+      metadata_cache:
+        enabled: true
+        ttl_seconds: 300
+      parallel_reads:
+        threads: 4
+
+    # Parquet index configuration
+    index:
+      format: parquet
+      row_group_size: 10000
+      compression: zstd
+
+    # Inline threshold (bytes)
+    inline_threshold: 1024
+
+nodes:
+  - name: process
+    run: |
+      return {"output": f"Processed: {state['input']}"}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

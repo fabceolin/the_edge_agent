@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.69",
+    version="0.9.74",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -53,6 +53,7 @@ setup(
     extras_require={
         "dev": [
             "pytest",
+            "pytest-asyncio>=0.23.0",  # For async test support
             "coverage",
             "hypothesis",
             "parameterized==0.9.0",
