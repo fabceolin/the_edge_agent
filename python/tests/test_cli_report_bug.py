@@ -14,7 +14,9 @@ from typer.testing import CliRunner
 
 from the_edge_agent.cli import app, get_git_remote_repo
 
-runner = CliRunner()
+# Use mix_stderr=False to separate stderr, and set env to disable colors
+# This ensures --workflow appears as plain text without ANSI escape codes
+runner = CliRunner(mix_stderr=False, env={"NO_COLOR": "1", "TERM": "dumb"})
 
 
 class TestGetGitRemoteRepo(unittest.TestCase):
