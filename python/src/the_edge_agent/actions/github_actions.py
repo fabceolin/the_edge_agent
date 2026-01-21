@@ -31,9 +31,32 @@ import time
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 
-import requests
-
 logger = logging.getLogger(__name__)
+
+# Lazy import for requests - only imported when needed
+_requests = None
+
+
+def _get_requests():
+    """Lazily import requests module.
+
+    Returns:
+        The requests module.
+
+    Raises:
+        ImportError: If requests is not installed with helpful message.
+    """
+    global _requests
+    if _requests is None:
+        try:
+            import requests as req
+            _requests = req
+        except ImportError:
+            raise ImportError(
+                "The 'requests' package is required for GitHub actions. "
+                "Install it with: pip install the-edge-agent[web]"
+            )
+    return _requests
 
 
 class RateLimitError(Exception):
@@ -262,7 +285,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             params["page"] = page_num
 
             try:
-                response = requests.get(
+                response = _get_requests().get(
                     api_url,
                     headers=headers,
                     params=params,
@@ -338,13 +361,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "remaining_rate_limit": int(remaining) if remaining else None,
                 }
 
-            except requests.exceptions.Timeout:
+            except _get_requests().exceptions.Timeout:
                 return {
                     "success": False,
                     "error": "Request timed out after 30s",
                     "error_type": "network",
                 }
-            except requests.exceptions.ConnectionError as e:
+            except _get_requests().exceptions.ConnectionError as e:
                 return {
                     "success": False,
                     "error": f"Connection error: {str(e)}",
@@ -595,7 +618,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         def create_request() -> Dict[str, Any]:
             """Execute the create issue request with rate limit handling."""
             try:
-                response = requests.post(
+                response = _get_requests().post(
                     api_url,
                     headers=headers,
                     json=payload,
@@ -678,13 +701,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "state": issue_data.get("state"),
                 }
 
-            except requests.exceptions.Timeout:
+            except _get_requests().exceptions.Timeout:
                 return {
                     "success": False,
                     "error": "Request timed out after 30s",
                     "error_type": "network",
                 }
-            except requests.exceptions.ConnectionError as e:
+            except _get_requests().exceptions.ConnectionError as e:
                 return {
                     "success": False,
                     "error": f"Connection error: {str(e)}",
@@ -818,15 +841,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             """Execute API request with rate limit handling."""
             try:
                 if method == "PATCH":
-                    response = requests.patch(
+                    response = _get_requests().patch(
                         url, headers=headers, json=json_data, timeout=30
                     )
                 elif method == "POST":
-                    response = requests.post(
+                    response = _get_requests().post(
                         url, headers=headers, json=json_data, timeout=30
                     )
                 elif method == "GET":
-                    response = requests.get(url, headers=headers, timeout=30)
+                    response = _get_requests().get(url, headers=headers, timeout=30)
                 else:
                     return {
                         "success": False,
@@ -893,13 +916,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "data": response.json() if response.text else {},
                 }
 
-            except requests.exceptions.Timeout:
+            except _get_requests().exceptions.Timeout:
                 return {
                     "success": False,
                     "error": "Request timed out after 30s",
                     "error_type": "network",
                 }
-            except requests.exceptions.ConnectionError as e:
+            except _get_requests().exceptions.ConnectionError as e:
                 return {
                     "success": False,
                     "error": f"Connection error: {str(e)}",
@@ -1141,7 +1164,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         def search_request() -> Dict[str, Any]:
             """Execute the search request with rate limit handling."""
             try:
-                response = requests.get(
+                response = _get_requests().get(
                     api_url,
                     headers=headers,
                     params=params,
@@ -1223,13 +1246,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "items": items,
                 }
 
-            except requests.exceptions.Timeout:
+            except _get_requests().exceptions.Timeout:
                 return {
                     "success": False,
                     "error": "Request timed out after 30s",
                     "error_type": "network",
                 }
-            except requests.exceptions.ConnectionError as e:
+            except _get_requests().exceptions.ConnectionError as e:
                 return {
                     "success": False,
                     "error": f"Connection error: {str(e)}",
