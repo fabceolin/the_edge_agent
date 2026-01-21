@@ -1148,7 +1148,7 @@ nodes:
 };
 
 // Default example to show on load
-const DEFAULT_EXAMPLE = 'tera-templates';
+const DEFAULT_EXAMPLE = 'neurosymbolic-qa';
 
 // Get default YAML and state from examples
 const DEFAULT_YAML = EXAMPLES[DEFAULT_EXAMPLE].yaml;
@@ -1276,7 +1276,7 @@ function loadExample(exampleKey) {
   if (descEl) {
     descEl.textContent = example.description;
     if (example.requiresLlm) {
-      descEl.innerHTML += ' <span class="llm-badge">Requires LLM</span>';
+      descEl.innerHTML += ' <span class="llm-badge">LLM will run in your browser via CPU</span>';
     }
   }
 
