@@ -40,6 +40,7 @@ setup(
         "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
         "pydantic>=2.0.0",  # TEA-BUILTIN-015: Required for session, error_handling, http settings
         "pydot>=2.0.0",  # TEA-TOOLS-001: DOT/Graphviz parsing for tea from dot
+        "requests>=2.28.0",  # TEA-RALPHY-001.3: Required by github_actions, web_actions, core_actions
     ],
     entry_points={
         "console_scripts": [
