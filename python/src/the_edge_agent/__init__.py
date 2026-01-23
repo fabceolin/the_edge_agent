@@ -155,5 +155,4 @@ __all__ = [
     # Version
     "__version__",
 ]
-__version__ = "0.9.79"
-
+__version__ = "0.9.80"
