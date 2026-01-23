@@ -1,7 +1,9 @@
 # Story TEA-RALPHY-001.8: Progress Reporting & Notifications
 
 ## Status
-Backlog
+Deferred
+
+> **Note:** Deferred in favor of [TEA-RALPHY-002](./TEA-RALPHY-002-minimal-ralphy.md) which takes a simpler approach using tmux output via `tea from dot --tmux`.
 
 ## Epic Reference
 [TEA-RALPHY-001: Autonomous AI Coding Loop](./TEA-RALPHY-001-autonomous-coding-loop.md)

@@ -1,0 +1,283 @@
+# Dependency Analyzer Agent
+# TEA-RALPHY-002.1
+#
+# Analyzes file dependencies and generates DOT orchestration graph.
+#
+# Usage:
+#   tea run examples/agents/dependency-analyzer.yaml \
+#     --input '{"source": "docs/stories/TEA-FEATURE-*.md"}' > workflow.dot
+#
+#   # Then execute with:
+#   tea from dot workflow.dot --use-node-commands --tmux
+#
+#   # Or piped (requires TEA-RALPHY-002.2):
+#   tea run examples/agents/dependency-analyzer.yaml \
+#     --input '{"source": "docs/stories/*.md"}' \
+#     | tea from dot - --use-node-commands --tmux
+
+name: dependency-analyzer
+description: Analyzes file dependencies and generates DOT orchestration graph
+
+state_schema:
+  source: str
+  engine: str
+  command_template: str
+  files: list
+  file_contents: list
+  dependency_graph: dict
+  dot_content: str
+
+initial_state:
+  engine: claude
+  command_template: "claude -p 'Implement {file}' --dangerously-skip-permissions"
+
+nodes:
+  - name: resolve_files
+    run: |
+      import glob
+      import sys
+
+      source = state.get("source", "")
+
+      if not source:
+          print("Error: 'source' is required. Provide a glob pattern or file list.", file=sys.stderr)
+          return {"files": [], "_error": "source is required"}
+
+      # Handle glob pattern vs explicit list
+      if isinstance(source, str):
+          if "*" in source or "?" in source:
+              files = sorted(glob.glob(source, recursive=True))
+          else:
+              files = [source]
+      elif isinstance(source, list):
+          files = list(source)
+      else:
+          files = [str(source)]
+
+      if not files:
+          print(f"Warning: No files matched source: {source}", file=sys.stderr)
+
+      return {"files": files}
+
+  - name: read_files
+    run: |
+      import os
+      import sys
+
+      contents = []
+      for f in state.get("files", []):
+          if os.path.exists(f):
+              try:
+                  with open(f, 'r', encoding='utf-8') as fp:
+                      contents.append({
+                          "path": f,
+                          "name": os.path.basename(f),
+                          "content": fp.read()
+                      })
+              except Exception as e:
+                  print(f"Warning: Could not read {f}: {e}", file=sys.stderr)
+          else:
+              print(f"Warning: File not found: {f}", file=sys.stderr)
+
+      if not contents:
+          print("Error: No files could be read.", file=sys.stderr)
+
+      return {"file_contents": contents}
+
+  - name: analyze_dependencies
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: "{{ state.engine | default('claude') }}"
+      messages:
+        - role: user
+          content: |
+            Analyze these files and identify dependencies between them.
+
+            A file B depends on file A if:
+            - B references code, APIs, or features defined in A
+            - B has an explicit "Dependencies" section listing A
+            - B builds upon or extends functionality from A
+            - B cannot be implemented without A being completed first
+
+            FILES:
+            {% for file in state.file_contents %}
+            === {{ file.path }} ===
+            {{ file.content[:8000] }}
+            {% if file.content|length > 8000 %}
+            ... (truncated, {{ file.content|length }} total chars)
+            {% endif %}
+
+            {% endfor %}
+
+            Output a JSON object with this exact structure:
+            ```json
+            {
+              "nodes": ["filename1.md", "filename2.md", ...],
+              "edges": [
+                {"from": "dependency.md", "to": "dependent.md", "reason": "dependent uses API from dependency"}
+              ]
+            }
+            ```
+
+            Rules:
+            1. Use the filename (basename) as node identifier
+            2. "from" is the DEPENDENCY, "to" is the DEPENDENT (A -> B means B depends on A)
+            3. Files with NO dependencies should still appear in the nodes list
+            4. If uncertain about a dependency, include it (safer to serialize than parallelize incorrectly)
+            5. Look for explicit "## Dependencies" sections in the files
+            6. Look for story IDs referenced in other stories (e.g., "TEA-001.1" referenced in "TEA-001.4")
+
+            Output ONLY the JSON object, no explanation.
+    output: dependency_graph
+
+  - name: generate_dot
+    run: |
+      import json
+      import sys
+      import re
+      from collections import defaultdict
+
+      # Parse LLM response
+      graph_str = state.get("dependency_graph", "")
+      if not graph_str:
+          graph_str = "{}"
+
+      if isinstance(graph_str, str):
+          # Handle potential markdown code blocks
+          if "```json" in graph_str:
+              graph_str = graph_str.split("```json")[1].split("```")[0]
+          elif "```" in graph_str:
+              parts = graph_str.split("```")
+              if len(parts) >= 2:
+                  graph_str = parts[1]
+          try:
+              graph = json.loads(graph_str.strip())
+          except json.JSONDecodeError as e:
+              print("Warning: Could not parse LLM response as JSON: " + str(e), file=sys.stderr)
+              print("Raw response: " + graph_str[:500], file=sys.stderr)
+              # Fallback: treat all files as independent
+              graph = {
+                  "nodes": [f["name"] for f in state.get("file_contents", [])],
+                  "edges": []
+              }
+      else:
+          graph = graph_str
+
+      nodes = graph.get("nodes", [])
+      edges = graph.get("edges", [])
+
+      # If no nodes, use file contents
+      if not nodes:
+          nodes = [f["name"] for f in state.get("file_contents", [])]
+
+      # Build file path mapping (name -> path)
+      file_paths = {}
+      for f in state.get("file_contents", []):
+          file_paths[f["name"]] = f["path"]
+
+      # Build adjacency list for dependency tracking
+      deps = defaultdict(set)
+      for edge in edges:
+          if isinstance(edge, dict):
+              to_node = edge.get("to", "")
+              from_node = edge.get("from", "")
+              if to_node and from_node:
+                  deps[to_node].add(from_node)
+
+      # Topological sort with phase grouping
+      phases = []
+      remaining = set(nodes)
+      completed = set()
+      max_iterations = len(nodes) + 1  # Prevent infinite loop
+
+      iteration = 0
+      while remaining and iteration < max_iterations:
+          iteration += 1
+          # Find nodes with all dependencies satisfied
+          ready = [n for n in remaining if deps[n].issubset(completed)]
+
+          if not ready:
+              # Circular dependency detected - take all remaining
+              print("Warning: Circular dependency detected, parallelizing remaining: " + str(remaining), file=sys.stderr)
+              ready = list(remaining)
+
+          phases.append(ready)
+          completed.update(ready)
+          remaining -= set(ready)
+
+      # Generate DOT output
+      engine = state.get("engine", "claude")
+      cmd_template = state.get("command_template", "claude -p 'Implement {file}' --dangerously-skip-permissions")
+
+      LBRACE = "{"
+      RBRACE = "}"
+
+      lines = [
+          "digraph workflow " + LBRACE,
+          "    rankdir=TB;",
+          "    compound=true;",
+          "",
+      ]
+
+      for i, phase in enumerate(phases, 1):
+          parallel_label = " (Parallel)" if len(phase) > 1 else ""
+          lines.append("    // Phase " + str(i) + parallel_label)
+          lines.append("    subgraph cluster_phase_" + str(i) + " " + LBRACE)
+          lines.append('        label="Phase ' + str(i) + '";')
+          lines.append("        style=dashed;")
+          lines.append("")
+
+          for node in sorted(phase):
+              # Get full file path for command
+              file_path = file_paths.get(node, node)
+
+              # Generate command - escape quotes for DOT attribute
+              cmd = cmd_template.replace("{file}", file_path)
+              cmd_escaped = cmd.replace('"', '\\"')
+
+              # Create safe node ID (remove special chars)
+              node_id = re.sub(r'[^a-zA-Z0-9_]', '_', node)
+
+              lines.append('        "' + node_id + '" [label="' + node + '", command="' + cmd_escaped + '"];')
+
+          lines.append("    " + RBRACE)
+          lines.append("")
+
+      # Add edges
+      if edges:
+          lines.append("    // Dependencies")
+          for edge in edges:
+              if isinstance(edge, dict):
+                  from_node = edge.get("from", "")
+                  to_node = edge.get("to", "")
+                  if from_node and to_node:
+                      from_id = re.sub(r'[^a-zA-Z0-9_]', '_', from_node)
+                      to_id = re.sub(r'[^a-zA-Z0-9_]', '_', to_node)
+                      lines.append('    "' + from_id + '" -> "' + to_id + '";')
+
+      lines.append(RBRACE)
+
+      return {"dot_content": "\n".join(lines)}
+
+  - name: output_dot
+    run: |
+      # Print DOT to stdout for piping
+      dot_content = state.get("dot_content", "")
+      if dot_content:
+          print(dot_content)
+      return {"_output_format": "dot"}
+
+edges:
+  - from: __start__
+    to: resolve_files
+  - from: resolve_files
+    to: read_files
+  - from: read_files
+    to: analyze_dependencies
+  - from: analyze_dependencies
+    to: generate_dot
+  - from: generate_dot
+    to: output_dot
+  - from: output_dot
+    to: __end__

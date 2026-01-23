@@ -1,7 +1,9 @@
 # Story TEA-RALPHY-001.10: Dynamic Dependency Analysis & DOT Generation
 
 ## Status
-Draft
+Deferred
+
+> **Note:** Superseded by [TEA-RALPHY-002.1](./TEA-RALPHY-002.1.dependency-analyzer-agent.md) which implements this as a simpler YAML agent.
 
 ## Epic Reference
 [TEA-RALPHY-001: Autonomous AI Coding Loop](./TEA-RALPHY-001-autonomous-coding-loop.md)

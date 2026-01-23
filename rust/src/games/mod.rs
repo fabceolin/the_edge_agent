@@ -28,8 +28,42 @@
 //! assert!(session.current_difficulty > 0.5); // Difficulty increased
 //! ```
 
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+#[cfg(feature = "game-duckdb")]
+pub mod db;
+
+#[cfg(feature = "game-duckdb")]
+pub mod embeddings;
+
+// Re-export embedding types for convenience
+#[cfg(feature = "game-duckdb")]
+pub use embeddings::{difficulty_to_similarity_range, Difficulty, EmbeddingSearch};
+
+/// Opik integration for game tracing (TEA-GAME-001.8)
+pub mod opik;
+
+/// Phrase generation with LLM integration (TEA-GAME-001.4)
+pub mod phrase_generator;
+
+// Re-export key Opik types for convenience
+pub use opik::{
+    clear_game_opik_handler, configure_game_opik, get_game_opik_config, has_game_opik_handler,
+    is_game_opik_enabled, send_game_span, set_game_opik_handler, GameOpikConfig, GameSpanType,
+    OpikGameSpan,
+};
+
+/// Adjectives for username generation (AC-3)
+const ADJECTIVES: &[&str] = &[
+    "Swift", "Brave", "Clever", "Quick", "Wise", "Bold", "Sharp", "Keen", "Nimble", "Bright",
+];
+
+/// Animals for username generation (AC-3)
+const ANIMALS: &[&str] = &[
+    "Fox", "Owl", "Wolf", "Raven", "Tiger", "Eagle", "Hawk", "Bear", "Deer", "Lion",
+];
 
 /// Minimum difficulty bound (AC-6)
 pub const MIN_DIFFICULTY: f64 = 0.1;
@@ -235,6 +269,84 @@ pub fn adjust_difficulty(session: &mut GameSession, window_size: usize) {
     session.current_difficulty = session
         .current_difficulty
         .clamp(MIN_DIFFICULTY, MAX_DIFFICULTY);
+}
+
+/// Generate a random username in the pattern `{Adjective}{Animal}{Number}` (AC-3).
+///
+/// Examples: "SwiftFox42", "BraveOwl07", "CleverWolf99"
+///
+/// # Format
+///
+/// - Adjective: One of 10 predefined adjectives (Swift, Brave, etc.)
+/// - Animal: One of 10 predefined animals (Fox, Owl, etc.)
+/// - Number: Two-digit number from 00-99
+///
+/// # Example
+///
+/// ```rust
+/// use the_edge_agent::games::generate_username;
+///
+/// let username = generate_username();
+/// // e.g., "SwiftFox42"
+/// assert!(username.len() >= 6); // Minimum: "Bold" + "Fox" + "00" = 9 chars
+/// ```
+pub fn generate_username() -> String {
+    let mut rng = rand::thread_rng();
+    let adjective = ADJECTIVES[rng.gen_range(0..ADJECTIVES.len())];
+    let animal = ANIMALS[rng.gen_range(0..ANIMALS.len())];
+    let number: u8 = rng.gen_range(0..100);
+    format!("{}{}{:02}", adjective, animal, number)
+}
+
+/// Calculate the player's score based on session statistics (AC-4).
+///
+/// The score formula is:
+/// ```text
+/// score = accuracy * avg_difficulty * answer_factor
+/// ```
+///
+/// Where:
+/// - `accuracy = correct_answers / total_answers`
+/// - `avg_difficulty = sum_difficulty / total_answers`
+/// - `answer_factor = min(1.0, log2(total_answers + 1) / log2(50))`
+///
+/// The answer_factor rewards playing more rounds (up to 50 answers), after which
+/// it caps at 1.0.
+///
+/// # Arguments
+///
+/// * `session` - Reference to the game session to calculate score for
+///
+/// # Returns
+///
+/// The calculated score (0.0 to ~1.0), or 0.0 if no answers have been submitted.
+///
+/// # Example
+///
+/// ```rust
+/// use the_edge_agent::games::{GameSession, calculate_score};
+///
+/// let mut session = GameSession::default();
+/// session.total_answers = 10;
+/// session.correct_answers = 8;
+/// session.sum_difficulty = 5.0; // avg difficulty = 0.5
+///
+/// let score = calculate_score(&session);
+/// // accuracy = 0.8, avg_diff = 0.5, answer_factor ≈ 0.61
+/// // score ≈ 0.8 * 0.5 * 0.61 ≈ 0.244
+/// assert!(score > 0.0 && score < 1.0);
+/// ```
+pub fn calculate_score(session: &GameSession) -> f64 {
+    if session.total_answers == 0 {
+        return 0.0;
+    }
+
+    let accuracy = session.correct_answers as f64 / session.total_answers as f64;
+    let avg_difficulty = session.sum_difficulty / session.total_answers as f64;
+    let answer_factor = (session.total_answers as f64 + 1.0).log2() / 50_f64.log2();
+    let answer_factor = answer_factor.min(1.0); // Cap at 1.0
+
+    accuracy * avg_difficulty * answer_factor
 }
 
 #[cfg(test)]
@@ -797,5 +909,304 @@ mod tests {
         );
         assert_eq!(session.total_answers, 5);
         assert_eq!(session.correct_answers, 5);
+    }
+
+    // ============================================================
+    // AC-3: generate_username() tests
+    // ============================================================
+
+    #[test]
+    fn test_generate_username_format() {
+        // AC-3: generate_username() returns random {Adjective}{Animal}{Number} pattern
+        let username = generate_username();
+
+        // Should match pattern: starts with adjective, contains animal, ends with 2-digit number
+        // Minimum length: "Bold" (4) + "Fox" (3) + "00" (2) = 9
+        // Maximum length: "Nimble" (6) + "Tiger" (5) + "99" (2) = 13
+        assert!(
+            username.len() >= 9 && username.len() <= 13,
+            "Username '{}' should be between 9 and 13 characters",
+            username
+        );
+
+        // Should end with a 2-digit number
+        let last_two = &username[username.len() - 2..];
+        assert!(
+            last_two.chars().all(|c| c.is_ascii_digit()),
+            "Username '{}' should end with 2-digit number, got '{}'",
+            username,
+            last_two
+        );
+    }
+
+    #[test]
+    fn test_generate_username_starts_with_valid_adjective() {
+        let username = generate_username();
+
+        // Check that it starts with one of the valid adjectives
+        let starts_with_adjective = ADJECTIVES.iter().any(|adj| username.starts_with(adj));
+
+        assert!(
+            starts_with_adjective,
+            "Username '{}' should start with a valid adjective",
+            username
+        );
+    }
+
+    #[test]
+    fn test_generate_username_contains_valid_animal() {
+        let username = generate_username();
+
+        // Check that it contains one of the valid animals (excluding the number at end)
+        let without_number = &username[..username.len() - 2];
+        let contains_animal = ANIMALS
+            .iter()
+            .any(|animal| without_number.ends_with(animal));
+
+        assert!(
+            contains_animal,
+            "Username '{}' should contain a valid animal",
+            username
+        );
+    }
+
+    #[test]
+    fn test_generate_username_number_range() {
+        // Generate multiple usernames and verify number is always 00-99
+        for _ in 0..20 {
+            let username = generate_username();
+            let last_two = &username[username.len() - 2..];
+            let number: u8 = last_two.parse().expect("Last two chars should be a number");
+            assert!(number < 100, "Number should be 00-99, got {}", number);
+        }
+    }
+
+    #[test]
+    fn test_generate_username_uniqueness() {
+        // Generate multiple usernames and check they are not all the same
+        // (probabilistically, 100 usernames should have some variety)
+        let usernames: Vec<String> = (0..100).map(|_| generate_username()).collect();
+        let unique_count = usernames
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
+        // With 10 adjectives, 10 animals, 100 numbers = 10,000 possibilities
+        // 100 samples should have high uniqueness
+        assert!(
+            unique_count > 50,
+            "Expected at least 50 unique usernames from 100 generations, got {}",
+            unique_count
+        );
+    }
+
+    #[test]
+    fn test_generate_username_examples() {
+        // Validate that specific patterns are possible
+        // Note: We can't test for specific outputs due to randomness,
+        // but we can validate the format is consistent
+        for _ in 0..10 {
+            let username = generate_username();
+
+            // Should be alphanumeric
+            assert!(
+                username.chars().all(|c| c.is_alphanumeric()),
+                "Username '{}' should only contain alphanumeric characters",
+                username
+            );
+
+            // Should start with uppercase (adjective starts with capital)
+            assert!(
+                username.chars().next().unwrap().is_uppercase(),
+                "Username '{}' should start with uppercase letter",
+                username
+            );
+        }
+    }
+
+    // ============================================================
+    // AC-4: calculate_score() tests
+    // ============================================================
+
+    #[test]
+    fn test_calculate_score_zero_total_answers() {
+        // AC-4: Handle edge case: total == 0 returns 0.0
+        let session = GameSession::default();
+        let score = calculate_score(&session);
+
+        assert!(
+            (score - 0.0).abs() < f64::EPSILON,
+            "Score should be 0.0 when total_answers is 0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_basic_calculation() {
+        // AC-4: score = accuracy * avg_difficulty * answer_factor
+        let mut session = GameSession::default();
+        session.total_answers = 10;
+        session.correct_answers = 8;
+        session.sum_difficulty = 5.0; // avg_difficulty = 0.5
+
+        let score = calculate_score(&session);
+
+        // accuracy = 0.8
+        // avg_difficulty = 0.5
+        // answer_factor = log2(11) / log2(50) ≈ 3.459 / 5.644 ≈ 0.613
+        // score ≈ 0.8 * 0.5 * 0.613 ≈ 0.245
+        assert!(
+            score > 0.0 && score < 1.0,
+            "Score should be between 0 and 1, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_perfect_accuracy() {
+        let mut session = GameSession::default();
+        session.total_answers = 50;
+        session.correct_answers = 50;
+        session.sum_difficulty = 47.5; // avg_difficulty = 0.95
+
+        let score = calculate_score(&session);
+
+        // accuracy = 1.0
+        // avg_difficulty = 0.95
+        // answer_factor = log2(51) / log2(50) ≈ 5.672 / 5.644 ≈ 1.005, capped at 1.0
+        // score ≈ 1.0 * 0.95 * 1.0 = 0.95
+        assert!(
+            (score - 0.95).abs() < 0.01,
+            "Perfect score with max difficulty should be ~0.95, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_zero_accuracy() {
+        let mut session = GameSession::default();
+        session.total_answers = 10;
+        session.correct_answers = 0;
+        session.sum_difficulty = 5.0;
+
+        let score = calculate_score(&session);
+
+        // accuracy = 0.0, so score should be 0
+        assert!(
+            (score - 0.0).abs() < f64::EPSILON,
+            "Score should be 0.0 when accuracy is 0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_answer_factor_cap() {
+        // AC-4: answer_factor is capped at 1.0
+        let mut session = GameSession::default();
+        session.total_answers = 100; // > 50, so factor would be > 1.0 without cap
+        session.correct_answers = 100;
+        session.sum_difficulty = 95.0; // avg = 0.95
+
+        let score = calculate_score(&session);
+
+        // answer_factor = log2(101) / log2(50) ≈ 6.658 / 5.644 ≈ 1.18, but capped at 1.0
+        // score = 1.0 * 0.95 * 1.0 = 0.95
+        assert!(
+            (score - 0.95).abs() < 0.01,
+            "Score should be ~0.95 with capped answer_factor, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_single_answer() {
+        let mut session = GameSession::default();
+        session.total_answers = 1;
+        session.correct_answers = 1;
+        session.sum_difficulty = 0.5;
+
+        let score = calculate_score(&session);
+
+        // accuracy = 1.0
+        // avg_difficulty = 0.5
+        // answer_factor = log2(2) / log2(50) ≈ 1.0 / 5.644 ≈ 0.177
+        // score ≈ 1.0 * 0.5 * 0.177 ≈ 0.089
+        assert!(
+            score > 0.0 && score < 0.15,
+            "Single correct answer should give small score, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_formula_verification() {
+        // Verify exact formula with known values
+        let mut session = GameSession::default();
+        session.total_answers = 10;
+        session.correct_answers = 5;
+        session.sum_difficulty = 5.0;
+
+        let score = calculate_score(&session);
+
+        // Manual calculation:
+        let accuracy = 5.0 / 10.0; // 0.5
+        let avg_difficulty = 5.0 / 10.0; // 0.5
+        let answer_factor = (11.0_f64.log2() / 50.0_f64.log2()).min(1.0);
+        let expected = accuracy * avg_difficulty * answer_factor;
+
+        assert!(
+            (score - expected).abs() < f64::EPSILON,
+            "Score {} should match expected {}",
+            score,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_low_difficulty() {
+        let mut session = GameSession::default();
+        session.total_answers = 50;
+        session.correct_answers = 50;
+        session.sum_difficulty = 5.0; // avg_difficulty = 0.1 (minimum)
+
+        let score = calculate_score(&session);
+
+        // accuracy = 1.0
+        // avg_difficulty = 0.1
+        // answer_factor ≈ 1.0
+        // score ≈ 1.0 * 0.1 * 1.0 = 0.1
+        assert!(
+            (score - 0.1).abs() < 0.01,
+            "Low difficulty score should be ~0.1, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_calculate_score_progression() {
+        // Score should increase with more correct answers
+        let mut session = GameSession::default();
+        session.sum_difficulty = 0.0;
+
+        let mut scores = Vec::new();
+
+        for i in 1..=20 {
+            session.total_answers = i;
+            session.correct_answers = i;
+            session.sum_difficulty += 0.5;
+            scores.push(calculate_score(&session));
+        }
+
+        // Each score should be greater than the previous
+        for i in 1..scores.len() {
+            assert!(
+                scores[i] > scores[i - 1],
+                "Score should increase: {} at {} answers should be > {} at {} answers",
+                scores[i],
+                i + 1,
+                scores[i - 1],
+                i
+            );
+        }
     }
 }
