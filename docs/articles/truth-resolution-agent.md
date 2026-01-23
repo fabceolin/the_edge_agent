@@ -10,9 +10,15 @@ fabceolin@gmail.com
 
 ## Abstract
 
-Sports disputes often involve conflicting narratives, incomplete evidence, and subjective interpretations that make fair adjudication challenging. This article presents a Truth Resolution Agent built with The Edge Agent (TEA) framework, designed to systematically evaluate evidence against established regulations and produce reasoned verdicts. We demonstrate the agent through a detailed analysis of the 1989 Japanese Grand Prix incident between Ayrton Senna and Alain Prost—one of the most controversial decisions in motorsport history. The agent processes the 1989 FIA regulations, eyewitness accounts, and factual evidence to deliver a verdict with full reasoning transparency. The result: **NOT GUILTY**, with the original disqualification deemed unjust based on regulatory ambiguity, inconsistent enforcement, and lack of competitive advantage.
+Sports disputes often involve conflicting narratives, incomplete evidence, and subjective interpretations that make fair adjudication challenging. This article presents a Truth Resolution Agent built with The Edge Agent (TEA) framework, designed to systematically evaluate evidence against established regulations and produce reasoned verdicts. We demonstrate the agent through a detailed analysis of the 1989 Japanese Grand Prix incident between Ayrton Senna and Alain Prost—one of the most controversial decisions in motorsport history.
 
-**Keywords:** Truth Resolution, Sports Arbitration, TEA, State Graph, Formula 1, Evidence-Based Judgment, AI Adjudication
+We present **two implementations**:
+1. **LLM-only approach** - Pure language model reasoning through structured nodes
+2. **Neurosymbolic approach** - Combining LLM for fact extraction with Prolog for deterministic judicial reasoning
+
+Both agents reach the same verdict: **NOT GUILTY**, with the original disqualification deemed unjust based on regulatory ambiguity, inconsistent enforcement, and lack of competitive advantage. The neurosymbolic version provides an additional benefit: **deterministic, auditable reasoning** where the same facts always produce the same verdict with a complete trace of which rules fired.
+
+**Keywords:** Truth Resolution, Sports Arbitration, TEA, State Graph, Formula 1, Evidence-Based Judgment, AI Adjudication, Neurosymbolic AI, Prolog
 
 ---
 
@@ -279,11 +285,118 @@ tea run examples/truth-resolution-agent.yaml --input @case.json -v
 
 ---
 
-## 6. The Verdict
+## 6. Neurosymbolic Architecture
 
-After processing all evidence, regulations, and precedents, the agent delivered the following verdict:
+The neurosymbolic version adds a critical capability: **deterministic, auditable reasoning** using Prolog for judicial logic.
 
-### 6.1 Summary
+### 6.1 Why Prolog for Judicial Reasoning?
+
+| Benefit | Description |
+|---------|-------------|
+| **Determinism** | Same facts always produce the same verdict |
+| **Auditability** | Complete trace of which rules fired and why |
+| **Consistency** | Automatically detects precedent inconsistencies |
+| **Transparency** | Every conclusion traceable to a specific rule |
+
+### 6.2 Neurosymbolic Flow
+
+```mermaid
+flowchart TD
+    START[__start__] --> EF[extract_facts<br/>LLM: NL → Prolog facts]
+    EF --> PF[parse_facts<br/>Clean Prolog syntax]
+    PF --> PR[prolog_reasoning<br/>Deterministic inference]
+    PR --> GV[generate_verdict<br/>LLM: Prolog → Human text]
+    GV --> ES[extract_summary]
+    ES --> END[__end__]
+
+    style PR fill:#f9f,stroke:#333,stroke-width:2px
+```
+
+### 6.3 Prolog Judicial Knowledge Base
+
+The neurosymbolic agent encodes judicial principles as Prolog rules:
+
+```prolog
+% Defense 1: Rule Ambiguity (principle of strict legality)
+valid_defense(RuleId, ambiguity) :-
+    rule_ambiguity(RuleId, _).
+
+% Defense 2: Force Majeure
+valid_defense(RuleId, force_majeure) :-
+    actus_reus(RuleId, Party, _),
+    force_majeure(Party, _).
+
+% Defense 3: No Advantage Gained (proportionality)
+valid_defense(RuleId, no_advantage) :-
+    actus_reus(RuleId, Party, _),
+    no_advantage_gained(Party, _).
+
+% Defense 4: Third Party Causation
+valid_defense(RuleId, third_party) :-
+    actus_reus(RuleId, Party, _),
+    third_party_action(Party, _, _).
+
+% Defense 5: Inconsistent Enforcement (strongest defense)
+valid_defense(RuleId, inconsistent_enforcement) :-
+    inconsistent_enforcement(RuleId).
+
+% Verdict is NOT_GUILTY if any valid defense exists
+verdict_for_rule(RuleId, not_guilty, Defense) :-
+    actus_reus(RuleId, _, _),
+    valid_defense(RuleId, Defense), !.
+
+% Verdict is GUILTY only if no defense applies
+verdict_for_rule(RuleId, guilty, no_defense) :-
+    actus_reus(RuleId, _, _),
+    \+ valid_defense(RuleId, _).
+```
+
+### 6.4 LLM-Extracted Facts (Prolog Format)
+
+The LLM extracts structured facts from natural language evidence:
+
+```prolog
+% Rules extracted from 1989 FIA regulations
+rule(article_56, 'Race distance completion', chicane_cut, disqualification).
+rule(appendix_j_2_1, 'Prohibition of outside assistance', outside_assistance, disqualification).
+rule(appendix_j_2_3, 'Marshal assistance for safety only', outside_assistance, disqualification).
+
+% Ambiguity in regulations (critical for defense)
+rule_ambiguity(appendix_j_2_3, 'Unclear if car may rejoin if engine restarts during safety move').
+
+% Evidence of alleged violations
+actus_reus(article_56, senna, 'Used escape road to rejoin after collision').
+actus_reus(appendix_j_2_3, senna, 'Engine restarted during marshal push').
+
+% Defense evidence
+force_majeure(senna, 'Collision with Prost was racing incident').
+no_advantage_gained(senna, 'Lost 30+ seconds for pit stop and wing replacement').
+third_party_action(senna, marshals, 'Initiated push to move car to safety').
+time_lost(senna, 30).
+
+% Precedents showing inconsistent enforcement
+precedent(imola_1989, chicane_cut, not_penalized, 1989).
+precedent(monaco_1988, chicane_cut, not_penalized, 1988).
+```
+
+---
+
+## 7. The Verdict
+
+After processing all evidence, regulations, and precedents, both agents delivered the same verdict through different reasoning approaches.
+
+### 7.1 Comparison: LLM-Only vs Neurosymbolic
+
+| Aspect | LLM-Only | Neurosymbolic |
+|--------|----------|---------------|
+| **Verdict** | NOT GUILTY | NOT GUILTY |
+| **Reasoning approach** | Natural language analysis | Prolog inference + NL explanation |
+| **Determinism** | May vary between runs | Always same result for same facts |
+| **Audit trail** | Textual reasoning | Prolog trace + textual |
+| **Defenses identified** | Ambiguity, inconsistent enforcement, no advantage | ambiguity, force_majeure, no_advantage, third_party, inconsistent_enforcement |
+| **Best for** | Nuanced cases requiring human-like judgment | Cases requiring strict consistency and auditability |
+
+### 7.2 Summary
 
 | Element | Finding |
 |---------|---------|
@@ -291,7 +404,7 @@ After processing all evidence, regulations, and precedents, the agent delivered 
 | **Penalty** | No penalty (disqualification overturned) |
 | **Key reasoning** | Regulatory ambiguity, inconsistent enforcement, no advantage gained |
 
-### 6.2 Analysis of Alleged Violations
+### 7.3 Analysis of Alleged Violations (LLM-Only Agent)
 
 **Article 56.2 - Race Distance:**
 > "The regulation speaks to *distance*, not *trajectory*. The escape road may add distance rather than reduce it... The escape road is a homologated feature of the FIA-approved circuit, designed for emergency use."
@@ -303,27 +416,61 @@ After processing all evidence, regulations, and precedents, the agent delivered 
 
 **Finding:** Safety-initiated marshal assistance that incidentally restarts an engine does not constitute prohibited outside assistance.
 
-### 6.3 Consistency Assessment
+### 7.4 Consistency Assessment
 
 The agent identified **INCONSISTENT** enforcement:
 
 > "The Imola 1989 precedent demonstrates that similar or clearer violations went unpunished in the same season... Voluntary chicane-cutting warranted no penalty while emergency escape road use warranted disqualification. This disparity constitutes selective enforcement."
 
-### 6.4 Proportionality
+### 7.5 Proportionality
 
 > "Disqualification is the maximum penalty. It should be reserved for clear, intentional violations conferring competitive advantage. This case presents ambiguous rule application, emergency circumstances, no competitive advantage (30+ seconds lost), marshal-initiated assistance, and inconsistent enforcement history."
 
-### 6.5 Dissenting Opinion
+### 7.6 Dissenting Opinion
 
 The agent acknowledged counter-arguments:
 
 > "A push did occur. Marshals physically moved Senna's car, and his engine restarted. The escape road was used. However, these arguments fail because the regulations acknowledge ambiguity, emergency circumstances distinguish this case, no advantage was gained, and inconsistent enforcement undermines strict application."
 
+### 7.7 Neurosymbolic Verdict (Prolog Trace)
+
+The neurosymbolic agent produces a deterministic verdict with a complete reasoning trace:
+
+```
+PROLOG REASONING RESULTS (DETERMINISTIC)
+═══════════════════════════════════════════════════════════════════════
+
+VERDICT: not_guilty
+
+DEFENSES FOUND:
+[defense(article_56, ambiguity),
+ defense(article_56, force_majeure),
+ defense(article_56, no_advantage),
+ defense(article_56, third_party),
+ defense(article_56, inconsistent_enforcement),
+ defense(appendix_j_2_3, ambiguity),
+ defense(appendix_j_2_3, force_majeure),
+ defense(appendix_j_2_3, no_advantage),
+ defense(appendix_j_2_3, third_party)]
+
+CONSISTENCY CHECK (Inconsistent Enforcement):
+[inconsistent(article_56)]
+
+FULL REASONING TRACE:
+Rules examined: [rule(article_56), rule(appendix_j_2_3)]
+Defenses found: 9 defenses across 2 rules
+Inconsistent enforcement detected: [inconsistent(article_56)]
+Verdicts: [verdict(article_56, not_guilty, ambiguity),
+           verdict(appendix_j_2_3, not_guilty, ambiguity)]
+```
+
+**Key insight**: The Prolog reasoner found **9 valid defenses** across the two alleged rule violations. With multiple defenses available, the verdict is deterministically NOT GUILTY. The same facts will **always** produce the same verdict.
+
 ---
 
-## 7. Generalization
+## 8. Generalization
 
-### 7.1 Adapting for Other Domains
+### 8.1 Adapting for Other Domains
 
 The Truth Resolution Agent can be adapted for:
 
@@ -334,14 +481,14 @@ The Truth Resolution Agent can be adapted for:
 | **Esports** | Tournament rules, cheating allegations, bracket disputes |
 | **Contract Disputes** | Agreement terms, breach definitions, damage calculations |
 
-### 7.2 Key Customization Points
+### 8.2 Key Customization Points
 
 1. **Regulations** - Replace with domain-specific rules
 2. **Evidence categories** - Adapt to available evidence types
 3. **Precedent database** - Build historical case repository
 4. **Judicial principles** - Adjust for domain conventions
 
-### 7.3 Limitations
+### 8.3 Limitations
 
 - **Cannot interview witnesses** - Relies on provided testimony
 - **No physical evidence examination** - Works with descriptions only
@@ -350,7 +497,7 @@ The Truth Resolution Agent can be adapted for:
 
 ---
 
-## 8. Conclusion
+## 9. Conclusion
 
 The Truth Resolution Agent demonstrates that structured AI reasoning can provide valuable judicial analysis for sports disputes. By encoding fundamental principles of fairness—strict legality, evidence-based reasoning, impartiality, proportionality, and consistency—the agent reached a verdict that addresses the historic injustice of the 1989 Japanese Grand Prix.
 
@@ -368,7 +515,7 @@ The agent's verdict aligns with the historical consensus among motorsport analys
 
 ---
 
-## 9. References
+## 10. References
 
 1. [1989 Japanese Grand Prix - Wikipedia](https://en.wikipedia.org/wiki/1989_Japanese_Grand_Prix)
 2. [32 years of controversial duel between Prost and Senna - Senna.com](https://www.senna.com/en/32-years-of-controversial-duel-between-prost-and-senna-at-japanese-gp/)
@@ -376,11 +523,13 @@ The agent's verdict aligns with the historical consensus among motorsport analys
 4. [The Controversial Chicane Penalty - Screen Rant](https://screenrant.com/senna-chicane-penalty-1989-formula-one-championship-disqualification/)
 5. [Flashback: The Prost/Senna collision - Motorsport.com](https://www.motorsport.com/f1/news/prost-senna-collision-suzuka-world-title/4561491/)
 6. [The Edge Agent Documentation](https://fabceolin.github.io/the_edge_agent/)
-7. [Truth Resolution Agent - GitHub](https://github.com/fabceolin/the_edge_agent/tree/main/examples/truth-resolution-agent.yaml)
+7. [Truth Resolution Agent (LLM-only) - GitHub](https://github.com/fabceolin/the_edge_agent/blob/main/examples/truth-resolution-agent.yaml)
+8. [Truth Resolution Agent (Neurosymbolic) - GitHub](https://github.com/fabceolin/the_edge_agent/blob/main/examples/truth-resolution-agent-neurosymbolic.yaml)
+9. [Suzuka 1989 Case File - GitHub](https://github.com/fabceolin/the_edge_agent/blob/main/examples/cases/suzuka-1989-senna-prost.yaml)
 
 ---
 
-## Appendix A: Running the Example
+## Appendix A: Running the Examples
 
 ```bash
 # Clone the repository
@@ -390,17 +539,35 @@ cd the_edge_agent
 # Install dependencies
 pip install -e python/[dev]
 
-# Run the Senna-Prost case
+# Run the LLM-only agent
 tea run examples/truth-resolution-agent.yaml \
+    --input @examples/cases/suzuka-1989-senna-prost.yaml -v
+
+# Run the Neurosymbolic agent (with Prolog reasoning)
+tea run examples/truth-resolution-agent-neurosymbolic.yaml \
     --input @examples/cases/suzuka-1989-senna-prost.yaml -v
 ```
 
-## Appendix B: Full Agent YAML
+## Appendix B: Agent YAML Files
 
-The complete agent definition is available at:
-`examples/truth-resolution-agent.yaml`
+| Agent | Description | GitHub Link |
+|-------|-------------|-------------|
+| LLM-Only | Pure language model reasoning | [`examples/truth-resolution-agent.yaml`](https://github.com/fabceolin/the_edge_agent/blob/main/examples/truth-resolution-agent.yaml) |
+| Neurosymbolic | LLM + Prolog deterministic reasoning | [`examples/truth-resolution-agent-neurosymbolic.yaml`](https://github.com/fabceolin/the_edge_agent/blob/main/examples/truth-resolution-agent-neurosymbolic.yaml) |
 
-## Appendix C: Full Case File
+## Appendix C: Case File
 
-The complete case file is available at:
-`examples/cases/suzuka-1989-senna-prost.yaml`
+The complete case file with regulations, evidence, precedents, and party arguments:
+
+[`examples/cases/suzuka-1989-senna-prost.yaml`](https://github.com/fabceolin/the_edge_agent/blob/main/examples/cases/suzuka-1989-senna-prost.yaml)
+
+## Appendix D: Choosing Between LLM-Only and Neurosymbolic
+
+| Use Case | Recommended Approach |
+|----------|---------------------|
+| Cases requiring strict auditability | **Neurosymbolic** - complete Prolog trace |
+| Cases with clear rule structure | **Neurosymbolic** - encode rules as Prolog |
+| Novel cases without precedent | **LLM-only** - better at reasoning by analogy |
+| Regulatory compliance | **Neurosymbolic** - deterministic, repeatable |
+| Nuanced factual disputes | **LLM-only** - better at weighing evidence |
+| High-stakes decisions | **Neurosymbolic** - explainable to stakeholders |
