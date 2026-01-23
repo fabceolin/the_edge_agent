@@ -1,0 +1,480 @@
+# Truth Resolution Agent - Neurosymbolic Version
+# Combines LLM for natural language understanding with Prolog for
+# deterministic, auditable judicial reasoning.
+#
+# Architecture:
+#   LLM: Extracts structured facts from natural language
+#   Prolog: Applies legal rules deterministically with full trace
+#   LLM: Generates human-readable verdict from Prolog justification
+#
+# Benefits over pure LLM approach:
+#   - Determinism: Same facts always produce same verdict
+#   - Auditability: Complete trace of which rules fired and why
+#   - Consistency: Automatically detects precedent inconsistencies
+#   - Transparency: Every conclusion traceable to specific rule
+#
+# Usage:
+#   tea run examples/truth-resolution-agent-neurosymbolic.yaml \
+#       --input @examples/cases/suzuka-1989-senna-prost.yaml -v
+
+name: truth-resolution-agent-neurosymbolic
+version: "1.0.0"
+description: |
+  Neurosymbolic judicial agent combining LLM for natural language
+  understanding and Prolog for deterministic, justifiable verdicts.
+
+state_schema:
+  # Case identification
+  case_id: str
+  case_title: str
+  date_of_incident: str
+  jurisdiction: str
+
+  # Raw inputs
+  raw_regulations: str
+  raw_evidence: str
+  raw_precedents: str
+  party_a_name: str
+  party_a_arguments: str
+  party_b_name: str
+  party_b_arguments: str
+
+  # Extracted Prolog facts
+  prolog_facts: str
+  llm_extraction: str
+
+  # Prolog reasoning results
+  verdict_result: str
+  defenses_found: str
+  consistency_check: str
+  reasoning_trace: str
+
+  # Final outputs
+  verdict: str
+  verdict_reasoning: str
+  penalty: str
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PHASE 1: LLM EXTRACTS STRUCTURED FACTS FROM ALL SOURCES
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: extract_facts
+    description: LLM converts regulations, evidence, and precedents to Prolog facts
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      messages:
+        - role: system
+          content: |
+            You are a legal fact extractor that converts case materials into Prolog facts.
+
+            OUTPUT FORMAT: Valid Prolog facts only, one per line, ending with period.
+            No comments, no markdown, no explanations.
+
+            ═══════════════════════════════════════════════════════════════════════════
+            PREDICATE SCHEMA (use EXACTLY these predicates)
+            ═══════════════════════════════════════════════════════════════════════════
+
+            % RULES (from regulations)
+            rule(RuleId, Description, Trigger, MaxPenalty).
+            % RuleId: atom like article_56, appendix_j_2
+            % Description: quoted string
+            % Trigger: atom like chicane_cut, outside_assistance
+            % MaxPenalty: atom like disqualification, time_penalty, reprimand
+
+            rule_ambiguity(RuleId, Reason).
+            % When regulation text is unclear or has interpretation notes
+
+            % EVIDENCE (from case facts)
+            actus_reus(RuleId, Party, ActDescription).
+            % The alleged act that might violate a rule
+            % Party: atom like senna, prost
+
+            undisputed_fact(FactId, Description).
+            disputed_fact(FactId, Description).
+
+            force_majeure(Party, Circumstance).
+            % Emergency circumstances beyond party's control
+
+            no_advantage_gained(Party, Evidence).
+            % Evidence that party did not benefit from alleged violation
+
+            third_party_action(Party, ThirdParty, Action).
+            % When a third party (e.g., marshals) took action
+
+            time_lost(Party, Seconds).
+            % Time penalty already suffered
+
+            % PRECEDENTS
+            precedent(CaseId, ViolationType, Outcome, Year).
+            % Outcome: atom penalized or not_penalized
+            % ViolationType: atom like chicane_cut, outside_assistance
+
+            ═══════════════════════════════════════════════════════════════════════════
+            EXTRACTION RULES
+            ═══════════════════════════════════════════════════════════════════════════
+
+            1. Use lowercase atoms with underscores: senna, article_56, chicane_cut
+            2. Quote strings with single quotes: 'Race distance completion'
+            3. Each fact on its own line, ending with period
+            4. Extract ALL relevant facts - more is better than fewer
+            5. If regulation mentions "interpretation note" → create rule_ambiguity fact
+            6. If same violation type appears in multiple precedents with different
+               outcomes → this indicates inconsistent enforcement (critical for defense)
+
+        - role: user
+          content: |
+            Extract Prolog facts from this case:
+
+            ════════════════════════════════════════════════════════════════════════════
+            CASE: {{ state.case_title }}
+            DATE: {{ state.date_of_incident }}
+            JURISDICTION: {{ state.jurisdiction }}
+            ACCUSED PARTY: senna
+            ════════════════════════════════════════════════════════════════════════════
+
+            REGULATIONS:
+            {{ state.raw_regulations }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            EVIDENCE:
+            {{ state.raw_evidence }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            PRECEDENTS:
+            {{ state.raw_precedents }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            DEFENSE ARGUMENTS ({{ state.party_a_name }}):
+            {{ state.party_a_arguments }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            PROSECUTION ARGUMENTS ({{ state.party_b_name }}):
+            {{ state.party_b_arguments }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            Output ONLY valid Prolog facts. No markdown, no explanations.
+    output:
+      llm_extraction: "{{ result.content }}"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PHASE 2: PARSE AND CLEAN PROLOG FACTS
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: parse_facts
+    description: Clean LLM output into valid Prolog
+    language: python
+    run: |
+      llm_response = state.get("llm_extraction", {})
+      content = llm_response.get("content", "") if isinstance(llm_response, dict) else str(llm_response)
+
+      # Remove markdown code blocks if present
+      if "```prolog" in content:
+        content = content.split("```prolog")[1].split("```")[0]
+      elif "```" in content:
+        content = content.split("```")[1].split("```")[0]
+
+      # Clean up: keep only lines that look like Prolog facts
+      lines = []
+      for line in content.strip().split('\n'):
+        line = line.strip()
+        # Skip empty lines and comments
+        if not line or line.startswith('%') or line.startswith('#'):
+          continue
+        # Must end with period and contain parentheses (predicate structure)
+        if line.endswith('.') and '(' in line and ')' in line:
+          lines.append(line)
+
+      prolog_facts = '\n'.join(lines)
+      return {"prolog_facts": prolog_facts}
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PHASE 3: PROLOG DETERMINISTIC REASONING
+  # ═══════════════════════════════════════════════════════════════════════════
+  #
+  # This is where the neurosymbolic magic happens:
+  # 1. Load extracted facts via tea_load_code/1
+  # 2. Apply judicial reasoning rules
+  # 3. Check for valid defenses
+  # 4. Detect inconsistent enforcement
+  # 5. Determine verdict based on logical inference
+  #
+  # KEY INSIGHT: The verdict is DETERMINISTIC - same facts always produce
+  # the same verdict, with a complete audit trail of which rules fired.
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: prolog_reasoning
+    description: Deterministic judicial reasoning via Prolog
+    language: prolog
+    run: |
+      % ═══════════════════════════════════════════════════════════════════════
+      % JUDICIAL REASONING KNOWLEDGE BASE
+      % ═══════════════════════════════════════════════════════════════════════
+
+      :- dynamic rule/4.
+      :- dynamic rule_ambiguity/2.
+      :- dynamic actus_reus/3.
+      :- dynamic undisputed_fact/2.
+      :- dynamic disputed_fact/2.
+      :- dynamic force_majeure/2.
+      :- dynamic no_advantage_gained/2.
+      :- dynamic third_party_action/3.
+      :- dynamic time_lost/2.
+      :- dynamic precedent/4.
+      :- dynamic defense_found/2.
+
+      % ─────────────────────────────────────────────────────────────────────────
+      % DEFENSE RULES
+      % ─────────────────────────────────────────────────────────────────────────
+
+      % Defense 1: Rule Ambiguity (principle of strict legality)
+      valid_defense(RuleId, ambiguity) :-
+          rule_ambiguity(RuleId, _).
+
+      % Defense 2: Force Majeure
+      valid_defense(RuleId, force_majeure) :-
+          actus_reus(RuleId, Party, _),
+          force_majeure(Party, _).
+
+      % Defense 3: No Advantage Gained (proportionality)
+      valid_defense(RuleId, no_advantage) :-
+          actus_reus(RuleId, Party, _),
+          no_advantage_gained(Party, _).
+
+      % Defense 4: Third Party Causation
+      valid_defense(RuleId, third_party) :-
+          actus_reus(RuleId, Party, _),
+          third_party_action(Party, _, _).
+
+      % Defense 5: Inconsistent Enforcement (strongest defense)
+      valid_defense(RuleId, inconsistent_enforcement) :-
+          inconsistent_enforcement(RuleId).
+
+      % ─────────────────────────────────────────────────────────────────────────
+      % INCONSISTENT ENFORCEMENT DETECTION
+      % ─────────────────────────────────────────────────────────────────────────
+
+      % Map rule IDs to violation types
+      rule_violation_type(article_56, chicane_cut).
+      rule_violation_type(article_56, escape_road_use).
+      rule_violation_type(appendix_j_2, outside_assistance).
+      rule_violation_type(appendix_j_2, push_start).
+      rule_violation_type(appendix_j_2_1, outside_assistance).
+      rule_violation_type(appendix_j_2_3, outside_assistance).
+
+      % Enforcement is inconsistent if same violation had different outcomes
+      inconsistent_enforcement(RuleId) :-
+          rule_violation_type(RuleId, ViolationType),
+          precedent(_, ViolationType, penalized, _),
+          precedent(_, ViolationType, not_penalized, _).
+
+      % Also inconsistent if any similar violation was not penalized
+      inconsistent_enforcement(RuleId) :-
+          rule_violation_type(RuleId, ViolationType),
+          precedent(_, ViolationType, not_penalized, _).
+
+      % ─────────────────────────────────────────────────────────────────────────
+      % VERDICT DETERMINATION
+      % ─────────────────────────────────────────────────────────────────────────
+
+      % Verdict is NOT_GUILTY if any valid defense exists
+      verdict_for_rule(RuleId, not_guilty, Defense) :-
+          actus_reus(RuleId, _, _),
+          valid_defense(RuleId, Defense),
+          !.
+
+      % Verdict is GUILTY only if no defense applies
+      verdict_for_rule(RuleId, guilty, no_defense) :-
+          actus_reus(RuleId, _, _),
+          \+ valid_defense(RuleId, _).
+
+      % ─────────────────────────────────────────────────────────────────────────
+      % MAIN EXECUTION
+      % ─────────────────────────────────────────────────────────────────────────
+
+      % Load facts from state
+      state(prolog_facts, FactsAtom),
+      (FactsAtom \= '' -> tea_load_code(FactsAtom) ; true),
+
+      % Find all potential violations (actus_reus facts)
+      findall(rule(R), actus_reus(R, _, _), RulesWithViolations),
+      sort(RulesWithViolations, UniqueRules),
+
+      % Find all defenses that apply
+      findall(defense(R, D), valid_defense(R, D), AllDefenses),
+
+      % Check consistency for each rule
+      findall(inconsistent(R), inconsistent_enforcement(R), Inconsistencies),
+
+      % Determine verdict for each rule
+      findall(verdict(R, V, Reason), verdict_for_rule(R, V, Reason), Verdicts),
+
+      % Overall verdict: NOT_GUILTY if ANY rule has valid defense
+      (member(verdict(_, not_guilty, _), Verdicts) ->
+          OverallVerdict = not_guilty
+      ;
+          OverallVerdict = guilty
+      ),
+
+      % Build reasoning trace
+      length(AllDefenses, DefenseCount),
+      length(Inconsistencies, InconsistentCount),
+      format(atom(Trace),
+        'Rules examined: ~w~nDefenses found: ~w~nInconsistent enforcement detected: ~w~nVerdicts: ~w',
+        [UniqueRules, AllDefenses, Inconsistencies, Verdicts]),
+
+      % Return results
+      return(verdict_result, OverallVerdict),
+      return(defenses_found, AllDefenses),
+      return(consistency_check, Inconsistencies),
+      return(reasoning_trace, Trace).
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PHASE 4: LLM GENERATES HUMAN-READABLE VERDICT
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  - name: generate_verdict
+    description: LLM converts Prolog results to formal verdict document
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      messages:
+        - role: system
+          content: |
+            You are a judicial officer writing the FORMAL VERDICT DOCUMENT.
+
+            Your verdict is based on DETERMINISTIC Prolog reasoning - the verdict
+            has already been computed. Your job is to explain it clearly.
+
+            CRITICAL: The Prolog verdict is FINAL. Do not override it.
+
+            Structure your verdict:
+
+            ═══════════════════════════════════════════════════════════════════════
+            FORMAL VERDICT DOCUMENT
+            ═══════════════════════════════════════════════════════════════════════
+
+            Case: [Title]
+            Date: [Date]
+            Jurisdiction: [Jurisdiction]
+
+            ───────────────────────────────────────────────────────────────────────
+            I. PROLOG REASONING RESULTS (DETERMINISTIC)
+            ───────────────────────────────────────────────────────────────────────
+
+            [Show the Prolog trace - which rules fired, which defenses applied]
+
+            ───────────────────────────────────────────────────────────────────────
+            II. DEFENSES ACCEPTED
+            ───────────────────────────────────────────────────────────────────────
+
+            [List each defense that the Prolog reasoner accepted, with explanation]
+
+            ───────────────────────────────────────────────────────────────────────
+            III. CONSISTENCY ANALYSIS
+            ───────────────────────────────────────────────────────────────────────
+
+            [Explain any inconsistent enforcement detected]
+
+            ───────────────────────────────────────────────────────────────────────
+            IV. VERDICT
+            ───────────────────────────────────────────────────────────────────────
+
+            # [GUILTY / NOT GUILTY]
+
+            ───────────────────────────────────────────────────────────────────────
+            V. REASONING
+            ───────────────────────────────────────────────────────────────────────
+
+            [Detailed explanation of why the verdict follows from the Prolog reasoning]
+
+            ───────────────────────────────────────────────────────────────────────
+            VI. PENALTY
+            ───────────────────────────────────────────────────────────────────────
+
+            [If guilty: proportionate penalty. If not guilty: "No penalty"]
+
+            ═══════════════════════════════════════════════════════════════════════
+
+            IMPORTANT: This is a NEUROSYMBOLIC verdict. The Prolog reasoning is
+            DETERMINISTIC - the same facts will ALWAYS produce the same verdict.
+
+        - role: user
+          content: |
+            CASE: {{ state.case_title }}
+            DATE: {{ state.date_of_incident }}
+            JURISDICTION: {{ state.jurisdiction }}
+
+            ════════════════════════════════════════════════════════════════════════════
+            PROLOG REASONING RESULTS (DETERMINISTIC - DO NOT OVERRIDE)
+            ════════════════════════════════════════════════════════════════════════════
+
+            VERDICT: {{ state.verdict_result }}
+
+            DEFENSES FOUND:
+            {{ state.defenses_found }}
+
+            CONSISTENCY CHECK (Inconsistent Enforcement):
+            {{ state.consistency_check }}
+
+            FULL REASONING TRACE:
+            {{ state.reasoning_trace }}
+
+            ════════════════════════════════════════════════════════════════════════════
+            EXTRACTED PROLOG FACTS (for reference)
+            ════════════════════════════════════════════════════════════════════════════
+
+            {{ state.prolog_facts }}
+
+            ════════════════════════════════════════════════════════════════════════════
+
+            Generate the formal verdict document explaining the Prolog reasoning.
+            The verdict ({{ state.verdict_result }}) is FINAL - explain why it is correct.
+    output:
+      verdict_reasoning: "{{ result.content }}"
+
+  - name: extract_summary
+    description: Extract verdict and penalty
+    language: python
+    run: |
+      verdict_result = state.get("verdict_result", "")
+      reasoning = state.get("verdict_reasoning", {})
+      content = reasoning.get("content", "") if isinstance(reasoning, dict) else str(reasoning)
+
+      # Determine verdict string
+      if verdict_result == "not_guilty" or "not_guilty" in str(verdict_result):
+        verdict = "NOT_GUILTY"
+        penalty = "No penalty - disqualification vacated"
+      else:
+        verdict = "GUILTY"
+        penalty = "Penalty as determined by stewards"
+
+      verdict_text = f"VERDICT: {verdict}\nPENALTY: {penalty}"
+
+      return {"verdict": verdict_text, "penalty": penalty}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EDGES - Sequential neurosymbolic flow
+# ═══════════════════════════════════════════════════════════════════════════════
+
+edges:
+  - from: __start__
+    to: extract_facts
+  - from: extract_facts
+    to: parse_facts
+  - from: parse_facts
+    to: prolog_reasoning
+  - from: prolog_reasoning
+    to: generate_verdict
+  - from: generate_verdict
+    to: extract_summary
+  - from: extract_summary
+    to: __end__

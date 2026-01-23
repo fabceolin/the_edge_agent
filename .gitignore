@@ -244,3 +244,5 @@ MARKETING_SUMMARY.txt
 README_PT.md
 !.github/workflows/                                                                                                                                                                                                                                                                                                                                                        
 !examples/workflows/
+.worktrees/
+docs/drafts/
