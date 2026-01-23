@@ -4,6 +4,9 @@ HTTP Response Actions for Early Termination.
 TEA-BUILTIN-015.5: Provides http.respond action for explicit HTTP response
 within workflow, enabling early termination with custom status/body/headers.
 
+TEA-ARCH-001: HTTPResponse class moved to exceptions module. Re-exported here
+for backward compatibility with existing imports.
+
 Example YAML:
     nodes:
       - name: unauthorized_response
@@ -20,56 +23,13 @@ Example YAML:
 import logging
 from typing import Any, Callable, Dict, Optional
 
+# TEA-ARCH-001: Import from canonical location and re-export for backward compatibility
+from the_edge_agent.exceptions import HTTPResponse
+
 logger = logging.getLogger(__name__)
 
-
-class HTTPResponse(Exception):
-    """
-    Special exception to signal early HTTP response termination.
-
-    When raised during graph execution, this exception signals that
-    the workflow should terminate immediately and return the specified
-    HTTP response. The stategraph or yaml_engine catches this exception
-    and converts it to a proper response.
-
-    Attributes:
-        status: HTTP status code (e.g., 200, 401, 500).
-        body: Response body (will be JSON-serialized if dict).
-        headers: Optional HTTP headers to include.
-        content_type: Content-Type header value.
-
-    Example:
-        >>> raise HTTPResponse(
-        ...     status=401,
-        ...     body={"error": "unauthorized"},
-        ...     headers={"WWW-Authenticate": "Bearer"}
-        ... )
-    """
-
-    def __init__(
-        self,
-        status: int = 200,
-        body: Any = None,
-        headers: Optional[Dict[str, str]] = None,
-        content_type: str = "application/json",
-    ):
-        self.status = status
-        self.body = body
-        self.headers = headers or {}
-        self.content_type = content_type
-        # Set Content-Type if not already in headers
-        if "Content-Type" not in self.headers:
-            self.headers["Content-Type"] = content_type
-        super().__init__(f"HTTP {status}")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation for response."""
-        return {
-            "status": self.status,
-            "body": self.body,
-            "headers": self.headers,
-            "content_type": self.content_type,
-        }
+# Re-export for backward compatibility (AC3)
+__all__ = ["HTTPResponse", "http_respond", "http_respond_sync", "register_actions"]
 
 
 async def http_respond(

@@ -2,6 +2,9 @@ from .stategraph import StateGraph, START, END
 from .yaml_engine import YAMLEngine
 from .checkpointers import MemoryCheckpointer
 
+# TEA-ARCH-001: Core exceptions (zero dependencies)
+from .exceptions import HTTPResponse
+
 # Parallel Execution Reliability (TD.13)
 from .parallel import (
     ParallelConfig,
@@ -95,6 +98,8 @@ __all__ = [
     "END",
     "YAMLEngine",
     "MemoryCheckpointer",
+    # TEA-ARCH-001: Core exceptions
+    "HTTPResponse",
     # Parallel Execution Reliability (TD.13)
     "ParallelConfig",
     "ParallelFlowResult",
