@@ -1,7 +1,9 @@
 # Story TEA-RALPHY-001.9: Integration Workflow Agent
 
 ## Status
-Ready for Review
+Deferred
+
+> **Note:** Superseded by [TEA-RALPHY-002](./TEA-RALPHY-002-minimal-ralphy.md) which takes a simpler two-command approach: `tea run dependency-analyzer.yaml | tea from dot - --tmux`.
 
 ## Epic Reference
 [TEA-RALPHY-001: Autonomous AI Coding Loop](./TEA-RALPHY-001-autonomous-coding-loop.md)

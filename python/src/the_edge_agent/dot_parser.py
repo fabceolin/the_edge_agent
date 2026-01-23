@@ -872,10 +872,14 @@ def _generate_subprocess_execution_code(
         command_template: Command template with {{ item }} placeholder
         timeout: Subprocess timeout in seconds (default: DEFAULT_SUBPROCESS_TIMEOUT)
     """
-    return f'''import subprocess
+    # Replace {{ item }} with __ITEM_PLACEHOLDER__ to avoid Jinja2 template processing
+    # The placeholder is then replaced with actual item value at runtime
+    safe_template = command_template.replace("{{ item }}", "__ITEM_PLACEHOLDER__")
+    escaped_template = safe_template.replace('"', '\\"')
+    return f"""import subprocess
 
 item = state.get("item", "")
-cmd = f"""{command_template}"""
+cmd = "{escaped_template}".replace("__ITEM_PLACEHOLDER__", item)
 
 try:
     result = subprocess.run(
@@ -904,7 +908,7 @@ except Exception as e:
         "item": item,
         "success": False,
         "error": str(e)
-    }}'''
+    }}"""
 
 
 def _generate_tmux_execution_code(
@@ -912,7 +916,10 @@ def _generate_tmux_execution_code(
 ) -> str:
     """Generate tmux-based execution code."""
     session = tmux_session or "tea-workflow"
-    return f'''import subprocess
+    # Replace {{ item }} with __ITEM_PLACEHOLDER__ to avoid Jinja2 template processing
+    safe_template = command_template.replace("{{ item }}", "__ITEM_PLACEHOLDER__")
+    escaped_template = safe_template.replace('"', '\\"')
+    return f"""import subprocess
 import time
 import re as _re
 
@@ -920,7 +927,7 @@ item = state.get("item", "")
 session = "{session}"
 # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
 window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
-cmd = f"""{command_template}"""
+cmd = "{escaped_template}".replace("__ITEM_PLACEHOLDER__", item)
 
 try:
     # Create or attach to tmux session
@@ -930,31 +937,62 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window and run command in one step (avoids race condition)
-    # Use double quotes for tmux argument to avoid nested single-quote conflicts
-    escaped_cmd = cmd.replace("'", "'\\''")
-    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
-    # Escape double quotes for the outer tmux argument wrapper
-    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
+    # Create new window first (empty)
     subprocess.run(
-        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
+        f"tmux new-window -t {{session}} -n {{window_name}}",
         shell=True,
         executable='/bin/bash'
     )
+
+    # Small delay for window to initialize
+    time.sleep(0.1)
+
+    # Use send-keys to type the command - this preserves quotes correctly
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
+    subprocess.run(
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
+        check=True
+    )
+
+    # Wait for the window to close (command completed)
+    # Poll every 2 seconds, timeout after 30 minutes
+    max_wait = 1800  # 30 minutes
+    poll_interval = 2
+    waited = 0
+    while waited < max_wait:
+        # Check if window still exists
+        result = subprocess.run(
+            f"tmux list-windows -t {{session}} 2>/dev/null | grep -q '{{window_name}}'",
+            shell=True,
+            executable='/bin/bash'
+        )
+        if result.returncode != 0:
+            # Window closed = command finished
+            break
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    if waited >= max_wait:
+        return {{
+            "item": item,
+            "success": False,
+            "error": f"Timeout waiting for command to complete after {{max_wait}}s"
+        }}
 
     return {{
         "item": item,
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command running in tmux window. Check tmux attach -t {session}"
+        "note": "Command completed in tmux window"
     }}
 except Exception as e:
     return {{
         "item": item,
         "success": False,
         "error": str(e)
-    }}'''
+    }}"""
 
 
 # TEA-TOOLS-002: Dispatch execution code generators for per-node commands
@@ -1059,17 +1097,49 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window and run command in one step (avoids race condition)
-    # Use double quotes for tmux argument to avoid nested single-quote conflicts
-    escaped_cmd = cmd.replace("'", "'\\''")
-    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
-    # Escape double quotes for the outer tmux argument wrapper
-    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
+    # Create new window first (empty)
     subprocess.run(
-        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
+        f"tmux new-window -t {{session}} -n {{window_name}}",
         shell=True,
         executable='/bin/bash'
     )
+
+    # Small delay for window to initialize
+    time.sleep(0.1)
+
+    # Use send-keys to type the command - this preserves quotes correctly
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
+    subprocess.run(
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
+        check=True
+    )
+
+    # Wait for the window to close (command completed)
+    # Poll every 2 seconds, timeout after 30 minutes
+    max_wait = 1800  # 30 minutes
+    poll_interval = 2
+    waited = 0
+    while waited < max_wait:
+        # Check if window still exists
+        result = subprocess.run(
+            f"tmux list-windows -t {{session}} 2>/dev/null | grep -q '{{window_name}}'",
+            shell=True,
+            executable='/bin/bash'
+        )
+        if result.returncode != 0:
+            # Window closed = command finished
+            break
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    if waited >= max_wait:
+        return {{
+            "item": item,
+            "command": cmd,
+            "success": False,
+            "error": f"Timeout waiting for command to complete after {{max_wait}}s"
+        }}
 
     return {{
         "item": item,
@@ -1077,7 +1147,7 @@ try:
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command running in tmux window. Check tmux attach -t {session}"
+        "note": "Command completed in tmux window"
     }}
 except Exception as e:
     return {{
@@ -1189,6 +1259,99 @@ def dot_to_yaml(
             all_labels.add(analyzed.node_labels.get(node_id, node_id))
 
         # Check for missing commands
+        missing = all_labels - set(analyzed.node_commands.keys())
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            raise ValueError(
+                f"--use-node-commands requires ALL nodes to have command attribute. "
+                f"Missing commands for: {missing_list}"
+            )
+
+    # Generate YAML
+    yaml_content = generate_yaml(
+        analyzed=analyzed,
+        command_template=command_template,
+        max_concurrency=max_concurrency,
+        workflow_name=workflow_name,
+        use_tmux=use_tmux,
+        tmux_session=tmux_session,
+        use_node_commands=use_node_commands,
+        tea_executable=tea_executable,
+        subprocess_timeout=subprocess_timeout,
+    )
+
+    # Optionally validate
+    if validate:
+        _validate_yaml(yaml_content)
+
+    # Optionally write to file
+    if output_path:
+        Path(output_path).write_text(yaml_content)
+
+    return yaml_content
+
+
+def dot_to_yaml_from_string(
+    dot_content: str,
+    command_template: str,
+    output_path: Optional[str] = None,
+    max_concurrency: int = 3,
+    workflow_name: Optional[str] = None,
+    use_tmux: bool = False,
+    tmux_session: Optional[str] = None,
+    validate: bool = False,
+    use_node_commands: bool = False,
+    allow_cycles: bool = False,
+    tea_executable: Optional[str] = None,
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
+) -> str:
+    """
+    Convert DOT content string to TEA YAML workflow.
+
+    TEA-RALPHY-002.2: Same as dot_to_yaml but accepts string content instead of file path.
+    Useful for piping DOT content from another command.
+
+    Args:
+        dot_content: DOT format string
+        command_template: Command template with {{ item }} placeholder
+        output_path: Optional path to write YAML output
+        max_concurrency: Maximum parallel executions (default: 3)
+        workflow_name: Name for the workflow (default: "stdin-workflow")
+        use_tmux: Generate tmux-based execution (default: False)
+        tmux_session: Tmux session name (required if use_tmux is True)
+        validate: Validate generated YAML before returning
+        use_node_commands: Use per-node command attribute from DOT
+        allow_cycles: Allow cycles in the graph (for feedback loops)
+        tea_executable: Override "tea" in commands with this executable name
+        subprocess_timeout: Timeout for subprocess execution in seconds
+
+    Returns:
+        Generated YAML string
+
+    Raises:
+        DotParseError: If DOT parsing fails
+        CircularDependencyError: If circular dependencies detected (unless allow_cycles=True)
+        ValueError: If validation fails or --use-node-commands without any commands
+    """
+    # Parse DOT string
+    parsed = parse_dot_string(
+        dot_content, default_name=workflow_name or "stdin-workflow"
+    )
+
+    # Analyze graph structure
+    analyzed = analyze_graph(parsed, allow_cycles=allow_cycles)
+
+    # Validate commands if needed
+    if use_node_commands:
+        all_labels = set()
+        for phase in analyzed.phases:
+            all_labels.update(phase.items)
+        for node_id in analyzed.standalone_nodes:
+            node = parsed.nodes.get(node_id)
+            if node and node.shape in ("ellipse", "circle", "point", "doublecircle"):
+                continue
+            all_labels.add(analyzed.node_labels.get(node_id, node_id))
+
         missing = all_labels - set(analyzed.node_commands.keys())
         if missing:
             missing_list = ", ".join(sorted(missing))

@@ -1,6 +1,7 @@
 [package]
 name = "the_edge_agent"
-version = "0.9.75"
+version = "0.9.79"
+
 edition = "2021"
 authors = ["The Edge Agent Contributors"]
 description = "Lightweight state graph workflow engine for edge computing"
@@ -107,6 +108,8 @@ reasoning = ["llm"]  # Reasoning techniques (TEA-AGENT-001.4-rust): CoT, ReAct, 
 planning = []  # Planning primitives (TEA-AGENT-001.3-rust): decompose, execute, replan, status
 a2a = ["dep:dashmap", "dep:bincode"]  # Inter-agent communication (TEA-AGENT-001.5-rust)
 markdown = ["dep:md-parser"]  # Markdown parsing action (TEA-RALPHY-001.2)
+game = []  # Game engine module (TEA-GAME-001.1)
+game-duckdb = ["game", "dep:duckdb"]  # Game with DuckDB persistence (TEA-GAME-001.2, TEA-GAME-001.3)
 prolog = ["dep:swipl"]
 scryer = ["dep:scryer-prolog"]  # Pure Rust Prolog (TEA-RELEASE-005.1)
 ltm-duckdb = ["dep:duckdb"]

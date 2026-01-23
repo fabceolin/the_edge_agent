@@ -1678,7 +1678,9 @@ app.add_typer(from_app, name="from")
 
 @from_app.command("dot")
 def from_dot(
-    file: Path = typer.Argument(..., help="Path to DOT/Graphviz file"),
+    file: str = typer.Argument(
+        ..., help="Path to DOT/Graphviz file, or '-' to read from stdin"
+    ),
     command: Optional[str] = typer.Option(
         None,
         "--command",
@@ -1726,6 +1728,20 @@ def from_dot(
         "-t",
         help="Subprocess timeout in seconds (default: 1800 = 30 minutes)",
     ),
+    workflow: Optional[Path] = typer.Option(
+        None,
+        "--workflow",
+        "-w",
+        help="Workflow file to run for each node. Node labels become the 'source' input. "
+        'Generates command: tea run <workflow> --input \'{"source": "<node_label>", ...}\'',
+    ),
+    workflow_input: Optional[str] = typer.Option(
+        None,
+        "--workflow-input",
+        "-i",
+        help="Additional JSON input to merge with source for --workflow mode. "
+        'Example: \'{"mode": "sequential", "use_worktrees": false}\'',
+    ),
 ):
     """
     Convert DOT/Graphviz diagram to TEA YAML workflow.
@@ -1749,22 +1765,90 @@ def from_dot(
 
         # With tmux
         tea from dot workflow.dot --tmux -s my-session
+
+        # Read from stdin (TEA-RALPHY-002.2)
+        tea run analyzer.yaml | tea from dot - --use-node-commands --tmux
+
+        # Save DOT to file, then execute
+        tea run analyzer.yaml > workflow.dot
+        tea from dot workflow.dot --use-node-commands --tmux
     """
     from the_edge_agent.dot_parser import (
         dot_to_yaml,
+        dot_to_yaml_from_string,
         DotParseError,
         CircularDependencyError,
     )
 
-    # Validate file exists
-    if not file.exists():
-        typer.echo(f"Error: DOT file not found: {file}", err=True)
-        raise typer.Exit(1)
+    # TEA-RALPHY-002.2: Handle stdin with '-'
+    stdin_content = None
+    if file == "-":
+        import sys
+
+        if sys.stdin.isatty():
+            typer.echo(
+                "Error: No input from stdin. Pipe DOT content or use a file path.\n"
+                "Example: tea run analyzer.yaml | tea from dot - --use-node-commands --tmux",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        stdin_content = sys.stdin.read()
+
+        if not stdin_content.strip():
+            typer.echo("Error: Empty input from stdin.", err=True)
+            raise typer.Exit(1)
+    else:
+        # Validate file exists
+        file_path = Path(file)
+        if not file_path.exists():
+            typer.echo(f"Error: DOT file not found: {file}", err=True)
+            raise typer.Exit(1)
 
     # Validate tmux options
     if session and not tmux:
         typer.echo("Error: --session requires --tmux flag", err=True)
         raise typer.Exit(1)
+
+    # Handle workflow mode - generates command template automatically
+    if workflow:
+        if command:
+            typer.echo(
+                "Error: --workflow and --command are mutually exclusive.", err=True
+            )
+            raise typer.Exit(1)
+        if not workflow.exists():
+            typer.echo(f"Error: Workflow file not found: {workflow}", err=True)
+            raise typer.Exit(1)
+
+        import json
+        import os
+
+        cwd = os.getcwd()
+        workflow_abs = workflow.resolve()
+
+        venv_path = os.path.join(cwd, "python", ".venv", "bin", "activate")
+        if not os.path.exists(venv_path):
+            venv_path = os.path.join(cwd, ".venv", "bin", "activate")
+
+        extra_input = {}
+        if workflow_input:
+            try:
+                extra_input = json.loads(workflow_input)
+            except json.JSONDecodeError as e:
+                typer.echo(f"Error: Invalid JSON in --workflow-input: {e}", err=True)
+                raise typer.Exit(1)
+
+        input_dict = {"source": "{{ item }}", **extra_input}
+        input_json = json.dumps(input_dict)
+
+        command = (
+            f"cd {cwd} && source {venv_path} && "
+            f"tea run {workflow_abs} --input-timeout {timeout} --input '{input_json}'"
+        )
+        use_node_commands = False
+        typer.echo(f"Workflow mode: Using {workflow.name} for each node")
+        typer.echo(f"Generated command template: {command[:100]}...")
 
     # TEA-TOOLS-002: Validate command mode (mutually exclusive)
     if use_node_commands and command:
@@ -1783,20 +1867,37 @@ def from_dot(
         raise typer.Exit(1)
 
     try:
-        yaml_content = dot_to_yaml(
-            file_path=str(file),
-            command_template=command or "",
-            output_path=str(output) if output else None,
-            max_concurrency=max_concurrency,
-            workflow_name=name,
-            use_tmux=tmux,
-            tmux_session=session,
-            validate=validate_output,
-            use_node_commands=use_node_commands,
-            allow_cycles=allow_cycles,
-            tea_executable=tea_executable,
-            subprocess_timeout=timeout,
-        )
+        # TEA-RALPHY-002.2: Use stdin content or file path
+        if stdin_content:
+            yaml_content = dot_to_yaml_from_string(
+                dot_content=stdin_content,
+                command_template=command or "",
+                output_path=str(output) if output else None,
+                max_concurrency=max_concurrency,
+                workflow_name=name or "stdin-workflow",
+                use_tmux=tmux,
+                tmux_session=session,
+                validate=validate_output,
+                use_node_commands=use_node_commands,
+                allow_cycles=allow_cycles,
+                tea_executable=tea_executable,
+                subprocess_timeout=timeout,
+            )
+        else:
+            yaml_content = dot_to_yaml(
+                file_path=str(file),
+                command_template=command or "",
+                output_path=str(output) if output else None,
+                max_concurrency=max_concurrency,
+                workflow_name=name,
+                use_tmux=tmux,
+                tmux_session=session,
+                validate=validate_output,
+                use_node_commands=use_node_commands,
+                allow_cycles=allow_cycles,
+                tea_executable=tea_executable,
+                subprocess_timeout=timeout,
+            )
 
         if output:
             typer.echo(f"Generated YAML written to {output}", err=True)

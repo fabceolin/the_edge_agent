@@ -1,7 +1,9 @@
 # Epic TEA-RALPHY-001: Autonomous AI Coding Loop
 
 ## Status
-Draft
+Deferred
+
+> **Note:** Superseded by [TEA-RALPHY-002: Minimal Ralphy](./TEA-RALPHY-002-minimal-ralphy.md) which takes a simpler, composable approach using existing TEA infrastructure.
 
 ## Epic Goal
 

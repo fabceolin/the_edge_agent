@@ -238,6 +238,47 @@ function restoreGraphPanelState() {
 // Make toggleGraphPanel available globally for onclick handler
 window.toggleGraphPanel = toggleGraphPanel;
 
+// ============================================================================
+// Tab Navigation
+// ============================================================================
+
+/**
+ * Initialize tab navigation
+ */
+function initTabNavigation() {
+  const tabs = document.querySelectorAll('.tab');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetTab = tab.dataset.tab;
+
+      // Update active tab
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      // Show target content, hide others
+      tabContents.forEach(content => {
+        if (content.id === `${targetTab}-tab`) {
+          content.classList.remove('hidden');
+        } else {
+          content.classList.add('hidden');
+        }
+      });
+
+      // Notify game module when game tab is selected
+      if (targetTab === 'game' && window.gameUI) {
+        window.gameUI.onTabActivated();
+      }
+
+      console.log(`[TEA-DEMO] Switched to ${targetTab} tab`);
+    });
+  });
+}
+
+// Make tab navigation available globally
+window.initTabNavigation = initTabNavigation;
+
 // Import from the bundled package
 import {
   initLlm,
@@ -1517,9 +1558,10 @@ try {
   versionEl.textContent = '';
 }
 
-// Initialize editors first, then example selector, then LLM
+// Initialize editors first, then example selector, tabs, then LLM
 initEditors();
 populateExampleSelector();
+initTabNavigation();
 initializeLlm();
 
 // Restore graph panel state from localStorage

@@ -75,6 +75,12 @@
             </a>
         </header>
 
+        <!-- Tab Bar -->
+        <nav class="tab-bar">
+            <button class="tab active" data-tab="workflow">Workflow</button>
+            <button class="tab" data-tab="game">Game</button>
+        </nav>
+
         <div id="status-bar">
             <span id="status">Initializing...</span>
             <span id="threading-status"></span>
@@ -89,47 +95,136 @@
         </div>
 
         <main>
-            <!-- Example Selector -->
-            <div class="example-selector-container">
-                <label for="example-selector">Example Workflow:</label>
-                <select id="example-selector"></select>
-                <span id="example-description" class="example-description"></span>
+            <!-- Workflow Tab Content -->
+            <div id="workflow-tab" class="tab-content active">
+                <!-- Example Selector -->
+                <div class="example-selector-container">
+                    <label for="example-selector">Example Workflow:</label>
+                    <select id="example-selector"></select>
+                    <span id="example-description" class="example-description"></span>
+                </div>
+
+                <!-- Workflow Content -->
+                    <!-- YAML Workflow -->
+                    <div class="yaml-container">
+                        <div class="yaml-editor">
+                            <label>YAML Workflow:</label>
+                            <div id="yaml-editor" class="editor-container"></div>
+                        </div>
+                        <div class="yaml-state">
+                            <label>Initial State (YAML):</label>
+                            <div id="state-editor" class="state-editor-container"></div>
+                        </div>
+                    </div>
+                    <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
+
+                    <!-- Graph Panel -->
+                    <div id="graph-panel" class="collapsible-panel">
+                        <div class="panel-header" onclick="toggleGraphPanel()">
+                            <span class="panel-icon">▶</span>
+                            <span class="panel-title">Agent Graph</span>
+                            <span id="graph-status" class="status-badge"></span>
+                        </div>
+                        <div class="panel-content" id="graph-content">
+                            <div id="mermaid-container"></div>
+                            <div id="graph-error" class="error-message hidden">
+                                <span class="error-icon">⚠</span>
+                                <span>Graph unavailable</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="yaml-output" class="hidden">
+                        <h3>Output:</h3>
+                        <div id="output-editor" class="output-editor-container"></div>
+                    </div>
             </div>
 
-            <!-- Workflow Content -->
-                <!-- YAML Workflow -->
-                <div class="yaml-container">
-                    <div class="yaml-editor">
-                        <label>YAML Workflow:</label>
-                        <div id="yaml-editor" class="editor-container"></div>
+            <!-- Game Tab Content -->
+            <div id="game-tab" class="tab-content hidden">
+                <!-- Welcome Screen -->
+                <div id="game-welcome" class="game-screen">
+                    <h2>Know Your Model</h2>
+                    <p class="game-instructions">
+                        Can you guess which word the AI chose?<br>
+                        You'll see a phrase with a blank and 5 word choices.<br>
+                        One word is from the AI - find it!
+                    </p>
+                    <div class="username-display">
+                        Playing as: <span id="username">Loading...</span>
                     </div>
-                    <div class="yaml-state">
-                        <label>Initial State (YAML):</label>
-                        <div id="state-editor" class="state-editor-container"></div>
+                    <button id="start-game-btn" class="primary-btn">Start Game</button>
+                </div>
+
+                <!-- Game Screen -->
+                <div id="game-playing" class="game-screen hidden">
+                    <div class="game-stats-bar">
+                        <span>Round: <strong id="round-num">1</strong></span>
+                        <span>Score: <strong id="current-score">0.00</strong></span>
+                        <span>Accuracy: <strong id="accuracy">0%</strong></span>
+                    </div>
+
+                    <div class="difficulty-bar">
+                        <label>Difficulty:</label>
+                        <div class="progress-bar">
+                            <div id="difficulty-fill" class="progress-fill" style="width: 50%"></div>
+                        </div>
+                        <span id="difficulty-label">Medium</span>
+                    </div>
+
+                    <div class="phrase-container">
+                        <p id="phrase-text">The <span class="blank">___</span> shines brightly.</p>
+                    </div>
+
+                    <div id="word-choices" class="word-choices">
+                        <!-- Populated dynamically -->
+                    </div>
+
+                    <div id="loading-indicator" class="loading-indicator hidden">
+                        <div class="spinner"></div>
+                        <span id="loading-text">Generating question...</span>
+                    </div>
+
+                    <button id="give-up-btn" class="secondary-btn">Give Up & Submit to Leaderboard</button>
+                </div>
+
+                <!-- Leaderboard Screen -->
+                <div id="game-leaderboard" class="game-screen hidden">
+                    <h2>Leaderboard</h2>
+                    <div id="your-score-summary" class="your-score-summary hidden">
+                        <p>Your score: <strong id="final-score">0.00</strong> | Accuracy: <strong id="final-accuracy">0%</strong> | Rounds: <strong id="final-rounds">0</strong></p>
+                    </div>
+                    <table class="leaderboard-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Player</th>
+                                <th>Score</th>
+                                <th>Accuracy</th>
+                                <th>Rounds</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                    <div class="leaderboard-actions">
+                        <button id="play-again-btn" class="primary-btn">Play Again</button>
                     </div>
                 </div>
-                <button id="run-yaml-btn" disabled>Run YAML Workflow</button>
 
-                <!-- Graph Panel -->
-                <div id="graph-panel" class="collapsible-panel">
-                    <div class="panel-header" onclick="toggleGraphPanel()">
-                        <span class="panel-icon">▶</span>
-                        <span class="panel-title">Agent Graph</span>
-                        <span id="graph-status" class="status-badge"></span>
-                    </div>
-                    <div class="panel-content" id="graph-content">
-                        <div id="mermaid-container"></div>
-                        <div id="graph-error" class="error-message hidden">
-                            <span class="error-icon">⚠</span>
-                            <span>Graph unavailable</span>
+                <!-- Error Modal -->
+                <div id="error-modal" class="error-modal hidden">
+                    <div class="error-modal-content">
+                        <h3>Something went wrong</h3>
+                        <p id="error-message">An error occurred. Please try again.</p>
+                        <div class="error-modal-actions">
+                            <button id="error-retry-btn" class="primary-btn">Retry</button>
+                            <button id="error-back-btn" class="secondary-btn">Return to Welcome</button>
                         </div>
                     </div>
                 </div>
-
-                <div id="yaml-output" class="hidden">
-                    <h3>Output:</h3>
-                    <div id="output-editor" class="output-editor-container"></div>
-                </div>
+            </div>
         </main>
 
         <footer>
@@ -140,5 +235,6 @@
     </div>
 
     <script type="module" src="app.js"></script>
+    <script type="module" src="game.js"></script>
 </body>
 </html>

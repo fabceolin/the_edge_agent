@@ -8,14 +8,28 @@
 #
 # Model: google/gemma-3-4b-it
 # Source: Ollama Registry (https://ollama.com/library/gemma3)
+#
+# OPTIMIZATION: Uses cargo-chef for efficient Docker layer caching.
+# Dependency layers are cached separately from source code changes.
 
 # =============================================================================
-# Stage 1: Builder - Compile Rust binary with LLM support
+# Stage 1: Chef - Prepare dependency recipe
 # =============================================================================
-# NOTE: Model is downloaded directly in final stage to avoid layer duplication
-# that would require ~6.6GB during build (3.3GB in downloader + 3.3GB in final)
+FROM rust:latest AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /build
+
 # =============================================================================
-FROM rust:latest AS builder
+# Stage 2: Planner - Analyze dependencies
+# =============================================================================
+FROM chef AS planner
+COPY rust/ ./
+RUN cargo chef prepare --recipe-path recipe.json
+
+# =============================================================================
+# Stage 3: Builder - Build dependencies (cached) then source
+# =============================================================================
+FROM chef AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,9 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 
-COPY rust/ ./
+# Build dependencies first (this layer is cached if dependencies don't change)
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json \
+    --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer,llm-local"
 
-# Build with all features + scryer + llm-local for embedded inference
+# Now copy source and build (only this layer rebuilds on code changes)
+COPY rust/ ./
 RUN cargo build --release --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer,llm-local"
 
 RUN ls -lh target/release/tea && \

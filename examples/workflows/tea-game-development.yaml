@@ -1,0 +1,711 @@
+# TEA Workflow generated from DOT diagram
+# Source: tea-game-development
+# Command template: 
+# Command mode: per-node
+# Max concurrency: 3
+# Execution mode: tmux
+#
+# Usage: tea run tea-game-development.yaml
+
+name: tea-game-development
+description: Generated from DOT diagram
+nodes:
+- name: setup
+  run: |-
+    # Initialize phase items for parallel execution
+    state["phase1_items"] = ['TEA-GAME-001.1', 'TEA-GAME-001.4']
+    state["phase2_items"] = ['TEA-GAME-001.2']
+    state["phase3_items"] = ['TEA-GAME-001.3']
+    state["phase4_items"] = ['TEA-GAME-001.5']
+    state["phase5_items"] = ['TEA-GAME-001.6']
+    state["phase6_items"] = ['TEA-GAME-001.7', 'TEA-GAME-001.8']
+
+    # TEA-TOOLS-002: Per-node command mappings
+    state["_phase1_commands"] = {
+        'TEA-GAME-001.1': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.1"}\'',
+        'TEA-GAME-001.4': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.4"}\''
+    }
+    state["_phase2_commands"] = {
+        'TEA-GAME-001.2': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.2"}\''
+    }
+    state["_phase3_commands"] = {
+        'TEA-GAME-001.3': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.3"}\''
+    }
+    state["_phase4_commands"] = {
+        'TEA-GAME-001.5': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.5"}\''
+    }
+    state["_phase5_commands"] = {
+        'TEA-GAME-001.6': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.6"}\''
+    }
+    state["_phase6_commands"] = {
+        'TEA-GAME-001.7': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.7"}\'',
+        'TEA-GAME-001.8': 'python -m the_edge_agent.cli run /home/fabricio/src/spa-base/the_edge_agent/examples/workflows/bmad-story-development.yaml -i \'{"arg": "TEA-GAME-001.8"}\''
+    }
+    return state
+- name: phase-1_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase1_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-1_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase1_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-1_results
+  _render_items:
+  - TEA-GAME-001.1
+  - TEA-GAME-001.4
+- name: phase-1_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-1 parallel execution
+    results = state.get("phase-1_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-1_complete"] = True
+    state["phase-1_success_count"] = success_count
+    state["phase-1_total"] = len(results)
+    return state
+- name: phase-2_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase2_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-2_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase2_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-2_results
+  _render_items:
+  - TEA-GAME-001.2
+- name: phase-2_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-2 parallel execution
+    results = state.get("phase-2_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-2_complete"] = True
+    state["phase-2_success_count"] = success_count
+    state["phase-2_total"] = len(results)
+    return state
+- name: phase-3_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase3_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-3_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase3_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-3_results
+  _render_items:
+  - TEA-GAME-001.3
+- name: phase-3_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-3 parallel execution
+    results = state.get("phase-3_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-3_complete"] = True
+    state["phase-3_success_count"] = success_count
+    state["phase-3_total"] = len(results)
+    return state
+- name: phase-4_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase4_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-4_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase4_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-4_results
+  _render_items:
+  - TEA-GAME-001.5
+- name: phase-4_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-4 parallel execution
+    results = state.get("phase-4_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-4_complete"] = True
+    state["phase-4_success_count"] = success_count
+    state["phase-4_total"] = len(results)
+    return state
+- name: phase-5_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase5_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-5_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase5_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-5_results
+  _render_items:
+  - TEA-GAME-001.6
+- name: phase-5_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-5 parallel execution
+    results = state.get("phase-5_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-5_complete"] = True
+    state["phase-5_success_count"] = success_count
+    state["phase-5_total"] = len(results)
+    return state
+- name: phase-6_parallel
+  type: dynamic_parallel
+  items: '{{ state.phase6_items }}'
+  item_var: item
+  max_concurrency: 3
+  fan_in: phase-6_collect
+  steps:
+  - name: execute
+    run: |-
+      import subprocess
+      import time
+
+      item = state.get("item", "")
+      commands = state.get("_phase6_commands", {})
+      cmd = commands.get(item)
+
+      if not cmd:
+          return {
+              "item": item,
+              "success": False,
+              "error": f"No command defined for item '{item}'"
+          }
+
+      session = "tea-game"
+      # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
+      import re as _re
+      window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
+
+      try:
+          # Create or attach to tmux session
+          subprocess.run(
+              f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Create new window first (empty)
+          subprocess.run(
+              f"tmux new-window -t {session} -n {window_name}",
+              shell=True,
+              executable='/bin/bash'
+          )
+
+          # Small delay for window to initialize
+          time.sleep(0.1)
+
+          # Use send-keys to type the command - this preserves quotes correctly
+          # Add '; exit' so window closes when command completes
+          full_cmd = f"{cmd}; exit"
+          subprocess.run(
+              ["tmux", "send-keys", "-t", f"{session}:{window_name}", full_cmd, "Enter"],
+              check=True
+          )
+
+          # Wait for the window to close (command completed)
+          # Poll every 2 seconds, timeout after 30 minutes
+          max_wait = 1800  # 30 minutes
+          poll_interval = 2
+          waited = 0
+          while waited < max_wait:
+              # Check if window still exists
+              result = subprocess.run(
+                  f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                  shell=True,
+                  executable='/bin/bash'
+              )
+              if result.returncode != 0:
+                  # Window closed = command finished
+                  break
+              time.sleep(poll_interval)
+              waited += poll_interval
+
+          if waited >= max_wait:
+              return {
+                  "item": item,
+                  "command": cmd,
+                  "success": False,
+                  "error": f"Timeout waiting for command to complete after {max_wait}s"
+              }
+
+          return {
+              "item": item,
+              "command": cmd,
+              "success": True,
+              "tmux_session": session,
+              "tmux_window": window_name,
+              "note": "Command completed in tmux window"
+          }
+      except Exception as e:
+          return {
+              "item": item,
+              "command": cmd,
+              "success": False,
+              "error": str(e)
+          }
+  output: phase-6_results
+  _render_items:
+  - TEA-GAME-001.7
+  - TEA-GAME-001.8
+- name: phase-6_collect
+  fan_in: true
+  run: |-
+    # Collect results from phase-6 parallel execution
+    results = state.get("phase-6_results", [])
+    success_count = sum(1 for r in results if r.get("success", False))
+    state["phase-6_complete"] = True
+    state["phase-6_success_count"] = success_count
+    state["phase-6_total"] = len(results)
+    return state
+edges:
+- from: __start__
+  to: setup
+- from: setup
+  to: phase-1_parallel
+- from: phase-1_collect
+  to: phase-2_parallel
+- from: phase-2_collect
+  to: phase-3_parallel
+- from: phase-3_collect
+  to: phase-4_parallel
+- from: phase-4_collect
+  to: phase-5_parallel
+- from: phase-5_collect
+  to: phase-6_parallel
+- from: phase-6_collect
+  to: __end__
