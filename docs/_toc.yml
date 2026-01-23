@@ -146,6 +146,8 @@ parts:
         title: TEA Release Variants Guide
       - file: articles/runtime-backend-selection
         title: Runtime Backend Selection for Cloud Functions
+      - file: articles/truth-resolution-agent
+        title: "Truth Resolution Agent: Senna 1989 Case Study"
 
   - caption: Contributing
     chapters:

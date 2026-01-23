@@ -1,0 +1,373 @@
+# Test Case: Senna vs Prost - 1989 Japanese Grand Prix
+#
+# This file contains the structured input for the Truth Resolution Agent
+# to adjudicate the famous Suzuka 1989 incident.
+#
+# Usage:
+#   tea run examples/truth-resolution-agent.yaml --input examples/cases/suzuka-1989-senna-prost.yaml
+
+case_id: "FIA-1989-JPN-001"
+case_title: "Senna vs Race Stewards - 1989 Japanese Grand Prix Disqualification"
+date_of_incident: "1989-10-22"
+jurisdiction: "FIA (Fédération Internationale de l'Automobile)"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PARTIES
+# ═══════════════════════════════════════════════════════════════════════════
+
+party_a_name: "Ayrton Senna (McLaren-Honda)"
+party_a_arguments: |
+  DEFENSE ARGUMENTS FOR AYRTON SENNA:
+
+  1. FORCE MAJEURE
+     The collision was not solely caused by Senna. Prost turned in earlier than
+     on previous laps, deliberately closing the door on a legitimate overtaking
+     attempt. The collision was a racing incident or, at worst, shared fault.
+
+  2. NO ADVANTAGE GAINED
+     Senna lost approximately 30 seconds due to:
+     - The collision itself and wheel interlocking
+     - Waiting for marshals to push the car
+     - Navigating through the escape road bollards
+     - Mandatory pit stop to replace damaged front wing
+     The "chicane cut" provided ZERO competitive advantage.
+
+  3. INCONSISTENT ENFORCEMENT (SELECTIVE PROSECUTION)
+     At Imola 1989 (San Marino GP), multiple drivers cut the Variante Bassa
+     chicane without penalty, including Alain Prost himself, who finished
+     second. If the rule was not enforced at Imola, it cannot be selectively
+     enforced at Suzuka against Senna alone.
+
+  4. AMBIGUITY IN REGULATIONS
+     Article 56 speaks of "completing the race distance" but does not explicitly
+     address emergency situations where a car is pushed by marshals for safety.
+     The escape road exists precisely for situations where cars cannot navigate
+     the chicane. Senna used it as designed.
+
+  5. MARSHAL INTERVENTION
+     The marshals pushed Senna's car. Under Appendix J, marshals may assist
+     to move a car to safety. The restart of the engine was incidental to
+     the safety procedure. Senna cannot be penalized for the marshals'
+     actions in performing their safety duties.
+
+  6. PROPORTIONALITY
+     Even if a technical violation occurred, disqualification is disproportionate
+     when no advantage was gained and enforcement has been inconsistent.
+     A time penalty or reprimand would be more appropriate.
+
+party_b_name: "FIA Race Stewards / FISA"
+party_b_arguments: |
+  PROSECUTION ARGUMENTS (RACE STEWARDS):
+
+  1. ARTICLE 56 VIOLATION - FAILURE TO COMPLETE RACE DISTANCE
+     The regulations clearly state that the winner must complete the
+     "scheduled race distance." The track distance includes ALL corners,
+     including the Casio Triangle chicane. By using the escape road,
+     Senna failed to complete the geometric distance of that lap.
+
+  2. ILLEGAL PUSH START
+     Appendix J permits marshals to move a car to "a safe place."
+     It does NOT permit marshals to assist a driver in restarting
+     their car to rejoin the competition. Senna's engine was stalled;
+     the push by marshals constituted prohibited "outside assistance"
+     that enabled him to continue.
+
+  3. THE COLLISION WAS SENNA'S FAULT
+     Senna attempted an overtaking maneuver that was not fully alongside.
+     His front wheels were only at the level of Prost's rear wheels.
+     Under racing conventions, this does not entitle him to racing room.
+     Prost was entitled to take the racing line.
+
+  4. CLEAR RULE VIOLATION
+     Regardless of advantage gained, the rule is binary: either you
+     complete the race distance or you do not. Senna did not complete
+     the lap correctly. The penalty for failing to complete the race
+     distance is exclusion from the results.
+
+  5. SAFETY CONCERNS
+     Senna's aggressive driving throughout the season, including the
+     Estoril 1988 incident, demonstrates a pattern of dangerous behavior.
+     The championship implications do not justify risking a collision
+     at 200+ km/h.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REGULATIONS (1989 FIA Sporting Regulations)
+# ═══════════════════════════════════════════════════════════════════════════
+
+raw_regulations: |
+  1989 FIA FORMULA ONE SPORTING REGULATIONS
+  ═══════════════════════════════════════════
+
+  ARTICLE 56 - THE RACE
+
+  56.1 The distance of all races, from the start signal to the chequered flag,
+       shall be equal to the least number of complete laps which exceed a
+       distance of 305 kilometers (minimum 44 laps).
+
+  56.2 The winner of the Grand Prix shall be the driver who completes the
+       scheduled race distance in the shortest time.
+
+  56.3 Should the leading car complete the scheduled distance before 2 hours
+       have elapsed, the race will end when all remaining cars have completed
+       the lap on which they were running at the time.
+
+  [INTERPRETATION NOTE: The "scheduled distance" is defined by the homologated
+  track layout, including all corners and chicanes. The centerline of the
+  racing surface defines the official distance.]
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  APPENDIX J - GENERAL PRESCRIPTIONS
+  Article 2 - Outside Assistance
+
+  2.1 During the race, the driver must drive the car alone and unaided.
+
+  2.2 If a car stops on the circuit, it must be moved as soon as possible
+      so that its presence does not constitute a danger or hinder other
+      competitors. If the driver is unable to move the car himself, it
+      shall be the duty of the marshals to assist.
+
+  2.3 Should a car become disabled, the driver may attempt to push it to
+      the pits provided this does not endanger other competitors. Marshals
+      may assist ONLY to move the car to a position of safety.
+
+  [INTERPRETATION NOTE: The regulation permits marshals to move cars for
+  safety purposes. It is ambiguous whether a car moved for safety reasons
+  may rejoin the race if the engine restarts during the movement.]
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  PENALTIES
+
+  Failure to complete the race distance: EXCLUSION from results
+  Receipt of prohibited outside assistance: EXCLUSION from results
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EVIDENCE
+# ═══════════════════════════════════════════════════════════════════════════
+
+raw_evidence: |
+  UNDISPUTED FACTS (Agreed by all parties):
+  ═══════════════════════════════════════════
+
+  1. DATE AND LOCATION
+     - Race: 1989 Japanese Grand Prix
+     - Circuit: Suzuka Circuit, Japan
+     - Date: October 22, 1989
+     - Lap of incident: Lap 47 of 53
+
+  2. CHAMPIONSHIP CONTEXT
+     - Entering the race: Prost 76 points, Senna 60 points
+     - Only best 11 of 16 results counted
+     - Senna needed to win both remaining races (Japan, Australia)
+     - A double DNF would guarantee Prost the championship
+
+  3. THE COLLISION
+     - Location: Entry to Casio Triangle chicane (right-left chicane)
+     - Senna was following Prost closely exiting 130R corner
+     - Senna moved to the inside (right) for an overtaking attempt
+     - Prost turned in toward the chicane apex
+     - The cars' wheels interlocked
+     - Both cars slid into the escape road entrance
+     - Both engines stalled upon impact
+
+  4. POST-COLLISION - PROST
+     - Prost unbuckled and exited his car
+     - Prost retired from the race immediately
+     - Prost walked back to the pit lane
+
+  5. POST-COLLISION - SENNA
+     - Senna remained in his car
+     - Senna gestured to marshals for assistance
+     - Marshals pushed Senna's car backward to disengage from Prost's car
+     - Marshals then pushed Senna's car forward down the escape road
+     - During the forward push, Senna released the clutch (bump start)
+     - The Honda engine fired and restarted
+     - Senna drove down the escape road
+     - Senna weaved through the temporary chicane bollards in the escape road
+     - Senna rejoined the circuit AFTER the Casio Triangle chicane
+     - Senna did NOT rejoin at the point where he left the track
+
+  6. SENNA'S RECOVERY
+     - Senna completed Lap 47 via the escape road
+     - Senna pitted on Lap 48 for a new front wing (damaged in collision)
+     - Senna was approximately 30 seconds behind leader Nannini after pit stop
+     - Senna overtook Nannini at the same chicane on Lap 51
+     - Senna crossed the finish line in first place (on track)
+
+  7. TIME LOST BY SENNA
+     - Collision and wheel interlocking: ~5 seconds
+     - Push by marshals: ~8-10 seconds
+     - Driving through escape road bollards: ~5 seconds
+     - Pit stop for new front wing: ~12 seconds
+     - TOTAL TIME LOST: Approximately 30+ seconds
+
+  8. OFFICIAL RESULT (POST-STEWARDS DECISION)
+     - Senna: DISQUALIFIED
+     - Winner: Alessandro Nannini (Benetton)
+     - Prost: Did Not Finish (DNF)
+     - Prost confirmed as 1989 World Champion
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  DISPUTED FACTS:
+  ═══════════════════════════════════════════
+
+  1. WHO CAUSED THE COLLISION?
+     - Senna's view: Prost turned in early, deliberately closing the door
+     - Prost's view: Senna was not sufficiently alongside, move was optimistic
+     - Telemetry: Suggests Prost braked/turned slightly earlier than previous laps
+
+  2. WAS SENNA'S MOVE LEGITIMATE?
+     - Senna: Front wheels alongside Prost's rear, entitled to racing room
+     - Stewards: Not sufficiently alongside, no entitlement to space
+
+  3. ENGINE STATE WHEN PUSHED
+     - Unclear whether engine was fully stalled or just sputtering
+     - Senna claims he bump-started it (clutch release during push)
+     - This would constitute illegal outside assistance if true
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  DOCUMENTARY EVIDENCE:
+  ═══════════════════════════════════════════
+
+  1. Television broadcast footage showing the collision
+  2. Onboard camera footage (limited quality)
+  3. Timing sheets showing Senna's lap times and pit stop duration
+  4. Marshals' incident report
+  5. Stewards' decision document
+  6. WMSC appeal hearing transcript (Paris, October 1989)
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  TECHNICAL DATA:
+  ═══════════════════════════════════════════
+
+  QUALIFYING TIMES (highlighting setup differences):
+  - Senna: 1:38.041 (Pole position) - High downforce setup
+  - Prost: 1:39.771 (+1.730s) - Low drag setup
+
+  SETUP ANALYSIS:
+  - Senna: Optimized for cornering speed (faster in corners, slower on straights)
+  - Prost: Optimized for straight-line speed (defensive against overtaking)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PRECEDENTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+raw_precedents: |
+  PRECEDENT CASES FOR CHICANE CUTTING AND OUTSIDE ASSISTANCE
+  ═══════════════════════════════════════════════════════════════════════════
+
+  CASE 1: IMOLA 1989 (San Marino Grand Prix) - CHICANE CUTTING
+  ───────────────────────────────────────────────────────────────────────────
+  Date: April 23, 1989
+  Circuit: Autodromo Enzo e Dino Ferrari, Imola
+  Incident: Multiple drivers cut the Variante Bassa chicane during the race
+
+  Facts:
+  - Several drivers missed the chicane entry and used the escape road
+  - Alain Prost was among those who cut the chicane
+  - Prost finished second in the race
+  - No penalties were applied to any driver
+
+  Decision: NOT PENALIZED
+  Reasoning: No formal reasoning given; treated as racing incident
+
+  Similarity to current case: HIGH
+  - Same season (1989)
+  - Same type of violation (chicane cutting via escape road)
+  - Same driver (Prost) was involved without penalty
+  - Demonstrates inconsistent enforcement
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  CASE 2: VARIOUS 1989 RACES - FIRST CORNER INCIDENTS
+  ───────────────────────────────────────────────────────────────────────────
+  Multiple races in 1989 saw drivers run wide at Turn 1, missing the corner
+  and rejoining via run-off areas. None were disqualified for failing to
+  complete the "race distance" as defined by corner geometry.
+
+  Decision: NOT PENALIZED (multiple instances)
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  CASE 3: DALLAS 1984 - NIGEL MANSELL (Push/Assistance)
+  ───────────────────────────────────────────────────────────────────────────
+  Date: July 8, 1984
+  Driver: Nigel Mansell (Lotus)
+
+  Facts:
+  - Mansell's car stopped on the final lap
+  - Mansell attempted to push his own car across the finish line
+  - He collapsed from heat exhaustion during the attempt
+
+  Decision: DISQUALIFIED
+  Reasoning: The car must cross the finish line under its own power
+  Note: This case involved the driver pushing, not marshals
+
+  Similarity to current case: MEDIUM
+  - Different type of assistance (driver vs marshals)
+  - Establishes that car must move under own power to finish
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  CASE 4: NÜRBURGRING 2003 - MICHAEL SCHUMACHER (Modern comparison)
+  ───────────────────────────────────────────────────────────────────────────
+  Date: June 29, 2003
+  Driver: Michael Schumacher (Ferrari)
+
+  Facts:
+  - Schumacher went off into gravel trap
+  - Marshals pushed his car out of the gravel
+  - Engine was still running
+  - Schumacher continued racing
+
+  Decision: NOT PENALIZED
+  Reasoning: Marshals assisted for safety; engine was running
+
+  Note: This is a modern case showing evolved interpretation, but
+  demonstrates the ambiguity in the rules about marshal assistance.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  ENFORCEMENT PATTERN ANALYSIS (1979-1989):
+  ═══════════════════════════════════════════════════════════════════════════
+
+  Total disqualifications in Formula One 1979-1989: 26 drivers
+
+  Reasons for disqualification:
+  - Technical infringements (car out of spec): 18
+  - Underweight car: 4
+  - Illegal fuel: 2
+  - Push start / outside assistance: 1 (Mansell 1984, own push)
+  - Chicane cutting: 0
+
+  CONCLUSION: No driver in the 10-year period from 1979-1989 was
+  disqualified for cutting a chicane or using an escape road.
+  Senna's disqualification was UNPRECEDENTED.
+
+  ───────────────────────────────────────────────────────────────────────────
+
+  POST-INCIDENT: THE WMSC APPEAL (October 1989, Paris)
+  ═══════════════════════════════════════════════════════════════════════════
+
+  McLaren appealed the disqualification to the FISA World Motor Sport Council.
+
+  WMSC Decision:
+  1. Disqualification UPHELD (Article 56 violation confirmed)
+  2. Additional charge: "Dangerous Driving" added retroactively
+  3. Fine: $100,000 USD imposed
+  4. Suspension: 6-month suspended ban from competition
+  5. Condition: Senna required to publicly apologize to retain Super License
+
+  Note: The expansion of charges beyond the original chicane cut was
+  highly unusual and criticized as political interference by FISA
+  President Jean-Marie Balestre (French, same nationality as Prost).
+
+  SUBSEQUENT ADMISSION:
+  - Max Mosley (later FIA President) stated that Balestre "influenced
+    the race stewards in Japan to give the penalty to Senna"
+  - In 1996, Balestre admitted he acted to favor Prost
+  - These admissions confirm allegations of political manipulation

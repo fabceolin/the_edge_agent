@@ -1,0 +1,435 @@
+# Truth Resolution Agent
+# A multi-source judicial framework for sports disputes
+#
+# This agent demonstrates a structured graph approach where each phase
+# of the judicial process is a separate node. The graph structure mirrors
+# a real judicial process:
+# 1. Case intake and evidence gathering
+# 2. Rule identification and violation analysis
+# 3. Precedent review for consistency
+# 4. Judicial deliberation
+# 5. Verdict and penalty determination
+#
+# NOTE: This agent uses the Claude shell provider for LLM calls.
+# Run with: tea run examples/truth-resolution-agent.yaml
+
+name: truth-resolution-agent
+version: "1.0.0"
+description: |
+  An impartial judicial agent for resolving sports disputes.
+  Analyzes evidence against regulations and precedents to deliver
+  fair, consistent verdicts with transparent reasoning.
+
+state_schema:
+  # Case identification
+  case_id: str
+  case_title: str
+  date_of_incident: str
+  jurisdiction: str
+
+  # Raw inputs
+  raw_regulations: str
+  raw_evidence: str
+  raw_precedents: str
+  party_a_name: str
+  party_a_arguments: str
+  party_b_name: str
+  party_b_arguments: str
+
+  # Processed outputs
+  regulations_analysis: str
+  evidence_analysis: str
+  precedents_analysis: str
+  violation_analysis: str
+  consistency_assessment: str
+  deliberation_notes: str
+  verdict: str
+  verdict_reasoning: str
+  penalty: str
+
+nodes:
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 1: ANALYZE REGULATIONS
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: analyze_regulations
+    description: Parse and analyze the applicable regulations
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are a legal document analyst specializing in sports regulations.
+            Your task is to analyze regulations and identify:
+            1. Each specific rule that could apply to a racing incident
+            2. The exact text of each rule
+            3. What conditions trigger each rule
+            4. What the consequences are for violations
+            5. Any ambiguities in the rules
+
+            Be precise and quote exact regulatory text when available.
+        - role: user
+          content: |
+            JURISDICTION: {{ state.jurisdiction }}
+
+            REGULATIONS TEXT:
+            {{ state.raw_regulations }}
+
+            Analyze these regulations. For each relevant rule:
+            - State the rule ID and exact text
+            - Explain what triggers a violation
+            - List the possible penalties
+            - Note any ambiguities
+    output:
+      regulations_analysis: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 2: ANALYZE EVIDENCE
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: analyze_evidence
+    description: Categorize and analyze the evidence
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are a judicial clerk responsible for organizing case evidence.
+            Categorize evidence by reliability:
+            1. UNDISPUTED FACTS - Agreed by all parties (highest weight)
+            2. DISPUTED FACTS - Contested by one or more parties
+            3. DOCUMENTARY EVIDENCE - Official records, video, timing data
+            4. TECHNICAL DATA - Telemetry, measurements
+
+            For each piece of evidence, assess its reliability and relevance.
+        - role: user
+          content: |
+            CASE: {{ state.case_title }}
+
+            PARTIES:
+            - {{ state.party_a_name }}
+            - {{ state.party_b_name }}
+
+            EVIDENCE:
+            {{ state.raw_evidence }}
+
+            Categorize and analyze this evidence.
+            Clearly separate undisputed facts from disputed ones.
+    output:
+      evidence_analysis: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 3: ANALYZE PRECEDENTS
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: analyze_precedents
+    description: Analyze precedent cases for consistency
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are a legal researcher specializing in sports law precedents.
+
+            Key principles:
+            1. STARE DECISIS: Similar cases should be decided similarly
+            2. SELECTIVE ENFORCEMENT: If a rule was not enforced in similar
+               past cases, strict enforcement now is problematic
+            3. CONSISTENCY: The accused should not be penalized more harshly
+               than others who committed the same violation
+
+            Be objective. If enforcement has been inconsistent, say so clearly.
+        - role: user
+          content: |
+            CURRENT CASE: {{ state.case_title }}
+
+            PRECEDENT CASES:
+            {{ state.raw_precedents }}
+
+            Analyze:
+            1. How similar are these precedent cases to the current case?
+            2. How were similar violations treated in the past?
+            3. Is there evidence of consistent or inconsistent enforcement?
+            4. What does precedent suggest the outcome should be?
+    output:
+      precedents_analysis: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 4: ANALYZE VIOLATIONS
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: analyze_violations
+    description: Map evidence to potential rule violations
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are a legal analyst determining which rules may have been violated.
+
+            For each potential violation, establish:
+
+            1. ACTUS REUS (The Act): Did the accused commit the prohibited act?
+            2. MENS REA (Mental State):
+               - INTENTIONAL: Deliberate violation
+               - RECKLESS: Knew the risk, proceeded anyway
+               - NEGLIGENT: Should have known
+               - INNOCENT: No fault, force majeure
+            3. CAUSATION: Did the act cause the prohibited outcome?
+            4. DEFENSES: Force majeure, necessity, provocation, inconsistent enforcement
+
+            The burden of proof is on the ACCUSER.
+        - role: user
+          content: |
+            CASE: {{ state.case_title }}
+
+            REGULATIONS ANALYSIS:
+            {{ state.regulations_analysis }}
+
+            EVIDENCE ANALYSIS:
+            {{ state.evidence_analysis }}
+
+            DEFENSE ARGUMENTS ({{ state.party_a_name }}):
+            {{ state.party_a_arguments }}
+
+            PROSECUTION ARGUMENTS ({{ state.party_b_name }}):
+            {{ state.party_b_arguments }}
+
+            For each regulation, analyze whether it was violated.
+            Identify mitigating and aggravating factors.
+    output:
+      violation_analysis: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 5: ASSESS CONSISTENCY
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: assess_consistency
+    description: Assess whether enforcement has been consistent
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are assessing the CONSISTENCY of rule enforcement.
+
+            This is critical for justice:
+            - If the same rule was NOT enforced in similar past cases,
+              enforcing it strictly now may constitute SELECTIVE ENFORCEMENT
+            - Selective enforcement is a serious concern and a strong defense
+            - The accused should not be treated more harshly than others
+              who committed the same violation
+        - role: user
+          content: |
+            PRECEDENTS ANALYSIS:
+            {{ state.precedents_analysis }}
+
+            VIOLATION ANALYSIS:
+            {{ state.violation_analysis }}
+
+            Assess:
+            1. Has this rule been enforced consistently in the past?
+            2. Were similar violations penalized or not?
+            3. Is there a pattern of selective enforcement?
+            4. How should this affect the current decision?
+
+            Provide a clear CONSISTENCY ASSESSMENT: CONSISTENT, INCONSISTENT, or MIXED
+    output:
+      consistency_assessment: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 6: JUDICIAL DELIBERATION
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: deliberate
+    description: The core judicial reasoning process
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are an IMPARTIAL JUDICIAL OFFICER deliberating on a sports dispute.
+
+            CORE PRINCIPLES - FOLLOW THESE ABSOLUTELY:
+
+            1. STRICT LEGALITY
+               - Apply ONLY regulations in force at the time of the incident
+               - If a rule is ambiguous, interpret in favor of the accused
+
+            2. EVIDENCE-BASED
+               - Base decisions ONLY on verified facts
+               - Burden of proof is on the ACCUSER
+               - If evidence is insufficient, rule NOT GUILTY
+
+            3. ABSOLUTE IMPARTIALITY
+               You must NOT consider:
+               - Nationality of any party
+               - Political implications
+               - Championship consequences
+               - Public opinion
+
+            4. PROPORTIONALITY
+               - Penalty must fit the offense
+               - Consider intent vs accident
+               - Consider advantage gained
+
+            5. CONSISTENCY WITH PRECEDENT
+               - Similar cases MUST be treated similarly
+               - Inconsistent enforcement is a STRONG defense
+        - role: user
+          content: |
+            CASE: {{ state.case_title }} ({{ state.case_id }})
+            DATE: {{ state.date_of_incident }}
+
+            ════════════════════════════════════════════════════════════
+            REGULATIONS ANALYSIS:
+            {{ state.regulations_analysis }}
+
+            ════════════════════════════════════════════════════════════
+            EVIDENCE ANALYSIS:
+            {{ state.evidence_analysis }}
+
+            ════════════════════════════════════════════════════════════
+            VIOLATION ANALYSIS:
+            {{ state.violation_analysis }}
+
+            ════════════════════════════════════════════════════════════
+            CONSISTENCY ASSESSMENT:
+            {{ state.consistency_assessment }}
+
+            ════════════════════════════════════════════════════════════
+            ARGUMENTS FROM {{ state.party_a_name | upper }}:
+            {{ state.party_a_arguments }}
+
+            ARGUMENTS FROM {{ state.party_b_name | upper }}:
+            {{ state.party_b_arguments }}
+
+            ════════════════════════════════════════════════════════════
+
+            DELIBERATE on this case. Think through each issue carefully.
+
+            At the end, indicate your PRELIMINARY VERDICT:
+            - GUILTY: Violation proven, penalty warranted
+            - NOT_GUILTY: Violation not proven or defense successful
+            - RACING_INCIDENT: No fault to either party
+    output:
+      deliberation_notes: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 7: GENERATE FINAL VERDICT
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: verdict
+    description: Generate the formal verdict with full reasoning
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: system
+          content: |
+            You are a judicial officer issuing the FINAL VERDICT.
+
+            Your verdict document MUST include:
+
+            1. FINDINGS OF FACT
+            2. APPLICABLE LAW
+            3. ANALYSIS
+            4. PRECEDENT CONSIDERATION
+            5. VERDICT: GUILTY / NOT_GUILTY / RACING_INCIDENT
+            6. PENALTY (if guilty) - must be PROPORTIONATE
+            7. PENALTY REASONING
+            8. DISSENTING OPINION (if the case is close)
+
+            IMPORTANT:
+            - If enforcement has been INCONSISTENT, reduce or eliminate penalty
+            - If no advantage was gained, this is a strong mitigating factor
+            - The penalty must not exceed what was given in similar cases
+        - role: user
+          content: |
+            CASE: {{ state.case_title }}
+
+            DELIBERATION NOTES:
+            {{ state.deliberation_notes }}
+
+            CONSISTENCY ASSESSMENT:
+            {{ state.consistency_assessment }}
+
+            Issue the FORMAL VERDICT DOCUMENT with all required sections.
+    output:
+      verdict_reasoning: "{{ result.content }}"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # NODE 8: EXTRACT VERDICT SUMMARY
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: extract_summary
+    description: Extract the verdict and penalty into structured format
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      messages:
+        - role: user
+          content: |
+            From this verdict document, extract:
+            1. The VERDICT (exactly one of: GUILTY, NOT_GUILTY, RACING_INCIDENT)
+            2. The PENALTY (or "No penalty" if not guilty)
+
+            VERDICT DOCUMENT:
+            {{ state.verdict_reasoning }}
+
+            Reply in this exact format:
+            VERDICT: [verdict]
+            PENALTY: [penalty]
+    output:
+      verdict: "{{ result.content }}"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDGES - Define the judicial process flow
+# ═══════════════════════════════════════════════════════════════════════════
+
+edges:
+  # Phase 1: Parallel evidence gathering
+  - from: __start__
+    to: analyze_regulations
+  - from: __start__
+    to: analyze_evidence
+  - from: __start__
+    to: analyze_precedents
+
+  # Phase 2: Analysis (after evidence gathered)
+  - from: analyze_regulations
+    to: analyze_violations
+  - from: analyze_evidence
+    to: analyze_violations
+
+  # Phase 3: Consistency assessment
+  - from: analyze_precedents
+    to: assess_consistency
+  - from: analyze_violations
+    to: assess_consistency
+
+  # Phase 4: Deliberation
+  - from: assess_consistency
+    to: deliberate
+
+  # Phase 5: Verdict
+  - from: deliberate
+    to: verdict
+  - from: verdict
+    to: extract_summary
+  - from: extract_summary
+    to: __end__
