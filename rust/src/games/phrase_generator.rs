@@ -126,10 +126,9 @@ impl PhraseGenerator {
     /// # Arguments
     ///
     /// * `max_history_rounds` - Maximum number of user+assistant pairs to retain
-    ///                          (the system prompt is always kept)
+    ///   (the system prompt is always kept)
     pub fn new(max_history_rounds: usize) -> Self {
-        let mut history = Vec::new();
-        history.push(Message::system(PHRASE_SYSTEM_PROMPT));
+        let history = vec![Message::system(PHRASE_SYSTEM_PROMPT)];
         Self {
             history,
             max_history_rounds,
@@ -293,6 +292,7 @@ pub fn normalize_word(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     // ============================================================
     // AC-1: PhraseGenerator struct tests
@@ -358,13 +358,14 @@ mod tests {
     #[test]
     fn test_history_sequence_after_multiple_generations() {
         let mut generator = PhraseGenerator::new(10);
-        let mut call_count = 0;
+        let call_count = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            call_count += 1;
+            let mut count = call_count.borrow_mut();
+            *count += 1;
             Ok(format!(
                 r#"{{"phrase": "Phrase {}.", "word": "word{}"}}"#,
-                call_count, call_count
+                *count, *count
             ))
         };
 
@@ -410,13 +411,14 @@ mod tests {
     #[test]
     fn test_prune_history_keeps_last_n_rounds() {
         let mut generator = PhraseGenerator::new(2);
-        let mut counter = 0;
+        let counter = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            counter += 1;
+            let mut count = counter.borrow_mut();
+            *count += 1;
             Ok(format!(
                 r#"{{"phrase": "Phrase number {}.", "word": "word{}"}}"#,
-                counter, counter
+                *count, *count
             ))
         };
 
@@ -474,17 +476,17 @@ mod tests {
     #[test]
     fn test_generate_phrase_passes_history_to_callback() {
         let mut generator = PhraseGenerator::new(10);
-        let mut received_messages_count = 0;
+        let received_messages_count = RefCell::new(0);
 
         let mock_callback = |messages: &[Message]| -> Result<String, String> {
-            received_messages_count = messages.len();
+            *received_messages_count.borrow_mut() = messages.len();
             Ok(r#"{"phrase": "The ___ is bright.", "word": "sun"}"#.to_string())
         };
 
         let _ = generator.generate_phrase(&mock_callback);
 
         // Should have passed system + user messages
-        assert_eq!(received_messages_count, 2);
+        assert_eq!(*received_messages_count.borrow(), 2);
     }
 
     // ============================================================
@@ -571,11 +573,12 @@ mod tests {
     #[test]
     fn test_retry_on_first_failure_second_success() {
         let mut generator = PhraseGenerator::new(10);
-        let mut attempt_count = 0;
+        let attempt_count = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            attempt_count += 1;
-            if attempt_count == 1 {
+            let mut count = attempt_count.borrow_mut();
+            *count += 1;
+            if *count == 1 {
                 Ok("invalid json".to_string())
             } else {
                 Ok(r#"{"phrase": "The ___ is bright.", "word": "sun"}"#.to_string())
@@ -584,32 +587,33 @@ mod tests {
 
         let result = generator.generate_phrase(&mock_callback);
         assert!(result.is_ok());
-        assert_eq!(attempt_count, 2);
+        assert_eq!(*attempt_count.borrow(), 2);
     }
 
     #[test]
     fn test_retry_three_times_then_fail() {
         let mut generator = PhraseGenerator::new(10);
-        let mut attempt_count = 0;
+        let attempt_count = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            attempt_count += 1;
+            *attempt_count.borrow_mut() += 1;
             Ok("invalid json".to_string())
         };
 
         let result = generator.generate_phrase(&mock_callback);
         assert!(result.is_err());
-        assert_eq!(attempt_count, 3);
+        assert_eq!(*attempt_count.borrow(), 3);
     }
 
     #[test]
     fn test_retry_success_on_third_attempt() {
         let mut generator = PhraseGenerator::new(10);
-        let mut attempt_count = 0;
+        let attempt_count = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            attempt_count += 1;
-            if attempt_count < 3 {
+            let mut count = attempt_count.borrow_mut();
+            *count += 1;
+            if *count < 3 {
                 Ok("invalid json".to_string())
             } else {
                 Ok(r#"{"phrase": "The ___ is bright.", "word": "sun"}"#.to_string())
@@ -618,7 +622,7 @@ mod tests {
 
         let result = generator.generate_phrase(&mock_callback);
         assert!(result.is_ok());
-        assert_eq!(attempt_count, 3);
+        assert_eq!(*attempt_count.borrow(), 3);
     }
 
     #[test]
@@ -656,11 +660,12 @@ mod tests {
     #[test]
     fn test_history_updated_only_on_success() {
         let mut generator = PhraseGenerator::new(10);
-        let mut attempt_count = 0;
+        let attempt_count = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            attempt_count += 1;
-            if attempt_count < 2 {
+            let mut count = attempt_count.borrow_mut();
+            *count += 1;
+            if *count < 2 {
                 Ok("invalid json".to_string())
             } else {
                 Ok(r#"{"phrase": "The ___ is bright.", "word": "sun"}"#.to_string())
@@ -814,13 +819,14 @@ mod tests {
     #[test]
     fn test_full_generation_flow_with_pruning() {
         let mut generator = PhraseGenerator::new(2); // Only keep 2 rounds
-        let mut counter = 0;
+        let counter = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            counter += 1;
+            let mut count = counter.borrow_mut();
+            *count += 1;
             Ok(format!(
                 r#"{{"phrase": "Phrase {} with ___.", "word": "word{}"}}"#,
-                counter, counter
+                *count, *count
             ))
         };
 
@@ -844,13 +850,14 @@ mod tests {
     #[test]
     fn test_generate_five_consecutive_phrases() {
         let mut generator = PhraseGenerator::new(10);
-        let mut counter = 0;
+        let counter = RefCell::new(0);
 
         let mock_callback = |_messages: &[Message]| -> Result<String, String> {
-            counter += 1;
+            let mut count = counter.borrow_mut();
+            *count += 1;
             Ok(format!(
                 r#"{{"phrase": "The ___ number {}.", "word": "word{}"}}"#,
-                counter, counter
+                *count, *count
             ))
         };
 

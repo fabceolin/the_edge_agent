@@ -948,9 +948,10 @@ try:
     time.sleep(0.1)
 
     # Use send-keys to type the command - this preserves quotes correctly
-    # Window will close automatically when command completes (no read at end)
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
     subprocess.run(
-        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", cmd, "Enter"],
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
         check=True
     )
 
@@ -1107,9 +1108,10 @@ try:
     time.sleep(0.1)
 
     # Use send-keys to type the command - this preserves quotes correctly
-    # Window will close automatically when command completes (no read at end)
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
     subprocess.run(
-        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", cmd, "Enter"],
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
         check=True
     )
 
