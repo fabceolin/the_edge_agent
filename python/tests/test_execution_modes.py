@@ -14,9 +14,6 @@ from unittest.mock import patch
 
 import pytest
 
-# Configure pytest-asyncio mode
-pytest_plugins = ("pytest_asyncio",)
-
 from the_edge_agent.execution.mode import ExecutionMode, ExecutionConfig
 from the_edge_agent.execution.orchestrator import ExecutionOrchestrator, BaseExecutor
 from the_edge_agent.execution.sequential import SequentialExecutor

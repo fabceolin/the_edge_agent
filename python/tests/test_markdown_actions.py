@@ -412,6 +412,7 @@ class TestMarkdownParseActionMocked(unittest.TestCase):
                 self.assertIn("md-parser", result["error"])
                 self.assertIn("pip install", result["error"])
 
+    @unittest.skipUnless(MD_PARSER_AVAILABLE, "md-parser not installed")
     def test_parser_exception_handling(self):
         """Test handling of parser exceptions."""
         mock_parser = MagicMock()

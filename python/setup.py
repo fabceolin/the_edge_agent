@@ -54,6 +54,7 @@ setup(
     extras_require={
         "dev": [
             "pytest",
+            "pytest-asyncio>=0.23.0",  # For async test support
             "coverage",
             "hypothesis",
             "parameterized==0.9.0",

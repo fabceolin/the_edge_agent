@@ -1,6 +1,7 @@
 [package]
 name = "the_edge_agent"
 version = "0.9.79"
+
 edition = "2021"
 authors = ["The Edge Agent Contributors"]
 description = "Lightweight state graph workflow engine for edge computing"
