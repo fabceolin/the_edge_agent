@@ -189,6 +189,8 @@ The `shell_provider: claude` spawns a fresh Claude Code instance for each node e
 
 With BMad stories ready and TEA workflows defined, we can orchestrate parallel execution using DOT (Graphviz) graphs.
 
+> **For comprehensive DOT orchestration documentation**—including CLI reference, execution modes, verbose output, and best practices—see the [DOT Workflow Orchestration](./dot-workflow-orchestration.md) article.
+
 ### 4.1 Dependency Analysis
 
 Given an epic with 8 stories, the first step is mapping dependencies:
@@ -687,5 +689,5 @@ As TEA continues to evolve, this meta-development cycle accelerates: better TEA 
 
 - [BMad Method v4](https://github.com/bmad-code-org/BMAD-METHOD) - Breakthrough Method for Agile AI-Driven Development (Required)
 - [TEA Documentation](https://fabceolin.github.io/the_edge_agent/) - The Edge Agent official docs
-- [DOT Workflow Guide](../llm-prompts/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) - DOT orchestration guide
+- [DOT Workflow Orchestration](./dot-workflow-orchestration.md) - Complete guide to DOT orchestration, CLI reference, and best practices
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - DOT syntax reference
