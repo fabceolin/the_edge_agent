@@ -16,22 +16,6 @@ This article presents a meta-development methodology where The Edge Agent (TEA) 
 
 ---
 
-## Reproducibility
-
-This article uses code from a specific commit in The Edge Agent repository. To follow along:
-
-```bash
-git clone https://github.com/fabceolin/the_edge_agent.git
-cd the_edge_agent
-git checkout 2f5bdbb4e70bd47bdc7f28022656d7a58b69a817
-```
-
-**Commit:** `2f5bdbb4e70bd47bdc7f28022656d7a58b69a817`
-
-**Repository:** [github.com/fabceolin/the_edge_agent](https://github.com/fabceolin/the_edge_agent)
-
----
-
 ## 1. Introduction
 
 When developing complex features for The Edge Agent, we face a paradox: the very tool we're building could help us build it better. This article explores how we leverage TEA to accelerate TEA development, creating a virtuous cycle of meta-improvement.
