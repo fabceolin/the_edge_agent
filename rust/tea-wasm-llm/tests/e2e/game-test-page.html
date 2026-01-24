@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEA Game WASM Tests</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .pass { background: rgba(0, 200, 100, 0.2); }
+        .fail { background: rgba(255, 50, 50, 0.2); }
+        .running { background: rgba(255, 200, 0, 0.2); }
+        #summary {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        #summary.success { background: rgba(0, 200, 100, 0.3); }
+        #summary.failure { background: rgba(255, 50, 50, 0.3); }
+    </style>
+</head>
+<body>
+    <h1>TEA Game WASM Tests</h1>
+    <div id="test-results"></div>
+    <div id="summary"></div>
+
+    <script type="module">
+        // Test framework
+        const results = [];
+        const resultsDiv = document.getElementById('test-results');
+        const summaryDiv = document.getElementById('summary');
+
+        function log(testName, status, message = '') {
+            const div = document.createElement('div');
+            div.className = `test-result ${status}`;
+            div.textContent = `${status === 'pass' ? '[PASS]' : status === 'fail' ? '[FAIL]' : '[RUNNING]'} ${testName}${message ? ': ' + message : ''}`;
+            div.id = `test-${testName.replace(/\s+/g, '-')}`;
+
+            // Update existing or append new
+            const existing = document.getElementById(div.id);
+            if (existing) {
+                existing.replaceWith(div);
+            } else {
+                resultsDiv.appendChild(div);
+            }
+
+            if (status !== 'running') {
+                results.push({ name: testName, passed: status === 'pass', message });
+            }
+        }
+
+        async function runTest(name, fn) {
+            log(name, 'running');
+            try {
+                await fn();
+                log(name, 'pass');
+                return true;
+            } catch (error) {
+                log(name, 'fail', error.message);
+                return false;
+            }
+        }
+
+        function assert(condition, message) {
+            if (!condition) throw new Error(message || 'Assertion failed');
+        }
+
+        function assertEqual(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message || 'Assertion failed'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+            }
+        }
+
+        // Import WASM module
+        let wasm = null;
+
+        async function loadWasm() {
+            try {
+                wasm = await import('/pkg/tea_wasm_llm.js');
+                await wasm.default();
+                return true;
+            } catch (error) {
+                console.error('WASM load error:', error);
+                return false;
+            }
+        }
+
+        // Mock LLM callback
+        function createMockLlmCallback() {
+            const calls = [];
+            const callback = async (paramsJson) => {
+                const params = JSON.parse(paramsJson);
+                calls.push(params);
+
+                // Return mock phrase data
+                return JSON.stringify({
+                    phrase: "The ___ is bright today.",
+                    word: "sun",
+                    distractors: ["moon", "star", "sky", "day"]
+                });
+            };
+            callback.calls = calls;
+            return callback;
+        }
+
+        // Mock Opik callback
+        function createMockOpikCallback() {
+            const traces = [];
+            const callback = (traceJson) => {
+                traces.push(JSON.parse(traceJson));
+            };
+            callback.traces = traces;
+            return callback;
+        }
+
+        // Run all tests
+        async function runTests() {
+            // Load WASM first
+            const wasmLoaded = await loadWasm();
+            if (!wasmLoaded) {
+                summaryDiv.className = 'failure';
+                summaryDiv.textContent = 'Failed to load WASM module';
+                return;
+            }
+
+            log('WASM Module Load', 'pass');
+
+            // Test: game_init
+            await runTest('game_init initializes engine', async () => {
+                const result = JSON.parse(wasm.game_init());
+                assert(result.success === true, 'Expected success: true');
+                assert(result.data.initialized === true, 'Expected initialized: true');
+            });
+
+            // Test: game_has_llm_handler (before setting)
+            await runTest('game_has_llm_handler returns false initially', async () => {
+                const hasHandler = wasm.game_has_llm_handler();
+                assertEqual(hasHandler, false, 'Should not have handler');
+            });
+
+            // Test: game_set_llm_handler
+            await runTest('game_set_llm_handler sets callback', async () => {
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+                const hasHandler = wasm.game_has_llm_handler();
+                assertEqual(hasHandler, true, 'Should have handler after setting');
+            });
+
+            // Test: game_has_opik_handler (before setting)
+            await runTest('game_has_opik_handler returns false initially', async () => {
+                const hasHandler = wasm.game_has_opik_handler();
+                assertEqual(hasHandler, false, 'Should not have Opik handler');
+            });
+
+            // Test: game_set_opik_handler
+            await runTest('game_set_opik_handler sets callback', async () => {
+                const mockOpik = createMockOpikCallback();
+                wasm.game_set_opik_handler(mockOpik);
+                const hasHandler = wasm.game_has_opik_handler();
+                assertEqual(hasHandler, true, 'Should have Opik handler after setting');
+            });
+
+            // Test: game_start_session
+            await runTest('game_start_session creates session', async () => {
+                const result = JSON.parse(wasm.game_start_session());
+                assert(result.success === true, 'Expected success: true');
+                assert(typeof result.data.id === 'string', 'Expected session id');
+                assert(typeof result.data.username === 'string', 'Expected username');
+                assert(result.data.username.length >= 9, 'Username should be at least 9 chars');
+                assertEqual(result.data.total_answers, 0, 'Should have 0 total answers');
+                assertEqual(result.data.correct_answers, 0, 'Should have 0 correct answers');
+                assert(result.data.current_difficulty > 0, 'Should have positive difficulty');
+            });
+
+            // Test: game_get_session_stats
+            await runTest('game_get_session_stats returns session info', async () => {
+                const result = JSON.parse(wasm.game_get_session_stats());
+                assert(result.success === true, 'Expected success: true');
+                assert(typeof result.data.id === 'string', 'Expected session id');
+                assert(typeof result.data.score === 'number', 'Expected score');
+            });
+
+            // Test: game_generate_round
+            await runTest('game_generate_round creates round via LLM', async () => {
+                // Re-set mock LLM to capture calls
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                const result = JSON.parse(await wasm.game_generate_round());
+                assert(result.success === true, 'Expected success: true');
+                assert(typeof result.data.id === 'string', 'Expected round id');
+                assert(typeof result.data.phrase === 'string', 'Expected phrase');
+                assert(Array.isArray(result.data.choices), 'Expected choices array');
+                assertEqual(result.data.choices.length, 5, 'Expected 5 choices');
+
+                // Verify LLM was called
+                assertEqual(mockLlm.calls.length, 1, 'LLM should be called once');
+                assertEqual(mockLlm.calls[0].type, 'generate_phrase', 'Should call with generate_phrase type');
+            });
+
+            // Test: game_submit_answer (correct)
+            await runTest('game_submit_answer handles correct answer', async () => {
+                // Generate a fresh round
+                await wasm.game_generate_round();
+
+                const result = JSON.parse(wasm.game_submit_answer('sun', 1500));
+                assert(result.success === true, 'Expected success: true');
+                assertEqual(result.data.is_correct, true, 'Should be correct');
+                assertEqual(result.data.correct_word, 'sun', 'Correct word should be sun');
+                assert(typeof result.data.current_score === 'number', 'Should have score');
+                assert(typeof result.data.current_difficulty === 'number', 'Should have difficulty');
+            });
+
+            // Test: game_submit_answer (incorrect)
+            await runTest('game_submit_answer handles incorrect answer', async () => {
+                // Generate a fresh round
+                await wasm.game_generate_round();
+
+                const result = JSON.parse(wasm.game_submit_answer('moon', 2000));
+                assert(result.success === true, 'Expected success: true');
+                assertEqual(result.data.is_correct, false, 'Should be incorrect');
+                assertEqual(result.data.correct_word, 'sun', 'Correct word should be sun');
+            });
+
+            // Test: game_submit_answer (invalid choice)
+            await runTest('game_submit_answer rejects invalid choice', async () => {
+                // Generate a fresh round
+                await wasm.game_generate_round();
+
+                const result = JSON.parse(wasm.game_submit_answer('invalid_word', 1000));
+                assertEqual(result.success, false, 'Should fail');
+                assertEqual(result.error_type, 'invalid_choice', 'Should be invalid_choice error');
+            });
+
+            // Test: game_get_leaderboard (empty)
+            await runTest('game_get_leaderboard returns array', async () => {
+                const result = JSON.parse(wasm.game_get_leaderboard(10));
+                assert(result.success === true, 'Expected success: true');
+                assert(Array.isArray(result.data), 'Expected array');
+            });
+
+            // Test: game_submit_to_leaderboard
+            await runTest('game_submit_to_leaderboard submits session', async () => {
+                // Start fresh session
+                wasm.game_start_session();
+
+                // Play a round
+                await wasm.game_generate_round();
+                wasm.game_submit_answer('sun', 1000);
+
+                // Submit to leaderboard
+                const result = JSON.parse(wasm.game_submit_to_leaderboard());
+                assert(result.success === true, 'Expected success');
+                assert(typeof result.rank === 'number' || result.rank === null, 'Expected rank or null');
+                assert(typeof result.score === 'number', 'Expected score');
+            });
+
+            // Test: double submission blocked
+            await runTest('game_submit_to_leaderboard blocks double submission', async () => {
+                // Try to submit again
+                const result = JSON.parse(wasm.game_submit_to_leaderboard());
+                assertEqual(result.success, false, 'Should fail');
+                assertEqual(result.error_type, 'already_submitted', 'Should be already_submitted error');
+            });
+
+            // Test: session required errors
+            await runTest('game_get_session_stats requires session', async () => {
+                // Clear by starting new session (this resets, we need a way to clear)
+                // For now, this test validates the error format
+                wasm.game_init(); // Reinitialize
+                wasm.game_clear_llm_handler();
+
+                const result = JSON.parse(wasm.game_get_session_stats());
+                assertEqual(result.success, false, 'Should fail without session');
+                assertEqual(result.error_type, 'session_error', 'Should be session_error');
+            });
+
+            // Test: LLM required for round generation
+            await runTest('game_generate_round requires LLM handler', async () => {
+                wasm.game_init();
+                wasm.game_clear_llm_handler();
+                wasm.game_start_session();
+
+                const result = JSON.parse(await wasm.game_generate_round());
+                assertEqual(result.success, false, 'Should fail without LLM');
+                assertEqual(result.error_type, 'llm_error', 'Should be llm_error');
+            });
+
+            // Test: clear handlers
+            await runTest('game_clear_llm_handler removes callback', async () => {
+                wasm.game_set_llm_handler(() => {});
+                assert(wasm.game_has_llm_handler() === true, 'Should have handler');
+                wasm.game_clear_llm_handler();
+                assert(wasm.game_has_llm_handler() === false, 'Should not have handler after clear');
+            });
+
+            await runTest('game_clear_opik_handler removes callback', async () => {
+                wasm.game_set_opik_handler(() => {});
+                assert(wasm.game_has_opik_handler() === true, 'Should have handler');
+                wasm.game_clear_opik_handler();
+                assert(wasm.game_has_opik_handler() === false, 'Should not have handler after clear');
+            });
+
+            // =================================================================
+            // Opik Span Structure Tests (AC-7: Integration tests for span content)
+            // =================================================================
+
+            await runTest('Opik span has correct structure for session (AC-2)', async () => {
+                // Re-initialize
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                // Capture spans
+                const capturedSpans = [];
+                wasm.game_set_opik_handler((spanJson) => {
+                    capturedSpans.push(JSON.parse(spanJson));
+                });
+
+                // Start session
+                wasm.game_start_session();
+
+                // Verify session span
+                assertEqual(capturedSpans.length, 1, 'Should capture 1 span');
+                const sessionSpan = capturedSpans[0];
+
+                // Verify required fields
+                assert(typeof sessionSpan.span_id === 'string', 'Should have span_id');
+                assert(typeof sessionSpan.trace_id === 'string', 'Should have trace_id');
+                assertEqual(sessionSpan.name, 'game_session', 'Name should be game_session');
+                assertEqual(sessionSpan.span_type, 'session', 'Type should be session');
+                assertEqual(sessionSpan.status, 'running', 'Status should be running');
+                assert(typeof sessionSpan.start_time === 'number', 'Should have start_time');
+                assert(typeof sessionSpan.metadata === 'object', 'Should have metadata');
+                assert(typeof sessionSpan.metadata.username === 'string', 'Metadata should have username');
+                assert(typeof sessionSpan.metadata.project_name === 'string', 'Metadata should have project_name');
+            });
+
+            await runTest('Opik span has correct structure for round (AC-1)', async () => {
+                // Re-initialize and set up
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                // Capture spans
+                const capturedSpans = [];
+                wasm.game_set_opik_handler((spanJson) => {
+                    capturedSpans.push(JSON.parse(spanJson));
+                });
+
+                // Start session and generate round
+                wasm.game_start_session();
+                await wasm.game_generate_round();
+
+                // Find round span (should be second span)
+                const roundSpan = capturedSpans.find(s => s.span_type === 'round');
+                assert(roundSpan !== undefined, 'Should have round span');
+
+                // Verify required fields per AC-1
+                assert(typeof roundSpan.span_id === 'string', 'Should have span_id');
+                assert(typeof roundSpan.trace_id === 'string', 'Should have trace_id');
+                assert(typeof roundSpan.parent_id === 'string', 'Should have parent_id (session_id)');
+                assertEqual(roundSpan.name, 'game_round', 'Name should be game_round');
+                assertEqual(roundSpan.span_type, 'round', 'Type should be round');
+                assert(typeof roundSpan.metadata === 'object', 'Should have metadata');
+                assert(typeof roundSpan.metadata.phrase === 'string', 'Metadata should have phrase');
+                assert(Array.isArray(roundSpan.metadata.choices), 'Metadata should have choices array');
+                assert(typeof roundSpan.metadata.difficulty === 'number', 'Metadata should have difficulty');
+            });
+
+            await runTest('Opik span has correct structure for answer submission (AC-1 complete)', async () => {
+                // Re-initialize and set up
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                // Capture spans
+                const capturedSpans = [];
+                wasm.game_set_opik_handler((spanJson) => {
+                    capturedSpans.push(JSON.parse(spanJson));
+                });
+
+                // Play a round
+                wasm.game_start_session();
+                await wasm.game_generate_round();
+                wasm.game_submit_answer('sun', 1500);
+
+                // Find answer span (should have is_correct field)
+                const answerSpan = capturedSpans.find(s =>
+                    s.span_type === 'round' && s.metadata.is_correct !== undefined
+                );
+                assert(answerSpan !== undefined, 'Should have answer span');
+
+                // Verify AC-1 required fields
+                assert(typeof answerSpan.metadata.correct_word === 'string', 'Metadata should have correct_word');
+                assert(typeof answerSpan.metadata.selected_word === 'string', 'Metadata should have selected_word');
+                assert(typeof answerSpan.metadata.is_correct === 'boolean', 'Metadata should have is_correct');
+                assert(typeof answerSpan.metadata.response_time_ms === 'number', 'Metadata should have response_time_ms');
+                assert(typeof answerSpan.metadata.difficulty === 'number', 'Metadata should have difficulty');
+                assert(['success', 'failure'].includes(answerSpan.status), 'Status should be success or failure');
+                assert(typeof answerSpan.duration_ms === 'number', 'Should have duration_ms');
+            });
+
+            await runTest('Opik span has correct structure for leaderboard (AC-4)', async () => {
+                // Re-initialize and set up
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                // Capture spans
+                const capturedSpans = [];
+                wasm.game_set_opik_handler((spanJson) => {
+                    capturedSpans.push(JSON.parse(spanJson));
+                });
+
+                // Play and submit
+                wasm.game_start_session();
+                await wasm.game_generate_round();
+                wasm.game_submit_answer('sun', 1500);
+                wasm.game_submit_to_leaderboard();
+
+                // Find leaderboard span
+                const leaderboardSpan = capturedSpans.find(s => s.span_type === 'leaderboard_submit');
+                assert(leaderboardSpan !== undefined, 'Should have leaderboard_submit span');
+
+                // Verify AC-4 required fields
+                assertEqual(leaderboardSpan.name, 'leaderboard_submit', 'Name should be leaderboard_submit');
+                assert(typeof leaderboardSpan.parent_id === 'string', 'Should have parent_id (session_id)');
+                assert(typeof leaderboardSpan.metadata === 'object', 'Should have metadata');
+                assert(typeof leaderboardSpan.metadata.username === 'string', 'Metadata should have username');
+                assert(typeof leaderboardSpan.metadata.final_score === 'number', 'Metadata should have final_score');
+                assert(typeof leaderboardSpan.metadata.accuracy === 'number', 'Metadata should have accuracy');
+                assert(typeof leaderboardSpan.metadata.total_answers === 'number', 'Metadata should have total_answers');
+                assertEqual(leaderboardSpan.status, 'success', 'Status should be success');
+            });
+
+            await runTest('Graceful degradation when Opik not configured (AC-6)', async () => {
+                // Re-initialize without Opik handler
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                // Verify no handler
+                assertEqual(wasm.game_has_opik_handler(), false, 'Should not have Opik handler');
+
+                // Game should function normally
+                const sessionResult = JSON.parse(wasm.game_start_session());
+                assert(sessionResult.success === true, 'Session should start without Opik');
+
+                const roundResult = JSON.parse(await wasm.game_generate_round());
+                assert(roundResult.success === true, 'Round should generate without Opik');
+
+                const answerResult = JSON.parse(wasm.game_submit_answer('sun', 1000));
+                assert(answerResult.success === true, 'Answer should submit without Opik');
+
+                const leaderboardResult = JSON.parse(wasm.game_submit_to_leaderboard());
+                assert(leaderboardResult.success === true, 'Leaderboard should submit without Opik');
+            });
+
+            await runTest('Session span groups all round spans via trace_id (AC-2)', async () => {
+                // Re-initialize and set up
+                wasm.game_init();
+                wasm.game_clear_opik_handler();
+
+                const mockLlm = createMockLlmCallback();
+                wasm.game_set_llm_handler(mockLlm);
+
+                // Capture spans
+                const capturedSpans = [];
+                wasm.game_set_opik_handler((spanJson) => {
+                    capturedSpans.push(JSON.parse(spanJson));
+                });
+
+                // Start session and play multiple rounds
+                wasm.game_start_session();
+
+                for (let i = 0; i < 3; i++) {
+                    await wasm.game_generate_round();
+                    wasm.game_submit_answer('sun', 1000 + i * 100);
+                }
+
+                // Get session span
+                const sessionSpan = capturedSpans.find(s => s.span_type === 'session');
+                assert(sessionSpan !== undefined, 'Should have session span');
+
+                // All round spans should have trace_id matching session span_id
+                const roundSpans = capturedSpans.filter(s => s.span_type === 'round');
+                assert(roundSpans.length >= 3, 'Should have at least 3 round spans');
+
+                roundSpans.forEach((span, i) => {
+                    assertEqual(span.trace_id, sessionSpan.span_id,
+                        `Round span ${i} trace_id should match session span_id`);
+                });
+            });
+
+            // Summary
+            const passed = results.filter(r => r.passed).length;
+            const failed = results.filter(r => !r.passed).length;
+
+            summaryDiv.className = failed === 0 ? 'success' : 'failure';
+            summaryDiv.textContent = `Tests completed: ${passed} passed, ${failed} failed`;
+
+            // Expose for Playwright
+            window.testResults = {
+                passed,
+                failed,
+                total: results.length,
+                results
+            };
+        }
+
+        // Run tests on load
+        runTests();
+    </script>
+</body>
+</html>

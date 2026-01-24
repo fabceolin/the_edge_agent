@@ -430,20 +430,62 @@ tea-python run examples/workflows/bmad-story-validation.yaml \
 
 ## 6. Execution: From DOT to Running Workflow
 
-### 6.1 Generate YAML from DOT
+### 6.1 Execute DOT Directly (Recommended)
+
+The simplest approach is to execute the DOT file directly with tmux-based output.
+
+**Two execution modes:**
+
+#### Mode 1: Command Mode (nodes have `command` attribute)
 
 ```bash
-# Convert DOT to executable YAML workflow
-tea-python from dot examples/dot/tea-game-001-validation.dot \
-    --use-node-commands \
-    -o examples/dot/tea-game-001-validation.yaml
+# Execute DOT directly with tmux output (respects dependency order)
+tea run --from-dot examples/dot/tea-game-001-validation.dot
+
+# Or use the dedicated command with more options
+tea run-from-dot examples/dot/tea-game-001-validation.dot \
+    --session tea-game \
+    --max-parallel 3
+
+# Preview execution plan without running
+tea run --from-dot examples/dot/tea-game-001-validation.dot --dot-dry-run
 ```
 
-### 6.2 Execute the Workflow
+#### Mode 2: Workflow Mode (run a workflow for each node)
+
+When nodes represent stories/tasks, use `--dot-workflow` to run a workflow for each:
+
+```bash
+# Run bmad-story-development.yaml for each node
+tea run --from-dot stories.dot \
+    --dot-workflow examples/workflows/bmad-story-development.yaml
+
+# With additional input parameters
+tea run-from-dot stories.dot \
+    -w examples/workflows/bmad-story-development.yaml \
+    -i '{"mode": "sequential"}'
+```
+
+The node label is passed as `{"arg": "<node_label>"}` to the workflow.
+
+Monitor progress with: `tmux attach -t tea-dot`
+
+### 6.2 Alternative: Execute via YAML
+
+If you need YAML-specific features (checkpoints, interrupts), use the `dot_to_yaml` API:
+
+```python
+from the_edge_agent import dot_to_yaml
+
+# Generate YAML from DOT
+yaml_content = dot_to_yaml("workflow.dot", use_node_commands=True)
+```
+
+Then run:
 
 ```bash
 # Run with extended timeout (15 hours for large epics)
-tea-python run examples/dot/tea-game-001-validation.yaml \
+tea run examples/dot/tea-game-001-validation.yaml \
     --input-timeout 54000
 ```
 

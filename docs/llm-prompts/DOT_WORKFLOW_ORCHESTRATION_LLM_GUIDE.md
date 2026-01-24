@@ -109,16 +109,70 @@ digraph workflow_name {
 }
 ```
 
-### Step 2: Generate YAML Agent
+### Step 2: Execute DOT Directly (Recommended)
+
+**Two execution modes:**
+
+#### Mode 1: Command Mode (nodes have `command` attribute)
 
 ```bash
-tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
+# Execute DOT directly with tmux output
+tea run --from-dot workflow.dot
+
+# Or use the dedicated command with more options
+tea run-from-dot workflow.dot --session my-session --max-parallel 3
+
+# Preview execution plan without running
+tea run --from-dot workflow.dot --dot-dry-run
 ```
 
-### Step 3: Execute
+#### Mode 2: Workflow Mode (run a workflow for each node)
+
+When nodes don't have commands, use `--dot-workflow` to run a workflow for each node:
 
 ```bash
-tea-python run workflow.yaml
+# Run a workflow for each node (node label becomes input)
+tea run --from-dot stories.dot --dot-workflow bmad-story-development.yaml
+
+# With additional input parameters
+tea run --from-dot stories.dot \
+    --dot-workflow dev.yaml \
+    --dot-input '{"mode": "sequential"}'
+
+# Using run-from-dot command
+tea run-from-dot stories.dot -w bmad-story-development.yaml -i '{"mode": "sequential"}'
+```
+
+The node label is passed as `{"arg": "<node_label>"}` to the workflow.
+
+#### Verbose Mode (see LLM output in real-time)
+
+When workflows call `llm.call` with shell providers (e.g., Claude Code), use `TEA_SHELL_VERBOSE=1` to see the output in real-time:
+
+```bash
+# See Claude Code output while running
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot --dot-workflow dev.yaml
+
+# Or export for all commands
+export TEA_SHELL_VERBOSE=1
+tea run-from-dot stories.dot -w bmad-story-development.yaml
+```
+
+Monitor progress: `tmux attach -t tea-dot`
+
+### Step 2b: Alternative - Generate YAML First
+
+If you need YAML-specific features (checkpoints, interrupts):
+
+```python
+from the_edge_agent import dot_to_yaml
+yaml_content = dot_to_yaml("workflow.dot", use_node_commands=True, output_path="workflow.yaml")
+```
+
+Then run:
+
+```bash
+tea run workflow.yaml
 ```
 
 ---
@@ -338,26 +392,39 @@ command="pytest tests/ -v"
 
 ---
 
-## Generation Commands
+## Execution Commands
 
-### Basic Generation
+### Direct Execution (Recommended)
 
 ```bash
-# Generate YAML from DOT with per-node commands
-tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
+# Execute DOT directly with tmux output
+tea run --from-dot workflow.dot
+
+# Alternative: dedicated command with more options
+tea run-from-dot workflow.dot --session my-session --max-parallel 3
+
+# Preview execution plan (dry run)
+tea run --from-dot workflow.dot --dot-dry-run
 ```
 
-### With Options
+Monitor with: `tmux attach -t tea-dot`
 
-```bash
-# Custom concurrency (default: 3)
-tea-python from dot workflow.dot --use-node-commands -m 5 -o workflow.yaml
+### Programmatic YAML Generation (Alternative)
 
-# Custom workflow name
-tea-python from dot workflow.dot --use-node-commands -n "my-pipeline" -o workflow.yaml
+If you need YAML for checkpoints, interrupts, or other advanced features:
 
-# Validate before writing
-tea-python from dot workflow.dot --use-node-commands --validate -o workflow.yaml
+```python
+from the_edge_agent import dot_to_yaml
+
+# Generate with custom options
+yaml_content = dot_to_yaml(
+    "workflow.dot",
+    use_node_commands=True,
+    max_concurrency=5,
+    workflow_name="my-pipeline",
+    validate=True,
+    output_path="workflow.yaml"
+)
 ```
 
 ### Execute Generated Workflow
@@ -480,12 +547,19 @@ examples/dot/<workflow-name>.dot
 
 **After generating the DOT file, ALWAYS output these commands with full discovered paths:**
 
-#### Convert DOT to YAML:
+#### Execute DOT Directly (Recommended):
 ```bash
-tea-python from dot <DOT_OUTPUT>/<filename>.dot --use-node-commands -o <DOT_OUTPUT>/<filename>.yaml
+tea run --from-dot <DOT_OUTPUT>/<filename>.dot
 ```
 
-#### Execute the Workflow:
+Or with options:
+```bash
+tea run-from-dot <DOT_OUTPUT>/<filename>.dot --session my-session --max-parallel 3
+```
+
+Monitor: `tmux attach -t tea-dot`
+
+#### Alternative - Execute via YAML:
 ```bash
 tea-python run <DOT_OUTPUT>/<filename>.yaml 
 ```
@@ -497,14 +571,14 @@ tea-python run <DOT_OUTPUT>/<filename>.yaml  --show-graph
 
 **Example with discovered paths:**
 ```bash
-# Convert DOT to YAML
-tea-python from dot /home/user/project/docs/workflows/my-workflow.dot --use-node-commands -o /home/user/project/docs/workflows/my-workflow.yaml
+# Execute DOT directly (RECOMMENDED)
+tea run --from-dot /home/user/project/docs/workflows/my-workflow.dot
 
-# Execute workflow
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml 
+# Or with custom session and monitoring
+tea run-from-dot /home/user/project/docs/workflows/my-workflow.dot --session my-workflow
 
-# Or with visual graph progress (RECOMMENDED)
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml  --show-graph
+# Monitor progress
+tmux attach -t tea-dot
 ```
 
 ---
@@ -594,14 +668,16 @@ Write to: /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot
 **After saving the DOT file, output these executable commands:**
 
 ```bash
-# Convert DOT to YAML (tea-python from command)
-tea-python from dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot --use-node-commands -o /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml
+# Execute DOT directly with tmux output (RECOMMENDED)
+tea run --from-dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot
 
-# Execute workflow (tea-python run command)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml 
+# Alternative: dedicated command with more options
+tea run-from-dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot \
+    --session epic-impl \
+    --max-parallel 3
 
-# Or with visual graph progress (RECOMMENDED for monitoring multi-story workflows)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml  --show-graph
+# Monitor execution in tmux
+tmux attach -t tea-dot
 ```
 
 **Note:** All paths in the output commands MUST be the actual discovered absolute paths, not placeholders.

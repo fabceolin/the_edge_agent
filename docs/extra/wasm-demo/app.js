@@ -298,7 +298,20 @@ import {
   registerPrologHandler,
   clearPrologHandler,
   isPrologHandlerRegistered,
+  // Game functions (TEA-GAME-001.7)
+  game_init,
+  game_start_session,
+  game_generate_round,
+  game_submit_answer,
+  game_submit_to_leaderboard,
+  game_get_leaderboard,
+  game_get_session_stats,
+  game_set_llm_handler,
+  game_has_llm_handler,
 } from './pkg/index.js';
+
+// Import game UI module
+import { initGameUI } from './game.js';
 
 // Lua engine instance
 let luaEngine = null;
@@ -1403,6 +1416,45 @@ function updateThreadingStatus() {
   threadingStatusEl.textContent = multiThread ? 'Multi-thread' : 'Single-thread';
 }
 
+// Initialize game module (TEA-GAME-001.7)
+function initializeGame() {
+  try {
+    // Initialize game WASM module
+    game_init();
+    console.log('[TEA-DEMO] Game module initialized');
+
+    // Create WASM wrapper object with game functions
+    const wasmModule = {
+      game_start_session,
+      game_generate_round,
+      game_submit_answer,
+      game_submit_to_leaderboard,
+      game_get_leaderboard,
+      game_get_session_stats,
+    };
+
+    // Register LLM handler for game (reuses the same chat function)
+    if (!game_has_llm_handler()) {
+      game_set_llm_handler(async (paramsJson) => {
+        const params = JSON.parse(paramsJson);
+        const response = await chat(params.prompt, {
+          maxTokens: params.max_tokens || 100,
+          temperature: params.temperature || 0.7,
+        });
+        return JSON.stringify({ content: response.content });
+      });
+      console.log('[TEA-DEMO] Game LLM handler registered');
+    }
+
+    // Initialize game UI
+    initGameUI(wasmModule);
+    console.log('[TEA-DEMO] Game UI ready');
+  } catch (error) {
+    console.error('[TEA-DEMO] Game initialization failed:', error);
+    // Game is optional - don't fail the whole app
+  }
+}
+
 // Initialize LLM
 async function initializeLlm() {
   let yamlEngineReady = false;
@@ -1463,6 +1515,9 @@ async function initializeLlm() {
       });
       return JSON.stringify({ content: response.content });
     });
+
+    // Initialize game module (TEA-GAME-001.7)
+    initializeGame();
 
     await updateCacheStatus();
 

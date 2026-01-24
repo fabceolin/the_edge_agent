@@ -83,7 +83,7 @@ impl GameDb {
             CREATE TABLE IF NOT EXISTS game_sessions (
                 id VARCHAR PRIMARY KEY,
                 username VARCHAR NOT NULL,
-                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMP DEFAULT now(),
                 total_answers INTEGER DEFAULT 0,
                 correct_answers INTEGER DEFAULT 0,
                 sum_difficulty DOUBLE DEFAULT 0.0,
@@ -107,7 +107,7 @@ impl GameDb {
                 is_correct BOOLEAN,
                 response_time_ms INTEGER,
                 difficulty DOUBLE,
-                answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                answered_at TIMESTAMP DEFAULT now()
             )
             "#,
             [],
@@ -122,7 +122,7 @@ impl GameDb {
                 accuracy DOUBLE NOT NULL,
                 total_answers INTEGER NOT NULL,
                 avg_difficulty DOUBLE NOT NULL,
-                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                submitted_at TIMESTAMP DEFAULT now()
             )
             "#,
             [],
@@ -758,13 +758,13 @@ impl GameDb {
             INSERT INTO user_word_knowledge (
                 session_id, word_id, times_seen, times_correct,
                 times_as_llm, times_guessed, last_seen
-            ) VALUES (?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, 1, ?, ?, ?, now())
             ON CONFLICT (session_id, word_id) DO UPDATE SET
                 times_seen = user_word_knowledge.times_seen + 1,
                 times_correct = user_word_knowledge.times_correct + EXCLUDED.times_correct,
                 times_as_llm = user_word_knowledge.times_as_llm + EXCLUDED.times_as_llm,
                 times_guessed = user_word_knowledge.times_guessed + EXCLUDED.times_guessed,
-                last_seen = CURRENT_TIMESTAMP
+                last_seen = now()
             "#,
             params![
                 session_id,
@@ -909,13 +909,13 @@ impl GameDb {
             r#"
             INSERT INTO leaderboard (
                 username, score, accuracy, total_answers, avg_difficulty, submitted_at
-            ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ) VALUES (?, ?, ?, ?, ?, now())
             ON CONFLICT (username) DO UPDATE SET
                 score = EXCLUDED.score,
                 accuracy = EXCLUDED.accuracy,
                 total_answers = EXCLUDED.total_answers,
                 avg_difficulty = EXCLUDED.avg_difficulty,
-                submitted_at = CURRENT_TIMESTAMP
+                submitted_at = now()
             WHERE EXCLUDED.score > leaderboard.score
             "#,
             params![
@@ -1124,5 +1124,354 @@ mod tests {
         let count = db.bulk_insert_words(&words).unwrap();
         assert_eq!(count, 3);
         assert_eq!(db.word_count().unwrap(), 3);
+    }
+
+    // =========================================================================
+    // Session CRUD Tests (AC-2, AC-9)
+    // =========================================================================
+
+    #[test]
+    fn test_insert_session() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        let retrieved = db.get_session(&session.id).unwrap();
+        assert!(retrieved.is_some());
+
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.username, "TestPlayer");
+        assert_eq!(retrieved.total_answers, 0);
+        assert_eq!(retrieved.correct_answers, 0);
+    }
+
+    #[test]
+    fn test_update_session() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let mut session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        // Simulate game progress
+        session.total_answers = 10;
+        session.correct_answers = 8;
+        session.sum_difficulty = 5.5;
+        session.current_difficulty = 0.65;
+
+        db.update_session(&session).unwrap();
+
+        let retrieved = db.get_session(&session.id).unwrap().unwrap();
+        assert_eq!(retrieved.total_answers, 10);
+        assert_eq!(retrieved.correct_answers, 8);
+        assert!((retrieved.sum_difficulty - 5.5).abs() < f64::EPSILON);
+        assert!((retrieved.current_difficulty - 0.65).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_get_session_not_found() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let result = db.get_session("nonexistent-id").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_session_with_defaults() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("DefaultsTest");
+        db.insert_session(&session).unwrap();
+
+        let retrieved = db.get_session(&session.id).unwrap().unwrap();
+        assert_eq!(retrieved.total_answers, 0);
+        assert_eq!(retrieved.correct_answers, 0);
+        assert!((retrieved.sum_difficulty - 0.0).abs() < f64::EPSILON);
+        assert!((retrieved.current_difficulty - 0.5).abs() < f64::EPSILON);
+    }
+
+    // =========================================================================
+    // Leaderboard Tests (AC-4, AC-9)
+    // =========================================================================
+
+    #[test]
+    fn test_leaderboard_insert_new_entry() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let result = db
+            .submit_to_leaderboard("Player1", 0.85, 0.9, 50, 0.6)
+            .unwrap();
+        assert!(result, "New entry should be inserted");
+
+        let score = db.get_leaderboard_score("Player1").unwrap();
+        assert!(score.is_some());
+        assert!((score.unwrap() - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_leaderboard_upsert_higher_score() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        // Insert initial score
+        db.submit_to_leaderboard("Player1", 0.50, 0.7, 30, 0.5)
+            .unwrap();
+
+        // Submit higher score - should update
+        let result = db
+            .submit_to_leaderboard("Player1", 0.85, 0.9, 50, 0.6)
+            .unwrap();
+        assert!(result, "Higher score should update");
+
+        let score = db.get_leaderboard_score("Player1").unwrap().unwrap();
+        assert!((score - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_leaderboard_no_update_lower_score() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        // Insert high score
+        db.submit_to_leaderboard("Player1", 0.85, 0.9, 50, 0.6)
+            .unwrap();
+
+        // Submit lower score - should NOT update
+        let result = db
+            .submit_to_leaderboard("Player1", 0.50, 0.7, 30, 0.5)
+            .unwrap();
+        assert!(!result, "Lower score should not update");
+
+        // Original score should remain
+        let score = db.get_leaderboard_score("Player1").unwrap().unwrap();
+        assert!((score - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_leaderboard_no_update_equal_score() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        // Insert score
+        db.submit_to_leaderboard("Player1", 0.85, 0.9, 50, 0.6)
+            .unwrap();
+
+        // Submit equal score - should NOT update
+        let result = db
+            .submit_to_leaderboard("Player1", 0.85, 0.8, 40, 0.5)
+            .unwrap();
+        assert!(!result, "Equal score should not update");
+    }
+
+    #[test]
+    fn test_get_top_leaderboard() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        // Insert multiple players
+        db.submit_to_leaderboard("Player1", 0.50, 0.7, 30, 0.5)
+            .unwrap();
+        db.submit_to_leaderboard("Player2", 0.85, 0.9, 50, 0.6)
+            .unwrap();
+        db.submit_to_leaderboard("Player3", 0.65, 0.8, 40, 0.55)
+            .unwrap();
+
+        let top = db.get_top_leaderboard(10).unwrap();
+        assert_eq!(top.len(), 3);
+
+        // Should be sorted by score descending
+        assert_eq!(top[0].username, "Player2");
+        assert!((top[0].score - 0.85).abs() < f64::EPSILON);
+        assert_eq!(top[1].username, "Player3");
+        assert_eq!(top[2].username, "Player1");
+    }
+
+    #[test]
+    fn test_get_top_leaderboard_with_limit() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        // Insert multiple players
+        for i in 0..5 {
+            let score = (i as f64) * 0.1;
+            db.submit_to_leaderboard(&format!("Player{}", i), score, 0.8, 50, 0.5)
+                .unwrap();
+        }
+
+        let top = db.get_top_leaderboard(3).unwrap();
+        assert_eq!(top.len(), 3);
+    }
+
+    // =========================================================================
+    // Answer Recording Tests (AC-3, AC-5, AC-6, AC-9)
+    // =========================================================================
+
+    #[test]
+    fn test_record_answer_correct() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        let mut round = GameRound::new(
+            "The quick brown fox",
+            vec![
+                "fast".into(),
+                "slow".into(),
+                "quick".into(),
+                "lazy".into(),
+                "red".into(),
+            ],
+            "quick",
+        );
+        round.record_answer("quick", 1500);
+
+        db.record_answer(&session.id, &round, 0.5).unwrap();
+
+        // Verify word knowledge was updated
+        let knowledge = db.get_word_knowledge(&session.id, "quick").unwrap();
+        assert!(knowledge.is_some());
+        let knowledge = knowledge.unwrap();
+        assert_eq!(knowledge.times_seen, 1);
+        assert_eq!(knowledge.times_correct, 1);
+    }
+
+    #[test]
+    fn test_record_answer_incorrect_creates_confusion() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        let mut round = GameRound::new(
+            "The quick brown fox",
+            vec![
+                "fast".into(),
+                "slow".into(),
+                "quick".into(),
+                "lazy".into(),
+                "red".into(),
+            ],
+            "quick",
+        );
+        round.record_answer("fast", 2000); // Wrong answer
+
+        db.record_answer(&session.id, &round, 0.5).unwrap();
+
+        // Verify confusion was recorded
+        let confusion_count = db
+            .get_confusion_count(&session.id, "quick", "fast")
+            .unwrap();
+        assert_eq!(confusion_count, 1);
+    }
+
+    #[test]
+    fn test_record_answer_with_json_choices() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        // Test with various choices including special characters
+        let mut round = GameRound::new(
+            "Test phrase",
+            vec![
+                "word1".into(),
+                "word2".into(),
+                "word3".into(),
+                "word4".into(),
+                "word5".into(),
+            ],
+            "word3",
+        );
+        round.record_answer("word3", 1000);
+
+        // Should not panic - JSON serialization should work
+        db.record_answer(&session.id, &round, 0.5).unwrap();
+    }
+
+    #[test]
+    fn test_word_knowledge_accumulates() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        // First round - correct answer
+        let mut round1 = GameRound::new(
+            "Phrase 1",
+            vec![
+                "target".into(),
+                "a".into(),
+                "b".into(),
+                "c".into(),
+                "d".into(),
+            ],
+            "target",
+        );
+        round1.record_answer("target", 1000);
+        db.record_answer(&session.id, &round1, 0.5).unwrap();
+
+        // Second round - same word, wrong answer
+        let mut round2 = GameRound::new(
+            "Phrase 2",
+            vec![
+                "target".into(),
+                "x".into(),
+                "y".into(),
+                "z".into(),
+                "w".into(),
+            ],
+            "target",
+        );
+        round2.record_answer("x", 1500);
+        db.record_answer(&session.id, &round2, 0.6).unwrap();
+
+        let knowledge = db
+            .get_word_knowledge(&session.id, "target")
+            .unwrap()
+            .unwrap();
+        assert_eq!(knowledge.times_seen, 2);
+        assert_eq!(knowledge.times_correct, 1); // Only first was correct
+    }
+
+    #[test]
+    fn test_confusion_accumulates() {
+        let db = GameDb::new(":memory:").unwrap();
+        db.init_schema().unwrap();
+
+        let session = GameSession::with_username("TestPlayer");
+        db.insert_session(&session).unwrap();
+
+        // Make same mistake twice
+        for _ in 0..2 {
+            let mut round = GameRound::new(
+                "Test phrase",
+                vec![
+                    "correct".into(),
+                    "wrong".into(),
+                    "a".into(),
+                    "b".into(),
+                    "c".into(),
+                ],
+                "correct",
+            );
+            round.record_answer("wrong", 1000);
+            db.record_answer(&session.id, &round, 0.5).unwrap();
+        }
+
+        let confusion_count = db
+            .get_confusion_count(&session.id, "correct", "wrong")
+            .unwrap();
+        assert_eq!(confusion_count, 2);
     }
 }

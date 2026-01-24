@@ -66,6 +66,9 @@ futures = "0.3"
 # SHA-256 hashing for content deduplication (LTM)
 sha2 = "0.10"
 
+# Random number generation (WASM-compatible) for game username generation
+rand = "0.8"
+
 # Markdown parsing (TEA-RALPHY-001.2)
 md-parser = { git = "https://github.com/fabceolin/md-parser", features = ["serde", "frontmatter", "wasm"] }
 
