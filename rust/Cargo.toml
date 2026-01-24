@@ -122,6 +122,7 @@ all = ["memory", "trace", "data", "web", "rag", "llm", "code", "agent", "reflect
 [dependencies.duckdb]
 version = "1.1"
 optional = true
+features = ["bundled"]
 
 [dependencies.cozo]
 version = "0.7"

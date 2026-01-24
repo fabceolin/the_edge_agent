@@ -38,9 +38,18 @@ pub mod db;
 #[cfg(feature = "game-duckdb")]
 pub mod embeddings;
 
+#[cfg(feature = "game-duckdb")]
+pub mod engine;
+
 // Re-export embedding types for convenience
 #[cfg(feature = "game-duckdb")]
 pub use embeddings::{difficulty_to_similarity_range, Difficulty, EmbeddingSearch};
+
+// Re-export engine types for convenience (TEA-GAME-001.5)
+#[cfg(feature = "game-duckdb")]
+pub use engine::{
+    AnswerResult, GameEngine, GameEngineConfig, GameError, LeaderboardResult, SessionInfo,
+};
 
 /// Opik integration for game tracing (TEA-GAME-001.8)
 pub mod opik;

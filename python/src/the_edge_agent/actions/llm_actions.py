@@ -298,7 +298,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             full_command = [command] + [a for a in args if "{prompt}" not in str(a)]
             stdin_mode = "pipe"
 
+        # TEA-LLM-004.1: Verbose mode - print output in real-time
+        import sys
+
+        verbose = config.get("verbose", False)
+        if os.environ.get("TEA_SHELL_VERBOSE", "").lower() in ("1", "true", "yes"):
+            verbose = True
+
         try:
+            temp_path = None
             if prompt_in_args:
                 # Prompt already in args, no stdin needed
                 proc = subprocess.Popen(
@@ -308,7 +316,6 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     text=True,
                     env=env,
                 )
-                stdout, stderr = proc.communicate(timeout=provider_timeout)
             elif stdin_mode == "pipe":
                 proc = subprocess.Popen(
                     full_command,
@@ -318,9 +325,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     text=True,
                     env=env,
                 )
-                stdout, stderr = proc.communicate(
-                    input=prompt_text, timeout=provider_timeout
-                )
+                # Send input and close stdin
+                proc.stdin.write(prompt_text)
+                proc.stdin.close()
             elif stdin_mode == "file":
                 # Write to temp file for very large contexts
                 with tempfile.NamedTemporaryFile(
@@ -328,24 +335,54 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 ) as f:
                     f.write(prompt_text)
                     temp_path = f.name
-                try:
-                    # Replace {input_file} placeholder in args
-                    file_args = [a.replace("{input_file}", temp_path) for a in args]
-                    proc = subprocess.Popen(
-                        [command] + file_args,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        env=env,
-                    )
-                    stdout, stderr = proc.communicate(timeout=provider_timeout)
-                finally:
-                    os.unlink(temp_path)
+                # Replace {input_file} placeholder in args
+                file_args = [a.replace("{input_file}", temp_path) for a in args]
+                proc = subprocess.Popen(
+                    [command] + file_args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                )
             else:
                 return {
                     "error": f"Unknown stdin_mode: {stdin_mode}. Use 'pipe' or 'file'.",
                     "success": False,
                 }
+
+            # TEA-LLM-004.1: Read output - line by line if verbose, else all at once
+            if verbose:
+                # Read and print line by line
+                stdout_lines = []
+                start_time = time.time()
+                while True:
+                    if time.time() - start_time > provider_timeout:
+                        proc.kill()
+                        raise subprocess.TimeoutExpired(full_command, provider_timeout)
+
+                    line = proc.stdout.readline()
+                    if not line:
+                        if proc.poll() is not None:
+                            break
+                        continue
+
+                    stdout_lines.append(line)
+                    sys.stderr.write(line)
+                    sys.stderr.flush()
+
+                stdout = "".join(stdout_lines)
+                stderr = proc.stderr.read() if proc.stderr else ""
+                proc.wait(timeout=5)
+            else:
+                # Original behavior - read all at once
+                stdout, stderr = proc.communicate(timeout=provider_timeout)
+
+            # Clean up temp file if used
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
 
             if proc.returncode != 0:
                 return {
@@ -498,6 +535,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             full_content = []
             chunk_count = 0
             import select
+            import sys
+
+            # TEA-LLM-004.1: Verbose mode - print output in real-time
+            verbose = config.get("verbose", False)
+            # Also check environment variable for runtime override
+            if os.environ.get("TEA_SHELL_VERBOSE", "").lower() in ("1", "true", "yes"):
+                verbose = True
 
             start_time = time.time()
 
@@ -523,6 +567,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
                     full_content.append(line)
                     chunk_count += 1
+
+                    # TEA-LLM-004.1: Print to stderr in verbose mode
+                    if verbose:
+                        sys.stderr.write(line)
+                        sys.stderr.flush()
             except Exception:
                 # Fallback: just read all output
                 remaining = proc.stdout.read()

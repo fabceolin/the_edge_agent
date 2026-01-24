@@ -1816,6 +1816,7 @@ dependencies = [
  "lazy_static",
  "md-parser",
  "opendal",
+ "rand",
  "regex-lite",
  "serde",
  "serde_json",

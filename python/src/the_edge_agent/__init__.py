@@ -92,6 +92,16 @@ except ImportError:
 # Bug Reporting (TEA-REPORT-001d)
 from . import report_cli
 
+# DOT Parser and StateGraph Integration (TEA-GAME-001)
+from .dot_parser import (
+    dot_to_stategraph,
+    run_dot,
+    parse_dot,
+    parse_dot_string,
+    analyze_graph,
+    dot_to_yaml,
+)
+
 __all__ = [
     "StateGraph",
     "START",
@@ -152,6 +162,13 @@ __all__ = [
     "KUZU_AVAILABLE",
     # Opik Exporter (TEA-BUILTIN-005.1)
     "OpikExporter",
+    # DOT Parser and StateGraph Integration (TEA-GAME-001)
+    "dot_to_stategraph",
+    "run_dot",
+    "parse_dot",
+    "parse_dot_string",
+    "analyze_graph",
+    "dot_to_yaml",
     # Version
     "__version__",
 ]
