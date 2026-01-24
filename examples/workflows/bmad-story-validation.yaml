@@ -1,188 +1,186 @@
 name: bmad-story-validation
-description: Autonomous BMad Story Validation using Context Injection Pattern
+description: |
+  BMad Story Validation Workflow - Sequential QA and SM checks using BMad slash commands.
+
+  Sequence:
+  1. QA risk-profile → update story QA notes
+  2. QA nfr-assess → update story QA notes
+  3. QA test-design → update story QA notes
+  4. SM story-checklist → update story status
+
+  Uses BMad agents directly via slash commands for simplified context loading.
 
 state_schema:
   arg: str
-  bmad_root: str
-  agent_persona: str
-  task_definition: str
-  qa_output: str
-  qa_notes_output: str
-  sm_output: str
-  status_output: str
+  story_path: str
+  risk_profile_output: str
+  nfr_assess_output: str
+  test_design_output: str
+  sm_checklist_output: str
+
+# TEA-RALPHY-002.3: Enable verbose output for Claude Code shell provider
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
 
 nodes:
-  - name: detect_bmad_version
-    description: Auto-detect BMad directory structure
+  # ============================================================================
+  # NODE 0: Resolve story path from arg (handles both short labels and full paths)
+  # ============================================================================
+  - name: resolve_story_path
+    description: Convert short label to full story path if needed
     run: |
       import os
-      if os.path.isdir(".bmad-core/agents"):
-          bmad_root = ".bmad-core"
-      elif os.path.isdir("_bmad/bmm/agents"):
-          bmad_root = "_bmad/bmm"
-      else:
-          bmad_root = ".bmad-core"
-      return {"bmad_root": bmad_root}
+      import glob
 
-  - name: load_qa_context
-    description: Load QA agent persona and task definition
-    run: |
-      import os
-      bmad_root = state.get("bmad_root", ".bmad-core")
-      agent_file = os.path.join(bmad_root, "agents", "qa.md")
-      task_file = os.path.join(bmad_root, "tasks", "test-design.md")
-      agent_persona = ""
-      task_definition = ""
-      if os.path.exists(agent_file):
-          with open(agent_file, "r") as f:
-              agent_persona = f.read()
-      if os.path.exists(task_file):
-          with open(task_file, "r") as f:
-              task_definition = f.read()
-      return {"agent_persona": agent_persona, "task_definition": task_definition}
+      arg = state.get("arg", "")
 
-  - name: run_qa_test_design
-    description: Execute QA test-design via context injection
+      # If arg is already a full path that exists, use it directly
+      if os.path.isfile(arg):
+          return {"story_path": arg}
+
+      # Otherwise, search for matching story file
+      # arg could be: "PIR.1.person-table-row-level-accept-reject" or "PIR.1"
+      stories_dir = "docs/stories"
+
+      # Try exact match first
+      pattern = os.path.join(stories_dir, f"{arg}.md")
+      matches = glob.glob(pattern)
+      if matches:
+          return {"story_path": matches[0]}
+
+      # Try prefix match (e.g., "PIR.1" matches "PIR.1.person-table-row-level-accept-reject.md")
+      pattern = os.path.join(stories_dir, f"{arg}*.md")
+      matches = glob.glob(pattern)
+      if matches:
+          return {"story_path": matches[0]}
+
+      # Fallback: return arg as-is and let downstream handle the error
+      return {"story_path": arg}
+
+  # ============================================================================
+  # NODE 1: QA risk-profile using BMad slash command
+  # ============================================================================
+  - name: qa_risk_profile
+    description: Execute QA risk-profile and update story QA notes
     uses: llm.call
     with:
       provider: shell
       shell_provider: claude
       model: claude
-      timeout: 600
+      timeout: 3600
       messages:
         - role: user
           content: |
-            CRITICAL: ACTIVATE PERSONA MODE.
+            /BMad:agents:qa *risk-profile {{ state.story_path }} YOLO mode
 
-            {{ state.agent_persona }}
+            AFTER completing the risk-profile analysis, you MUST:
+            1. Append a "## QA Notes - Risk Profile" section to the story file {{ state.story_path }}
+            2. Include: Risk level, identified risks, mitigations, testing priorities
+            3. VERIFY the section was written by reading the file
 
-            TASK: Perform *test-design for story {{ state.arg }}.
+            When done print: RISK_PROFILE_COMPLETED
+    output: risk_profile_output
 
-            {{ state.task_definition }}
-
-            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
-
-            Find story in docs/stories/ matching {{ state.arg }}.
-            Generate comprehensive test design.
-
-            When done print: BMAD_QA_COMPLETED
-    output: qa_output
-
-  - name: write_qa_notes
-    description: Write QA notes to story file
+  # ============================================================================
+  # NODE 2: QA nfr-assess using BMad slash command
+  # ============================================================================
+  - name: qa_nfr_assess
+    description: Execute QA NFR assessment and update story QA notes
     uses: llm.call
     with:
       provider: shell
       shell_provider: claude
       model: claude
-      timeout: 600
+      timeout: 3600
       messages:
         - role: user
           content: |
-            CRITICAL: ACTIVATE PERSONA MODE.
+            /BMad:agents:qa *nfr-assess {{ state.story_path }} YOLO mode
 
-            {{ state.agent_persona }}
+            AFTER completing the NFR assessment, you MUST:
+            1. Append a "## QA Notes - NFR Assessment" section to the story file {{ state.story_path }}
+            2. Include: NFR coverage, missing considerations, test recommendations, acceptance criteria
+            3. VERIFY the section was written by reading the file
 
-            TASK: Write QA notes to the story file for {{ state.arg }}.
+            When done print: NFR_ASSESS_COMPLETED
+    output: nfr_assess_output
 
-            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
-
-            Based on the test design analysis, add a "## QA Notes" section to the story file.
-            Find the story file in docs/stories/ matching {{ state.arg }}.
-
-            The QA notes should include:
-            - Test coverage summary
-            - Risk areas identified
-            - Recommended test scenarios
-            - Any concerns or blockers
-
-            Save the updated story file.
-
-            When done print: QA_NOTES_WRITTEN
-    output: qa_notes_output
-
-  - name: load_sm_context
-    description: Load SM agent persona
-    run: |
-      import os
-      bmad_root = state.get("bmad_root", ".bmad-core")
-      agent_file = os.path.join(bmad_root, "agents", "sm.md")
-      agent_persona = ""
-      if os.path.exists(agent_file):
-          with open(agent_file, "r") as f:
-              agent_persona = f.read()
-      return {"agent_persona": agent_persona}
-
-  - name: run_sm_story_checklist
-    description: Execute SM story-checklist via context injection
+  # ============================================================================
+  # NODE 3: QA test-design using BMad slash command
+  # ============================================================================
+  - name: qa_test_design
+    description: Execute QA test-design and update story QA notes
     uses: llm.call
     with:
       provider: shell
       shell_provider: claude
       model: claude
-      timeout: 600
+      timeout: 3600
       messages:
         - role: user
           content: |
-            CRITICAL: ACTIVATE PERSONA MODE.
+            /BMad:agents:qa *test-design {{ state.story_path }} YOLO mode
 
-            {{ state.agent_persona }}
+            AFTER completing the test design, you MUST:
+            1. Append a "## QA Notes - Test Design" section to the story file {{ state.story_path }}
+            2. Include: Test coverage matrix, scenarios with expected results, test data/environment requirements
+            3. VERIFY the section was written by reading the file
 
-            TASK: Perform *story-checklist for story {{ state.arg }}.
+            When done print: TEST_DESIGN_COMPLETED
+    output: test_design_output
 
-            MODE: YOLO - Do NOT ask permission. Execute commands.
-
-            Find story in docs/stories/ matching {{ state.arg }}.
-            Validate against Definition of Ready checklist.
-
-            When done print: BMAD_SM_COMPLETED
-    output: sm_output
-
-  - name: update_story_status
-    description: Update story status based on checklist results
+  # ============================================================================
+  # NODE 4: SM story validation using BMad slash command
+  # ============================================================================
+  - name: sm_story_checklist
+    description: Execute SM story-checklist and update story status
     uses: llm.call
     with:
       provider: shell
       shell_provider: claude
       model: claude
-      timeout: 600
+      timeout: 3600
       messages:
         - role: user
           content: |
-            CRITICAL: ACTIVATE PERSONA MODE.
+            /BMad:agents:sm YOLO mode
 
-            {{ state.agent_persona }}
+            Execute the story validation checklist for {{ state.story_path }}
 
-            TASK: Update story status for {{ state.arg }}.
+            Validate against Definition of Ready:
+            - Story has clear title and description
+            - Acceptance criteria are defined and testable
+            - Dependencies are identified
+            - Technical approach is documented
+            - Story is properly sized
+            - QA notes sections are present (Risk Profile, NFR, Test Design)
+            - No blocking issues or unknowns
 
-            MODE: YOLO - Do NOT ask permission. Execute commands. Write files.
+            AFTER completing validation, you MUST update the story file {{ state.story_path }}:
+            1. Add "## SM Validation" section with checklist results
+            2. Update "## Status" section:
+               - If ALL criteria passed: Set to "Ready for Development"
+               - If ANY criteria failed: Set to "Needs Revision" with notes
+            3. VERIFY the sections were written by reading the file
 
-            Find the story file in docs/stories/ matching {{ state.arg }}.
-
-            Based on the checklist validation:
-            - If all criteria passed: Update status to "Ready for Development"
-            - If some criteria failed: Update status to "Needs Revision" and add notes
-
-            Update the "## Status" section in the story file.
-            Save the file.
-
-            When done print: STATUS_UPDATED
-    output: status_output
+            When done print: SM_CHECKLIST_COMPLETED
+    output: sm_checklist_output
 
 edges:
   - from: __start__
-    to: detect_bmad_version
-  - from: detect_bmad_version
-    to: load_qa_context
-  - from: load_qa_context
-    to: run_qa_test_design
-  - from: run_qa_test_design
-    to: write_qa_notes
-  - from: write_qa_notes
-    to: load_sm_context
-  - from: load_sm_context
-    to: run_sm_story_checklist
-  - from: run_sm_story_checklist
-    to: update_story_status
-  - from: update_story_status
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: qa_risk_profile
+  - from: qa_risk_profile
+    to: qa_nfr_assess
+  - from: qa_nfr_assess
+    to: qa_test_design
+  - from: qa_test_design
+    to: sm_story_checklist
+  - from: sm_story_checklist
     to: __end__

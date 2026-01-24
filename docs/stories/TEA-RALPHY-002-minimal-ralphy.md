@@ -55,7 +55,8 @@ tea run dependency-analyzer.yaml --input '{"source": "docs/stories/*.md"}' \
 | Story | Name | Status | Description |
 |-------|------|--------|-------------|
 | [TEA-RALPHY-002.1](./TEA-RALPHY-002.1.dependency-analyzer-agent.md) | Dependency Analyzer Agent | Draft | YAML agent that analyzes files and generates DOT |
-| [TEA-RALPHY-002.2](./TEA-RALPHY-002.2.dot-stdin-support.md) | DOT Stdin Support | Draft | Add stdin (`-`) support to `tea from dot` |
+| [TEA-RALPHY-002.2](./TEA-RALPHY-002.2.dot-stdin-support.md) | DOT Stdin Support | Done | Add stdin (`-`) support to `tea from dot` |
+| [TEA-RALPHY-002.3](./TEA-RALPHY-002.3.dot-exec-parameter.md) | Custom Executable Parameter | Done | `--exec`/`--dot-exec` for custom workflow runners |
 
 ## Deferred from TEA-RALPHY-001
 

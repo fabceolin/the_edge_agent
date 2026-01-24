@@ -448,11 +448,30 @@ tea run --from-dot stories.dot \
 tea run-from-dot stories.dot \
     -w examples/workflows/bmad-story-development.yaml \
     -i '{"mode": "sequential"}'
+
+# With custom executable (--dot-exec or --exec)
+tea run --from-dot stories.dot \
+    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-exec "python -m the_edge_agent"
+
+# Or using run-from-dot with --exec/-e
+tea-python run-from-dot stories.dot \
+    -w examples/workflows/bmad-story-validation.yaml \
+    -e "/path/to/custom/tea-python"
 ```
 
 The node label is passed as `{"arg": "<node_label>"}` to the workflow.
 
 Monitor progress with: `tmux attach -t tea-dot`
+
+#### Parameter Reference
+
+| `run-from-dot` | `run --from-dot` | Purpose |
+|----------------|------------------|---------|
+| `--workflow`/`-w` | `--dot-workflow` | Workflow YAML file to run for each node |
+| `--max-parallel`/`-m` | `--dot-max-parallel` | Maximum parallel processes |
+| `--exec`/`-e` | `--dot-exec` | Custom executable (default: `tea-python`) |
+| `--session`/`-s` | `--dot-session` | Tmux session name |
 
 ### 6.2 Alternative: Execute via YAML
 
@@ -499,229 +518,124 @@ tea run examples/dot/tea-game-001-validation.yaml \
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## 7. Ralphy Workflows: Validate and Develop
+## 7. Real-World Example: Matter Import Resolution Epic
 
-TEA now includes two production-ready workflows for the complete development cycle: **ralphy-validate** for story validation and **ralphy-develop** for autonomous implementation.
+This section demonstrates a production execution of 46 stories across 12 epics using TEA DOT orchestration.
 
-### 7.1 The Validate-Then-Develop Cycle
+### 7.1 Workflow Selection: Validation vs Development
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    RALPHY DEVELOPMENT CYCLE                     │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌───────────────┐        ┌────────────────┐                   │
-│   │  BMad Story   │───────►│ ralphy-validate │                  │
-│   │  (Draft)      │        │ (Check structure)│                 │
-│   └───────────────┘        └────────┬───────┘                   │
-│                                     │                           │
-│                            ┌────────▼────────┐                  │
-│                            │   PASS / FAIL   │                  │
-│                            └────────┬────────┘                  │
-│                                     │                           │
-│           ┌─────────────────────────┼─────────────────────────┐ │
-│           │                         │                         │ │
-│           ▼ (FAIL)                  ▼ (PASS)                  │ │
-│   ┌───────────────┐        ┌────────────────┐                 │ │
-│   │  Fix Story    │        │ ralphy-develop │                 │ │
-│   │  (Manual/PO)  │        │ (Implement)    │                 │ │
-│   └───────┬───────┘        └────────┬───────┘                 │ │
-│           │                         │                         │ │
-│           └─────────────────────────┼─────────────────────────┘ │
-│                                     │                           │
-│                            ┌────────▼────────┐                  │
-│                            │   Tests + PR    │                  │
-│                            └─────────────────┘                  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+TEA provides two complementary BMad workflows:
 
-### 7.2 Step 1: Validate Stories (ralphy-validate)
+| Workflow | Purpose | When to Use |
+|----------|---------|-------------|
+| `bmad-story-validation.yaml` | QA-only: risk-profile, NFR, test-design, SM checklist | Before development starts |
+| `bmad-story-development.yaml` | Full cycle: Dev → QA → SM with code implementation | After stories pass validation |
 
-Before developing, validate your stories to ensure they have the required BMad structure:
+For this epic, we use **bmad-story-validation** to validate all 46 stories before any implementation begins.
+
+### 7.2 The Execution Command
 
 ```bash
-# Validate a single story
-cd python && tea run ../examples/workflows/ralphy-validate.yaml \
-  --input '{"source": "../docs/stories/TEA-EXAMPLE-001.1.md"}'
-
-# Validate all stories in an epic
-cd python && tea run ../examples/workflows/ralphy-validate.yaml \
-  --input '{"source": "../docs/stories/TEA-EXAMPLE-001.*.md"}'
-
-# Strict mode (fail on warnings) - recommended for CI
-cd python && tea run ../examples/workflows/ralphy-validate.yaml \
-  --input '{"source": "../docs/stories/*.md", "strict": true}'
-
-# JSON output for automation
-cd python && tea run ../examples/workflows/ralphy-validate.yaml \
-  --input '{"source": "../docs/stories/*.md", "output_format": "json"}'
+# Actual command running in tmux session 'tea-dot'
+tea-python run-from-dot \
+    examples/dot/matter-import-resolution-workflow-short.dot \
+    --workflow examples/workflows/bmad-story-validation.yaml \
+    --max-parallel 3 \
+    --session tea-dot
 ```
 
-**What validation checks:**
+**Parameters explained:**
 
-| Check | Type | Description |
-|-------|------|-------------|
-| `## Status` | Error | Required section |
-| `## Story` | Error | Required section |
-| `## Acceptance Criteria` | Error | Required section with numbered items |
-| `## Tasks / Subtasks` | Error | Required section with checkbox tasks |
-| Valid status value | Warning | Must be: Draft, Ready, In Progress, Ready for Review, Done, Blocked, Deferred |
-| Task-AC linkage | Warning | Tasks should reference ACs with `(AC: 1, 2)` |
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `run-from-dot` | - | Command to execute DOT workflow |
+| DOT file | `matter-import-resolution-workflow-short.dot` | 46-node dependency graph |
+| `--workflow`/`-w` | `bmad-story-validation.yaml` | QA + SM validation workflow |
+| `--max-parallel`/`-m` | `3` | Limit concurrent processes |
+| `--session`/`-s` | `tea-dot` | Tmux session name |
 
-**Example output:**
+### 7.3 DOT File Structure (Short Labels)
 
-```
-===============================================================================
-                    RALPHY VALIDATE - Story Validation Report
-===============================================================================
-Stories: 3 | Passed: 2 | Failed: 1
-Errors: 1 | Warnings: 3
-===============================================================================
-
-[PASS] TEA-EXAMPLE-001.1.md
-  i Status: Ready
-  i Acceptance Criteria: 5
-  i Tasks: 0/8 (0.0%)
-  ! Only 5/8 tasks have AC references
-
-[FAIL] TEA-EXAMPLE-001.2.md
-  i Status: Draft
-  x Missing required section: ## Acceptance Criteria
-===============================================================================
-```
-
-### 7.3 Step 2: Implement Tasks (ralphy-develop)
-
-Once validation passes, use `ralphy-develop` to implement tasks autonomously:
-
-```bash
-# Basic development run (sequential mode, Claude engine)
-cd python && tea run ../examples/workflows/ralphy-develop.yaml \
-  --input '{"source": "../docs/stories/TEA-EXAMPLE-001.1.md"}'
-
-# Parallel mode with git worktrees
-cd python && tea run ../examples/workflows/ralphy-develop.yaml \
-  --input '{
-    "source": "../docs/stories/TEA-EXAMPLE-001.1.md",
-    "mode": "parallel",
-    "max_concurrency": 4
-  }'
-
-# Graph mode (respects task dependencies)
-cd python && tea run ../examples/workflows/ralphy-develop.yaml \
-  --input '{
-    "source": "../docs/stories/TEA-EXAMPLE-001.1.md",
-    "mode": "graph",
-    "max_concurrency": 4
-  }'
-
-# With visual tmux output
-cd python && tea run ../examples/workflows/ralphy-develop.yaml \
-  --input '{
-    "source": "../docs/stories/TEA-EXAMPLE-001.1.md",
-    "mode": "parallel",
-    "output_to_tmux": true,
-    "tmux_session": "ralphy",
-    "tmux_layout": "tiled"
-  }'
-```
-
-**Execution modes:**
-
-| Mode | Description | Best For |
-|------|-------------|----------|
-| `sequential` | Tasks run one at a time | Simple stories, debugging |
-| `parallel` | Tasks run in isolated git worktrees | Independent tasks, speed |
-| `graph` | Respects `depends_on` task dependencies | Complex stories with ordering |
-
-**Configuration options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `source` | string | *required* | Story file path or glob |
-| `engine` | string | `claude` | AI engine (claude, codex, gemini, opencode, cursor) |
-| `mode` | string | `sequential` | Execution mode |
-| `max_concurrency` | int | `4` | Max parallel tasks |
-| `create_prs` | bool | `true` | Create PRs for tasks |
-| `run_tests` | bool | `true` | Run tests after each task |
-| `output_to_tmux` | bool | `false` | Visual output to tmux panes |
-
-### 7.4 Complete Workflow Script
-
-Here's a script that combines both workflows:
-
-```bash
-#!/bin/bash
-# develop-story.sh - Complete validation + development cycle
-
-STORY_FILE="$1"
-
-if [ -z "$STORY_FILE" ]; then
-  echo "Usage: ./develop-story.sh <story-file>"
-  exit 1
-fi
-
-echo "=== Step 1: Validating story ==="
-cd python
-
-# Validate first
-tea run ../examples/workflows/ralphy-validate.yaml \
-  --input "{\"source\": \"$STORY_FILE\", \"strict\": true}" \
-  > /tmp/validation.log 2>&1
-
-if grep -q 'FAIL' /tmp/validation.log; then
-  echo "Validation FAILED. Please fix the story first."
-  cat /tmp/validation.log
-  exit 1
-fi
-
-echo "=== Step 2: Validation passed! Starting development ==="
-
-# Develop
-tea run ../examples/workflows/ralphy-develop.yaml \
-  --input "{
-    \"source\": \"$STORY_FILE\",
-    \"engine\": \"claude\",
-    \"mode\": \"sequential\",
-    \"run_tests\": true,
-    \"create_prs\": true
-  }"
-
-echo "=== Development complete ==="
-```
-
-### 7.5 Parallel Development with DOT
-
-For complex epics, combine DOT orchestration with ralphy-develop:
+For tmux compatibility, node labels must be short (tmux truncates window names to ~30 chars):
 
 ```dot
-digraph tea_game_001_development {
+digraph matter_import_resolution_workflow {
     rankdir=TB;
     node [shape=box];
 
-    Start [label="Start", shape=ellipse];
-    End [label="End", shape=ellipse];
+    // Use short labels like "PIR.1.person-table-row-level-accept-reject"
+    // NOT full paths like "/home/user/docs/stories/PIR.1.person-table..."
 
-    // Phase 1: Foundation
-    story_1 [label="TEA-GAME-001.1",
-             command="tea run examples/workflows/ralphy-develop.yaml
-                      --input '{\"source\": \"docs/stories/TEA-GAME-001.1.md\"}'"];
+    PIR_1 [label="PIR.1.person-table-row-level-accept-reject"];
+    PIR_2 [label="PIR.2.person-import-accept-all-enhancement"];
 
-    // Phase 2: Parallel development (3 stories simultaneously)
-    story_2 [label="TEA-GAME-001.2", command="tea run ..."];
-    story_4 [label="TEA-GAME-001.4", command="tea run ..."];
-    story_8 [label="TEA-GAME-001.8", command="tea run ..."];
-
-    Start -> story_1;
-    story_1 -> story_2;
-    story_1 -> story_4;
-    story_1 -> story_8;
-
-    // Each story gets fresh context via TEA subprocess
-    // No cross-contamination between implementations
+    Start -> PIR_1;
+    Start -> PIR_2;
 }
 ```
+
+The workflow's `resolve_story_path` node converts short labels to full paths at runtime.
+
+### 7.4 Execution Progress
+
+```
+Graph loaded: 46 nodes in 6 phases
+
+=== Execution Plan ===
+Phase 1 (parallel): 13 nodes
+Phase 2 (parallel): 11 nodes
+Phase 3 (parallel): 9 nodes
+Phase 4 (parallel): 7 nodes
+Phase 5 (parallel): 4 nodes
+Phase 6 (parallel): 2 nodes
+
+>>> Phase 1/6: 13 node(s)...
+  Starting: MPR.1.managing-partners-pattern-b-accept-ui
+  Starting: RIR.0.referee-import-pending-state
+  Starting: MIR.1.matter-deduplication-service-enhancement
+  Waiting for 3 window(s)...
+  ✓ Completed: RIR.0.referee-import-pending-state (388.3s)
+  ✓ Completed: MIR.1.matter-deduplication-service-enhancement (433.1s)
+  ✓ Completed: MPR.1.managing-partners-pattern-b-accept-ui (453.8s)
+  ...
+```
+
+### 7.5 Monitoring the Execution
+
+```bash
+# Attach to the tmux session
+tmux attach -t tea-dot
+
+# View output file (if running in background)
+tail -f /tmp/claude/-home-fabricio-src-spa-base/tasks/<task-id>.output
+
+# List all windows in session
+tmux list-windows -t tea-dot
+```
+
+### 7.6 Using Custom Executable
+
+If you need to use a different TEA installation or virtual environment:
+
+```bash
+# Use a specific virtualenv
+tea-python run-from-dot workflow.dot \
+    -w bmad-story-validation.yaml \
+    --exec "/home/user/.venv/bin/tea-python"
+
+# Use Python module directly
+tea-python run-from-dot workflow.dot \
+    -w bmad-story-validation.yaml \
+    -e "python -m the_edge_agent"
+
+# Via run --from-dot syntax
+tea-python run agent.yaml --from-dot workflow.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-exec "python -m the_edge_agent" \
+    --dot-max-parallel 3
+```
+
+---
 
 ## 8. Best Practices
 
@@ -731,59 +645,41 @@ digraph tea_game_001_development {
 |----------|---------------------|
 | Initial story creation | BMad PO agent (human elicitation) |
 | Story refinement | BMad PO/Architect (interactive) |
-| Story validation | `ralphy-validate` (automated) |
-| Bulk validation | `ralphy-validate` with glob pattern |
-| Task implementation | `ralphy-develop` (clean context) |
-| Complex epic execution | DOT workflow + `ralphy-develop` |
+| Story validation | `bmad-story-validation` workflow |
+| Full development cycle | `bmad-story-development` workflow |
+| Complex epic execution | DOT workflow + validation/development |
 | Debugging failures | BMad Dev agent (conversational) |
 | QA review | BMad QA agent or `bmad-review` workflow |
 
-### 8.2 Validate-Then-Develop Discipline
-
-1. **Always validate before developing** - Catch structural issues early
-2. **Use strict mode in CI** - Ensures consistent story quality
-3. **Fix validation errors before implementation** - Don't waste AI tokens on bad stories
-4. **Link tasks to ACs** - Improves traceability and validation coverage
-
-### 8.3 DOT Workflow Guidelines
+### 8.2 DOT Workflow Guidelines
 
 1. **Simple Labels** - Use story IDs, not descriptions
 2. **Explicit Dependencies** - Every edge represents a real constraint
 3. **Timeout Planning** - Use `--input-timeout 54000` (15 hours) for complex stories
 4. **Cluster Phases** - Group parallel stories in `subgraph cluster_*` blocks
 
-### 8.4 Context Isolation Principles
+### 8.3 Context Isolation Principles
 
 1. **Each story = one execution** - Never batch stories in one context
 2. **State via files** - Stories communicate through file system, not memory
 3. **Idempotent operations** - Re-running a story should produce same result
 4. **Explicit inputs** - All dependencies declared in DOT edges
 
-### 8.5 Execution Mode Selection
-
-| Mode | When to Use |
-|------|-------------|
-| `sequential` | Simple stories, debugging, learning the workflow |
-| `parallel` | Independent tasks, speed is priority |
-| `graph` | Tasks have dependencies (`depends_on` field) |
-| `output_to_tmux` | Monitoring AI agents, debugging, demos |
-
 ## 9. Conclusion
 
 The meta-development approach—using TEA to build TEA—provides several key advantages:
 
 1. **Quality through separation** - BMad ensures story quality; TEA ensures execution quality
-2. **Validate-then-develop discipline** - `ralphy-validate` catches issues before `ralphy-develop` runs
-3. **Parallelization through analysis** - Dependency graphs enable safe concurrent execution
-4. **Clean context guarantee** - Each story executes in isolation
-5. **Reproducibility** - DOT workflows and Ralphy commands are version-controlled and repeatable
+2. **Parallelization through analysis** - Dependency graphs enable safe concurrent execution
+3. **Clean context guarantee** - Each story executes in isolation
+4. **Reproducibility** - DOT workflows are version-controlled and repeatable
 
-The TEA-GAME-001 epic demonstrates this in practice: 8 stories, 6 phases, 25% efficiency gain through parallelization, zero context contamination.
+The Matter Import Resolution epic demonstrates this in practice: 46 stories, 6 phases, parallel validation with `--max-parallel 3`, zero context contamination.
 
-**The Ralphy workflows are now production-ready:**
+**Available BMad workflows:**
 
-- `ralphy-validate.yaml` - Validates BMad v4 story structure before development
-- `ralphy-develop.yaml` - Implements tasks autonomously with multiple AI engines and execution modes
+- `bmad-story-validation.yaml` - QA validation: risk-profile, NFR, test-design, SM checklist
+- `bmad-story-development.yaml` - Full cycle: Dev → QA → SM with code implementation
 
 As TEA continues to evolve, this meta-development cycle accelerates: better TEA enables better TEA development, which produces better TEA.
 
@@ -791,6 +687,5 @@ As TEA continues to evolve, this meta-development cycle accelerates: better TEA 
 
 - [BMad Method v4](https://github.com/bmad-code-org/BMAD-METHOD) - Breakthrough Method for Agile AI-Driven Development (Required)
 - [TEA Documentation](https://fabceolin.github.io/the_edge_agent/) - The Edge Agent official docs
-- [Ralphy Workflows README](../../examples/workflows/README-ralphy.md) - Complete guide to ralphy-validate and ralphy-develop
-- [DOT Workflow Guide](../shared/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) - DOT-to-YAML conversion guide
+- [DOT Workflow Guide](../llm-prompts/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) - DOT orchestration guide
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - DOT syntax reference

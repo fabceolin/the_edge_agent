@@ -570,6 +570,12 @@ def run(
         help="Additional JSON input to merge with node label for --dot-workflow mode. "
         'Example: \'{"mode": "sequential"}\'',
     ),
+    dot_exec: str = typer.Option(
+        "tea-python",
+        "--dot-exec",
+        help="Executable to use for running workflows in --from-dot mode (default: tea-python). "
+        "Examples: 'tea-python', 'python -m the_edge_agent', '/path/to/tea'",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -719,7 +725,9 @@ def run(
                             # Workflow mode: run workflow with node label as input
                             input_data = {"arg": label, **extra_input}
                             input_json = json.dumps(input_data)
-                            cmd = f"tea run {dot_workflow} --input '{input_json}'"
+                            cmd = (
+                                f"{dot_exec} run {dot_workflow} --input '{input_json}'"
+                            )
                         else:
                             # Command mode: use node's command attribute
                             cmd = node.command if node else None
@@ -2020,6 +2028,13 @@ def run_from_dot_cmd(
         "--dry-run",
         help="Show execution plan without running commands",
     ),
+    executable: str = typer.Option(
+        "tea-python",
+        "--exec",
+        "-e",
+        help="Executable to use for running workflows (default: tea-python). "
+        "Examples: 'tea-python', 'python -m the_edge_agent', '/path/to/tea'",
+    ),
 ):
     """
     Execute DOT workflow directly with tmux output for each node.
@@ -2213,7 +2228,7 @@ def run_from_dot_cmd(
                         # Workflow mode: run workflow with node label as input
                         input_data = {"arg": label, **extra_input}
                         input_json = json.dumps(input_data)
-                        cmd = f"tea-python run {workflow} --input '{input_json}'"
+                        cmd = f"{executable} run {workflow} --input '{input_json}'"
                     else:
                         # Command mode: use node's command attribute
                         cmd = node.command if node else None
