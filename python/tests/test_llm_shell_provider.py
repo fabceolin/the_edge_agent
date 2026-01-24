@@ -76,6 +76,8 @@ class TestShellProviderLlmCall(unittest.TestCase):
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.communicate.return_value = ("Response", "")
+        # Set up stdin mock for write() calls
+        mock_proc.stdin = MagicMock()
         mock_popen.return_value = mock_proc
 
         messages = [
@@ -97,11 +99,9 @@ class TestShellProviderLlmCall(unittest.TestCase):
         assert call_kwargs["stdin"] == subprocess.PIPE
         assert call_kwargs["text"] is True
 
-        # Verify messages were passed to communicate
-        communicate_args = mock_proc.communicate.call_args
-        input_text = communicate_args[1].get(
-            "input", communicate_args[0][0] if communicate_args[0] else ""
-        )
+        # Verify messages were written to stdin (implementation uses stdin.write instead of communicate input)
+        mock_proc.stdin.write.assert_called_once()
+        input_text = mock_proc.stdin.write.call_args[0][0]
         assert "You are helpful" in input_text
         assert "What is 2+2" in input_text
 
@@ -409,6 +409,8 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
             mock_proc = MagicMock()
             mock_proc.returncode = 0
             mock_proc.communicate.return_value = ("Response", "")
+            # Set up stdin mock for write() calls
+            mock_proc.stdin = MagicMock()
             mock_popen.return_value = mock_proc
 
             # Use gemini provider which uses stdin_mode=pipe
@@ -420,15 +422,9 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
                 shell_provider="gemini",
             )
 
-            # Check the input passed to communicate
-            input_text = mock_proc.communicate.call_args[1].get(
-                "input",
-                (
-                    mock_proc.communicate.call_args[0][0]
-                    if mock_proc.communicate.call_args[0]
-                    else ""
-                ),
-            )
+            # Check the input written to stdin (implementation uses stdin.write instead of communicate input)
+            mock_proc.stdin.write.assert_called_once()
+            input_text = mock_proc.stdin.write.call_args[0][0]
             assert "Test message" in input_text
 
     def test_format_system_message(self):
@@ -445,6 +441,8 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
             mock_proc = MagicMock()
             mock_proc.returncode = 0
             mock_proc.communicate.return_value = ("Response", "")
+            # Set up stdin mock for write() calls
+            mock_proc.stdin = MagicMock()
             mock_popen.return_value = mock_proc
 
             # Use gemini provider which uses stdin_mode=pipe
@@ -459,14 +457,9 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
                 shell_provider="gemini",
             )
 
-            input_text = mock_proc.communicate.call_args[1].get(
-                "input",
-                (
-                    mock_proc.communicate.call_args[0][0]
-                    if mock_proc.communicate.call_args[0]
-                    else ""
-                ),
-            )
+            # Check the input written to stdin (implementation uses stdin.write instead of communicate input)
+            mock_proc.stdin.write.assert_called_once()
+            input_text = mock_proc.stdin.write.call_args[0][0]
             assert "System:" in input_text
             assert "helpful assistant" in input_text
 
