@@ -148,6 +148,8 @@ parts:
         title: Runtime Backend Selection for Cloud Functions
       - file: articles/truth-resolution-agent
         title: "Truth Resolution Agent: Senna 1989 Case Study"
+      - file: articles/dot-workflow-orchestration
+        title: DOT Workflow Orchestration for AI Pipelines
 
   - caption: Contributing
     chapters:
