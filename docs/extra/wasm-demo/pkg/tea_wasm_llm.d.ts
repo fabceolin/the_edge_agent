@@ -80,6 +80,11 @@ export class MarkdownParseResult {
 export function clear_duckdb_handler(): void;
 
 /**
+ * Clear the game Opik handler (WASM export).
+ */
+export function clear_game_opik_handler(): void;
+
+/**
  * Clear the LLM handler
  */
 export function clear_llm_handler(): void;
@@ -108,6 +113,11 @@ export function clear_prolog_handler(): void;
  * Clear all stored credentials
  */
 export function clear_storage_credentials(): void;
+
+/**
+ * Configure game Opik settings (WASM export).
+ */
+export function configure_game_opik(config_json: string): void;
 
 /**
  * Configure LTM backend
@@ -256,11 +266,6 @@ export function execute_yaml_workflow_with_vars(yaml: string, initial_state: str
 export function game_clear_llm_handler(): void;
 
 /**
- * Clear the Opik callback
- */
-export function game_clear_opik_handler(): void;
-
-/**
  * Generate a new game round (AC-1)
  *
  * This function requires an LLM callback to be set via `game_set_llm_handler`.
@@ -302,11 +307,6 @@ export function game_get_session_stats(): string;
 export function game_has_llm_handler(): boolean;
 
 /**
- * Check if Opik handler is set
- */
-export function game_has_opik_handler(): boolean;
-
-/**
  * Initialize the game engine
  *
  * Must be called before any other game functions.
@@ -321,14 +321,6 @@ export function game_init(): string;
  * with the prompt and returns a JSON string with the response.
  */
 export function game_set_llm_handler(callback: Function): void;
-
-/**
- * Set the Opik callback for tracing (AC-4)
- *
- * The callback should be a function that takes a JSON string with trace data
- * and sends it to the Opik backend (fire-and-forget).
- */
-export function game_set_opik_handler(callback: Function): void;
 
 /**
  * Start a new game session (AC-1)
@@ -370,6 +362,11 @@ export function game_submit_to_leaderboard(): string;
 export function get_duckdb_extensions_async(): Promise<string>;
 
 /**
+ * Get current game Opik configuration as JSON (WASM export).
+ */
+export function get_game_opik_config(): string;
+
+/**
  * Get current LTM configuration
  */
 export function get_ltm_config(): string;
@@ -383,6 +380,11 @@ export function get_opik_config(): string;
  * Check if a DuckDB handler is registered
  */
 export function has_duckdb_handler(): boolean;
+
+/**
+ * Check if a game Opik handler is registered (WASM export) (AC-6).
+ */
+export function has_game_opik_handler(): boolean;
 
 /**
  * Check if an LLM handler is registered
@@ -713,6 +715,14 @@ export function send_opik_trace_async(trace_json: string): Promise<void>;
 export function set_duckdb_handler(handler: Function): void;
 
 /**
+ * Set the game Opik handler (WASM export) (AC-5).
+ *
+ * The handler should accept a JSON string (OpikGameSpan) and optionally
+ * return a Promise for async sending.
+ */
+export function set_game_opik_handler(handler: Function): void;
+
+/**
  * Register a JavaScript function to handle LLM calls
  *
  * The function should accept a JSON string (LlmParams) and return a Promise
@@ -979,52 +989,6 @@ export interface InitOutput {
   readonly set_llm_handler: (a: any) => void;
   readonly validate_yaml: (a: number, b: number) => [number, number, number];
   readonly render_template_wasm: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-  readonly execute_yaml: (a: number, b: number, c: number, d: number) => any;
-  readonly has_shared_array_buffer: () => number;
-  readonly main: () => void;
-  readonly version: () => [number, number];
-  readonly clear_duckdb_handler: () => void;
-  readonly duckdb_begin_async: () => any;
-  readonly duckdb_commit_async: () => any;
-  readonly duckdb_execute_async: (a: number, b: number) => any;
-  readonly duckdb_query_async: (a: number, b: number, c: number, d: number) => any;
-  readonly duckdb_rollback_async: () => any;
-  readonly execute_yaml_workflow: (a: number, b: number, c: number, d: number) => any;
-  readonly execute_yaml_workflow_with_vars: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly get_duckdb_extensions_async: () => any;
-  readonly has_duckdb_handler: () => number;
-  readonly init_duckdb_async: (a: number, b: number) => any;
-  readonly load_duckdb_extension_async: (a: number, b: number) => any;
-  readonly set_duckdb_handler: (a: any) => void;
-  readonly clear_lua_callback: () => void;
-  readonly clear_opik_callback: () => void;
-  readonly clear_prolog_handler: () => void;
-  readonly configure_opik: (a: number, b: number) => [number, number];
-  readonly create_llm_trace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-  readonly game_clear_llm_handler: () => void;
-  readonly game_clear_opik_handler: () => void;
-  readonly game_generate_round: () => any;
-  readonly game_get_leaderboard: (a: number) => [number, number];
-  readonly game_get_session_stats: () => [number, number];
-  readonly game_has_llm_handler: () => number;
-  readonly game_has_opik_handler: () => number;
-  readonly game_init: () => [number, number];
-  readonly game_set_llm_handler: (a: any) => void;
-  readonly game_set_opik_handler: (a: any) => void;
-  readonly game_start_session: () => [number, number];
-  readonly game_submit_answer: (a: number, b: number, c: number) => [number, number];
-  readonly game_submit_to_leaderboard: () => [number, number];
-  readonly get_opik_config: () => [number, number];
-  readonly has_lua_callback: () => number;
-  readonly has_opik_callback: () => number;
-  readonly has_prolog_handler: () => number;
-  readonly is_opik_enabled: () => number;
-  readonly lua_eval_async: (a: number, b: number, c: number, d: number) => any;
-  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
-  readonly send_opik_trace_async: (a: number, b: number) => any;
-  readonly set_lua_callback: (a: any) => void;
-  readonly set_opik_callback: (a: any) => void;
-  readonly set_prolog_handler: (a: any) => void;
   readonly __wbg_get_markdownparseresult_edges_json: (a: number) => [number, number];
   readonly __wbg_get_markdownparseresult_frontmatter_json: (a: number) => [number, number];
   readonly __wbg_get_markdownparseresult_sections_json: (a: number) => [number, number];
@@ -1040,28 +1004,16 @@ export interface InitOutput {
   readonly __wbg_set_markdownparseresult_tasks_json: (a: number, b: number, c: number) => void;
   readonly __wbg_set_markdownparseresult_title: (a: number, b: number, c: number) => void;
   readonly __wbg_set_markdownparseresult_variables_json: (a: number, b: number, c: number) => void;
-  readonly clear_ltm_handler: () => void;
-  readonly configure_ltm: (a: number, b: number) => [number, number, number, number];
-  readonly get_ltm_config: () => [number, number];
-  readonly has_ltm_handler: () => number;
-  readonly ltm_cleanup_expired_async: () => any;
-  readonly ltm_delete_async: (a: number, b: number) => any;
-  readonly ltm_list_async: (a: number, b: number, c: number) => any;
-  readonly ltm_retrieve_async: (a: number, b: number, c: number, d: number) => any;
-  readonly ltm_search_async: (a: number, b: number, c: number, d: number, e: number) => any;
-  readonly ltm_stats_async: () => any;
-  readonly ltm_store_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly markdown_extract_tasks: (a: number, b: number) => [number, number, number, number];
-  readonly markdown_extract_variables: (a: number, b: number) => [number, number, number, number];
-  readonly markdown_parse: (a: number, b: number) => [number, number, number];
-  readonly markdown_parse_json: (a: number, b: number) => [number, number, number, number];
-  readonly set_ltm_handler: (a: any) => void;
   readonly clear_storage_credentials: () => void;
   readonly has_storage_credentials: (a: number, b: number) => number;
   readonly init_memory: () => [number, number, number, number];
   readonly init_opfs: () => any;
   readonly is_memory_available: () => number;
   readonly is_opfs_available: () => number;
+  readonly markdown_extract_tasks: (a: number, b: number) => [number, number, number, number];
+  readonly markdown_extract_variables: (a: number, b: number) => [number, number, number, number];
+  readonly markdown_parse: (a: number, b: number) => [number, number, number];
+  readonly markdown_parse_json: (a: number, b: number) => [number, number, number, number];
   readonly set_storage_credentials: (a: number, b: number, c: number, d: number) => [number, number];
   readonly storage_copy_async: (a: number, b: number, c: number, d: number) => any;
   readonly storage_delete_async: (a: number, b: number) => any;
@@ -1072,6 +1024,66 @@ export interface InitOutput {
   readonly storage_supported_schemes: () => [number, number];
   readonly storage_write_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
   readonly storage_write_binary_async: (a: number, b: number, c: number, d: number) => any;
+  readonly execute_yaml: (a: number, b: number, c: number, d: number) => any;
+  readonly has_shared_array_buffer: () => number;
+  readonly main: () => void;
+  readonly version: () => [number, number];
+  readonly clear_game_opik_handler: () => void;
+  readonly clear_prolog_handler: () => void;
+  readonly configure_game_opik: (a: number, b: number) => [number, number];
+  readonly game_clear_llm_handler: () => void;
+  readonly game_generate_round: () => any;
+  readonly game_get_leaderboard: (a: number) => [number, number];
+  readonly game_get_session_stats: () => [number, number];
+  readonly game_has_llm_handler: () => number;
+  readonly game_init: () => [number, number];
+  readonly game_set_llm_handler: (a: any) => void;
+  readonly game_start_session: () => [number, number];
+  readonly game_submit_answer: (a: number, b: number, c: number) => [number, number];
+  readonly game_submit_to_leaderboard: () => [number, number];
+  readonly get_game_opik_config: () => [number, number];
+  readonly has_game_opik_handler: () => number;
+  readonly has_prolog_handler: () => number;
+  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
+  readonly set_game_opik_handler: (a: any) => void;
+  readonly set_prolog_handler: (a: any) => void;
+  readonly clear_duckdb_handler: () => void;
+  readonly duckdb_begin_async: () => any;
+  readonly duckdb_commit_async: () => any;
+  readonly duckdb_execute_async: (a: number, b: number) => any;
+  readonly duckdb_query_async: (a: number, b: number, c: number, d: number) => any;
+  readonly duckdb_rollback_async: () => any;
+  readonly execute_yaml_workflow: (a: number, b: number, c: number, d: number) => any;
+  readonly execute_yaml_workflow_with_vars: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly get_duckdb_extensions_async: () => any;
+  readonly has_duckdb_handler: () => number;
+  readonly init_duckdb_async: (a: number, b: number) => any;
+  readonly load_duckdb_extension_async: (a: number, b: number) => any;
+  readonly set_duckdb_handler: (a: any) => void;
+  readonly clear_ltm_handler: () => void;
+  readonly clear_lua_callback: () => void;
+  readonly clear_opik_callback: () => void;
+  readonly configure_ltm: (a: number, b: number) => [number, number, number, number];
+  readonly configure_opik: (a: number, b: number) => [number, number];
+  readonly create_llm_trace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+  readonly get_ltm_config: () => [number, number];
+  readonly get_opik_config: () => [number, number];
+  readonly has_ltm_handler: () => number;
+  readonly has_lua_callback: () => number;
+  readonly has_opik_callback: () => number;
+  readonly is_opik_enabled: () => number;
+  readonly ltm_cleanup_expired_async: () => any;
+  readonly ltm_delete_async: (a: number, b: number) => any;
+  readonly ltm_list_async: (a: number, b: number, c: number) => any;
+  readonly ltm_retrieve_async: (a: number, b: number, c: number, d: number) => any;
+  readonly ltm_search_async: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly ltm_stats_async: () => any;
+  readonly ltm_store_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly lua_eval_async: (a: number, b: number, c: number, d: number) => any;
+  readonly send_opik_trace_async: (a: number, b: number) => any;
+  readonly set_ltm_handler: (a: any) => void;
+  readonly set_lua_callback: (a: any) => void;
+  readonly set_opik_callback: (a: any) => void;
   readonly slugify: (a: number, b: number) => [number, number];
   readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
   readonly intounderlyingbytesource_autoAllocateChunkSize: (a: number) => number;
@@ -1086,10 +1098,10 @@ export interface InitOutput {
   readonly intounderlyingsink_write: (a: number, b: any) => any;
   readonly intounderlyingsource_cancel: (a: number) => void;
   readonly intounderlyingsource_pull: (a: number, b: any) => any;
-  readonly wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f: (a: number, b: number) => void;
-  readonly wasm_bindgen__closure__destroy__h9eb6f956610eaa1e: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e: (a: number, b: number, c: any) => void;
   readonly wasm_bindgen__closure__destroy__ha9e5309a8e8dc2f5: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__h9eb6f956610eaa1e: (a: number, b: number) => void;
   readonly wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

@@ -120,9 +120,10 @@ import init, {
   game_set_llm_handler,
   game_clear_llm_handler,
   game_has_llm_handler,
-  game_set_opik_handler,
-  game_clear_opik_handler,
-  game_has_opik_handler,
+  // Game opik functions - note: wasm-bindgen uses original names from game_opik.rs
+  set_game_opik_handler,
+  clear_game_opik_handler,
+  has_game_opik_handler,
 } from '../pkg/tea_wasm_llm.js';
 
 // Import model loading modules
@@ -1226,7 +1227,8 @@ export {
   game_set_llm_handler,
   game_clear_llm_handler,
   game_has_llm_handler,
-  game_set_opik_handler,
-  game_clear_opik_handler,
-  game_has_opik_handler,
+  // Re-export with game_ prefix for app.js compatibility
+  set_game_opik_handler as game_set_opik_handler,
+  clear_game_opik_handler as game_clear_opik_handler,
+  has_game_opik_handler as game_has_opik_handler,
 };

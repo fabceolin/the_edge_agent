@@ -214,12 +214,12 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-function wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1);
-}
-
 function wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e(arg0, arg1, arg2) {
     wasm.wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e(arg0, arg1, arg2);
+}
+
+function wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1);
 }
 
 function wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325(arg0, arg1, arg2, arg3) {
@@ -565,6 +565,13 @@ export function clear_duckdb_handler() {
 }
 
 /**
+ * Clear the game Opik handler (WASM export).
+ */
+export function clear_game_opik_handler() {
+    wasm.clear_game_opik_handler();
+}
+
+/**
  * Clear the LLM handler
  */
 export function clear_llm_handler() {
@@ -604,6 +611,19 @@ export function clear_prolog_handler() {
  */
 export function clear_storage_credentials() {
     wasm.clear_storage_credentials();
+}
+
+/**
+ * Configure game Opik settings (WASM export).
+ * @param {string} config_json
+ */
+export function configure_game_opik(config_json) {
+    const ptr0 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.configure_game_opik(ptr0, len0);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
 }
 
 /**
@@ -879,13 +899,6 @@ export function game_clear_llm_handler() {
 }
 
 /**
- * Clear the Opik callback
- */
-export function game_clear_opik_handler() {
-    wasm.game_clear_opik_handler();
-}
-
-/**
  * Generate a new game round (AC-1)
  *
  * This function requires an LLM callback to be set via `game_set_llm_handler`.
@@ -960,15 +973,6 @@ export function game_has_llm_handler() {
 }
 
 /**
- * Check if Opik handler is set
- * @returns {boolean}
- */
-export function game_has_opik_handler() {
-    const ret = wasm.game_has_opik_handler();
-    return ret !== 0;
-}
-
-/**
  * Initialize the game engine
  *
  * Must be called before any other game functions.
@@ -997,17 +1001,6 @@ export function game_init() {
  */
 export function game_set_llm_handler(callback) {
     wasm.game_set_llm_handler(callback);
-}
-
-/**
- * Set the Opik callback for tracing (AC-4)
- *
- * The callback should be a function that takes a JSON string with trace data
- * and sends it to the Opik backend (fire-and-forget).
- * @param {Function} callback
- */
-export function game_set_opik_handler(callback) {
-    wasm.game_set_opik_handler(callback);
 }
 
 /**
@@ -1094,6 +1087,23 @@ export function get_duckdb_extensions_async() {
 }
 
 /**
+ * Get current game Opik configuration as JSON (WASM export).
+ * @returns {string}
+ */
+export function get_game_opik_config() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.get_game_opik_config();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get current LTM configuration
  * @returns {string}
  */
@@ -1133,6 +1143,15 @@ export function get_opik_config() {
  */
 export function has_duckdb_handler() {
     const ret = wasm.has_duckdb_handler();
+    return ret !== 0;
+}
+
+/**
+ * Check if a game Opik handler is registered (WASM export) (AC-6).
+ * @returns {boolean}
+ */
+export function has_game_opik_handler() {
+    const ret = wasm.has_game_opik_handler();
     return ret !== 0;
 }
 
@@ -1771,6 +1790,17 @@ export function send_opik_trace_async(trace_json) {
  */
 export function set_duckdb_handler(handler) {
     wasm.set_duckdb_handler(handler);
+}
+
+/**
+ * Set the game Opik handler (WASM export) (AC-5).
+ *
+ * The handler should accept a JSON string (OpikGameSpan) and optionally
+ * return a Promise for async sending.
+ * @param {Function} handler
+ */
+export function set_game_opik_handler(handler) {
+    wasm.set_game_opik_handler(handler);
 }
 
 /**
@@ -2676,9 +2706,14 @@ function __wbg_get_imports() {
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_428b7dc1c1a37f19 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 1881, function: Function { arguments: [Externref], shim_idx: 1882, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+    imports.wbg.__wbindgen_cast_7c310da1b4e21bc9 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 1889, function: Function { arguments: [Externref], shim_idx: 1890, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
         const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha9e5309a8e8dc2f5, wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_a05c46e21695cc12 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 976, function: Function { arguments: [], shim_idx: 977, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h9eb6f956610eaa1e, wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f);
         return ret;
     };
     imports.wbg.__wbindgen_cast_cb9088102bce6b30 = function(arg0, arg1) {
@@ -2689,11 +2724,6 @@ function __wbg_get_imports() {
     imports.wbg.__wbindgen_cast_d6cd19b81560fd6e = function(arg0) {
         // Cast intrinsic for `F64 -> Externref`.
         const ret = arg0;
-        return ret;
-    };
-    imports.wbg.__wbindgen_cast_f8c41a10414abe07 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 968, function: Function { arguments: [], shim_idx: 969, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h9eb6f956610eaa1e, wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
