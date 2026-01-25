@@ -31,71 +31,129 @@ Stories are modeled as a **DAG (Directed Acyclic Graph)**:
 
 ```mermaid
 flowchart TB
-    subgraph XCR["Cross-cutting"]
-        XCR.1
-        XCR.2
+    subgraph A["Epic A - Foundation"]
+        A.1
+        A.2
     end
 
-    subgraph MIR["Matter"]
-        MIR.1 --> MIR.2 --> MIR.3 --> MIR.4 --> MIR.5 --> MIR.6 --> MIR.7 --> MIR.8
+    subgraph B["Epic B - Core Module"]
+        B.1 --> B.2 --> B.3 --> B.4 --> B.5 --> B.6 --> B.7 --> B.8
     end
 
-    subgraph LFR["Legal Field"]
-        LFR.0 --> LFR.0a
-        LFR.0 --> LFR.2 --> LFR.4
-        LFR.0 --> LFR.3
-        LFR.4 --> LFR.6
-        LFR.3 --> LFR.6
-        LFR.5 --> LFR.6
+    subgraph C["Epic C - Integration"]
+        C.0 --> C.0a
+        C.0 --> C.2 --> C.4
+        C.0 --> C.3
+        C.4 --> C.6
+        C.3 --> C.6
+        C.5 --> C.6
     end
 
-    subgraph SIR["Submission"]
-        SIR.0 --> SIR.0a --> SIR.0c
-        SIR.0 --> SIR.0b --> SIR.0c
-        SIR.0c --> SIR.1
-        SIR.0c --> SIR.2 --> SIR.3 --> SIR.4
+    subgraph D["Epic D - Import"]
+        D.0 --> D.0a --> D.0c
+        D.0 --> D.0b --> D.0c
+        D.0c --> D.1
+        D.0c --> D.2 --> D.3 --> D.4
     end
 
-    subgraph CIR["Client"]
-        CIR.1 --> CIR.2 --> CIR.3
+    subgraph E["Epic E - Entity 1"]
+        E.1 --> E.2 --> E.3
     end
 
-    subgraph DPR["Department"]
-        DPR.1 --> DPR.2 --> DPR.3
+    subgraph F["Epic F - Entity 2"]
+        F.1 --> F.2 --> F.3
     end
 
-    subgraph PIR["Person"]
-        PIR.1 --> PIR.2
+    subgraph G["Epic G - Entity 3"]
+        G.1 --> G.2
     end
 
-    subgraph RIR["Referee"]
-        RIR.0 --> RIR.1 --> RIR.2 --> RIR.3
+    subgraph H["Epic H - Entity 4"]
+        H.0 --> H.1 --> H.2 --> H.3
     end
 
-    subgraph OIR["Office"]
-        OIR.1 --> OIR.2
+    subgraph I["Epic I - Entity 5"]
+        I.1 --> I.2
     end
 
-    subgraph BIR["Basic Info"]
-        BIR.1 --> BIR.2
+    subgraph J["Epic J - Config"]
+        J.1 --> J.2
     end
 
-    subgraph IIR["Innovation"]
-        IIR.1
+    subgraph K["Epic K - Feature 1"]
+        K.1
     end
 
-    subgraph MPR["Managing Partners"]
-        MPR.1
+    subgraph L["Epic L - Feature 2"]
+        L.1
     end
 
     %% Cross-epic dependencies
-    XCR.1 --> MIR.6
-    XCR.1 --> LFR.3
-    XCR.1 --> LFR.5
-    MIR.1 --> LFR.5
+    A.1 --> B.6
+    A.1 --> C.3
+    A.1 --> C.5
+    B.1 --> C.5
 ```
 
 Each node represents a story. Each edge represents a dependency. TEA respects the dependency order while maximizing parallelism.
+
+### Development Waves
+
+TEA automatically computes the optimal execution waves based on the dependency graph:
+
+```mermaid
+flowchart LR
+    subgraph W1["Wave 1 (13 stories)"]
+        direction TB
+        W1_1["A.1, A.2"]
+        W1_2["B.1, C.0, D.0"]
+        W1_3["E.1, F.1, G.1"]
+        W1_4["H.0, I.1, J.1"]
+        W1_5["K.1, L.1"]
+    end
+
+    subgraph W2["Wave 2 (12 stories)"]
+        direction TB
+        W2_1["B.2, C.0a, C.2"]
+        W2_2["C.3, C.5"]
+        W2_3["D.0a, D.0b"]
+        W2_4["E.2, F.2, G.2"]
+        W2_5["H.1, I.2, J.2"]
+    end
+
+    subgraph W3["Wave 3 (6 stories)"]
+        direction TB
+        W3_1["B.3, C.4"]
+        W3_2["D.0c, E.3"]
+        W3_3["F.3, H.2"]
+    end
+
+    subgraph W4["Wave 4 (4 stories)"]
+        direction TB
+        W4_1["B.4, C.6"]
+        W4_2["D.1, D.2, H.3"]
+    end
+
+    subgraph W5["Wave 5 (2 stories)"]
+        W5_1["B.5, D.3"]
+    end
+
+    subgraph W6["Wave 6 (2 stories)"]
+        W6_1["B.6, D.4"]
+    end
+
+    subgraph W7["Wave 7 (1 story)"]
+        W7_1["B.7"]
+    end
+
+    subgraph W8["Wave 8 (1 story)"]
+        W8_1["B.8"]
+    end
+
+    W1 --> W2 --> W3 --> W4 --> W5 --> W6 --> W7 --> W8
+```
+
+With `--parallel-max 3`, each wave executes up to 3 stories concurrently until all stories in that wave complete, then proceeds to the next wave.
 
 ## 3. TEA Features That Enabled This
 
@@ -138,27 +196,27 @@ The `bmad-story-development.yaml` workflow orchestrates each story execution:
 ```
 12 Epics | 43 Stories | ~6 hours
 
-XCR: 2    MIR: 8    LFR: 7    SIR: 8
-CIR: 3    DPR: 3    PIR: 2    RIR: 4
-OIR: 2    BIR: 2    IIR: 1    MPR: 1
+A: 2    B: 8    C: 7    D: 8
+E: 3    F: 3    G: 2    H: 4
+I: 2    J: 2    K: 1    L: 1
 ```
 
 ### 4.2 Epic Breakdown
 
 | Epic | Domain | Stories |
 |------|--------|---------|
-| XCR | Cross-cutting (Foundation) | 2 |
-| MIR | Matter Import Resolution | 8 |
-| LFR | Legal Field Resolution | 7 |
-| SIR | Submission Import Resolution | 8 |
-| CIR | Client Import Resolution | 3 |
-| DPR | Department Resolution | 3 |
-| PIR | Person Import Resolution | 2 |
-| RIR | Referee Import Resolution | 4 |
-| OIR | Office Import Resolution | 2 |
-| BIR | Basic Info Resolution | 2 |
-| IIR | Innovative Initiatives | 1 |
-| MPR | Managing Partners | 1 |
+| A | Foundation | 2 |
+| B | Core Module | 8 |
+| C | Integration | 7 |
+| D | Import | 8 |
+| E | Entity 1 | 3 |
+| F | Entity 2 | 3 |
+| G | Entity 3 | 2 |
+| H | Entity 4 | 4 |
+| I | Entity 5 | 2 |
+| J | Config | 2 |
+| K | Feature 1 | 1 |
+| L | Feature 2 | 1 |
 
 ## 5. The Two-Phase Execution
 
