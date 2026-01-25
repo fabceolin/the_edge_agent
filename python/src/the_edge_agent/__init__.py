@@ -2,6 +2,9 @@ from .stategraph import StateGraph, START, END
 from .yaml_engine import YAMLEngine
 from .checkpointers import MemoryCheckpointer
 
+# TEA-ARCH-001: Core exceptions (zero dependencies)
+from .exceptions import HTTPResponse
+
 # Parallel Execution Reliability (TD.13)
 from .parallel import (
     ParallelConfig,
@@ -89,12 +92,24 @@ except ImportError:
 # Bug Reporting (TEA-REPORT-001d)
 from . import report_cli
 
+# DOT Parser and StateGraph Integration (TEA-GAME-001)
+from .dot_parser import (
+    dot_to_stategraph,
+    run_dot,
+    parse_dot,
+    parse_dot_string,
+    analyze_graph,
+    dot_to_yaml,
+)
+
 __all__ = [
     "StateGraph",
     "START",
     "END",
     "YAMLEngine",
     "MemoryCheckpointer",
+    # TEA-ARCH-001: Core exceptions
+    "HTTPResponse",
     # Parallel Execution Reliability (TD.13)
     "ParallelConfig",
     "ParallelFlowResult",
@@ -147,7 +162,14 @@ __all__ = [
     "KUZU_AVAILABLE",
     # Opik Exporter (TEA-BUILTIN-005.1)
     "OpikExporter",
+    # DOT Parser and StateGraph Integration (TEA-GAME-001)
+    "dot_to_stategraph",
+    "run_dot",
+    "parse_dot",
+    "parse_dot_string",
+    "analyze_graph",
+    "dot_to_yaml",
     # Version
     "__version__",
 ]
-__version__ = "0.9.69"
+__version__ = "0.9.83"

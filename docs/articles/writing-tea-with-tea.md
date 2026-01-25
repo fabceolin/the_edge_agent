@@ -16,22 +16,6 @@ This article presents a meta-development methodology where The Edge Agent (TEA) 
 
 ---
 
-## Reproducibility
-
-This article uses code from a specific commit in The Edge Agent repository. To follow along:
-
-```bash
-git clone https://github.com/fabceolin/the_edge_agent.git
-cd the_edge_agent
-git checkout 2f5bdbb4e70bd47bdc7f28022656d7a58b69a817
-```
-
-**Commit:** `2f5bdbb4e70bd47bdc7f28022656d7a58b69a817`
-
-**Repository:** [github.com/fabceolin/the_edge_agent](https://github.com/fabceolin/the_edge_agent)
-
----
-
 ## 1. Introduction
 
 When developing complex features for The Edge Agent, we face a paradox: the very tool we're building could help us build it better. This article explores how we leverage TEA to accelerate TEA development, creating a virtuous cycle of meta-improvement.
@@ -205,6 +189,8 @@ The `shell_provider: claude` spawns a fresh Claude Code instance for each node e
 
 With BMad stories ready and TEA workflows defined, we can orchestrate parallel execution using DOT (Graphviz) graphs.
 
+> **For comprehensive DOT orchestration documentation**—including CLI reference, execution modes, verbose output, and best practices—see the [DOT Workflow Orchestration](./dot-workflow-orchestration.md) article.
+
 ### 4.1 Dependency Analysis
 
 Given an epic with 8 stories, the first step is mapping dependencies:
@@ -343,16 +329,35 @@ Before running TEA workflows that use Claude Code as the LLM backend, you need t
    claude auth
    ```
 
-3. **BMad Core** files present in the repository:
+3. **BMad v4 (Required)** - The Ralphy workflows require BMad v4 story format:
    ```
    .bmad-core/
    ├── agents/
    │   ├── qa.md          # QA agent persona
    │   ├── sm.md          # Scrum Master agent persona
+   │   ├── po.md          # Product Owner agent persona
    │   └── dev.md         # Developer agent persona
-   └── tasks/
-       └── test-design.md # Test design task definition
+   ├── tasks/
+   │   ├── test-design.md        # Test design task
+   │   ├── validate-next-story.md # Story validation task
+   │   └── qa-gate.md            # QA gate task
+   ├── checklists/
+   │   ├── story-draft-checklist.md
+   │   └── po-master-checklist.md
+   └── templates/
+       └── story-tmpl.yaml       # Story template
    ```
+
+   To verify BMad v4 is installed:
+   ```bash
+   # Check for .bmad-core directory
+   ls -la .bmad-core/
+
+   # Check for required task files
+   ls .bmad-core/tasks/validate-next-story.md
+   ```
+
+   If you don't have BMad v4, see the [BMad Setup Guide](https://github.com/bmad-code-org/BMAD-METHOD) to initialize it.
 
 ### 5.2 The Shell Provider Configuration
 
@@ -411,20 +416,81 @@ tea-python run examples/workflows/bmad-story-validation.yaml \
 
 ## 6. Execution: From DOT to Running Workflow
 
-### 6.1 Generate YAML from DOT
+### 6.1 Execute DOT Directly (Recommended)
+
+The simplest approach is to execute the DOT file directly with tmux-based output.
+
+**Two execution modes:**
+
+#### Mode 1: Command Mode (nodes have `command` attribute)
 
 ```bash
-# Convert DOT to executable YAML workflow
-tea-python from dot examples/dot/tea-game-001-validation.dot \
-    --use-node-commands \
-    -o examples/dot/tea-game-001-validation.yaml
+# Execute DOT directly with tmux output (respects dependency order)
+tea run --from-dot examples/dot/tea-game-001-validation.dot
+
+# Or use the dedicated command with more options
+tea run-from-dot examples/dot/tea-game-001-validation.dot \
+    --session tea-game \
+    --max-parallel 3
+
+# Preview execution plan without running
+tea run --from-dot examples/dot/tea-game-001-validation.dot --dot-dry-run
 ```
 
-### 6.2 Execute the Workflow
+#### Mode 2: Workflow Mode (run a workflow for each node)
+
+When nodes represent stories/tasks, use `--dot-workflow` to run a workflow for each:
+
+```bash
+# Run bmad-story-development.yaml for each node
+tea run --from-dot stories.dot \
+    --dot-workflow examples/workflows/bmad-story-development.yaml
+
+# With additional input parameters
+tea run-from-dot stories.dot \
+    -w examples/workflows/bmad-story-development.yaml \
+    -i '{"mode": "sequential"}'
+
+# With custom executable (--dot-exec or --exec)
+tea run --from-dot stories.dot \
+    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-exec "python -m the_edge_agent"
+
+# Or using run-from-dot with --exec/-e
+tea-python run-from-dot stories.dot \
+    -w examples/workflows/bmad-story-validation.yaml \
+    -e "/path/to/custom/tea-python"
+```
+
+The node label is passed as `{"arg": "<node_label>"}` to the workflow.
+
+Monitor progress with: `tmux attach -t tea-dot`
+
+#### Parameter Reference
+
+| `run-from-dot` | `run --from-dot` | Purpose |
+|----------------|------------------|---------|
+| `--workflow`/`-w` | `--dot-workflow` | Workflow YAML file to run for each node |
+| `--max-parallel`/`-m` | `--dot-max-parallel` | Maximum parallel processes |
+| `--exec`/`-e` | `--dot-exec` | Custom executable (default: `tea-python`) |
+| `--session`/`-s` | `--dot-session` | Tmux session name |
+
+### 6.2 Alternative: Execute via YAML
+
+If you need YAML-specific features (checkpoints, interrupts), use the `dot_to_yaml` API:
+
+```python
+from the_edge_agent import dot_to_yaml
+
+# Generate YAML from DOT
+yaml_content = dot_to_yaml("workflow.dot", use_node_commands=True)
+```
+
+Then run:
 
 ```bash
 # Run with extended timeout (15 hours for large epics)
-tea-python run examples/dot/tea-game-001-validation.yaml \
+tea run examples/dot/tea-game-001-validation.yaml \
     --input-timeout 54000
 ```
 
@@ -454,61 +520,124 @@ tea-python run examples/dot/tea-game-001-validation.yaml \
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## 7. Future: Parallelized Development
+## 7. Real-World Example: Matter Import Resolution Epic
 
-The same pattern applies to implementation, not just validation:
+This section demonstrates a production execution of 46 stories across 12 epics using TEA DOT orchestration.
 
-### 7.1 Development Workflow Structure
+### 7.1 Workflow Selection: Validation vs Development
 
-```yaml
-# bmad-story-development.yaml (future)
-nodes:
-  - name: load_dev_context
-    description: Load developer agent and story
-    run: |
-      # Load BMad dev agent persona
-      # Load story requirements
+TEA provides two complementary BMad workflows:
 
-  - name: implement_story
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      messages:
-        - role: user
-          content: |
-            ACTIVATE: Developer Agent
-            STORY: {{ state.story_file }}
-            MODE: YOLO - Implement all acceptance criteria
+| Workflow | Purpose | When to Use |
+|----------|---------|-------------|
+| `bmad-story-validation.yaml` | QA-only: risk-profile, NFR, test-design, SM checklist | Before development starts |
+| `bmad-story-development.yaml` | Full cycle: Dev → QA → SM with code implementation | After stories pass validation |
 
-  - name: run_tests
-    uses: shell.run
-    with:
-      command: "cargo test --features game"
+For this epic, we use **bmad-story-validation** to validate all 46 stories before any implementation begins.
 
-  - name: update_status
-    description: Mark story as implemented
+### 7.2 The Execution Command
+
+```bash
+# Actual command running in tmux session 'tea-dot'
+tea-python run-from-dot \
+    examples/dot/matter-import-resolution-workflow-short.dot \
+    --workflow examples/workflows/bmad-story-validation.yaml \
+    --max-parallel 3 \
+    --session tea-dot
 ```
 
-### 7.2 Parallel Development DOT
+**Parameters explained:**
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `run-from-dot` | - | Command to execute DOT workflow |
+| DOT file | `matter-import-resolution-workflow-short.dot` | 46-node dependency graph |
+| `--workflow`/`-w` | `bmad-story-validation.yaml` | QA + SM validation workflow |
+| `--max-parallel`/`-m` | `3` | Limit concurrent processes |
+| `--session`/`-s` | `tea-dot` | Tmux session name |
+
+### 7.3 DOT File Structure (Short Labels)
+
+For tmux compatibility, node labels must be short (tmux truncates window names to ~30 chars):
 
 ```dot
-digraph tea_game_001_development {
-    // Same dependency structure as validation
-    // But running bmad-story-development.yaml
+digraph matter_import_resolution_workflow {
+    rankdir=TB;
+    node [shape=box];
 
-    story_1 [command="tea-python run bmad-story-development.yaml
-                      --input '{\"arg\": \"TEA-GAME-001.1\"}'"];
+    // Use short labels like "PIR.1.person-table-row-level-accept-reject"
+    // NOT full paths like "/home/user/docs/stories/PIR.1.person-table..."
 
-    // Phase 2: Develop 3 stories in parallel
-    story_1 -> story_2;
-    story_1 -> story_4;
-    story_1 -> story_8;
+    PIR_1 [label="PIR.1.person-table-row-level-accept-reject"];
+    PIR_2 [label="PIR.2.person-import-accept-all-enhancement"];
 
-    // Each story gets fresh context
-    // No cross-contamination between implementations
+    Start -> PIR_1;
+    Start -> PIR_2;
 }
 ```
+
+The workflow's `resolve_story_path` node converts short labels to full paths at runtime.
+
+### 7.4 Execution Progress
+
+```
+Graph loaded: 46 nodes in 6 phases
+
+=== Execution Plan ===
+Phase 1 (parallel): 13 nodes
+Phase 2 (parallel): 11 nodes
+Phase 3 (parallel): 9 nodes
+Phase 4 (parallel): 7 nodes
+Phase 5 (parallel): 4 nodes
+Phase 6 (parallel): 2 nodes
+
+>>> Phase 1/6: 13 node(s)...
+  Starting: MPR.1.managing-partners-pattern-b-accept-ui
+  Starting: RIR.0.referee-import-pending-state
+  Starting: MIR.1.matter-deduplication-service-enhancement
+  Waiting for 3 window(s)...
+  ✓ Completed: RIR.0.referee-import-pending-state (388.3s)
+  ✓ Completed: MIR.1.matter-deduplication-service-enhancement (433.1s)
+  ✓ Completed: MPR.1.managing-partners-pattern-b-accept-ui (453.8s)
+  ...
+```
+
+### 7.5 Monitoring the Execution
+
+```bash
+# Attach to the tmux session
+tmux attach -t tea-dot
+
+# View output file (if running in background)
+tail -f /tmp/claude/-home-fabricio-src-spa-base/tasks/<task-id>.output
+
+# List all windows in session
+tmux list-windows -t tea-dot
+```
+
+### 7.6 Using Custom Executable
+
+If you need to use a different TEA installation or virtual environment:
+
+```bash
+# Use a specific virtualenv
+tea-python run-from-dot workflow.dot \
+    -w bmad-story-validation.yaml \
+    --exec "/home/user/.venv/bin/tea-python"
+
+# Use Python module directly
+tea-python run-from-dot workflow.dot \
+    -w bmad-story-validation.yaml \
+    -e "python -m the_edge_agent"
+
+# Via run --from-dot syntax
+tea-python run agent.yaml --from-dot workflow.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-exec "python -m the_edge_agent" \
+    --dot-max-parallel 3
+```
+
+---
 
 ## 8. Best Practices
 
@@ -516,11 +645,13 @@ digraph tea_game_001_development {
 
 | Scenario | Recommended Approach |
 |----------|---------------------|
-| Initial story creation | BMad (human elicitation) |
-| Story refinement | BMad (interactive) |
-| Bulk validation | TEA (parallel DOT) |
-| Implementation | TEA (clean context) |
-| Debugging failures | BMad (conversational) |
+| Initial story creation | BMad PO agent (human elicitation) |
+| Story refinement | BMad PO/Architect (interactive) |
+| Story validation | `bmad-story-validation` workflow |
+| Full development cycle | `bmad-story-development` workflow |
+| Complex epic execution | DOT workflow + validation/development |
+| Debugging failures | BMad Dev agent (conversational) |
+| QA review | BMad QA agent or `bmad-review` workflow |
 
 ### 8.2 DOT Workflow Guidelines
 
@@ -545,13 +676,18 @@ The meta-development approach—using TEA to build TEA—provides several key ad
 3. **Clean context guarantee** - Each story executes in isolation
 4. **Reproducibility** - DOT workflows are version-controlled and repeatable
 
-The TEA-GAME-001 epic demonstrates this in practice: 8 stories, 6 phases, 25% efficiency gain through parallelization, zero context contamination.
+The Matter Import Resolution epic demonstrates this in practice: 46 stories, 6 phases, parallel validation with `--max-parallel 3`, zero context contamination.
+
+**Available BMad workflows:**
+
+- `bmad-story-validation.yaml` - QA validation: risk-profile, NFR, test-design, SM checklist
+- `bmad-story-development.yaml` - Full cycle: Dev → QA → SM with code implementation
 
 As TEA continues to evolve, this meta-development cycle accelerates: better TEA enables better TEA development, which produces better TEA.
 
 ## 10. References
 
-- [BMad Method](https://github.com/bmad-code-org/BMAD-METHOD) - Breakthrough Method for Agile AI-Driven Development
+- [BMad Method v4](https://github.com/bmad-code-org/BMAD-METHOD) - Breakthrough Method for Agile AI-Driven Development (Required)
 - [TEA Documentation](https://fabceolin.github.io/the_edge_agent/) - The Edge Agent official docs
-- [DOT Workflow Guide](../shared/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) - DOT-to-YAML conversion guide
+- [DOT Workflow Orchestration](./dot-workflow-orchestration.md) - Complete guide to DOT orchestration, CLI reference, and best practices
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - DOT syntax reference

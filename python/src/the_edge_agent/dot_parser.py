@@ -11,6 +11,7 @@ Usage:
     tea from dot workflow.dot -c "echo {{ item }}" --tmux -s my-session
 """
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +19,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pydot
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # Default timeout for subprocess execution in generated YAML workflows (in seconds)
 DEFAULT_SUBPROCESS_TIMEOUT = 900  # 15 minutes
@@ -485,6 +488,10 @@ def _detect_implicit_phases(
 
     Looks for fan-out patterns (one node with multiple targets) and
     fan-in patterns (multiple sources to one node).
+
+    IMPORTANT (TEA-GAME-001 bugfix): When targets have edges between them
+    (internal dependencies), only the independent subset is included in
+    the parallel phase. Targets with internal dependencies are excluded.
     """
     phases: List[PhaseInfo] = []
 
@@ -492,19 +499,50 @@ def _detect_implicit_phases(
     for node_id, targets in outgoing.items():
         if len(targets) > 1:
             # This is a fan-out point
+            target_set = set(targets)
+
+            # TEA-GAME-001 bugfix: Check for internal dependencies between targets
+            # A target is "independent" if no other target in the set has an edge to it
+            # If B -> C exists and both are in target_set, C is NOT independent
+            independent_targets = []
+            for target in targets:
+                # Check if any OTHER target has an edge to this target
+                has_internal_dependency = False
+                target_incoming = set(incoming.get(target, []))
+                # If any of the incoming edges come from another target, skip this node
+                if target_incoming & target_set:
+                    has_internal_dependency = True
+                    logger.debug(
+                        f"Excluding {target} from parallel phase: "
+                        f"has internal dependency from {target_incoming & target_set}"
+                    )
+
+                if not has_internal_dependency:
+                    independent_targets.append(target)
+
+            # Only create a parallel phase if there are 2+ independent targets
+            if len(independent_targets) < 2:
+                logger.debug(
+                    f"Skipping phase for fan-out {node_id}: "
+                    f"only {len(independent_targets)} independent target(s)"
+                )
+                continue
+
             # Find corresponding fan-in
             fan_in = None
-            target_set = set(targets)
+            independent_set = set(independent_targets)
 
             for candidate in parsed.nodes:
                 sources = set(incoming.get(candidate, []))
-                if sources == target_set or (
-                    len(sources) > 1 and sources.issubset(target_set)
+                if sources == independent_set or (
+                    len(sources) > 1 and sources.issubset(independent_set)
                 ):
                     fan_in = candidate
                     break
 
-            items = [parsed.nodes[t].label for t in targets if t in parsed.nodes]
+            items = [
+                parsed.nodes[t].label for t in independent_targets if t in parsed.nodes
+            ]
 
             phases.append(
                 PhaseInfo(
@@ -872,10 +910,14 @@ def _generate_subprocess_execution_code(
         command_template: Command template with {{ item }} placeholder
         timeout: Subprocess timeout in seconds (default: DEFAULT_SUBPROCESS_TIMEOUT)
     """
-    return f'''import subprocess
+    # Replace {{ item }} with __ITEM_PLACEHOLDER__ to avoid Jinja2 template processing
+    # The placeholder is then replaced with actual item value at runtime
+    safe_template = command_template.replace("{{ item }}", "__ITEM_PLACEHOLDER__")
+    escaped_template = safe_template.replace('"', '\\"')
+    return f"""import subprocess
 
 item = state.get("item", "")
-cmd = f"""{command_template}"""
+cmd = "{escaped_template}".replace("__ITEM_PLACEHOLDER__", item)
 
 try:
     result = subprocess.run(
@@ -904,7 +946,7 @@ except Exception as e:
         "item": item,
         "success": False,
         "error": str(e)
-    }}'''
+    }}"""
 
 
 def _generate_tmux_execution_code(
@@ -912,7 +954,10 @@ def _generate_tmux_execution_code(
 ) -> str:
     """Generate tmux-based execution code."""
     session = tmux_session or "tea-workflow"
-    return f'''import subprocess
+    # Replace {{ item }} with __ITEM_PLACEHOLDER__ to avoid Jinja2 template processing
+    safe_template = command_template.replace("{{ item }}", "__ITEM_PLACEHOLDER__")
+    escaped_template = safe_template.replace('"', '\\"')
+    return f"""import subprocess
 import time
 import re as _re
 
@@ -920,7 +965,7 @@ item = state.get("item", "")
 session = "{session}"
 # Sanitize window name: remove special chars (including dots which tmux interprets as pane separator)
 window_name = _re.sub(r'[^a-zA-Z0-9_-]', '_', item)[:30]
-cmd = f"""{command_template}"""
+cmd = "{escaped_template}".replace("__ITEM_PLACEHOLDER__", item)
 
 try:
     # Create or attach to tmux session
@@ -930,31 +975,62 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window and run command in one step (avoids race condition)
-    # Use double quotes for tmux argument to avoid nested single-quote conflicts
-    escaped_cmd = cmd.replace("'", "'\\''")
-    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
-    # Escape double quotes for the outer tmux argument wrapper
-    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
+    # Create new window first (empty)
     subprocess.run(
-        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
+        f"tmux new-window -t {{session}} -n {{window_name}}",
         shell=True,
         executable='/bin/bash'
     )
+
+    # Small delay for window to initialize
+    time.sleep(0.1)
+
+    # Use send-keys to type the command - this preserves quotes correctly
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
+    subprocess.run(
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
+        check=True
+    )
+
+    # Wait for the window to close (command completed)
+    # Poll every 2 seconds, timeout after 30 minutes
+    max_wait = 1800  # 30 minutes
+    poll_interval = 2
+    waited = 0
+    while waited < max_wait:
+        # Check if window still exists
+        result = subprocess.run(
+            f"tmux list-windows -t {{session}} 2>/dev/null | grep -q '{{window_name}}'",
+            shell=True,
+            executable='/bin/bash'
+        )
+        if result.returncode != 0:
+            # Window closed = command finished
+            break
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    if waited >= max_wait:
+        return {{
+            "item": item,
+            "success": False,
+            "error": f"Timeout waiting for command to complete after {{max_wait}}s"
+        }}
 
     return {{
         "item": item,
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command running in tmux window. Check tmux attach -t {session}"
+        "note": "Command completed in tmux window"
     }}
 except Exception as e:
     return {{
         "item": item,
         "success": False,
         "error": str(e)
-    }}'''
+    }}"""
 
 
 # TEA-TOOLS-002: Dispatch execution code generators for per-node commands
@@ -1059,17 +1135,49 @@ try:
         executable='/bin/bash'
     )
 
-    # Create new window and run command in one step (avoids race condition)
-    # Use double quotes for tmux argument to avoid nested single-quote conflicts
-    escaped_cmd = cmd.replace("'", "'\\''")
-    full_cmd = f"bash -c '{{escaped_cmd}}; echo; echo Press Enter to close...; read'"
-    # Escape double quotes for the outer tmux argument wrapper
-    full_cmd_escaped = full_cmd.replace('"', '\\\\"')
+    # Create new window first (empty)
     subprocess.run(
-        f'tmux new-window -t {{session}} -n {{window_name}} "{{full_cmd_escaped}}"',
+        f"tmux new-window -t {{session}} -n {{window_name}}",
         shell=True,
         executable='/bin/bash'
     )
+
+    # Small delay for window to initialize
+    time.sleep(0.1)
+
+    # Use send-keys to type the command - this preserves quotes correctly
+    # Add '; exit' so window closes when command completes
+    full_cmd = f"{{cmd}}; exit"
+    subprocess.run(
+        ["tmux", "send-keys", "-t", f"{{session}}:{{window_name}}", full_cmd, "Enter"],
+        check=True
+    )
+
+    # Wait for the window to close (command completed)
+    # Poll every 2 seconds, timeout after 30 minutes
+    max_wait = 1800  # 30 minutes
+    poll_interval = 2
+    waited = 0
+    while waited < max_wait:
+        # Check if window still exists
+        result = subprocess.run(
+            f"tmux list-windows -t {{session}} 2>/dev/null | grep -q '{{window_name}}'",
+            shell=True,
+            executable='/bin/bash'
+        )
+        if result.returncode != 0:
+            # Window closed = command finished
+            break
+        time.sleep(poll_interval)
+        waited += poll_interval
+
+    if waited >= max_wait:
+        return {{
+            "item": item,
+            "command": cmd,
+            "success": False,
+            "error": f"Timeout waiting for command to complete after {{max_wait}}s"
+        }}
 
     return {{
         "item": item,
@@ -1077,7 +1185,7 @@ try:
         "success": True,
         "tmux_session": session,
         "tmux_window": window_name,
-        "note": "Command running in tmux window. Check tmux attach -t {session}"
+        "note": "Command completed in tmux window"
     }}
 except Exception as e:
     return {{
@@ -1221,6 +1329,99 @@ def dot_to_yaml(
     return yaml_content
 
 
+def dot_to_yaml_from_string(
+    dot_content: str,
+    command_template: str,
+    output_path: Optional[str] = None,
+    max_concurrency: int = 3,
+    workflow_name: Optional[str] = None,
+    use_tmux: bool = False,
+    tmux_session: Optional[str] = None,
+    validate: bool = False,
+    use_node_commands: bool = False,
+    allow_cycles: bool = False,
+    tea_executable: Optional[str] = None,
+    subprocess_timeout: int = DEFAULT_SUBPROCESS_TIMEOUT,
+) -> str:
+    """
+    Convert DOT content string to TEA YAML workflow.
+
+    TEA-RALPHY-002.2: Same as dot_to_yaml but accepts string content instead of file path.
+    Useful for piping DOT content from another command.
+
+    Args:
+        dot_content: DOT format string
+        command_template: Command template with {{ item }} placeholder
+        output_path: Optional path to write YAML output
+        max_concurrency: Maximum parallel executions (default: 3)
+        workflow_name: Name for the workflow (default: "stdin-workflow")
+        use_tmux: Generate tmux-based execution (default: False)
+        tmux_session: Tmux session name (required if use_tmux is True)
+        validate: Validate generated YAML before returning
+        use_node_commands: Use per-node command attribute from DOT
+        allow_cycles: Allow cycles in the graph (for feedback loops)
+        tea_executable: Override "tea" in commands with this executable name
+        subprocess_timeout: Timeout for subprocess execution in seconds
+
+    Returns:
+        Generated YAML string
+
+    Raises:
+        DotParseError: If DOT parsing fails
+        CircularDependencyError: If circular dependencies detected (unless allow_cycles=True)
+        ValueError: If validation fails or --use-node-commands without any commands
+    """
+    # Parse DOT string
+    parsed = parse_dot_string(
+        dot_content, default_name=workflow_name or "stdin-workflow"
+    )
+
+    # Analyze graph structure
+    analyzed = analyze_graph(parsed, allow_cycles=allow_cycles)
+
+    # Validate commands if needed
+    if use_node_commands:
+        all_labels = set()
+        for phase in analyzed.phases:
+            all_labels.update(phase.items)
+        for node_id in analyzed.standalone_nodes:
+            node = parsed.nodes.get(node_id)
+            if node and node.shape in ("ellipse", "circle", "point", "doublecircle"):
+                continue
+            all_labels.add(analyzed.node_labels.get(node_id, node_id))
+
+        missing = all_labels - set(analyzed.node_commands.keys())
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            raise ValueError(
+                f"--use-node-commands requires ALL nodes to have command attribute. "
+                f"Missing commands for: {missing_list}"
+            )
+
+    # Generate YAML
+    yaml_content = generate_yaml(
+        analyzed=analyzed,
+        command_template=command_template,
+        max_concurrency=max_concurrency,
+        workflow_name=workflow_name,
+        use_tmux=use_tmux,
+        tmux_session=tmux_session,
+        use_node_commands=use_node_commands,
+        tea_executable=tea_executable,
+        subprocess_timeout=subprocess_timeout,
+    )
+
+    # Optionally validate
+    if validate:
+        _validate_yaml(yaml_content)
+
+    # Optionally write to file
+    if output_path:
+        Path(output_path).write_text(yaml_content)
+
+    return yaml_content
+
+
 def _validate_yaml(yaml_content: str) -> None:
     """
     Validate generated YAML by loading it through YAMLEngine.
@@ -1237,3 +1438,365 @@ def _validate_yaml(yaml_content: str) -> None:
         _ = graph.compile()
     except Exception as e:
         raise ValueError(f"Generated YAML validation failed: {e}")
+
+
+# ==============================================================================
+# DOT to StateGraph Direct Execution (TEA-GAME-001)
+# ==============================================================================
+
+
+def dot_to_stategraph(
+    dot_source: str,
+    command_timeout: int = 3600,
+    working_directory: Optional[str] = None,
+    raise_exceptions: bool = True,
+) -> "StateGraph":
+    """
+    Convert a DOT file directly to a StateGraph for execution.
+
+    This bypasses YAML generation and uses the StateGraph's native graph
+    execution engine, which properly handles dependencies via topological
+    traversal and supports parallel fan-out/fan-in patterns.
+
+    Args:
+        dot_source: Path to DOT file or DOT content string
+        command_timeout: Timeout for shell command execution in seconds (default: 3600)
+        working_directory: Working directory for command execution
+        raise_exceptions: If True, raise exceptions on command failure
+
+    Returns:
+        Compiled StateGraph ready for execution via .invoke()
+
+    Example:
+        >>> from the_edge_agent.dot_parser import dot_to_stategraph
+        >>>
+        >>> graph = dot_to_stategraph("workflow.dot")
+        >>> for event in graph.invoke({}):
+        ...     print(event)
+
+    TEA-GAME-001: Direct DOT execution without YAML intermediary
+    """
+    import subprocess
+    import os
+    from the_edge_agent.stategraph import StateGraph, START, END
+
+    # Parse DOT (file or string)
+    if dot_source.endswith(".dot") or "/" in dot_source:
+        parsed = parse_dot(dot_source)
+    else:
+        parsed = parse_dot_string(dot_source, "inline")
+
+    # Analyze graph structure
+    analyzed = analyze_graph(parsed)
+
+    # Build adjacency lists
+    outgoing: Dict[str, List[str]] = {n: [] for n in parsed.nodes}
+    incoming: Dict[str, List[str]] = {n: [] for n in parsed.nodes}
+    for edge in parsed.edges:
+        if edge.source in outgoing:
+            outgoing[edge.source].append(edge.target)
+        if edge.target in incoming:
+            incoming[edge.target].append(edge.source)
+
+    # Detect start and end nodes
+    start_node = analyzed.start_node
+    end_node = analyzed.end_node
+
+    # Create StateGraph
+    graph = StateGraph(
+        state_schema={"results": list, "current_node": str, "errors": list},
+        raise_exceptions=raise_exceptions,
+    )
+
+    # Create command executor factory
+    def create_command_runner(node_id: str, command: str):
+        """Create a run function that executes a shell command."""
+
+        def run_command(state: Dict[str, Any]) -> Dict[str, Any]:
+            logger.info(f"Executing node '{node_id}': {command[:80]}...")
+
+            cwd = working_directory or os.getcwd()
+
+            try:
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    executable="/bin/bash",
+                    timeout=command_timeout,
+                    cwd=cwd,
+                )
+
+                node_result = {
+                    "node": node_id,
+                    "command": command,
+                    "success": result.returncode == 0,
+                    "returncode": result.returncode,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                }
+
+                # Update state
+                results = state.get("results", [])
+                results.append(node_result)
+
+                if result.returncode != 0:
+                    errors = state.get("errors", [])
+                    errors.append(
+                        {
+                            "node": node_id,
+                            "error": result.stderr or f"Exit code {result.returncode}",
+                        }
+                    )
+                    logger.warning(
+                        f"Node '{node_id}' failed with exit code {result.returncode}"
+                    )
+                    return {"results": results, "errors": errors}
+
+                logger.info(f"Node '{node_id}' completed successfully")
+                return {"results": results}
+
+            except subprocess.TimeoutExpired:
+                logger.error(
+                    f"Node '{node_id}' timed out after {command_timeout} seconds"
+                )
+                errors = state.get("errors", [])
+                errors.append(
+                    {
+                        "node": node_id,
+                        "error": f"Command timed out after {command_timeout}s",
+                    }
+                )
+                results = state.get("results", [])
+                results.append({"node": node_id, "success": False, "error": "timeout"})
+                return {"results": results, "errors": errors}
+
+            except Exception as e:
+                logger.error(f"Node '{node_id}' error: {e}")
+                errors = state.get("errors", [])
+                errors.append({"node": node_id, "error": str(e)})
+                results = state.get("results", [])
+                results.append({"node": node_id, "success": False, "error": str(e)})
+                return {"results": results, "errors": errors}
+
+        return run_command
+
+    # Add nodes to StateGraph
+    for node_id, node in parsed.nodes.items():
+        # Skip ellipse/circle shapes (Start/End markers)
+        if node.shape in ("ellipse", "circle", "point", "doublecircle"):
+            continue
+
+        # Get command for this node
+        command = node.command or analyzed.node_commands.get(node.label)
+
+        if command:
+            run_func = create_command_runner(node_id, command)
+            graph.add_node(node_id, run=run_func)
+        else:
+            # Node without command - just pass through
+            graph.add_node(node_id, run=lambda state: state)
+
+    # Detect fan-out and fan-in patterns for parallel edges
+    fan_out_nodes: Dict[str, List[str]] = {}  # fan_out_node -> [parallel_targets]
+    fan_in_nodes: Dict[str, str] = {}  # parallel_target -> fan_in_node
+
+    # Helper to check if a node is a marker (Start/End ellipse)
+    def is_marker_node(node_id: str) -> bool:
+        node = parsed.nodes.get(node_id)
+        return node and node.shape in ("ellipse", "circle", "point", "doublecircle")
+
+    for node_id, targets in outgoing.items():
+        if len(targets) > 1:
+            # This is a fan-out point - check if targets converge
+            target_set = set(targets)
+
+            # Find common fan-in node (exclude marker nodes like End)
+            for candidate in parsed.nodes:
+                if is_marker_node(candidate):
+                    continue  # Skip Start/End ellipse markers
+
+                sources = set(incoming.get(candidate, []))
+                if len(sources) > 1 and sources.issubset(target_set):
+                    fan_out_nodes[node_id] = list(target_set)
+                    for t in target_set:
+                        fan_in_nodes[t] = candidate
+                    break
+
+    # Add fan-in nodes
+    added_fanin_nodes = set()
+    for target, fanin_node_id in fan_in_nodes.items():
+        if fanin_node_id not in added_fanin_nodes:
+            if fanin_node_id in graph.graph.nodes:
+                # Already exists, mark as fan_in
+                graph.graph.nodes[fanin_node_id]["fan_in"] = True
+            else:
+                # Create new fan-in node
+                node = parsed.nodes.get(fanin_node_id)
+                command = None
+                if node:
+                    command = node.command or analyzed.node_commands.get(node.label)
+
+                if command:
+                    run_func = create_command_runner(fanin_node_id, command)
+                    graph.add_fanin_node(fanin_node_id, run=run_func)
+                else:
+                    # Fan-in without command - merge parallel results
+                    def merge_results(state, parallel_results=None):
+                        if parallel_results:
+                            results = state.get("results", [])
+                            for pr in parallel_results:
+                                if isinstance(pr, dict) and "results" in pr:
+                                    results.extend(pr.get("results", []))
+                            return {"results": results}
+                        return state
+
+                    graph.add_fanin_node(fanin_node_id, run=merge_results)
+
+            added_fanin_nodes.add(fanin_node_id)
+
+    # Get list of real nodes (excluding START, END, and ellipse markers)
+    real_nodes = [n for n in graph.graph.nodes if n not in (START, END)]
+
+    # Set entry point
+    entry_set = False
+    if start_node and start_node in parsed.nodes:
+        # Find first real node after Start
+        first_targets = outgoing.get(start_node, [])
+        if first_targets:
+            first_real_node = first_targets[0]
+            if first_real_node in graph.graph.nodes:
+                graph.set_entry_point(first_real_node)
+                entry_set = True
+
+    if not entry_set:
+        # Find node with no incoming edges (other than START)
+        for node_id in real_nodes:
+            node_incoming = incoming.get(node_id, [])
+            # Filter out Start markers from incoming
+            real_incoming = [
+                n
+                for n in node_incoming
+                if n not in (start_node,) and n in graph.graph.nodes
+            ]
+            if not real_incoming:
+                graph.set_entry_point(node_id)
+                entry_set = True
+                break
+
+        # Fallback: if still no entry point, use first real node
+        if not entry_set and real_nodes:
+            graph.set_entry_point(real_nodes[0])
+
+    # Track nodes with edges to End marker
+    finish_points_set = set()
+
+    # Add edges
+    for edge in parsed.edges:
+        source = edge.source
+        target = edge.target
+
+        # Skip edges involving Start/End markers
+        source_node = parsed.nodes.get(source)
+        target_node = parsed.nodes.get(target)
+
+        if source_node and source_node.shape in (
+            "ellipse",
+            "circle",
+            "point",
+            "doublecircle",
+        ):
+            continue
+        if target_node and target_node.shape in (
+            "ellipse",
+            "circle",
+            "point",
+            "doublecircle",
+        ):
+            # Edge to End - set finish point
+            if source in graph.graph.nodes:
+                graph.set_finish_point(source)
+                finish_points_set.add(source)
+            continue
+
+        # Skip if nodes don't exist
+        if source not in graph.graph.nodes or target not in graph.graph.nodes:
+            continue
+
+        # Check if this is a parallel edge
+        if source in fan_out_nodes and target in fan_out_nodes[source]:
+            fanin_node = fan_in_nodes.get(target)
+            if fanin_node and fanin_node in graph.graph.nodes:
+                graph.add_parallel_edge(source, target, fanin_node)
+            else:
+                graph.add_edge(source, target)
+        else:
+            graph.add_edge(source, target)
+
+    # If no finish point was set, find nodes with no outgoing edges
+    if not finish_points_set:
+        for node_id in real_nodes:
+            node_outgoing = outgoing.get(node_id, [])
+            # Filter out End markers from outgoing
+            real_outgoing = [
+                n
+                for n in node_outgoing
+                if n not in (end_node,) and n in graph.graph.nodes
+            ]
+            if not real_outgoing:
+                graph.set_finish_point(node_id)
+                finish_points_set.add(node_id)
+                break
+
+        # Fallback: if still no finish point, use last real node
+        if not finish_points_set and real_nodes:
+            graph.set_finish_point(real_nodes[-1])
+
+    # Compile and return
+    return graph.compile()
+
+
+def run_dot(
+    dot_source: str,
+    initial_state: Optional[Dict[str, Any]] = None,
+    command_timeout: int = 3600,
+    working_directory: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Execute a DOT workflow directly using StateGraph.
+
+    This is a convenience function that creates a StateGraph from DOT
+    and runs it to completion.
+
+    Args:
+        dot_source: Path to DOT file or DOT content string
+        initial_state: Initial state dict (default: empty with results list)
+        command_timeout: Timeout for command execution in seconds
+        working_directory: Working directory for commands
+
+    Returns:
+        Final state dict with 'results' list containing execution results
+
+    Example:
+        >>> result = run_dot("workflow.dot")
+        >>> for r in result["results"]:
+        ...     print(f"{r['node']}: {'OK' if r['success'] else 'FAILED'}")
+    """
+    graph = dot_to_stategraph(
+        dot_source,
+        command_timeout=command_timeout,
+        working_directory=working_directory,
+    )
+
+    state = initial_state or {"results": [], "errors": []}
+
+    final_state = None
+    for event in graph.invoke(state):
+        if event.get("type") == "final":
+            final_state = event.get("state", {})
+        elif event.get("type") == "error":
+            logger.error(f"Execution error: {event}")
+            final_state = event.get("state", {})
+
+    return final_state or state

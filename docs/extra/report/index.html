@@ -85,15 +85,32 @@
     <script>
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
-            // Get the full path for decoding
+            // Get the full path for decoding - check both pathname and hash
+            // Hash-based routing is used for GitHub Pages SPA redirect via 404.html
             var path = window.location.pathname;
+            var hash = window.location.hash;
 
-            // Check if we have a valid report URL pattern
-            if (path.match(/\/report\/[^/]+\/\w+_.+$/)) {
+            // Check hash first (from 404.html redirect)
+            // Format: /report/#/0.0.0/python_xyz...
+            if (hash && hash.match(/^#\/[^/]+\/\w+_.+$/)) {
+                var hashPath = '/report' + hash.substring(1); // Remove # prefix
+                initReportViewer(hashPath);
+            }
+            // Then check pathname (direct access if server supports routing)
+            else if (path.match(/\/report\/[^/]+\/\w+_.+$/)) {
                 initReportViewer(path);
             } else {
                 // Show landing page or error
                 showLandingPage();
+            }
+        });
+
+        // Also handle hash changes for navigation
+        window.addEventListener('hashchange', function() {
+            var hash = window.location.hash;
+            if (hash && hash.match(/^#\/[^/]+\/\w+_.+$/)) {
+                var hashPath = '/report' + hash.substring(1);
+                initReportViewer(hashPath);
             }
         });
 

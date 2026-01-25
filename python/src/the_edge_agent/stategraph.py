@@ -13,7 +13,8 @@ import copy
 from queue import Queue, Empty
 
 # TEA-BUILTIN-015.5: Import HTTPResponse for early termination
-from the_edge_agent.actions.http_response_actions import HTTPResponse
+# TEA-ARCH-001: Moved to exceptions module to avoid transitive dependency on actions package
+from the_edge_agent.exceptions import HTTPResponse
 
 from the_edge_agent.checkpoint import CheckpointMixin
 from the_edge_agent.visualization import VisualizationMixin

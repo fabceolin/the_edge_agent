@@ -1280,5 +1280,158 @@ class TestBackwardCompatibility(unittest.TestCase):
         self.assertTrue(result["_cache_key"].startswith("cache:workflow_from_file:"))
 
 
+# Check for HierarchicalLTMBackend dependencies
+HIERARCHICAL_AVAILABLE = False
+try:
+    import sqlalchemy
+    import fsspec
+
+    HIERARCHICAL_AVAILABLE = True
+except ImportError:
+    pass
+
+
+@unittest.skipUnless(
+    HIERARCHICAL_AVAILABLE, "SQLAlchemy and fsspec required for hierarchical tests"
+)
+class TestCacheWrapHierarchicalIntegration(unittest.TestCase):
+    """
+    Integration tests for cache.wrap with HierarchicalLTMBackend (TEA-FIX-001).
+
+    These tests verify that cache.wrap correctly stores large cached results
+    in the HierarchicalLTMBackend when no entity is provided.
+    """
+
+    def setUp(self):
+        """Set up test fixtures with real HierarchicalLTMBackend."""
+        from the_edge_agent.memory import HierarchicalLTMBackend
+
+        self.temp_dir = tempfile.mkdtemp()
+        self.storage_uri = f"file://{self.temp_dir}/"
+
+        # Create real HierarchicalLTMBackend with low inline_threshold
+        self.ltm = HierarchicalLTMBackend(
+            catalog_url="sqlite:///:memory:",
+            storage_uri=self.storage_uri,
+            hierarchy_levels=["org", "project", "user", "session"],
+            inline_threshold=100,  # Force blob storage for larger results
+            cache_path="_cache/",
+            lazy=False,
+        )
+
+        self.engine = MockEngine(ltm_backend=self.ltm)
+        self.registry = {}
+        register_actions(self.registry, self.engine)
+
+    def tearDown(self):
+        """Clean up test fixtures."""
+        self.ltm.close()
+
+        import shutil
+
+        try:
+            shutil.rmtree(self.temp_dir)
+        except Exception:
+            pass
+
+    def test_cache_wrap_large_result_without_entity(self):
+        """
+        TEA-FIX-001 AC-2, AC-4: cache.wrap stores large results without entity.
+
+        This is the primary integration test verifying the bug fix.
+        Before the fix, large results would fail to store because the backend
+        required an entity to generate a blob path.
+        """
+
+        # Create a test action that returns a large result
+        def large_result_action(state, **kwargs):
+            return {"success": True, "data": "x" * 200}  # > inline_threshold
+
+        self.registry["test.large"] = large_result_action
+
+        # First call - cache miss, should store result
+        result1 = self.registry["cache.wrap"](
+            state={},
+            action="test.large",
+            args={},
+            key="test_large_cache_key",
+        )
+
+        self.assertTrue(result1["success"])
+        self.assertFalse(result1["_cache_hit"])
+        self.assertIn("data", result1["result"])
+
+        # Verify the entry was stored using the computed cache key
+        actual_cache_key = result1["_cache_key"]
+        retrieve_result = self.ltm.retrieve(actual_cache_key)
+        self.assertTrue(retrieve_result["success"])
+        self.assertTrue(retrieve_result["found"])
+
+        # Second call - cache hit
+        result2 = self.registry["cache.wrap"](
+            state={},
+            action="test.large",
+            args={},
+            key="test_large_cache_key",
+        )
+
+        self.assertTrue(result2["success"])
+        self.assertTrue(result2["_cache_hit"])  # Should hit cache
+        self.assertEqual(result2["result"]["data"], "x" * 200)
+
+    def test_cache_wrap_small_result_inlines(self):
+        """
+        Verify that small results are still inlined (not using blob storage).
+        """
+
+        def small_result_action(state, **kwargs):
+            return {"success": True, "msg": "hi"}  # < inline_threshold
+
+        self.registry["test.small"] = small_result_action
+
+        result = self.registry["cache.wrap"](
+            state={},
+            action="test.small",
+            args={},
+            key="test_small_cache_key",
+        )
+
+        self.assertTrue(result["success"])
+
+        # Verify cache hit on second call
+        result2 = self.registry["cache.wrap"](
+            state={},
+            action="test.small",
+            args={},
+            key="test_small_cache_key",
+        )
+
+        self.assertTrue(result2["_cache_hit"])
+
+    def test_cache_wrap_uses_cache_path_for_blobs(self):
+        """
+        TEA-FIX-001: Verify blob path uses _cache/ prefix.
+        """
+
+        def blob_action(state, **kwargs):
+            return {"success": True, "content": "y" * 200}
+
+        self.registry["test.blob"] = blob_action
+
+        result = self.registry["cache.wrap"](
+            state={},
+            action="test.blob",
+            args={},
+            key="test_blob_key",
+        )
+
+        self.assertTrue(result["success"])
+
+        # Verify blob was created in cache path
+        # The blob path should contain _cache/
+        cache_files = list(self.ltm._fs.glob(f"{self.temp_dir}/_cache/*.json"))
+        self.assertGreater(len(cache_files), 0, "Expected blob in _cache/ directory")
+
+
 if __name__ == "__main__":
     unittest.main()

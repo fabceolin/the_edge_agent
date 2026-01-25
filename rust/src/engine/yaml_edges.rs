@@ -185,28 +185,35 @@ impl EdgeFactory {
                     }
 
                     if let Some(condition) = &rule.condition {
-                        // Conditional rule: add conditional edge
-                        // The condition is evaluated at runtime by the executor
+                        // Conditional goto rule: add conditional edge with boolean evaluation
+                        // TEA-RUST-GOTO-FIX: Use boolean mode for goto conditions
+                        // The condition is evaluated as truthy/falsy at runtime by the executor
                         if target == END {
                             graph.add_edge(
                                 node_name,
                                 END,
-                                Edge::conditional(condition.clone(), target.clone()),
+                                Edge::conditional_boolean(condition.clone(), target.clone()),
                             )?;
                         } else {
                             graph.add_edge(
                                 node_name,
                                 target,
-                                Edge::conditional(condition.clone(), target.clone()),
+                                Edge::conditional_boolean(condition.clone(), target.clone()),
                             )?;
                         }
                     } else {
                         // Fallback rule (no condition = always true)
+                        // TEA-RUST-GOTO-FIX: Use unconditional edge instead of simple
+                        // This ensures fallback is evaluated AFTER conditional edges
                         has_fallback = true;
                         if target == END {
                             graph.set_finish_point(node_name)?;
                         } else {
-                            graph.add_edge(node_name, target, Edge::simple())?;
+                            graph.add_edge(
+                                node_name,
+                                target,
+                                Edge::unconditional(target.clone()),
+                            )?;
                         }
                     }
                 }
@@ -261,8 +268,9 @@ impl EdgeFactory {
         // Handle simple edge (possibly with condition on __start__)
         if let Some(to) = &config.to {
             if let Some(condition) = &config.condition {
-                // Conditional edge to single target
-                let edge = Edge::conditional(condition, to);
+                // Conditional edge to single target - use boolean mode
+                // TEA-RUST-GOTO-FIX: Simple conditional edges use boolean evaluation
+                let edge = Edge::conditional_boolean(condition, to);
                 graph.add_edge(from, to, edge)?;
             } else {
                 // Simple edge

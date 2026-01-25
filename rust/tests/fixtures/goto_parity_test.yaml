@@ -1,0 +1,22 @@
+name: goto-parity-test
+nodes:
+  - name: set_flag
+    language: lua
+    run: |
+      return { should_continue = true }
+    goto:
+      - if: "state.should_continue"
+        to: process
+      - to: skip
+
+  - name: process
+    language: lua
+    run: |
+      return { result = "processed" }
+    goto: __end__
+
+  - name: skip
+    language: lua
+    run: |
+      return { result = "skipped" }
+    goto: __end__

@@ -15,6 +15,8 @@ pub mod llm;
 pub mod llm_backend;
 #[cfg(feature = "llm-local")]
 pub mod llm_local;
+#[cfg(feature = "markdown")]
+pub mod markdown;
 pub mod memory;
 #[cfg(feature = "planning")]
 pub mod planning;
@@ -36,6 +38,9 @@ pub fn register_defaults(registry: &ActionRegistry) {
 
     #[cfg(feature = "llm")]
     llm::register(registry);
+
+    #[cfg(feature = "markdown")]
+    markdown::register(registry);
 
     #[cfg(feature = "reasoning")]
     reasoning::register(registry);

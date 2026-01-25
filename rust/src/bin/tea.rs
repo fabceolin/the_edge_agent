@@ -1197,8 +1197,8 @@ fn inspect_workflow(file: PathBuf, format: String) -> Result<()> {
                 if node.retry.is_some() {
                     print!(" (retry)");
                 }
-                if node.fallback.is_some() {
-                    print!(" (fallback: {})", node.fallback.as_ref().unwrap());
+                if let Some(fallback) = &node.fallback {
+                    print!(" (fallback: {})", fallback);
                 }
                 println!();
             }

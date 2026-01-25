@@ -1,0 +1,128 @@
+# Parallel Execution Mode Example
+# Story: TEA-RALPHY-001.6
+#
+# This workflow executes tasks in parallel with isolated git worktrees.
+# Each task gets its own branch and worktree for complete isolation.
+# Results are merged back to the target branch after completion.
+#
+# Features:
+# - Isolated worktrees prevent task interference
+# - Concurrent execution limited by max_parallel setting
+# - Automatic merge with conflict detection
+# - Cleanup of worktrees after successful merge
+#
+# Usage:
+#   tea run examples/workflows/parallel-worktree-pattern.yaml
+#
+# Override settings:
+#   tea run examples/workflows/parallel-worktree-pattern.yaml \
+#     --input '{"settings": {"execution": {"parallel": {"max_parallel": 8}}}}'
+
+name: parallel-task-runner
+description: Execute tasks in parallel with isolated worktrees
+
+settings:
+  execution:
+    mode: parallel
+    target_branch: main
+
+    parallel:
+      max_parallel: 4
+      use_worktrees: true  # Set to false for simple parallel (no git isolation)
+      worktree_base: .worktrees
+      branch_prefix: "feature/"
+      merge_strategy: recursive
+
+state_schema:
+  tasks:
+    type: array
+    description: List of tasks to execute in parallel
+  results:
+    type: object
+    description: Execution results including merge status
+
+initial_state:
+  tasks:
+    - id: feature-auth
+      description: "Implement authentication module"
+      command: |
+        mkdir -p src/auth
+        echo 'def authenticate(user, password): return True' > src/auth/__init__.py
+        echo 'Authentication module created'
+
+    - id: feature-api
+      description: "Implement API endpoints"
+      command: |
+        mkdir -p src/api
+        echo 'from flask import Flask; app = Flask(__name__)' > src/api/__init__.py
+        echo 'API module created'
+
+    - id: feature-db
+      description: "Implement database layer"
+      command: |
+        mkdir -p src/db
+        echo 'import sqlite3; conn = sqlite3.connect(":memory:")' > src/db/__init__.py
+        echo 'Database module created'
+
+    - id: feature-tests
+      description: "Add test infrastructure"
+      command: |
+        mkdir -p tests
+        echo 'import pytest; def test_placeholder(): assert True' > tests/test_placeholder.py
+        echo 'Test infrastructure created'
+
+nodes:
+  - name: run_parallel
+    description: Execute all tasks in parallel with worktrees
+    uses: execution.run
+    with:
+      tasks: "{{ state.tasks }}"
+    output: results
+
+  - name: check_conflicts
+    description: Check for merge conflicts
+    run: |
+      results = state.get("results", {})
+      conflicts = results.get("conflicts")
+
+      if conflicts:
+          return {
+              "has_conflicts": True,
+              "conflict_files": [c.get("file") for c in conflicts],
+              "action_required": "Resolve merge conflicts before continuing"
+          }
+
+      return {
+          "has_conflicts": False,
+          "merged_tasks": results.get("tasks_completed", 0)
+      }
+
+  - name: handle_conflicts
+    description: Handle merge conflicts with AI assistance
+    condition: "{{ state.has_conflicts }}"
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      messages:
+        - role: user
+          content: |
+            Merge conflicts detected in the following files:
+            {{ state.conflict_files | tojson }}
+
+            Please analyze these conflicts and suggest resolutions.
+            Consider that these are independent features being merged.
+
+edges:
+  - from: __start__
+    to: run_parallel
+  - from: run_parallel
+    to: check_conflicts
+  - from: check_conflicts
+    to: handle_conflicts
+    condition: "{{ state.has_conflicts }}"
+  - from: check_conflicts
+    to: __end__
+    condition: "{{ not state.has_conflicts }}"
+  - from: handle_conflicts
+    to: __end__

@@ -370,8 +370,15 @@ impl TemplateProcessor {
         };
 
         // Render template and parse as boolean
-        let result = self.render(&template_expr, state, &HashMap::new())?;
-        Ok(parse_bool_result(&result))
+        // TEA-RUST-GOTO-FIX: If rendering fails (e.g., missing variable), treat as falsy
+        match self.render(&template_expr, state, &HashMap::new()) {
+            Ok(result) => Ok(parse_bool_result(&result)),
+            Err(_) => {
+                // Missing variable or other template error: treat as falsy
+                // This matches Python/Jinja2 behavior where undefined variables are falsy
+                Ok(false)
+            }
+        }
     }
 
     /// Get a boolean value from state.
@@ -580,6 +587,39 @@ mod tests {
         assert!(!processor.eval_condition("!escalate", &state).unwrap());
         assert!(processor.eval_condition("!done", &state).unwrap());
         assert!(processor.eval_condition("!missing", &state).unwrap());
+    }
+
+    /// TEA-RUST-GOTO-FIX: Test that state.key pattern works for boolean values
+    #[test]
+    fn test_eval_condition_state_dot_key_boolean() {
+        let processor = TemplateProcessor::new(HashMap::new());
+
+        // Test with true value
+        let state = json!({"should_continue": true});
+        assert!(
+            processor
+                .eval_condition("state.should_continue", &state)
+                .unwrap(),
+            "state.should_continue should evaluate to true when value is true"
+        );
+
+        // Test with false value
+        let state_false = json!({"should_continue": false});
+        assert!(
+            !processor
+                .eval_condition("state.should_continue", &state_false)
+                .unwrap(),
+            "state.should_continue should evaluate to false when value is false"
+        );
+
+        // Test missing key (should be falsy)
+        let state_empty = json!({});
+        assert!(
+            !processor
+                .eval_condition("state.should_continue", &state_empty)
+                .unwrap(),
+            "state.should_continue should evaluate to false when key is missing"
+        );
     }
 
     #[test]

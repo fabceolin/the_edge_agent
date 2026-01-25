@@ -1,8 +1,14 @@
 # DOT Workflow Orchestration Guide for LLMs
 
-> **TEA Version**: 0.9.4 | **Primary CLI**: `tea-python`
+> **TEA Version**: 0.9.82+ | **Primary CLI**: `tea-python run-from-dot`
 
 This document provides instructions for generating DOT (Graphviz) files that orchestrate sequential and parallel execution of stories, tasks, or any workflow items using TEA agents.
+
+## Version Requirements
+
+- **Minimum version**: 0.9.82
+- **Recommended**: Latest version for bug fixes and performance improvements
+- The `run-from-dot` command and Workflow Mode are only available in the Python implementation (`tea-python`)
 
 ## Use Case
 
@@ -109,16 +115,119 @@ digraph workflow_name {
 }
 ```
 
-### Step 2: Generate YAML Agent
+### Step 2: Execute DOT Directly (Recommended)
+
+**Two CLI forms are available (both work identically):**
+
+| Form | Command | Parameter Style |
+|------|---------|-----------------|
+| Dedicated command | `tea-python run-from-dot` | `--workflow`, `--max-parallel` |
+| Run option | `tea-python run --from-dot` | `--dot-workflow`, `--dot-max-parallel` |
+
+**Two execution modes:**
+
+#### Mode 1: Command Mode (nodes have `command` attribute)
+
+Each DOT node must have a `command` attribute that specifies what to execute:
 
 ```bash
-tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
+# Using run-from-dot command (RECOMMENDED)
+tea-python run-from-dot workflow.dot
+tea-python run-from-dot workflow.dot --session my-session --max-parallel 4
+tea-python run-from-dot workflow.dot --dry-run
+
+# Using run --from-dot option (equivalent)
+tea-python run --from-dot workflow.dot
+tea-python run --from-dot workflow.dot --dot-session my-session --dot-max-parallel 4
+tea-python run --from-dot workflow.dot --dot-dry-run
 ```
 
-### Step 3: Execute
+#### Mode 2: Workflow Mode (RECOMMENDED - run a workflow for each node)
+
+When nodes don't have commands, use `--workflow` to run a TEA workflow for each node.
+The node label is passed as `{"arg": "<node_label>"}` to the workflow.
 
 ```bash
-tea-python run workflow.yaml
+# Using run-from-dot command (RECOMMENDED)
+tea-python run-from-dot stories.dot --workflow bmad-story-validation.yaml
+tea-python run-from-dot stories.dot -w bmad-story-validation.yaml --max-parallel 4
+tea-python run-from-dot stories.dot -w dev.yaml -m 4 -i '{"mode": "sequential"}'
+
+# Using run --from-dot option (equivalent)
+tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml
+tea-python run --from-dot stories.dot --dot-workflow dev.yaml --dot-max-parallel 4
+```
+
+**Important:** In Workflow Mode, the node label becomes `state.arg` in the workflow. Design your workflow to handle this input appropriately.
+
+#### Verbose Mode (see LLM output in real-time)
+
+When workflows call `llm.call` with shell providers (e.g., Claude Code), use `TEA_SHELL_VERBOSE=1` to see the output in real-time:
+
+```bash
+# See Claude Code output while running
+TEA_SHELL_VERBOSE=1 tea-python run-from-dot stories.dot --workflow dev.yaml
+
+# Or export for all commands in the session
+export TEA_SHELL_VERBOSE=1
+tea-python run-from-dot stories.dot -w bmad-story-validation.yaml -m 3
+```
+
+#### Command Reference
+
+**`run-from-dot` command options:**
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--workflow` | `-w` | None | Workflow YAML to run for each node |
+| `--max-parallel` | `-m` | 3 | Maximum parallel tmux windows |
+| `--session` | `-s` | `tea-dot` | Tmux session name |
+| `--input` | `-i` | None | Additional JSON input to merge |
+| `--exec` | `-e` | `tea-python` | Executable to use for running workflows |
+| `--timeout` | `-t` | 54000 | Command timeout in seconds (15h) |
+| `--poll-interval` | | 5 | Seconds between completion checks |
+| `--dry-run` | | false | Show plan without executing |
+| `--verbose` | `-v` | 0 | Verbosity level (-v, -vv, -vvv) |
+
+**`run --from-dot` option equivalents:**
+
+| run-from-dot | run --from-dot |
+|--------------|----------------|
+| `--workflow` | `--dot-workflow` |
+| `--max-parallel` | `--dot-max-parallel` |
+| `--session` | `--dot-session` |
+| `--input` | `--dot-input` |
+| `--exec` | `--dot-exec` |
+| `--dry-run` | `--dot-dry-run` |
+
+**Custom executable examples:**
+
+```bash
+# Use a specific Python path
+tea-python run-from-dot stories.dot -w workflow.yaml --exec "/usr/bin/python3 -m the_edge_agent"
+
+# Use a custom TEA installation
+tea-python run-from-dot stories.dot -w workflow.yaml -e "/opt/tea/bin/tea-python"
+
+# Use Claude Code directly (experimental)
+tea-python run-from-dot stories.dot -w workflow.yaml --exec "claude"
+```
+
+Monitor progress: `tmux attach -t tea-dot`
+
+### Step 2b: Alternative - Generate YAML First
+
+If you need YAML-specific features (checkpoints, interrupts):
+
+```python
+from the_edge_agent import dot_to_yaml
+yaml_content = dot_to_yaml("workflow.dot", use_node_commands=True, output_path="workflow.yaml")
+```
+
+Then run:
+
+```bash
+tea run workflow.yaml
 ```
 
 ---
@@ -338,26 +447,54 @@ command="pytest tests/ -v"
 
 ---
 
-## Generation Commands
+## Execution Commands
 
-### Basic Generation
+### Direct Execution via run-from-dot (Recommended)
 
 ```bash
-# Generate YAML from DOT with per-node commands
-tea-python from dot workflow.dot --use-node-commands -o workflow.yaml
+# Command Mode: Execute DOT with node commands
+tea-python run-from-dot workflow.dot
+
+# Workflow Mode: Run a workflow for each node (RECOMMENDED)
+tea-python run-from-dot stories.dot --workflow bmad-story-validation.yaml
+
+# With parallelism control (default is 3)
+tea-python run-from-dot stories.dot -w bmad-story-validation.yaml --max-parallel 4
+
+# With custom session name
+tea-python run-from-dot workflow.dot --session my-session -m 3
+
+# Preview execution plan (dry run)
+tea-python run-from-dot workflow.dot --dry-run
+
+# With verbose output for LLM shell calls
+TEA_SHELL_VERBOSE=1 tea-python run-from-dot stories.dot -w dev.yaml -v
 ```
 
-### With Options
+**Equivalent using `run --from-dot`:**
 
 ```bash
-# Custom concurrency (default: 3)
-tea-python from dot workflow.dot --use-node-commands -m 5 -o workflow.yaml
+tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 4
+```
 
-# Custom workflow name
-tea-python from dot workflow.dot --use-node-commands -n "my-pipeline" -o workflow.yaml
+Monitor with: `tmux attach -t tea-dot`
 
-# Validate before writing
-tea-python from dot workflow.dot --use-node-commands --validate -o workflow.yaml
+### Programmatic YAML Generation (Alternative)
+
+If you need YAML for checkpoints, interrupts, or other advanced features:
+
+```python
+from the_edge_agent import dot_to_yaml
+
+# Generate with custom options
+yaml_content = dot_to_yaml(
+    "workflow.dot",
+    use_node_commands=True,
+    max_concurrency=5,
+    workflow_name="my-pipeline",
+    validate=True,
+    output_path="workflow.yaml"
+)
 ```
 
 ### Execute Generated Workflow
@@ -389,7 +526,7 @@ tea-python run workflow.yaml  -vv
 When you have multiple tea implementations (Python, Rust, or different versions), use the appropriate executable directly:
 
 ```bash
-# Python implementation v0.9.4 (default)
+# Python implementation v0.9.82+ (required for run-from-dot)
 tea-python run workflow.yaml
 
 # Rust implementation
@@ -480,31 +617,43 @@ examples/dot/<workflow-name>.dot
 
 **After generating the DOT file, ALWAYS output these commands with full discovered paths:**
 
-#### Convert DOT to YAML:
+#### Workflow Mode (RECOMMENDED for story orchestration):
 ```bash
-tea-python from dot <DOT_OUTPUT>/<filename>.dot --use-node-commands -o <DOT_OUTPUT>/<filename>.yaml
+# Run a workflow for each DOT node (node label becomes state.arg)
+tea-python run-from-dot <DOT_OUTPUT>/<filename>.dot \
+    --workflow <WORKFLOW_PATH>/bmad-story-validation.yaml \
+    --max-parallel 4
+
+# With verbose LLM output
+TEA_SHELL_VERBOSE=1 tea-python run-from-dot <DOT_OUTPUT>/<filename>.dot \
+    -w <WORKFLOW_PATH>/bmad-story-validation.yaml -m 3
 ```
 
-#### Execute the Workflow:
+#### Command Mode (for DOT files with embedded commands):
 ```bash
-tea-python run <DOT_OUTPUT>/<filename>.yaml 
+tea-python run-from-dot <DOT_OUTPUT>/<filename>.dot --max-parallel 4
 ```
 
-#### With Visual Progress (recommended for multi-story workflows):
+Monitor: `tmux attach -t tea-dot`
+
+#### Alternative - Execute via YAML (if YAML generation is needed):
 ```bash
-tea-python run <DOT_OUTPUT>/<filename>.yaml  --show-graph
+tea-python run <DOT_OUTPUT>/<filename>.yaml --show-graph
 ```
 
 **Example with discovered paths:**
 ```bash
-# Convert DOT to YAML
-tea-python from dot /home/user/project/docs/workflows/my-workflow.dot --use-node-commands -o /home/user/project/docs/workflows/my-workflow.yaml
+# Workflow Mode (RECOMMENDED)
+tea-python run-from-dot /home/user/project/examples/dot/epic-stories.dot \
+    --workflow /home/user/project/examples/workflows/bmad-story-validation.yaml \
+    --max-parallel 4
 
-# Execute workflow
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml 
+# Command Mode
+tea-python run-from-dot /home/user/project/examples/dot/my-workflow.dot \
+    --session my-workflow -m 3
 
-# Or with visual graph progress (RECOMMENDED)
-tea-python run /home/user/project/docs/workflows/my-workflow.yaml  --show-graph
+# Monitor progress
+tmux attach -t tea-dot
 ```
 
 ---
@@ -594,14 +743,21 @@ Write to: /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot
 **After saving the DOT file, output these executable commands:**
 
 ```bash
-# Convert DOT to YAML (tea-python from command)
-tea-python from dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot --use-node-commands -o /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml
+# Command Mode: Execute DOT with embedded commands
+tea-python run-from-dot /home/user/project/the_edge_agent/examples/dot/epic-implementation.dot \
+    --session epic-impl \
+    --max-parallel 3
 
-# Execute workflow (tea-python run command)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml 
+# Workflow Mode (RECOMMENDED): Run workflow for each node
+tea-python run-from-dot /home/user/project/the_edge_agent/examples/dot/epic-stories.dot \
+    --workflow /home/user/project/the_edge_agent/examples/workflows/bmad-story-validation.yaml \
+    --max-parallel 4
 
-# Or with visual graph progress (RECOMMENDED for monitoring multi-story workflows)
-tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementation.yaml  --show-graph
+# With verbose LLM output
+TEA_SHELL_VERBOSE=1 tea-python run-from-dot stories.dot -w bmad-story-validation.yaml -m 3
+
+# Monitor execution in tmux
+tmux attach -t tea-dot
 ```
 
 **Note:** All paths in the output commands MUST be the actual discovered absolute paths, not placeholders.
@@ -616,10 +772,46 @@ tea-python run /home/user/project/the_edge_agent/examples/dot/epic-implementatio
 - **Verify files exist** before including them in the DOT file
 - **Store PROJECT_ROOT** (derived from discovered workflow path) and reuse it for all command paths
 
-### Labels
-- **Keep labels simple**: Use short IDs like `TEA-PARALLEL-001.1` instead of multi-line labels
+### Labels (CRITICAL for Workflow Mode)
+- **Keep labels SHORT (max 30 chars recommended)**: Use IDs like `PIR.1.person-table-accept` instead of full paths
+- **Avoid full file paths as labels**: tmux window names are truncated to 30 chars, causing collisions
 - **Avoid special characters**: No newlines (`\n`), quotes, or special chars in labels
-- Labels are used as dict keys and tmux window names
+- Labels are used as dict keys, tmux window names, AND passed as `state.arg` in Workflow Mode
+
+**Example - Good vs Bad Labels:**
+
+```dot
+// GOOD - Short, unique labels that work well with tmux
+PIR_1 [label="PIR.1.person-table-accept"];
+MIR_2 [label="MIR.2.matter-table-expand"];
+
+// BAD - Full paths get truncated and cause collisions
+// Both would become "_home_fabricio_src_spa-base_do" in tmux!
+PIR_1 [label="/home/fabricio/src/spa-base/docs/stories/PIR.1.person-table-row-level-accept-reject.md"];
+MIR_2 [label="/home/fabricio/src/spa-base/docs/stories/MIR.2.matter-table-expandable-parent-child-rows.md"];
+```
+
+**Workflow Design for Short Labels:**
+
+When using Workflow Mode with short labels, design your workflow to resolve the full path:
+
+```yaml
+# In your workflow YAML, add a node to resolve the story path
+nodes:
+  - name: resolve_story_path
+    run: |
+      import os, glob
+      arg = state.get("arg", "")
+      # If already a full path, use it
+      if os.path.isfile(arg):
+          return {"story_path": arg}
+      # Otherwise, search for matching story
+      pattern = f"docs/stories/{arg}*.md"
+      matches = glob.glob(pattern)
+      if matches:
+          return {"story_path": matches[0]}
+      return {"story_path": arg}
+```
 
 ### Commands
 - **Use absolute paths**: Discovered at runtime via `<WORKFLOW_PATH>` and `<STORIES_PATH>`

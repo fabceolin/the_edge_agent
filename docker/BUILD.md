@@ -12,6 +12,7 @@ TEA provides Docker images for both Python and Rust implementations.
 | `gemma3-4b` | `Dockerfile.gemma3-4b` | ~5GB | Full + Gemma 3 4B Q8_0 model |
 | `gemma3n-e4b` | `Dockerfile.gemma3n-e4b` | ~8.5GB | Full + Gemma 3N E4B model |
 | `phi4-mini` | `Dockerfile.phi4-mini` | ~3.5GB | Full + Phi-4 mini Q8_0 model |
+| `qwen3-8b` | `Dockerfile.qwen3-8b` | ~6GB | Full + Qwen 3 8B Q4_K_M model |
 
 ## Rust Image Variants
 
@@ -23,6 +24,7 @@ TEA provides Docker images for both Python and Rust implementations.
 | `rust-gemma3-4b` | `Dockerfile.rust-gemma3-4b` | ~4.5GB | Full + Gemma 3 4B model |
 | `rust-gemma3n-e4b` | `Dockerfile.rust-gemma3n-e4b` | ~8.5GB | Full + Gemma 3N E4B model |
 | `rust-phi4-mini` | `Dockerfile.rust-phi4-mini` | ~3.5GB | Full + Phi-4 mini model |
+| `rust-qwen3-8b` | `Dockerfile.rust-qwen3-8b` | ~5.5GB | Full + Qwen 3 8B model |
 
 ## Size Comparison: Python vs Rust
 

@@ -158,8 +158,12 @@ fi
 echo ""
 
 # Commit and tag
-git add "$SETUP_PY" "$CARGO_TOML" "$YAML_REF" "$INIT_PY" "$CONF_PY"
-git commit -m "chore: bump version to $VERSION"
+# Update Cargo.lock after Cargo.toml version change
+cd "$PROJECT_ROOT/rust" && cargo update --workspace && cd "$PROJECT_ROOT"
+CARGO_LOCK="$PROJECT_ROOT/rust/Cargo.lock"
+
+git add "$SETUP_PY" "$CARGO_TOML" "$CARGO_LOCK" "$YAML_REF" "$INIT_PY"
+git commit -m "chore(release): bump version to $VERSION"
 git tag -a "v$VERSION" -m "$MESSAGE"
 
 echo "Done! Created tag v$VERSION"

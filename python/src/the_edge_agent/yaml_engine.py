@@ -61,6 +61,9 @@ from .memory import (
     expand_ltm_config,
     create_ltm_backend,
     parse_backend_config,
+    # BUG.001: Hierarchical LTM Backend Config Transformation
+    _parse_hierarchical_ltm_config,
+    _is_hierarchical_nested_config,
 )
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
 from .observability import ObservabilityContext, EventStream
@@ -1044,10 +1047,19 @@ class YAMLEngine:
                     # TEA-LTM-010: Expand ducklake alias before creating backend
                     expanded_config = expand_ltm_config({"ltm": ltm_settings})
                     actual_backend_type = expanded_config.get("backend", backend_type)
-                    # Parse config using standard config parser
-                    _, kwargs = parse_backend_config(
-                        {"ltm_backend": actual_backend_type, **expanded_config}
-                    )
+
+                    # BUG.001: Handle hierarchical backend with nested config
+                    if (
+                        actual_backend_type.lower() == "hierarchical"
+                        and _is_hierarchical_nested_config(expanded_config)
+                    ):
+                        kwargs = _parse_hierarchical_ltm_config(expanded_config)
+                    else:
+                        # Parse config using standard config parser
+                        _, kwargs = parse_backend_config(
+                            {"ltm_backend": actual_backend_type, **expanded_config}
+                        )
+
                     # Create new backend from parsed YAML settings
                     self._ltm_backend = create_ltm_backend(
                         actual_backend_type, **kwargs

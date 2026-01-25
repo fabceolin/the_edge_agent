@@ -30,9 +30,12 @@
 mod config;
 mod duckdb;
 mod executor;
+pub mod game;
+pub mod game_opik;
 mod llm;
 mod ltm;
 mod lua;
+mod markdown;
 mod opik;
 mod parallel;
 mod params;
@@ -63,6 +66,11 @@ pub use prolog::{
 pub use opik::{
     clear_opik_callback, configure_opik, create_llm_trace, get_opik_config, has_opik_callback,
     is_opik_enabled, send_opik_trace_async, set_opik_callback, OpikConfig, OpikTrace, OpikUsage,
+};
+
+pub use game_opik::{
+    clear_game_opik_handler, configure_game_opik, get_game_opik_config, has_game_opik_handler,
+    set_game_opik_handler, GameOpikConfig, GameSpanType, OpikGameSpan,
 };
 
 pub use duckdb::{
@@ -110,6 +118,23 @@ pub use templates::{
     render_template, render_template_wasm, render_template_with_config, sanitize_context_value,
     TemplateError, TemplateResult, TemplateSecurityConfig,
 };
+
+pub use markdown::{
+    markdown_extract_tasks, markdown_extract_variables, markdown_parse, markdown_parse_json,
+    MarkdownParseResult,
+};
+
+pub use game::{
+    game_clear_llm_handler, game_generate_round, game_get_leaderboard, game_get_session_stats,
+    game_has_llm_handler, game_init, game_set_llm_handler, game_start_session, game_submit_answer,
+    game_submit_to_leaderboard, AnswerResultInfo, GameErrorType, GameRoundInfo, GameSessionInfo,
+    LeaderboardEntryInfo,
+};
+
+// Re-export game opik functions with game_ prefix for backwards compatibility
+pub use game_opik::set_game_opik_handler as game_set_opik_handler;
+pub use game_opik::clear_game_opik_handler as game_clear_opik_handler;
+pub use game_opik::has_game_opik_handler as game_has_opik_handler;
 
 pub use routing::{
     build_execution_path, detect_cycles, evaluate_condition, evaluate_goto, find_entry_node,

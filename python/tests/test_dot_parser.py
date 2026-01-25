@@ -273,6 +273,77 @@ class TestGraphAnalysis(unittest.TestCase):
         with self.assertRaises(CircularDependencyError):
             analyze_graph(parsed)
 
+    def test_analyze_implicit_parallel_with_internal_dependencies(self):
+        """
+        TEA-GAME-001 bugfix: Test that fan-out targets with internal dependencies
+        are NOT incorrectly grouped into a parallel phase.
+
+        Given: A -> B, A -> C, B -> C (C depends on B)
+        Expected: B and C should NOT be in same parallel phase because B -> C
+        """
+        dot_content = """
+        digraph workflow {
+            A [label="A"];
+            B [label="B"];
+            C [label="C"];
+            D [label="D"];
+            A -> B;
+            A -> C;
+            B -> C;
+            C -> D;
+        }
+        """
+        parsed = parse_dot_string(dot_content, "workflow")
+        analyzed = analyze_graph(parsed)
+
+        # The implicit phase detection should NOT group B and C together
+        # because C depends on B (there's an edge B -> C)
+        for phase in analyzed.phases:
+            phase_items = set(phase.items)
+            # B and C should NOT both be in the same phase
+            if "B" in phase_items:
+                self.assertNotIn(
+                    "C",
+                    phase_items,
+                    "B and C should not be in same phase due to B -> C dependency",
+                )
+
+    def test_analyze_implicit_parallel_truly_independent(self):
+        """
+        TEA-GAME-001 bugfix: Test that truly independent fan-out targets
+        ARE correctly grouped into a parallel phase.
+
+        Given: A -> B, A -> C (no edge between B and C)
+        Expected: B and C should be in the same parallel phase
+        """
+        dot_content = """
+        digraph workflow {
+            A [label="A"];
+            B [label="B"];
+            C [label="C"];
+            D [label="D"];
+            A -> B;
+            A -> C;
+            B -> D;
+            C -> D;
+        }
+        """
+        parsed = parse_dot_string(dot_content, "workflow")
+        analyzed = analyze_graph(parsed)
+
+        # Should detect a parallel phase containing B and C
+        found_bc_phase = False
+        for phase in analyzed.phases:
+            phase_items = set(phase.items)
+            if "B" in phase_items and "C" in phase_items:
+                found_bc_phase = True
+                break
+
+        self.assertTrue(
+            found_bc_phase,
+            "B and C should be in same parallel phase (no internal dependencies)",
+        )
+
 
 class TestYamlGenerator(unittest.TestCase):
     """Tests for YAML generation functionality."""
@@ -719,6 +790,105 @@ class TestExampleDotFiles(unittest.TestCase):
         # May or may not have dynamic_parallel depending on structure
         # Just verify basic structure is valid
         self.assertIsInstance(config["nodes"], list)
+
+
+class TestDotToStateGraph(unittest.TestCase):
+    """Tests for DOT to StateGraph direct conversion (TEA-GAME-001)."""
+
+    def test_dot_to_stategraph_simple(self):
+        """Test converting a simple DOT to StateGraph."""
+        from the_edge_agent.dot_parser import dot_to_stategraph
+
+        dot_content = """
+        digraph workflow {
+            A [label="Task A", command="echo A"];
+            B [label="Task B", command="echo B"];
+            A -> B;
+        }
+        """
+
+        # Create temporary DOT file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".dot", delete=False) as f:
+            f.write(dot_content)
+            dot_path = f.name
+
+        try:
+            graph = dot_to_stategraph(dot_path)
+
+            # Verify it's a compiled graph (has invoke method)
+            self.assertTrue(hasattr(graph, "invoke"))
+
+            # Verify nodes exist
+            self.assertIn("A", graph.graph.nodes)
+            self.assertIn("B", graph.graph.nodes)
+        finally:
+            os.unlink(dot_path)
+
+    def test_dot_to_stategraph_from_string(self):
+        """Test converting DOT string directly to StateGraph."""
+        from the_edge_agent.dot_parser import dot_to_stategraph
+
+        dot_content = """
+        digraph test {
+            task1 [label="Task 1", command="echo task1"];
+            task2 [label="Task 2", command="echo task2"];
+            task1 -> task2;
+        }
+        """
+
+        # Should work with DOT string content
+        graph = dot_to_stategraph(dot_content)
+
+        self.assertTrue(hasattr(graph, "invoke"))
+        self.assertIn("task1", graph.graph.nodes)
+        self.assertIn("task2", graph.graph.nodes)
+
+    def test_dot_to_stategraph_with_start_end_markers(self):
+        """Test that Start/End ellipse nodes are handled correctly."""
+        from the_edge_agent.dot_parser import dot_to_stategraph
+
+        dot_content = """
+        digraph workflow {
+            Start [label="Start", shape=ellipse];
+            End [label="End", shape=ellipse];
+            A [label="Task A", command="echo A"];
+            B [label="Task B", command="echo B"];
+            Start -> A;
+            A -> B;
+            B -> End;
+        }
+        """
+
+        graph = dot_to_stategraph(dot_content)
+
+        # Start/End should not be in nodes (they're markers)
+        self.assertNotIn("Start", graph.graph.nodes)
+        self.assertNotIn("End", graph.graph.nodes)
+
+        # A and B should exist
+        self.assertIn("A", graph.graph.nodes)
+        self.assertIn("B", graph.graph.nodes)
+
+    def test_run_dot_simple(self):
+        """Test run_dot convenience function."""
+        from the_edge_agent.dot_parser import run_dot
+
+        dot_content = """
+        digraph test {
+            echo_test [label="Echo Test", command="echo 'hello world'"];
+        }
+        """
+
+        result = run_dot(dot_content, command_timeout=30)
+
+        # Should have results
+        self.assertIn("results", result)
+        self.assertGreater(len(result["results"]), 0)
+
+        # First result should be successful
+        first_result = result["results"][0]
+        self.assertTrue(first_result.get("success", False))
+        self.assertIn("hello world", first_result.get("stdout", ""))
 
 
 if __name__ == "__main__":

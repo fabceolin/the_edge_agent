@@ -1,0 +1,90 @@
+# TEA-DIST-002: Docker Rust LLM Image - Qwen 3 8B
+#
+# Full TEA Rust image with bundled Qwen 3 8B Q4_K_M GGUF model (~5.2GB).
+# Self-contained for offline LLM inference without external model downloads.
+#
+# Build: docker build -t tea:rust-qwen3-8b -f docker/Dockerfile.rust-qwen3-8b .
+# Size: ~5.5GB target
+#
+# Model: Alibaba/Qwen3-8B
+# Source: Ollama Registry (https://ollama.com/library/qwen3:8b)
+
+# =============================================================================
+# Stage 1: Builder - Compile Rust binary with LLM support
+# =============================================================================
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~10GB during build (5.2GB in downloader + 5.2GB in final)
+# =============================================================================
+FROM rust:latest AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY rust/ ./
+
+# Build with all features + scryer + llm-local for embedded inference
+RUN cargo build --release --features "memory,trace,data,web,rag,llm,code,agent,reflection,reasoning,planning,a2a,ltm-duckdb,scryer,llm-local"
+
+RUN ls -lh target/release/tea && \
+    ./target/release/tea --version
+
+# =============================================================================
+# Stage 2: Runtime - Image with bundled model
+# =============================================================================
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3t64 \
+    libgomp1 \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/*
+
+# Copy the compiled binary
+COPY --from=builder /build/target/release/tea /usr/local/bin/tea
+
+# Download model directly in final stage to avoid layer duplication
+# This saves ~5.2GB of overlay storage during build
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/qwen3-8b.gguf \
+    "https://registry.ollama.ai/v2/library/qwen3/blobs/sha256:a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/qwen3-8b.gguf
+
+# Verify binary
+RUN tea --version
+
+# Set environment variables for model
+ENV TEA_MODEL_PATH="/opt/tea-models/qwen3-8b.gguf"
+ENV TEA_MODEL_NAME="qwen3-8b"
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+USER tea
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Rust Qwen3-8B - Full features with bundled Qwen 3 8B model"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="rust-qwen3-8b"
+LABEL tea.runtime="rust"
+LABEL tea.model="qwen3-8b"
+LABEL tea.model.size="5.2GB"
+LABEL tea.model.source="ollama"
+
+ENTRYPOINT ["tea"]
+CMD ["--help"]

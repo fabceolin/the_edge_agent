@@ -238,6 +238,47 @@ function restoreGraphPanelState() {
 // Make toggleGraphPanel available globally for onclick handler
 window.toggleGraphPanel = toggleGraphPanel;
 
+// ============================================================================
+// Tab Navigation
+// ============================================================================
+
+/**
+ * Initialize tab navigation
+ */
+function initTabNavigation() {
+  const tabs = document.querySelectorAll('.tab');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetTab = tab.dataset.tab;
+
+      // Update active tab
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+
+      // Show target content, hide others
+      tabContents.forEach(content => {
+        if (content.id === `${targetTab}-tab`) {
+          content.classList.remove('hidden');
+        } else {
+          content.classList.add('hidden');
+        }
+      });
+
+      // Notify game module when game tab is selected
+      if (targetTab === 'game' && window.gameUI) {
+        window.gameUI.onTabActivated();
+      }
+
+      console.log(`[TEA-DEMO] Switched to ${targetTab} tab`);
+    });
+  });
+}
+
+// Make tab navigation available globally
+window.initTabNavigation = initTabNavigation;
+
 // Import from the bundled package
 import {
   initLlm,
@@ -257,7 +298,20 @@ import {
   registerPrologHandler,
   clearPrologHandler,
   isPrologHandlerRegistered,
+  // Game functions (TEA-GAME-001.7)
+  game_init,
+  game_start_session,
+  game_generate_round,
+  game_submit_answer,
+  game_submit_to_leaderboard,
+  game_get_leaderboard,
+  game_get_session_stats,
+  game_set_llm_handler,
+  game_has_llm_handler,
 } from './pkg/index.js';
+
+// Import game UI module
+import { initGameUI } from './game.js';
 
 // Lua engine instance
 let luaEngine = null;
@@ -1148,7 +1202,7 @@ nodes:
 };
 
 // Default example to show on load
-const DEFAULT_EXAMPLE = 'tera-templates';
+const DEFAULT_EXAMPLE = 'neurosymbolic-qa';
 
 // Get default YAML and state from examples
 const DEFAULT_YAML = EXAMPLES[DEFAULT_EXAMPLE].yaml;
@@ -1276,7 +1330,7 @@ function loadExample(exampleKey) {
   if (descEl) {
     descEl.textContent = example.description;
     if (example.requiresLlm) {
-      descEl.innerHTML += ' <span class="llm-badge">Requires LLM</span>';
+      descEl.innerHTML += ' <span class="llm-badge">LLM will run in your browser via CPU</span>';
     }
   }
 
@@ -1362,6 +1416,45 @@ function updateThreadingStatus() {
   threadingStatusEl.textContent = multiThread ? 'Multi-thread' : 'Single-thread';
 }
 
+// Initialize game module (TEA-GAME-001.7)
+function initializeGame() {
+  try {
+    // Initialize game WASM module
+    game_init();
+    console.log('[TEA-DEMO] Game module initialized');
+
+    // Create WASM wrapper object with game functions
+    const wasmModule = {
+      game_start_session,
+      game_generate_round,
+      game_submit_answer,
+      game_submit_to_leaderboard,
+      game_get_leaderboard,
+      game_get_session_stats,
+    };
+
+    // Register LLM handler for game (reuses the same chat function)
+    if (!game_has_llm_handler()) {
+      game_set_llm_handler(async (paramsJson) => {
+        const params = JSON.parse(paramsJson);
+        const response = await chat(params.prompt, {
+          maxTokens: params.max_tokens || 100,
+          temperature: params.temperature || 0.7,
+        });
+        return JSON.stringify({ content: response.content });
+      });
+      console.log('[TEA-DEMO] Game LLM handler registered');
+    }
+
+    // Initialize game UI
+    initGameUI(wasmModule);
+    console.log('[TEA-DEMO] Game UI ready');
+  } catch (error) {
+    console.error('[TEA-DEMO] Game initialization failed:', error);
+    // Game is optional - don't fail the whole app
+  }
+}
+
 // Initialize LLM
 async function initializeLlm() {
   let yamlEngineReady = false;
@@ -1422,6 +1515,9 @@ async function initializeLlm() {
       });
       return JSON.stringify({ content: response.content });
     });
+
+    // Initialize game module (TEA-GAME-001.7)
+    initializeGame();
 
     await updateCacheStatus();
 
@@ -1517,9 +1613,10 @@ try {
   versionEl.textContent = '';
 }
 
-// Initialize editors first, then example selector, then LLM
+// Initialize editors first, then example selector, tabs, then LLM
 initEditors();
 populateExampleSelector();
+initTabNavigation();
 initializeLlm();
 
 // Restore graph panel state from localStorage

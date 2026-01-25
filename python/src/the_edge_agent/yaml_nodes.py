@@ -721,6 +721,12 @@ class NodeFactory:
                 "json": json,
                 "requests": None,  # Will be imported if used
                 "datetime": None,
+                # Actions registry for calling registered actions from run blocks
+                "actions": (
+                    engine.actions_registry
+                    if hasattr(engine, "actions_registry")
+                    else {}
+                ),
             }
 
             # Try to import common modules if referenced

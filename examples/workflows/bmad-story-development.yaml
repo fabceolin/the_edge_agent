@@ -19,6 +19,16 @@ state_schema:
   sm_output: str              # Output from sm agent
   final_status: str           # Final story status
 
+# TEA-RALPHY-002.3: Enable verbose output for Claude Code shell provider
+# This streams Claude Code's conversation/tool output to stderr in real-time
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
 nodes:
   - name: detect_bmad_version
     description: Auto-detect BMad directory structure

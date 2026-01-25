@@ -12,7 +12,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.69",
+    version="0.9.83",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -40,6 +40,7 @@ setup(
         "python-dotenv>=1.0.0",  # TEA-KIROKU-005: Load .env files for API keys
         "pydantic>=2.0.0",  # TEA-BUILTIN-015: Required for session, error_handling, http settings
         "pydot>=2.0.0",  # TEA-TOOLS-001: DOT/Graphviz parsing for tea from dot
+        "requests>=2.28.0",  # TEA-RALPHY-001.3: Required by github_actions, web_actions, core_actions
     ],
     entry_points={
         "console_scripts": [
@@ -53,6 +54,7 @@ setup(
     extras_require={
         "dev": [
             "pytest",
+            "pytest-asyncio>=0.23.0",  # For async test support
             "coverage",
             "hypothesis",
             "parameterized==0.9.0",

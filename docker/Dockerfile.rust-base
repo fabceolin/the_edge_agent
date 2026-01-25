@@ -13,11 +13,27 @@
 #   - tea:rust-gemma3-4b (~4.5GB) - Full + bundled Gemma 3 4B model
 #   - tea:rust-gemma3n-e4b (~8.5GB) - Full + bundled Gemma 3N E4B model
 #   - tea:rust-phi4-mini (~3.5GB) - Full + bundled Phi-4 mini model
+#
+# OPTIMIZATION: Uses cargo-chef for efficient Docker layer caching.
 
 # =============================================================================
-# Stage 1: Builder - Compile Rust binary
+# Stage 1: Chef - Prepare dependency recipe
 # =============================================================================
-FROM rust:latest AS builder
+FROM rust:latest AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /build
+
+# =============================================================================
+# Stage 2: Planner - Analyze dependencies
+# =============================================================================
+FROM chef AS planner
+COPY rust/ ./
+RUN cargo chef prepare --recipe-path recipe.json
+
+# =============================================================================
+# Stage 3: Builder - Build dependencies (cached) then source
+# =============================================================================
+FROM chef AS builder
 
 # Install build dependencies for mlua (Lua bindings)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,13 +42,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create build directory
 WORKDIR /build
 
-# Copy Rust source
-COPY rust/ ./
+# Build dependencies first (this layer is cached if dependencies don't change)
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# Build with default features (release mode, optimized for size)
+# Now copy source and build (only this layer rebuilds on code changes)
+COPY rust/ ./
 RUN cargo build --release
 
 # Verify binary was built

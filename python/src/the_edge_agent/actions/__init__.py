@@ -41,6 +41,8 @@ Actions are organized by domain:
 - error_actions: Error handling actions (error.is_retryable, error.clear, error.retry) (TEA-BUILTIN-015.6)
 - a2a_actions: Inter-agent communication (send, receive, broadcast, delegate, state, discover) (TEA-AGENT-001.5)
 - semtools_actions: Semantic search using SemTools CLI (TEA-BUILTIN-014)
+- markdown_actions: Markdown parsing with sections, variables, checklists (TEA-RALPHY-001.1)
+- github_actions: GitHub Issues integration for task sourcing (TEA-RALPHY-001.3)
 
 Firebase Agent Memory Infrastructure (TEA-BUILTIN-006):
 - catalog_actions: Data catalog for tables, files, and snapshots
@@ -174,6 +176,18 @@ from .data_tabular_actions import register_actions as register_data_tabular
 # TEA-RELEASE-004.5: Local LLM Actions (llama-cpp-python)
 from .llm_local_actions import register_actions as register_llm_local
 
+# TEA-RALPHY-001.1: Markdown Parsing Actions (md-parser PyO3 bindings)
+from .markdown_actions import register_actions as register_markdown
+
+# TEA-RALPHY-001.3: GitHub Issues Integration
+from .github_actions import register_actions as register_github
+
+# TEA-RALPHY-001.4: BMad Story Task Extraction
+from .bmad_actions import register_actions as register_bmad
+
+# TEA-RALPHY-001.6: Git Worktree Actions (Execution Modes)
+from .git_actions import register_actions as register_git
+
 
 def build_actions_registry(engine: Any) -> Dict[str, Callable]:
     """
@@ -302,6 +316,18 @@ def build_actions_registry(engine: Any) -> Dict[str, Callable]:
 
     # TEA-RELEASE-004.5: Local LLM Actions (llama-cpp-python)
     register_llm_local(registry, engine)
+
+    # TEA-RALPHY-001.1: Markdown Parsing Actions (md-parser PyO3 bindings)
+    register_markdown(registry, engine)
+
+    # TEA-RALPHY-001.3: GitHub Issues Integration
+    register_github(registry, engine)
+
+    # TEA-RALPHY-001.4: BMad Story Task Extraction
+    register_bmad(registry, engine)
+
+    # TEA-RALPHY-001.6: Git Worktree Actions (Execution Modes)
+    register_git(registry, engine)
 
     return registry
 

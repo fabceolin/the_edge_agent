@@ -242,4 +242,15 @@ MARKETING_PLAN_2026.md
 MARKETING_README.md
 MARKETING_SUMMARY.txt
 README_PT.md
-
+!.github/workflows/                                                                                                                                                                                                                                                                                                                                                        
+!examples/workflows/
+.worktrees/
+docs/stories/LEXLINK-EPIC-000-tea-mapping.md
+docs/stories/LEXLINK-EPIC-001-pdf-ingestion.md
+docs/stories/LEXLINK-EPIC-002-knowledge-graph.md
+docs/stories/LEXLINK-EPIC-003-neurosymbolic-engine.md
+docs/stories/LEXLINK-EPIC-004-chat-interface.md
+docs/stories/LEXLINK-EPIC-005-infrastructure.md
+docs/stories/LEXLINK-MVP-INDEX.md
+docs/LEXLINK-MVP-INDEX.md
+docs/drafts/

@@ -388,7 +388,9 @@ def handle_interrupt_interactive(
 
 @app.command()
 def run(
-    file: Path = typer.Argument(..., help="Path to workflow YAML file"),
+    file: Optional[Path] = typer.Argument(
+        None, help="Path to workflow YAML file (required unless --from-dot)"
+    ),
     input: Optional[str] = typer.Option(
         None, "--input", "-i", help="Initial state as JSON or @file.json"
     ),
@@ -534,9 +536,314 @@ def run(
         "-g",
         help="Show ASCII graph visualization with progress during execution",
     ),
+    # TEA-GAME-001: Direct DOT execution
+    from_dot: Optional[Path] = typer.Option(
+        None,
+        "--from-dot",
+        help="Execute DOT file directly with tmux (bypasses YAML). "
+        "Uses same logic as 'tea run-from-dot' command.",
+    ),
+    dot_session: str = typer.Option(
+        "tea-dot",
+        "--dot-session",
+        help="Tmux session name for --from-dot mode (default: tea-dot)",
+    ),
+    dot_max_parallel: int = typer.Option(
+        3,
+        "--dot-max-parallel",
+        help="Maximum parallel tmux windows for --from-dot mode (default: 3)",
+    ),
+    dot_dry_run: bool = typer.Option(
+        False,
+        "--dot-dry-run",
+        help="Show DOT execution plan without running (requires --from-dot)",
+    ),
+    dot_workflow: Optional[Path] = typer.Option(
+        None,
+        "--dot-workflow",
+        help="Workflow YAML to run for each DOT node (requires --from-dot). "
+        "Node labels become the 'arg' input. Overrides node command attributes.",
+    ),
+    dot_input: Optional[str] = typer.Option(
+        None,
+        "--dot-input",
+        help="Additional JSON input to merge with node label for --dot-workflow mode. "
+        'Example: \'{"mode": "sequential"}\'',
+    ),
+    dot_exec: str = typer.Option(
+        "tea-python",
+        "--dot-exec",
+        help="Executable to use for running workflows in --from-dot mode (default: tea-python). "
+        "Examples: 'tea-python', 'python -m the_edge_agent', '/path/to/tea'",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
+
+    # TEA-GAME-001: Handle --from-dot mode (delegates to run_from_dot logic)
+    if from_dot is not None:
+        if not from_dot.exists():
+            typer.echo(f"Error: DOT file not found: {from_dot}", err=True)
+            raise typer.Exit(1)
+
+        # Validate dot-specific options
+        if dot_dry_run and file:
+            typer.echo(
+                "Warning: --dot-dry-run with workflow file ignored (using --from-dot)",
+                err=True,
+            )
+
+        # Validate --dot-workflow
+        if dot_workflow and not dot_workflow.exists():
+            typer.echo(f"Error: Workflow file not found: {dot_workflow}", err=True)
+            raise typer.Exit(1)
+
+        # Parse --dot-input
+        extra_input = {}
+        if dot_input:
+            try:
+                extra_input = json.loads(dot_input)
+            except json.JSONDecodeError as e:
+                typer.echo(f"Error: Invalid JSON in --dot-input: {e}", err=True)
+                raise typer.Exit(1)
+
+        # Import and execute DOT directly
+        import subprocess
+        import re
+        from collections import defaultdict, deque
+        from the_edge_agent.dot_parser import (
+            parse_dot,
+            analyze_graph,
+            DotParseError,
+            CircularDependencyError,
+        )
+
+        try:
+            typer.echo(f"Loading DOT graph from {from_dot}...", err=True)
+            parsed = parse_dot(str(from_dot))
+            analyzed = analyze_graph(parsed)
+
+            # Build execution order using topological sort
+            in_degree = defaultdict(int)
+            adj = defaultdict(list)
+            all_nodes = set()
+
+            for node_id, node in parsed.nodes.items():
+                if node.shape in ("ellipse", "circle", "point", "doublecircle"):
+                    continue
+                all_nodes.add(node_id)
+                in_degree[node_id] = 0
+
+            for edge in parsed.edges:
+                src, tgt = edge.source, edge.target
+                src_node = parsed.nodes.get(src)
+                tgt_node = parsed.nodes.get(tgt)
+                if src_node and src_node.shape in (
+                    "ellipse",
+                    "circle",
+                    "point",
+                    "doublecircle",
+                ):
+                    continue
+                if tgt_node and tgt_node.shape in (
+                    "ellipse",
+                    "circle",
+                    "point",
+                    "doublecircle",
+                ):
+                    continue
+                if src in all_nodes and tgt in all_nodes:
+                    adj[src].append(tgt)
+                    in_degree[tgt] += 1
+
+            # Kahn's algorithm with levels
+            levels = []
+            queue = deque([n for n in all_nodes if in_degree[n] == 0])
+            while queue:
+                level = list(queue)
+                levels.append(level)
+                queue.clear()
+                for node in level:
+                    for neighbor in adj[node]:
+                        in_degree[neighbor] -= 1
+                        if in_degree[neighbor] == 0:
+                            queue.append(neighbor)
+
+            total_nodes = sum(len(level) for level in levels)
+            typer.echo(
+                f"Graph loaded: {total_nodes} nodes in {len(levels)} phases", err=True
+            )
+
+            # Show execution plan
+            typer.echo("\n=== Execution Plan ===", err=True)
+            for i, level in enumerate(levels, 1):
+                parallel_marker = " (parallel)" if len(level) > 1 else ""
+                typer.echo(f"Phase {i}{parallel_marker}:", err=True)
+                for node_id in level:
+                    node = parsed.nodes.get(node_id)
+                    label = node.label if node else node_id
+                    typer.echo(f"  - {label}", err=True)
+
+            typer.echo(f"\nTmux session: {dot_session}", err=True)
+            typer.echo(f"Attach with: tmux attach -t {dot_session}", err=True)
+
+            if dot_dry_run:
+                typer.echo("\n(Dry run - no commands executed)", err=True)
+                return
+
+            # Create tmux session
+            subprocess.run(
+                f"tmux has-session -t {dot_session} 2>/dev/null || tmux new-session -d -s {dot_session}",
+                shell=True,
+                executable="/bin/bash",
+            )
+
+            # Execute phases
+            start_time = time.time()
+            results = []
+            errors = []
+            poll_interval = 5
+            timeout_secs = 54000
+
+            for phase_idx, level in enumerate(levels, 1):
+                phase_size = len(level)
+                typer.echo(
+                    f"\n>>> Phase {phase_idx}/{len(levels)}: {phase_size} node(s)...",
+                    err=True,
+                )
+                active_windows = {}
+
+                for batch_start in range(0, phase_size, dot_max_parallel):
+                    batch = level[batch_start : batch_start + dot_max_parallel]
+
+                    for node_id in batch:
+                        node = parsed.nodes.get(node_id)
+                        label = node.label if node else node_id
+
+                        # Determine command: workflow mode or command mode
+                        if dot_workflow:
+                            # Workflow mode: run workflow with node label as input
+                            input_data = {"arg": label, **extra_input}
+                            input_json = json.dumps(input_data)
+                            cmd = (
+                                f"{dot_exec} run {dot_workflow} --input '{input_json}'"
+                            )
+                        else:
+                            # Command mode: use node's command attribute
+                            cmd = node.command if node else None
+                            if not cmd:
+                                cmd = analyzed.node_commands.get(label)
+                            if not cmd:
+                                typer.echo(
+                                    f"  Warning: No command for '{label}', skipping",
+                                    err=True,
+                                )
+                                results.append(
+                                    {
+                                        "node": label,
+                                        "success": False,
+                                        "error": "No command",
+                                    }
+                                )
+                                continue
+
+                        window_name = re.sub(r"[^a-zA-Z0-9_-]", "_", label)[:30]
+                        typer.echo(f"  Starting: {label}", err=True)
+
+                        subprocess.run(
+                            f"tmux new-window -t {dot_session} -n {window_name}",
+                            shell=True,
+                            executable="/bin/bash",
+                        )
+                        time.sleep(0.3)
+                        subprocess.run(
+                            [
+                                "tmux",
+                                "send-keys",
+                                "-t",
+                                f"{dot_session}:{window_name}",
+                                f"{cmd}; exit",
+                                "Enter",
+                            ],
+                            check=True,
+                        )
+                        active_windows[window_name] = (node_id, label, time.time())
+
+                    typer.echo(
+                        f"  Waiting for {len(active_windows)} window(s)...", err=True
+                    )
+
+                    while active_windows:
+                        time.sleep(poll_interval)
+                        completed = []
+                        for window_name, (
+                            node_id,
+                            label,
+                            start,
+                        ) in active_windows.items():
+                            result = subprocess.run(
+                                f"tmux list-windows -t {dot_session} 2>/dev/null | grep -q '{window_name}'",
+                                shell=True,
+                                executable="/bin/bash",
+                            )
+                            if result.returncode != 0:
+                                elapsed = time.time() - start
+                                typer.echo(
+                                    f"  ✓ Completed: {label} ({elapsed:.1f}s)", err=True
+                                )
+                                results.append(
+                                    {
+                                        "node": label,
+                                        "success": True,
+                                        "elapsed": round(elapsed, 1),
+                                    }
+                                )
+                                completed.append(window_name)
+                            elif time.time() - start > timeout_secs:
+                                typer.echo(f"  ✗ Timeout: {label}", err=True)
+                                results.append(
+                                    {
+                                        "node": label,
+                                        "success": False,
+                                        "error": "Timeout",
+                                    }
+                                )
+                                errors.append({"node": label, "error": "Timeout"})
+                                subprocess.run(
+                                    f"tmux kill-window -t {dot_session}:{window_name}",
+                                    shell=True,
+                                    executable="/bin/bash",
+                                )
+                                completed.append(window_name)
+                        for w in completed:
+                            del active_windows[w]
+
+            # Summary
+            elapsed = time.time() - start_time
+            success_count = sum(1 for r in results if r.get("success", False))
+            typer.echo(f"\n=== Summary ===", err=True)
+            typer.echo(f"Total time: {elapsed:.1f}s", err=True)
+            typer.echo(f"Nodes: {success_count}/{len(results)} succeeded", err=True)
+            if errors:
+                raise typer.Exit(1)
+            return
+
+        except DotParseError as e:
+            typer.echo(f"Error: Invalid DOT syntax: {e}", err=True)
+            raise typer.Exit(1)
+        except CircularDependencyError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+        except Exception as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+    # Validate file is provided for normal workflow mode
+    if file is None:
+        typer.echo(
+            "Error: Workflow file required (or use --from-dot for DOT files)", err=True
+        )
+        raise typer.Exit(1)
 
     # Check mutual exclusivity of --interactive and --stream (AC-2, AC-13)
     if interactive and stream:
@@ -1664,145 +1971,395 @@ schema_app = typer.Typer(
 app.add_typer(schema_app, name="schema")
 
 
-# ============================================================
-# From Subcommands (TEA-TOOLS-001)
-# ============================================================
-
-from_app = typer.Typer(
-    name="from",
-    help="Convert external formats to TEA YAML workflows",
-    no_args_is_help=True,
-)
-app.add_typer(from_app, name="from")
+# =============================================================================
+# run-from-dot Command (TEA-GAME-001)
+# =============================================================================
 
 
-@from_app.command("dot")
-def from_dot(
-    file: Path = typer.Argument(..., help="Path to DOT/Graphviz file"),
-    command: Optional[str] = typer.Option(
+@app.command("run-from-dot")
+def run_from_dot_cmd(
+    file: str = typer.Argument(..., help="Path to DOT/Graphviz file"),
+    session: str = typer.Option(
+        "tea-dot",
+        "--session",
+        "-s",
+        help="Tmux session name (default: tea-dot)",
+    ),
+    workflow: Optional[Path] = typer.Option(
         None,
-        "--command",
-        "-c",
-        help="Command template to execute per item (use {{ item }} placeholder). "
-        "Required when NOT using --use-node-commands.",
+        "--workflow",
+        "-w",
+        help="Workflow YAML to run for each node. Node labels become input. "
+        "If not specified, uses 'command' attribute from DOT nodes.",
     ),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Output YAML path (default: stdout)"
-    ),
-    max_concurrency: int = typer.Option(
-        3, "--max-concurrency", "-m", help="Maximum parallel executions"
-    ),
-    name: Optional[str] = typer.Option(
-        None, "--name", "-n", help="Workflow name (default: derived from graph)"
-    ),
-    tmux: bool = typer.Option(False, "--tmux", help="Generate tmux-based execution"),
-    session: Optional[str] = typer.Option(
-        None, "--session", "-s", help="Tmux session name (only with --tmux)"
-    ),
-    validate_output: bool = typer.Option(
-        False, "--validate", help="Validate generated YAML before output"
-    ),
-    # TEA-TOOLS-002: Per-node command support (default: True)
-    use_node_commands: bool = typer.Option(
-        True,
-        "--use-node-commands/--no-use-node-commands",
-        help="Use command attribute from DOT nodes (default: enabled). Each node MUST have "
-        'command="..." attribute. Use --no-use-node-commands with --command for template mode.',
-    ),
-    allow_cycles: bool = typer.Option(
-        False,
-        "--allow-cycles",
-        help="Allow cycles in the graph (for feedback loops like QA retry patterns).",
-    ),
-    tea_executable: Optional[str] = typer.Option(
+    workflow_input: Optional[str] = typer.Option(
         None,
-        "--tea-executable",
-        help="Override tea executable name in commands (e.g., tea-python, tea-rust). "
-        "Replaces 'tea' at start of command with the specified executable name.",
+        "--input",
+        "-i",
+        help="Additional JSON input to merge with node label for --workflow mode. "
+        'Example: \'{"mode": "sequential"}\'',
     ),
     timeout: int = typer.Option(
-        1800,
+        54000,
         "--timeout",
         "-t",
-        help="Subprocess timeout in seconds (default: 1800 = 30 minutes)",
+        help="Command timeout in seconds (default: 54000 = 15 hours)",
+    ),
+    poll_interval: int = typer.Option(
+        5,
+        "--poll-interval",
+        help="Seconds between polling for window completion (default: 5)",
+    ),
+    max_parallel: int = typer.Option(
+        3,
+        "--max-parallel",
+        "-m",
+        help="Maximum parallel tmux windows (default: 3)",
+    ),
+    verbose: int = typer.Option(
+        0,
+        "--verbose",
+        "-v",
+        count=True,
+        help="Verbosity level (-v, -vv, -vvv)",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show execution plan without running commands",
+    ),
+    executable: str = typer.Option(
+        "tea-python",
+        "--exec",
+        "-e",
+        help="Executable to use for running workflows (default: tea-python). "
+        "Examples: 'tea-python', 'python -m the_edge_agent', '/path/to/tea'",
     ),
 ):
     """
-    Convert DOT/Graphviz diagram to TEA YAML workflow.
+    Execute DOT workflow directly with tmux output for each node.
 
-    Parses DOT files with cluster subgraphs and generates parallel workflow
-    YAML using dynamic_parallel and fan_in patterns.
+    This command parses a DOT file and executes each node in a separate tmux
+    window, respecting the dependency order defined by edges. Each node runs
+    in isolation and you can monitor progress via tmux.
 
     Two modes of operation:
 
-    1. Per-node mode (default): Each DOT node specifies its own command attribute
+    1. Command mode (default): Each DOT node must have a 'command' attribute
 
-    2. Template mode (--no-use-node-commands --command): Same command for all nodes
+    2. Workflow mode (--workflow): Run a TEA workflow for each node, passing
+       the node label as input
+
+    The execution uses StateGraph internally for proper dependency handling
+    and parallel fan-out/fan-in patterns.
 
     Examples:
 
-        # Per-node mode (default) - each node has its own command attribute
-        tea from dot workflow.dot -o out.yaml
+        # Execute using node commands (each node has command="...")
+        tea run-from-dot workflow.dot
 
-        # Template mode - same command, different items
-        tea from dot workflow.dot --no-use-node-commands -c "make build-{{ item }}" -o out.yaml
+        # Execute using a workflow for each node
+        tea run-from-dot stories.dot --workflow bmad-story-development.yaml
 
-        # With tmux
-        tea from dot workflow.dot --tmux -s my-session
+        # With additional input for workflow mode
+        tea run-from-dot stories.dot -w dev.yaml -i '{"mode": "sequential"}'
+
+        # Custom session name
+        tea run-from-dot workflow.dot --session my-project
+
+        # Monitor with: tmux attach -t tea-dot
+
+    TEA-GAME-001: Direct DOT execution with tmux output
     """
+    import subprocess
+    import re
     from the_edge_agent.dot_parser import (
-        dot_to_yaml,
+        parse_dot,
+        analyze_graph,
         DotParseError,
         CircularDependencyError,
     )
 
+    # Configure logging based on verbosity
+    if verbose >= 3:
+        logging.basicConfig(level=logging.DEBUG)
+    elif verbose >= 2:
+        logging.basicConfig(level=logging.INFO)
+    elif verbose >= 1:
+        logging.basicConfig(level=logging.WARNING)
+
     # Validate file exists
-    if not file.exists():
+    dot_path = Path(file)
+    if not dot_path.exists():
         typer.echo(f"Error: DOT file not found: {file}", err=True)
         raise typer.Exit(1)
 
-    # Validate tmux options
-    if session and not tmux:
-        typer.echo("Error: --session requires --tmux flag", err=True)
+    # Validate workflow if specified
+    if workflow and not workflow.exists():
+        typer.echo(f"Error: Workflow file not found: {workflow}", err=True)
         raise typer.Exit(1)
 
-    # TEA-TOOLS-002: Validate command mode (mutually exclusive)
-    if use_node_commands and command:
-        typer.echo(
-            "Error: --use-node-commands and --command are mutually exclusive. "
-            "Use --no-use-node-commands with --command for template mode.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    if not use_node_commands and not command:
-        typer.echo(
-            "Error: --command is required when using --no-use-node-commands (template mode)",
-            err=True,
-        )
-        raise typer.Exit(1)
+    # Parse additional input
+    extra_input = {}
+    if workflow_input:
+        try:
+            extra_input = json.loads(workflow_input)
+        except json.JSONDecodeError as e:
+            typer.echo(f"Error: Invalid JSON in --input: {e}", err=True)
+            raise typer.Exit(1)
 
     try:
-        yaml_content = dot_to_yaml(
-            file_path=str(file),
-            command_template=command or "",
-            output_path=str(output) if output else None,
-            max_concurrency=max_concurrency,
-            workflow_name=name,
-            use_tmux=tmux,
-            tmux_session=session,
-            validate=validate_output,
-            use_node_commands=use_node_commands,
-            allow_cycles=allow_cycles,
-            tea_executable=tea_executable,
-            subprocess_timeout=timeout,
+        typer.echo(f"Loading DOT graph from {file}...", err=True)
+
+        # Parse and analyze DOT
+        parsed = parse_dot(str(dot_path))
+        analyzed = analyze_graph(parsed)
+
+        # Build execution order using topological sort
+        # (respecting dependencies from edges)
+        from collections import defaultdict, deque
+
+        # Build adjacency and in-degree
+        in_degree = defaultdict(int)
+        adj = defaultdict(list)
+        all_nodes = set()
+
+        for node_id, node in parsed.nodes.items():
+            # Skip ellipse shapes (Start/End markers)
+            if node.shape in ("ellipse", "circle", "point", "doublecircle"):
+                continue
+            all_nodes.add(node_id)
+            in_degree[node_id] = 0
+
+        for edge in parsed.edges:
+            src = edge.source
+            tgt = edge.target
+            # Skip edges involving markers
+            src_node = parsed.nodes.get(src)
+            tgt_node = parsed.nodes.get(tgt)
+            if src_node and src_node.shape in (
+                "ellipse",
+                "circle",
+                "point",
+                "doublecircle",
+            ):
+                continue
+            if tgt_node and tgt_node.shape in (
+                "ellipse",
+                "circle",
+                "point",
+                "doublecircle",
+            ):
+                continue
+            if src in all_nodes and tgt in all_nodes:
+                adj[src].append(tgt)
+                in_degree[tgt] += 1
+
+        # Kahn's algorithm for topological sort with levels (for parallelization)
+        levels = []
+        queue = deque([n for n in all_nodes if in_degree[n] == 0])
+
+        while queue:
+            level = list(queue)
+            levels.append(level)
+            queue.clear()
+            for node in level:
+                for neighbor in adj[node]:
+                    in_degree[neighbor] -= 1
+                    if in_degree[neighbor] == 0:
+                        queue.append(neighbor)
+
+        total_nodes = sum(len(level) for level in levels)
+        typer.echo(
+            f"Graph loaded: {total_nodes} nodes in {len(levels)} phases", err=True
         )
 
-        if output:
-            typer.echo(f"Generated YAML written to {output}", err=True)
-        else:
-            # Print to stdout
-            print(yaml_content)
+        # Show execution plan
+        typer.echo("\n=== Execution Plan ===", err=True)
+        for i, level in enumerate(levels, 1):
+            parallel_marker = " (parallel)" if len(level) > 1 else ""
+            typer.echo(f"Phase {i}{parallel_marker}:", err=True)
+            for node_id in level:
+                node = parsed.nodes.get(node_id)
+                label = node.label if node else node_id
+                typer.echo(f"  - {label}", err=True)
+
+        typer.echo(f"\nTmux session: {session}", err=True)
+        typer.echo(f"Attach with: tmux attach -t {session}", err=True)
+        typer.echo("", err=True)
+
+        # Dry run - just show plan without executing
+        if dry_run:
+            typer.echo("(Dry run - no commands executed)", err=True)
+            return
+
+        # Create/ensure tmux session exists
+        subprocess.run(
+            f"tmux has-session -t {session} 2>/dev/null || tmux new-session -d -s {session}",
+            shell=True,
+            executable="/bin/bash",
+        )
+
+        # Execute phases
+        start_time = time.time()
+        results = []
+        errors = []
+
+        for phase_idx, level in enumerate(levels, 1):
+            phase_size = len(level)
+            typer.echo(
+                f"\n>>> Phase {phase_idx}/{len(levels)}: " f"{phase_size} node(s)...",
+                err=True,
+            )
+
+            # Start all nodes in this level (up to max_parallel at a time)
+            active_windows = {}  # window_name -> (node_id, start_time)
+
+            for batch_start in range(0, phase_size, max_parallel):
+                batch = level[batch_start : batch_start + max_parallel]
+
+                # Launch batch
+                for node_id in batch:
+                    node = parsed.nodes.get(node_id)
+                    label = node.label if node else node_id
+
+                    # Determine command
+                    if workflow:
+                        # Workflow mode: run workflow with node label as input
+                        input_data = {"arg": label, **extra_input}
+                        input_json = json.dumps(input_data)
+                        cmd = f"{executable} run {workflow} --input '{input_json}'"
+                    else:
+                        # Command mode: use node's command attribute
+                        cmd = node.command if node else None
+                        if not cmd:
+                            cmd = analyzed.node_commands.get(label)
+                        if not cmd:
+                            typer.echo(
+                                f"  Warning: No command for node '{label}', skipping",
+                                err=True,
+                            )
+                            results.append(
+                                {
+                                    "node": label,
+                                    "success": False,
+                                    "error": "No command defined",
+                                }
+                            )
+                            continue
+
+                    # Sanitize window name
+                    window_name = re.sub(r"[^a-zA-Z0-9_-]", "_", label)[:30]
+
+                    typer.echo(f"  Starting: {label}", err=True)
+                    if verbose >= 1:
+                        typer.echo(f"    Command: {cmd[:80]}...", err=True)
+
+                    # Create window and send command
+                    subprocess.run(
+                        f"tmux new-window -t {session} -n {window_name}",
+                        shell=True,
+                        executable="/bin/bash",
+                    )
+                    time.sleep(0.3)  # Allow window to initialize
+
+                    # Send command with exit on completion
+                    full_cmd = f"{cmd}; exit"
+                    subprocess.run(
+                        [
+                            "tmux",
+                            "send-keys",
+                            "-t",
+                            f"{session}:{window_name}",
+                            full_cmd,
+                            "Enter",
+                        ],
+                        check=True,
+                    )
+
+                    active_windows[window_name] = (node_id, label, time.time())
+
+                # Wait for batch to complete
+                typer.echo(
+                    f"  Waiting for {len(active_windows)} window(s)...", err=True
+                )
+
+                while active_windows:
+                    time.sleep(poll_interval)
+
+                    # Check which windows are still running
+                    completed = []
+                    for window_name, (node_id, label, start) in active_windows.items():
+                        result = subprocess.run(
+                            f"tmux list-windows -t {session} 2>/dev/null | grep -q '{window_name}'",
+                            shell=True,
+                            executable="/bin/bash",
+                        )
+                        if result.returncode != 0:
+                            # Window closed = command finished
+                            elapsed = time.time() - start
+                            typer.echo(
+                                f"  ✓ Completed: {label} ({elapsed:.1f}s)",
+                                err=True,
+                            )
+                            results.append(
+                                {
+                                    "node": label,
+                                    "success": True,
+                                    "elapsed_seconds": round(elapsed, 1),
+                                }
+                            )
+                            completed.append(window_name)
+                        else:
+                            # Check timeout
+                            if time.time() - start > timeout:
+                                typer.echo(
+                                    f"  ✗ Timeout: {label} (>{timeout}s)",
+                                    err=True,
+                                )
+                                results.append(
+                                    {
+                                        "node": label,
+                                        "success": False,
+                                        "error": f"Timeout after {timeout}s",
+                                    }
+                                )
+                                errors.append(
+                                    {
+                                        "node": label,
+                                        "error": f"Timeout after {timeout}s",
+                                    }
+                                )
+                                # Kill the window
+                                subprocess.run(
+                                    f"tmux kill-window -t {session}:{window_name}",
+                                    shell=True,
+                                    executable="/bin/bash",
+                                )
+                                completed.append(window_name)
+
+                    for w in completed:
+                        del active_windows[w]
+
+        # Summary
+        elapsed = time.time() - start_time
+        success_count = sum(1 for r in results if r.get("success", False))
+        fail_count = len(results) - success_count
+
+        typer.echo("\n=== Execution Summary ===", err=True)
+        typer.echo(f"Total time: {elapsed:.1f}s", err=True)
+        typer.echo(f"Nodes: {success_count}/{len(results)} succeeded", err=True)
+
+        if errors:
+            typer.echo(f"\nErrors ({len(errors)}):", err=True)
+            for e in errors:
+                typer.echo(f"  - {e.get('node')}: {e.get('error')}", err=True)
+
+        typer.echo(f"\nTmux session '{session}' is still available.", err=True)
+        typer.echo(f"Attach with: tmux attach -t {session}", err=True)
+
+        if fail_count > 0:
+            raise typer.Exit(1)
 
     except DotParseError as e:
         typer.echo(f"Error: Invalid DOT syntax: {e}", err=True)
@@ -1810,11 +2367,13 @@ def from_dot(
     except CircularDependencyError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
-    except ValueError as e:
-        typer.echo(f"Error: Validation failed: {e}", err=True)
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
+        if verbose >= 2:
+            traceback.print_exc()
         raise typer.Exit(1)
 
 
@@ -1890,6 +2449,254 @@ def schema_merge(
         typer.echo(f"✓ Merged schema written to {output}", err=True)
 
 
+def get_git_remote_repo() -> Optional[str]:
+    """Get the repository owner/name from git remote origin."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            # Parse GitHub URL formats:
+            # https://github.com/owner/repo.git
+            # git@github.com:owner/repo.git
+            if "github.com" in url:
+                if url.startswith("git@"):
+                    # git@github.com:owner/repo.git
+                    path = url.split(":")[-1]
+                else:
+                    # https://github.com/owner/repo.git
+                    path = url.split("github.com/")[-1]
+                # Remove .git suffix
+                if path.endswith(".git"):
+                    path = path[:-4]
+                return path
+    except Exception:
+        pass
+    return None
+
+
+@app.command("report-bug")
+def report_bug(
+    description: str = typer.Argument(..., help="Bug description"),
+    workflow: Optional[Path] = typer.Option(
+        None,
+        "--workflow",
+        "-w",
+        help="Workflow YAML file for extended context (node names, actions, schema)",
+    ),
+    search_first: bool = typer.Option(
+        False,
+        "--search-first",
+        "-s",
+        help="Search for similar issues before creating",
+    ),
+    create_issue: bool = typer.Option(
+        False,
+        "--create-issue",
+        "-c",
+        help="Create GitHub issue directly (requires GITHUB_TOKEN)",
+    ),
+    repo: Optional[str] = typer.Option(
+        None,
+        "--repo",
+        "-r",
+        help="Repository owner/name (default: detected from git remote)",
+    ),
+    labels: Optional[str] = typer.Option(
+        None,
+        "--labels",
+        "-l",
+        help="Comma-separated labels (default: bug,auto-reported)",
+    ),
+):
+    """
+    Report a bug with optional GitHub integration.
+
+    By default, generates a bug report URL (TEA-REPORT-001 style) for manual filing.
+    With --create-issue, creates a GitHub issue directly.
+
+    Examples:
+
+        tea report-bug "Parser fails on nested lists"
+
+        tea report-bug "LLM timeout" --workflow agent.yaml
+
+        tea report-bug "Memory leak" --search-first --create-issue
+    """
+    from the_edge_agent.report import ErrorReport, ErrorType
+    from the_edge_agent.report_encoder import encode_error_report
+    from the_edge_agent.report_cli import REPORT_BASE_URL, add_extended_context
+
+    # Parse labels
+    label_list = ["bug", "auto-reported"]
+    if labels:
+        label_list = [l.strip() for l in labels.split(",")]
+
+    # Determine repository
+    target_repo = repo or get_git_remote_repo()
+    if not target_repo and (create_issue or search_first):
+        typer.echo(
+            "Error: --repo is required when using --create-issue or --search-first "
+            "(could not detect from git remote)",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    # Create base error report from description
+    report = ErrorReport(
+        error_type=ErrorType.ACTION_ERROR,
+        message=description,
+        stack=[],  # No stack trace for manual reports
+    )
+
+    # Extract extended context from workflow if provided
+    workflow_config = None
+    if workflow:
+        if not workflow.exists():
+            typer.echo(f"Error: Workflow file not found: {workflow}", err=True)
+            raise typer.Exit(1)
+        try:
+            import yaml
+
+            with open(workflow) as f:
+                workflow_config = yaml.safe_load(f)
+            report = add_extended_context(report, workflow_config)
+        except Exception as e:
+            typer.echo(f"Warning: Could not parse workflow file: {e}", err=True)
+
+    # Search for similar issues first if requested
+    if search_first and target_repo:
+        try:
+            # Get search action from registry
+            from the_edge_agent.actions.github_actions import register_actions
+
+            action_registry: Dict[str, Callable] = {}
+            register_actions(action_registry, engine=None)
+            github_search_issues = action_registry.get("github.search_issues")
+
+            if not github_search_issues:
+                raise ImportError("github.search_issues action not registered")
+
+            typer.echo("Searching for similar issues...", err=True)
+            search_result = github_search_issues(
+                state={},  # Required first arg for actions
+                query=f"{description[:50]} in:body label:bug",
+                repo=target_repo,
+                issue_state="all",  # Renamed to avoid conflict with state param
+                per_page=5,
+            )
+
+            if search_result.get("total_count", 0) > 0:
+                typer.echo("\n" + "━" * 68)
+                typer.echo("🔍 Similar issues found:")
+                for item in search_result.get("items", [])[:5]:
+                    state = item.get("state", "unknown")
+                    number = item.get("number")
+                    title = item.get("title", "")[:60]
+                    url = item.get("html_url") or item.get("url", "")
+                    typer.echo(f'   #{number}: "{title}" ({state})')
+                    typer.echo(f"        {url}")
+                typer.echo("")
+                typer.echo(
+                    f"   Consider adding a comment to #{search_result['items'][0]['number']} "
+                    "instead of filing a new issue."
+                )
+                typer.echo("━" * 68)
+
+                if not create_issue:
+                    # Don't create, just show similar issues
+                    return
+        except Exception as e:
+            typer.echo(f"Warning: Could not search for similar issues: {e}", err=True)
+
+    # Create GitHub issue if requested
+    if create_issue and target_repo:
+        try:
+            # Get create action from registry
+            from the_edge_agent.actions.github_actions import register_actions
+
+            action_registry: Dict[str, Callable] = {}
+            register_actions(action_registry, engine=None)
+            github_create_issue = action_registry.get("github.create_issue")
+
+            if not github_create_issue:
+                raise ImportError("github.create_issue action not registered")
+
+            # Build issue body
+            body_parts = [f"## Bug Report\n\n{description}\n"]
+
+            body_parts.append(f"\n**Version:** {report.version}")
+            body_parts.append(f"**Platform:** {report.platform}")
+
+            if report.extended:
+                ext = report.extended
+                if ext.workflow_name:
+                    body_parts.append(f"**Workflow:** {ext.workflow_name}")
+                if ext.nodes:
+                    node_names = [n.name for n in ext.nodes[:10]]
+                    body_parts.append(f"**Nodes:** {', '.join(node_names)}")
+                if ext.active_node:
+                    body_parts.append(f"**Active Node:** {ext.active_node}")
+
+            body_parts.append("\n---\n*Auto-generated by TEA bug reporter*")
+
+            body = "\n".join(body_parts)
+
+            result = github_create_issue(
+                state={},  # Required first arg for actions
+                repo=target_repo,
+                title=f"Bug: {description[:80]}",
+                body=body,
+                labels=label_list,
+            )
+
+            typer.echo("\n" + "━" * 68)
+            typer.echo(f"✅ Issue created: #{result.get('number')}")
+            typer.echo(f"   {result.get('html_url') or result.get('url')}")
+            typer.echo("")
+            typer.echo(f"   Title: Bug: {description[:80]}")
+            typer.echo(f"   Labels: {', '.join(label_list)}")
+            typer.echo("━" * 68)
+            return
+
+        except Exception as e:
+            typer.echo(f"Error creating issue: {e}", err=True)
+            typer.echo("Falling back to URL generation...", err=True)
+
+    # Default: generate bug report URL (TEA-REPORT-001 style)
+    try:
+        url = encode_error_report(report, REPORT_BASE_URL)
+
+        typer.echo("\n" + "━" * 68)
+        typer.echo("🐛 Bug Report URL:")
+        typer.echo(f"   {url}")
+        typer.echo("")
+        typer.echo("   This URL contains: description, version, platform.")
+        if report.extended:
+            typer.echo("   Extended context: workflow structure (node names, actions).")
+        typer.echo("   Click to open in browser and file issue on GitHub.")
+        typer.echo("━" * 68)
+
+        # Try to copy to clipboard
+        try:
+            from the_edge_agent.report_cli import copy_to_clipboard
+
+            if copy_to_clipboard(url):
+                typer.echo("   📋 URL copied to clipboard")
+        except Exception:
+            pass
+
+    except Exception as e:
+        typer.echo(f"Error generating bug report URL: {e}", err=True)
+        raise typer.Exit(1)
+
+
 def version_callback(value: bool):
     """Handle --version flag."""
     if value:
@@ -1938,6 +2745,7 @@ def main_callback(
             "inspect",
             "schema",
             "from",
+            "report-bug",
         ]:
             # Looks like legacy invocation
             if first_arg.endswith((".yaml", ".yml")):

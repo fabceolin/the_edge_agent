@@ -287,8 +287,16 @@ pub enum EdgeType {
         condition: Option<String>,
         /// Rust condition function (if not using Lua)
         condition_fn: Option<ConditionFn>,
-        /// Target node name
+        /// Target node name (or expected result in string-match mode)
         target: String,
+        /// Boolean evaluation mode (TEA-RUST-GOTO-FIX)
+        ///
+        /// When `true`: condition is evaluated as truthy/falsy - if truthy, take this edge
+        /// When `false`: condition is rendered as string and matched against `target`
+        ///
+        /// Goto-style conditions (`goto: [{if: ..., to: ...}]`) use boolean mode.
+        /// Targets-map conditions (`edges: [{when: ..., targets: {...}}]`) use string-match mode.
+        is_boolean_mode: bool,
     },
 
     /// Parallel edge for fan-out
@@ -303,11 +311,15 @@ impl std::fmt::Debug for EdgeType {
         match self {
             EdgeType::Simple => write!(f, "Simple"),
             EdgeType::Conditional {
-                condition, target, ..
+                condition,
+                target,
+                is_boolean_mode,
+                ..
             } => f
                 .debug_struct("Conditional")
                 .field("condition", condition)
                 .field("target", target)
+                .field("is_boolean_mode", is_boolean_mode)
                 .finish(),
             EdgeType::Parallel { branches } => f
                 .debug_struct("Parallel")
@@ -332,13 +344,32 @@ impl Edge {
         }
     }
 
-    /// Create a conditional edge with Lua expression
+    /// Create a conditional edge with Lua expression (string-match mode)
+    ///
+    /// In string-match mode, the condition is rendered as a string and compared
+    /// against the target. Use `conditional_boolean()` for truthy/falsy evaluation.
     pub fn conditional(condition: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
             edge_type: EdgeType::Conditional {
                 condition: Some(condition.into()),
                 condition_fn: None,
                 target: target.into(),
+                is_boolean_mode: false,
+            },
+        }
+    }
+
+    /// Create a conditional edge with boolean evaluation (TEA-RUST-GOTO-FIX)
+    ///
+    /// In boolean mode, the condition is evaluated as truthy/falsy.
+    /// If truthy, this edge is taken. Used for goto-style conditions.
+    pub fn conditional_boolean(condition: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            edge_type: EdgeType::Conditional {
+                condition: Some(condition.into()),
+                condition_fn: None,
+                target: target.into(),
+                is_boolean_mode: true,
             },
         }
     }
@@ -353,6 +384,23 @@ impl Edge {
                 condition: None,
                 condition_fn: Some(Arc::new(f)),
                 target: target.into(),
+                is_boolean_mode: false,
+            },
+        }
+    }
+
+    /// Create an unconditional edge that always matches (TEA-RUST-GOTO-FIX)
+    ///
+    /// Used for goto fallback rules (`goto: [{to: next_node}]`).
+    /// This is different from `simple()` because it participates in
+    /// conditional edge evaluation order (processed after conditionals).
+    pub fn unconditional(target: impl Into<String>) -> Self {
+        Self {
+            edge_type: EdgeType::Conditional {
+                condition: None,
+                condition_fn: None,
+                target: target.into(),
+                is_boolean_mode: true,
             },
         }
     }

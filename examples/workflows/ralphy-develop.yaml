@@ -1,0 +1,944 @@
+# =============================================================================
+# Ralphy Loop - Autonomous AI Coding Workflow (TEA-RALPHY-001.9)
+# =============================================================================
+# A complete workflow that orchestrates an autonomous coding loop:
+# 1. Detects task source type (markdown, yaml, github, bmad, glob)
+# 2. Parses tasks from the source
+# 3. Configures the AI engine (claude, codex, gemini, opencode, cursor)
+# 4. Executes tasks in sequential, parallel, or graph mode
+# 5. Optionally outputs to tmux panes for visual feedback
+# 6. Runs tests and lint automatically
+# 7. Creates git branches and PRs
+# 8. Reports token usage and costs
+# 9. Supports checkpoint/resume for long-running workflows
+# =============================================================================
+
+name: ralphy-develop
+description: Development workflow - Implements tasks from BMad stories using AI engines
+
+state_schema:
+  # Input parameters
+  source: str                    # Task source (file path, glob, github:owner/repo)
+  engine: str                    # AI engine name (claude, codex, gemini, opencode, cursor)
+  mode: str                      # Execution mode (sequential, parallel, graph)
+  max_concurrency: int           # Max parallel tasks (default: 4)
+  base_branch: str               # Git base branch (default: main)
+  create_prs: bool               # Create PRs for each task (default: true)
+  draft_prs: bool                # Create as draft PRs (default: false)
+  run_tests: bool                # Run tests after each task (default: true)
+  test_command: str              # Override test command
+  lint_command: str              # Override lint command
+  output_to_tmux: bool           # Output task execution to tmux panes (default: false)
+  tmux_session: str              # Tmux session name (default: ralphy)
+  tmux_layout: str               # Tmux layout (tiled, even-horizontal, even-vertical)
+
+  # Internal state
+  source_type: str               # Detected source type
+  tasks: list                    # Parsed tasks
+  engine_config: dict            # Engine configuration
+  test_results: list             # Test results per task
+  completed_tasks: list          # Successfully completed tasks
+  failed_tasks: list             # Failed tasks
+  pr_urls: list                  # Created PR URLs
+  total_tasks: int               # Total task count
+
+  # Tracking (from Opik integration)
+  _token_usage: dict             # Token usage tracking
+  _cost_summary: dict            # Cost summary
+
+initial_state:
+  engine: claude
+  mode: sequential
+  max_concurrency: 4
+  base_branch: main
+  create_prs: true
+  draft_prs: false
+  run_tests: true
+  output_to_tmux: false
+  tmux_session: ralphy
+  tmux_layout: tiled
+  tasks: []
+  completed_tasks: []
+  failed_tasks: []
+  pr_urls: []
+  test_results: []
+  _token_usage: {}
+  _cost_summary:
+    total_input_tokens: 0
+    total_output_tokens: 0
+    total_cost_usd: 0.0
+
+settings:
+  opik:
+    enabled: true
+    project_name: "ralphy-loop"
+  progress:
+    track: true
+
+# =============================================================================
+# NODES
+# =============================================================================
+
+nodes:
+  # ============================================
+  # Phase 1: Source Detection & Parsing
+  # ============================================
+  - name: detect_source_type
+    description: Detect the type of task source from input
+    run: |
+      source = state.get("source", "")
+
+      if not source:
+          return {"error": "No source provided", "source_type": "error"}
+
+      if source.startswith("github:"):
+          source_type = "github"
+      elif source.endswith(".yaml") or source.endswith(".yml"):
+          source_type = "yaml"
+      elif source.endswith(".md"):
+          # Check if it's a BMad story file
+          import os
+          if os.path.exists(source):
+              with open(source, 'r') as f:
+                  content = f.read()
+              if '## Tasks / Subtasks' in content or '## Acceptance Criteria' in content:
+                  source_type = "bmad"
+              else:
+                  source_type = "markdown"
+          else:
+              source_type = "markdown"
+      elif "*" in source:
+          source_type = "glob"
+      else:
+          # Default: assume BMad story if file exists
+          source_type = "bmad"
+
+      return {"source_type": source_type}
+
+  - name: parse_markdown_source
+    description: Parse tasks from Markdown using markdown.parse action
+    condition: "{{ state.source_type == 'markdown' }}"
+    run: |
+      import os
+      source = state.get("source", "")
+      tasks = []
+
+      if os.path.exists(source):
+          with open(source, 'r') as f:
+              content = f.read()
+
+          # Use markdown.parse action via registry
+          result = actions["markdown.parse"](state=state, content=content)
+
+          if result.get("success"):
+              # Convert checklist items to task format
+              for i, task in enumerate(result.get("tasks", [])):
+                  tasks.append({
+                      "id": f"md-task-{i+1}",
+                      "text": task.get("text", ""),
+                      "checked": task.get("checked", False),
+                      "ac_refs": task.get("ac_refs", []),
+                      "source_file": source,
+                      "type": "markdown"
+                  })
+
+      return {"tasks": tasks, "total_tasks": len(tasks)}
+
+  - name: parse_yaml_source
+    description: Parse tasks from YAML file directly
+    condition: "{{ state.source_type == 'yaml' }}"
+    run: |
+      import os
+      import yaml
+      source = state.get("source", "")
+      tasks = []
+
+      if os.path.exists(source):
+          with open(source, 'r') as f:
+              data = yaml.safe_load(f)
+
+          # YAML task files can have tasks in 'tasks' key
+          yaml_tasks = data.get("tasks", [])
+          for i, task in enumerate(yaml_tasks):
+              if isinstance(task, dict):
+                  tasks.append({
+                      "id": task.get("id", f"yaml-task-{i+1}"),
+                      "text": task.get("text", task.get("description", "")),
+                      "source_file": source,
+                      "type": "yaml",
+                      "metadata": task
+                  })
+              elif isinstance(task, str):
+                  tasks.append({
+                      "id": f"yaml-task-{i+1}",
+                      "text": task,
+                      "source_file": source,
+                      "type": "yaml"
+                  })
+
+      return {"tasks": tasks, "total_tasks": len(tasks)}
+
+  - name: parse_github_source
+    description: Parse tasks from GitHub Issues using github.list_issues action
+    condition: "{{ state.source_type == 'github' }}"
+    run: |
+      source = state.get("source", "")
+      tasks = []
+
+      # Extract repo from github:owner/repo format
+      if source.startswith("github:"):
+          repo = source[7:]  # Remove "github:" prefix
+
+          # Use github.list_issues action
+          result = actions["github.list_issues"](
+              state=state,
+              repo=repo,
+              issue_state="open",
+              parse_body=True
+          )
+
+          if result.get("success"):
+              for issue in result.get("issues", []):
+                  tasks.append({
+                      "id": f"github-{issue['number']}",
+                      "text": issue.get("title", ""),
+                      "body": issue.get("body", ""),
+                      "source_file": f"github:{repo}#{issue['number']}",
+                      "type": "github",
+                      "github_issue": issue,
+                      "subtasks": issue.get("tasks", [])
+                  })
+
+      return {"tasks": tasks, "total_tasks": len(tasks)}
+
+  - name: parse_bmad_source
+    description: Parse tasks from BMad story file using bmad.parse_story action
+    condition: "{{ state.source_type == 'bmad' }}"
+    run: |
+      import os
+      source = state.get("source", "")
+      tasks = []
+
+      if os.path.exists(source):
+          with open(source, 'r') as f:
+              content = f.read()
+
+          # Use bmad.parse_story action
+          result = actions["bmad.parse_story"](state=state, content=content)
+
+          if result.get("success"):
+              story_id = result.get("story_id", "unknown")
+
+              for i, task in enumerate(result.get("tasks", [])):
+                  task_id = f"{story_id}-task-{i+1}"
+                  tasks.append({
+                      "id": task_id,
+                      "text": task.get("text", ""),
+                      "checked": task.get("checked", False),
+                      "ac_refs": task.get("ac_refs", []),
+                      "source_file": source,
+                      "type": "bmad",
+                      "story_id": story_id,
+                      "subtasks": task.get("subtasks", [])
+                  })
+
+      return {"tasks": tasks, "total_tasks": len(tasks)}
+
+  - name: parse_glob_source
+    description: Parse tasks from glob pattern (each file becomes a task)
+    condition: "{{ state.source_type == 'glob' }}"
+    run: |
+      import glob as glob_module
+      import os
+      source = state.get("source", "")
+      tasks = []
+
+      files = glob_module.glob(source, recursive=True)
+
+      for f in files:
+          if os.path.isfile(f):
+              # Each file becomes a task
+              basename = os.path.basename(f)
+              task_id = basename.replace(".md", "").replace(".yaml", "").replace(".yml", "")
+              tasks.append({
+                  "id": task_id,
+                  "source_file": f,
+                  "text": f"Process file: {basename}",
+                  "type": "glob"
+              })
+
+      return {"tasks": tasks, "total_tasks": len(tasks)}
+
+  # ============================================
+  # Phase 2: Engine Configuration
+  # ============================================
+  - name: configure_engine
+    description: Validate and configure the AI engine
+    run: |
+      import shutil
+      engine = state.get("engine", "claude")
+
+      # Map engine names to CLI commands
+      engine_commands = {
+          "claude": "claude",
+          "codex": "codex",
+          "gemini": "gemini",
+          "opencode": "opencode",
+          "cursor": "agent"  # Cursor CLI is named 'agent'
+      }
+
+      engine_cmd = engine_commands.get(engine, engine)
+
+      # Check if engine CLI exists
+      available = shutil.which(engine_cmd) is not None
+
+      if not available:
+          # Engine not found, but don't fail - user might install later
+          # or might be using a different provider
+          pass
+
+      return {
+          "engine_config": {
+              "name": engine,
+              "command": engine_cmd,
+              "available": available,
+              "provider": "shell"
+          }
+      }
+
+  # ============================================
+  # Phase 3: Test Command Detection
+  # ============================================
+  - name: detect_test_command
+    description: Auto-detect test and lint commands for the project
+    run: |
+      import os
+
+      test_cmd = state.get("test_command")
+      lint_cmd = state.get("lint_command")
+
+      if not test_cmd:
+          # Detect based on project files
+          if os.path.exists("package.json"):
+              test_cmd = "npm test"
+          elif os.path.exists("pyproject.toml") or os.path.exists("setup.py"):
+              test_cmd = "pytest"
+          elif os.path.exists("Cargo.toml"):
+              test_cmd = "cargo test"
+          elif os.path.exists("Makefile"):
+              # Check if make test exists
+              with open("Makefile", "r") as f:
+                  if "test:" in f.read():
+                      test_cmd = "make test"
+                  else:
+                      test_cmd = "echo 'No test command detected'"
+          else:
+              test_cmd = "echo 'No test command detected'"
+
+      if not lint_cmd:
+          if os.path.exists("package.json"):
+              lint_cmd = "npm run lint || true"
+          elif os.path.exists("pyproject.toml"):
+              lint_cmd = "ruff check . || true"
+          elif os.path.exists("Cargo.toml"):
+              lint_cmd = "cargo clippy || true"
+          else:
+              lint_cmd = "echo 'No lint command detected'"
+
+      return {"test_command": test_cmd, "lint_command": lint_cmd}
+
+  # ============================================
+  # Phase 4: Task Execution
+  # ============================================
+  - name: execute_tasks_sequential
+    description: Execute tasks one by one in sequential mode
+    condition: "{{ state.mode == 'sequential' }}"
+    run: |
+      import subprocess
+      import os
+
+      tasks = state.get("tasks", [])
+      engine_config = state.get("engine_config", {})
+      test_cmd = state.get("test_command", "echo 'No tests'")
+      base_branch = state.get("base_branch", "main")
+      create_prs = state.get("create_prs", True)
+      draft_prs = state.get("draft_prs", False)
+      run_tests = state.get("run_tests", True)
+      output_to_tmux = state.get("output_to_tmux", False)
+      tmux_session = state.get("tmux_session", "ralphy")
+
+      completed = []
+      failed = []
+      pr_urls = []
+      test_results = []
+
+      # Setup tmux if enabled
+      pane_id = None
+      if output_to_tmux:
+          in_tmux = os.environ.get("TMUX") is not None
+          if not in_tmux:
+              subprocess.run(["tmux", "new-session", "-d", "-s", tmux_session], capture_output=True)
+          result = subprocess.run(
+              ["tmux", "list-panes", "-t", tmux_session, "-F", "#{pane_id}"],
+              capture_output=True, text=True
+          )
+          pane_id = result.stdout.strip().split("\n")[0] if result.stdout.strip() else None
+
+      for task in tasks:
+          if task.get("checked", False):
+              completed.append(task)
+              continue
+
+          task_id = task.get("id", "unknown")
+          task_text = task.get("text", "")
+          source_file = task.get("source_file", "")
+
+          try:
+              branch_name = f"task/{task_id}"
+              subprocess.run(["git", "checkout", base_branch], check=True, capture_output=True)
+              subprocess.run(["git", "checkout", "-b", branch_name], check=True, capture_output=True)
+
+              instructions = [
+                  "Read the source file for full requirements if needed",
+                  "Implement all acceptance criteria",
+                  "Write tests for your implementation",
+                  "Do not ask for confirmation, just implement"
+              ]
+              instructions_text = "\n".join([f"- {i}" for i in instructions])
+              prompt = f"Implement the following task:\n\nTask ID: {task_id}\nTask: {task_text}\nSource File: {source_file}\n\nInstructions:\n{instructions_text}\n\nWhen done, ensure all code is properly formatted and tested."
+
+              if output_to_tmux and pane_id:
+                  # Execute in tmux pane with visible output
+                  engine_cmd = engine_config.get("command", "claude")
+                  shell_cmd = f'{engine_cmd} "{prompt.replace(chr(34), chr(92)+chr(34))}"'
+                  subprocess.run(["tmux", "send-keys", "-t", pane_id, shell_cmd, "Enter"], capture_output=True)
+                  # Wait for completion marker
+                  import time
+                  timeout = 3600
+                  start = time.time()
+                  while (time.time() - start) < timeout:
+                      time.sleep(5)
+                      result = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane_id], capture_output=True, text=True)
+                      if "TASK_COMPLETE" in result.stdout or "$" in result.stdout[-50:]:
+                          break
+                  ai_result = {"success": True}
+              else:
+                  ai_result = actions["llm.call"](
+                      state=state,
+                      provider="shell",
+                      shell_provider=engine_config.get("name", "claude"),
+                      messages=[{"role": "user", "content": prompt}],
+                      timeout=3600
+                  )
+
+              if ai_result.get("error"):
+                  failed.append({"task": task, "error": ai_result.get("error")})
+                  continue
+
+              test_passed = True
+              test_output = ""
+              if run_tests:
+                  test_result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True)
+                  test_passed = test_result.returncode == 0
+                  test_output = test_result.stdout + test_result.stderr
+                  test_results.append({"task_id": task_id, "passed": test_passed, "output": test_output[:5000]})
+
+              subprocess.run(["git", "add", "-A"], check=True, capture_output=True)
+              commit_msg = f"feat: implement {task_id}\n\n{task_text[:200]}\n\nAutonomous implementation by Ralphy"
+              subprocess.run(["git", "commit", "-m", commit_msg], check=False, capture_output=True)
+
+              pr_url = None
+              if create_prs:
+                  pr_cmd = ["gh", "pr", "create", "--title", f"feat: {task_id}", "--body", f"Autonomous implementation of {task_id}\n\n**Task:** {task_text}\n\n**Test Results:** {'Pass' if test_passed else 'Fail'}"]
+                  if draft_prs:
+                      pr_cmd.append("--draft")
+                  pr_result = subprocess.run(pr_cmd, capture_output=True, text=True)
+                  if pr_result.returncode == 0:
+                      pr_url = pr_result.stdout.strip()
+                      pr_urls.append(pr_url)
+
+              completed.append({"task": task, "pr_url": pr_url, "test_passed": test_passed})
+
+          except Exception as e:
+              failed.append({"task": task, "error": str(e)})
+
+          finally:
+              subprocess.run(["git", "checkout", base_branch], check=False, capture_output=True)
+
+      return {
+          "completed_tasks": completed,
+          "failed_tasks": failed,
+          "pr_urls": pr_urls,
+          "test_results": test_results,
+          "execution_mode": "sequential",
+          "output_to_tmux": output_to_tmux
+      }
+
+  - name: execute_tasks_parallel
+    description: Execute tasks in parallel using worktrees
+    condition: "{{ state.mode == 'parallel' }}"
+    run: |
+      import concurrent.futures
+      import subprocess
+      import os
+      import time
+
+      tasks = state.get("tasks", [])
+      max_concurrency = state.get("max_concurrency", 4)
+      engine_config = state.get("engine_config", {})
+      test_cmd = state.get("test_command", "echo 'No tests'")
+      base_branch = state.get("base_branch", "main")
+      create_prs = state.get("create_prs", True)
+      draft_prs = state.get("draft_prs", False)
+      run_tests = state.get("run_tests", True)
+      output_to_tmux = state.get("output_to_tmux", False)
+      tmux_session = state.get("tmux_session", "ralphy")
+      tmux_layout = state.get("tmux_layout", "tiled")
+
+      pending_tasks = [t for t in tasks if not t.get("checked", False)]
+
+      completed = []
+      failed = []
+      pr_urls = []
+      pane_map = {}
+
+      # Setup tmux panes if enabled
+      if output_to_tmux:
+          in_tmux = os.environ.get("TMUX") is not None
+          if not in_tmux:
+              subprocess.run(["tmux", "new-session", "-d", "-s", tmux_session], capture_output=True)
+
+          tasks_to_run = pending_tasks[:max_concurrency]
+          for i, task in enumerate(tasks_to_run):
+              task_id = task.get("id", f"task-{i}")
+              if i > 0:
+                  result = subprocess.run(["tmux", "split-window", "-h", "-t", tmux_session, "-P", "-F", "#{pane_id}"], capture_output=True, text=True)
+                  pane_id = result.stdout.strip()
+              else:
+                  result = subprocess.run(["tmux", "list-panes", "-t", tmux_session, "-F", "#{pane_id}"], capture_output=True, text=True)
+                  pane_id = result.stdout.strip().split("\n")[0]
+              pane_map[task_id] = pane_id
+              subprocess.run(["tmux", "select-pane", "-t", pane_id, "-T", task_id], capture_output=True)
+          subprocess.run(["tmux", "select-layout", "-t", tmux_session, tmux_layout], capture_output=True)
+
+      def execute_single_task(task, pane_id=None):
+          task_id = task.get("id", "unknown")
+          task_text = task.get("text", "")
+          source_file = task.get("source_file", "")
+
+          try:
+              worktree_result = actions["git.worktree_create"](
+                  state=state, branch_name=f"task/{task_id}", base_branch=base_branch
+              )
+              if not worktree_result.get("success"):
+                  return {"task": task, "error": worktree_result.get("error"), "success": False}
+
+              worktree_path = worktree_result.get("worktree_path")
+              instructions = [f"Work within the worktree directory: {worktree_path}", "Implement all acceptance criteria", "Write tests for your implementation", "Do not ask for confirmation, just implement"]
+              instructions_text = "\n".join([f"- {i}" for i in instructions])
+              prompt = f"Implement the following task in the worktree at {worktree_path}:\n\nTask ID: {task_id}\nTask: {task_text}\nSource File: {source_file}\n\nInstructions:\n{instructions_text}"
+
+              if pane_id:
+                  engine_cmd = engine_config.get("command", "claude")
+                  shell_cmd = f'cd {worktree_path} && {engine_cmd} "{prompt.replace(chr(34), chr(92)+chr(34))}" && echo "TASK_COMPLETE: {task_id}"'
+                  subprocess.run(["tmux", "send-keys", "-t", pane_id, shell_cmd, "Enter"], capture_output=True)
+                  timeout = 3600
+                  start = time.time()
+                  while (time.time() - start) < timeout:
+                      time.sleep(5)
+                      result = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane_id], capture_output=True, text=True)
+                      if f"TASK_COMPLETE: {task_id}" in result.stdout:
+                          break
+                  ai_result = {"success": True}
+              else:
+                  ai_result = actions["llm.call"](
+                      state=state, provider="shell", shell_provider=engine_config.get("name", "claude"),
+                      messages=[{"role": "user", "content": prompt}], timeout=3600
+                  )
+
+              if ai_result.get("error"):
+                  actions["git.worktree_remove"](state=state, worktree_path=worktree_path, delete_branch=True, force=True)
+                  return {"task": task, "error": ai_result.get("error"), "success": False}
+
+              test_passed = True
+              if run_tests:
+                  test_result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, cwd=worktree_path)
+                  test_passed = test_result.returncode == 0
+
+              subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True, capture_output=True)
+              subprocess.run(["git", "commit", "-m", f"feat: implement {task_id}"], cwd=worktree_path, check=False, capture_output=True)
+
+              merge_result = actions["git.worktree_merge"](
+                  state=state, worktree_path=worktree_path, target_branch=base_branch, delete_after_merge=True
+              )
+
+              pr_url = None
+              if merge_result.get("merged") and create_prs:
+                  pr_cmd = ["gh", "pr", "create", "--title", f"feat: {task_id}", "--body", f"Task: {task_text}"]
+                  if draft_prs:
+                      pr_cmd.append("--draft")
+                  pr_result = subprocess.run(pr_cmd, capture_output=True, text=True)
+                  if pr_result.returncode == 0:
+                      pr_url = pr_result.stdout.strip()
+
+              return {"task": task, "success": True, "pr_url": pr_url, "test_passed": test_passed, "merged": merge_result.get("merged", False)}
+
+          except Exception as e:
+              return {"task": task, "error": str(e), "success": False}
+
+      with concurrent.futures.ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+          futures = {}
+          for task in pending_tasks:
+              task_id = task.get("id", "unknown")
+              pane_id = pane_map.get(task_id) if output_to_tmux else None
+              futures[executor.submit(execute_single_task, task, pane_id)] = task
+
+          for future in concurrent.futures.as_completed(futures):
+              result = future.result()
+              if result.get("success"):
+                  completed.append(result)
+                  if result.get("pr_url"):
+                      pr_urls.append(result.get("pr_url"))
+              else:
+                  failed.append(result)
+
+      return {
+          "completed_tasks": completed,
+          "failed_tasks": failed,
+          "pr_urls": pr_urls,
+          "execution_mode": "parallel",
+          "output_to_tmux": output_to_tmux
+      }
+
+  - name: execute_tasks_graph
+    description: Execute tasks based on dependency graph (respects task dependencies)
+    condition: "{{ state.mode == 'graph' }}"
+    run: |
+      import subprocess
+      import os
+      import time
+      from concurrent.futures import ThreadPoolExecutor, as_completed
+
+      tasks = state.get("tasks", [])
+      max_concurrency = state.get("max_concurrency", 4)
+      engine_config = state.get("engine_config", {})
+      test_cmd = state.get("test_command", "echo 'No tests'")
+      base_branch = state.get("base_branch", "main")
+      create_prs = state.get("create_prs", True)
+      draft_prs = state.get("draft_prs", False)
+      run_tests = state.get("run_tests", True)
+      output_to_tmux = state.get("output_to_tmux", False)
+      tmux_session = state.get("tmux_session", "ralphy")
+      tmux_layout = state.get("tmux_layout", "tiled")
+
+      pending_tasks = [t for t in tasks if not t.get("checked", False)]
+      completed = []
+      failed = []
+      pr_urls = []
+      completed_ids = set()
+
+      # Build dependency graph from task metadata
+      # Tasks can have "depends_on": ["task-id-1", "task-id-2"]
+      task_map = {t.get("id"): t for t in pending_tasks}
+      deps = {t.get("id"): set(t.get("depends_on", [])) for t in pending_tasks}
+
+      # Setup tmux if enabled
+      pane_map = {}
+      if output_to_tmux:
+          in_tmux = os.environ.get("TMUX") is not None
+          if not in_tmux:
+              subprocess.run(["tmux", "new-session", "-d", "-s", tmux_session], capture_output=True)
+
+      def execute_task(task, pane_id=None):
+          task_id = task.get("id", "unknown")
+          task_text = task.get("text", "")
+          source_file = task.get("source_file", "")
+
+          try:
+              worktree_result = actions["git.worktree_create"](
+                  state=state, branch_name=f"task/{task_id}", base_branch=base_branch
+              )
+              if not worktree_result.get("success"):
+                  return {"task": task, "error": worktree_result.get("error"), "success": False}
+
+              worktree_path = worktree_result.get("worktree_path")
+              instructions = [f"Work in: {worktree_path}", "Implement all AC", "Write tests", "Do not ask, just implement"]
+              instructions_text = "\n".join([f"- {i}" for i in instructions])
+              prompt = f"Task: {task_id}\n{task_text}\nSource: {source_file}\n\n{instructions_text}"
+
+              if pane_id:
+                  engine_cmd = engine_config.get("command", "claude")
+                  shell_cmd = f'cd {worktree_path} && {engine_cmd} "{prompt.replace(chr(34), chr(92)+chr(34))}" && echo "TASK_COMPLETE: {task_id}"'
+                  subprocess.run(["tmux", "send-keys", "-t", pane_id, shell_cmd, "Enter"], capture_output=True)
+                  timeout = 3600
+                  start = time.time()
+                  while (time.time() - start) < timeout:
+                      time.sleep(5)
+                      result = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane_id], capture_output=True, text=True)
+                      if f"TASK_COMPLETE: {task_id}" in result.stdout:
+                          break
+                  ai_result = {"success": True}
+              else:
+                  ai_result = actions["llm.call"](
+                      state=state, provider="shell", shell_provider=engine_config.get("name", "claude"),
+                      messages=[{"role": "user", "content": prompt}], timeout=3600
+                  )
+
+              if ai_result.get("error"):
+                  actions["git.worktree_remove"](state=state, worktree_path=worktree_path, delete_branch=True, force=True)
+                  return {"task": task, "error": ai_result.get("error"), "success": False}
+
+              test_passed = True
+              if run_tests:
+                  test_result = subprocess.run(test_cmd, shell=True, capture_output=True, text=True, cwd=worktree_path)
+                  test_passed = test_result.returncode == 0
+
+              subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True, capture_output=True)
+              subprocess.run(["git", "commit", "-m", f"feat: implement {task_id}"], cwd=worktree_path, check=False, capture_output=True)
+
+              merge_result = actions["git.worktree_merge"](
+                  state=state, worktree_path=worktree_path, target_branch=base_branch, delete_after_merge=True
+              )
+
+              pr_url = None
+              if merge_result.get("merged") and create_prs:
+                  pr_cmd = ["gh", "pr", "create", "--title", f"feat: {task_id}", "--body", f"Task: {task_text}"]
+                  if draft_prs:
+                      pr_cmd.append("--draft")
+                  pr_result = subprocess.run(pr_cmd, capture_output=True, text=True)
+                  if pr_result.returncode == 0:
+                      pr_url = pr_result.stdout.strip()
+
+              return {"task": task, "success": True, "pr_url": pr_url, "test_passed": test_passed}
+
+          except Exception as e:
+              return {"task": task, "error": str(e), "success": False}
+
+      # Execute tasks respecting dependencies (topological order with parallelism)
+      pane_idx = 0
+      while len(completed_ids) + len(failed) < len(pending_tasks):
+          # Find tasks with all dependencies satisfied
+          ready = []
+          for task_id, task_deps in deps.items():
+              if task_id in completed_ids:
+                  continue
+              if any(t.get("id") == task_id for t in [f.get("task", {}) for f in failed]):
+                  continue
+              if task_deps.issubset(completed_ids):
+                  ready.append(task_map[task_id])
+
+          if not ready:
+              # Deadlock or all remaining have unmet deps
+              for task_id in deps:
+                  if task_id not in completed_ids:
+                      t = task_map.get(task_id)
+                      if t and not any(f.get("task", {}).get("id") == task_id for f in failed):
+                          failed.append({"task": t, "error": "Unmet dependencies"})
+              break
+
+          # Setup tmux panes for ready tasks if needed
+          if output_to_tmux:
+              for i, task in enumerate(ready[:max_concurrency]):
+                  task_id = task.get("id")
+                  if task_id not in pane_map:
+                      if pane_idx > 0:
+                          result = subprocess.run(["tmux", "split-window", "-h", "-t", tmux_session, "-P", "-F", "#{pane_id}"], capture_output=True, text=True)
+                          pane_id = result.stdout.strip()
+                      else:
+                          result = subprocess.run(["tmux", "list-panes", "-t", tmux_session, "-F", "#{pane_id}"], capture_output=True, text=True)
+                          pane_id = result.stdout.strip().split("\n")[0]
+                      pane_map[task_id] = pane_id
+                      pane_idx += 1
+              subprocess.run(["tmux", "select-layout", "-t", tmux_session, tmux_layout], capture_output=True)
+
+          # Execute ready tasks in parallel
+          with ThreadPoolExecutor(max_workers=min(max_concurrency, len(ready))) as executor:
+              futures = {}
+              for task in ready[:max_concurrency]:
+                  pane_id = pane_map.get(task.get("id")) if output_to_tmux else None
+                  futures[executor.submit(execute_task, task, pane_id)] = task
+
+              for future in as_completed(futures):
+                  result = future.result()
+                  task_id = result.get("task", {}).get("id")
+                  if result.get("success"):
+                      completed.append(result)
+                      completed_ids.add(task_id)
+                      if result.get("pr_url"):
+                          pr_urls.append(result.get("pr_url"))
+                  else:
+                      failed.append(result)
+
+      return {
+          "completed_tasks": completed,
+          "failed_tasks": failed,
+          "pr_urls": pr_urls,
+          "execution_mode": "graph",
+          "output_to_tmux": output_to_tmux
+      }
+
+  # ============================================
+  # Phase 5: Results Collection & Reporting
+  # ============================================
+  - name: collect_results
+    description: Collect and summarize results from all tasks
+    run: |
+      completed = state.get("completed_tasks", [])
+      failed = state.get("failed_tasks", [])
+      total = state.get("total_tasks", 0)
+
+      completed_count = len(completed)
+      failed_count = len(failed)
+      success_rate = (completed_count / max(total, 1)) * 100
+
+      return {
+          "results_summary": {
+              "total_tasks": total,
+              "completed": completed_count,
+              "failed": failed_count,
+              "success_rate": round(success_rate, 1),
+              "pr_urls": state.get("pr_urls", [])
+          }
+      }
+
+  - name: report_costs
+    description: Generate cost summary from Opik tracking
+    run: |
+      # Token/cost tracking is handled by Opik when opik_trace=True
+      # This node provides a summary of the workflow execution
+      cost_summary = state.get("_cost_summary", {})
+
+      return {
+          "cost_report": {
+              "total_input_tokens": cost_summary.get("total_input_tokens", 0),
+              "total_output_tokens": cost_summary.get("total_output_tokens", 0),
+              "total_cost_usd": cost_summary.get("total_cost_usd", 0.0),
+              "note": "Detailed tracking available in Opik dashboard when opik.enabled=true"
+          }
+      }
+
+  - name: notify_completion
+    description: Output completion notification
+    run: |
+      summary = state.get("results_summary", {})
+      cost = state.get("cost_report", {})
+      completed = summary.get('completed', 0)
+      total = summary.get('total_tasks', 0)
+      rate = summary.get('success_rate', 0)
+      failed_count = summary.get('failed', 0)
+      pr_count = len(summary.get('pr_urls', []))
+      cost_usd = cost.get('total_cost_usd', 0)
+      tokens_in = cost.get('total_input_tokens', 0)
+      tokens_out = cost.get('total_output_tokens', 0)
+      sep = "=" * 79
+      print(f"\n{sep}")
+      print("                        RALPHY LOOP COMPLETE")
+      print(sep)
+      print(f"Tasks completed: {completed}/{total} ({rate}%)")
+      print(f"Failed: {failed_count}")
+      print(f"PRs created: {pr_count}")
+      print(f"Cost: ~${cost_usd:.4f} USD")
+      print(f"Tokens: {tokens_in} in / {tokens_out} out")
+      print(f"{sep}\n")
+      return {"notification_sent": True}
+
+# =============================================================================
+# EDGES
+# =============================================================================
+
+edges:
+  # Start -> Source Detection
+  - from: __start__
+    to: detect_source_type
+
+  # Source Detection -> Parse (conditional based on type)
+  - from: detect_source_type
+    to: parse_markdown_source
+    condition: "{{ state.source_type == 'markdown' }}"
+
+  - from: detect_source_type
+    to: parse_yaml_source
+    condition: "{{ state.source_type == 'yaml' }}"
+
+  - from: detect_source_type
+    to: parse_github_source
+    condition: "{{ state.source_type == 'github' }}"
+
+  - from: detect_source_type
+    to: parse_bmad_source
+    condition: "{{ state.source_type == 'bmad' }}"
+
+  - from: detect_source_type
+    to: parse_glob_source
+    condition: "{{ state.source_type == 'glob' }}"
+
+  # Parse -> Configure Engine
+  - from: parse_markdown_source
+    to: configure_engine
+
+  - from: parse_yaml_source
+    to: configure_engine
+
+  - from: parse_github_source
+    to: configure_engine
+
+  - from: parse_bmad_source
+    to: configure_engine
+
+  - from: parse_glob_source
+    to: configure_engine
+
+  # Configure Engine -> Detect Test Command
+  - from: configure_engine
+    to: detect_test_command
+
+  # Detect Test Command -> Execute (conditional on mode)
+  - from: detect_test_command
+    to: execute_tasks_sequential
+    condition: "{{ state.mode == 'sequential' }}"
+
+  - from: detect_test_command
+    to: execute_tasks_parallel
+    condition: "{{ state.mode == 'parallel' }}"
+
+  - from: detect_test_command
+    to: execute_tasks_graph
+    condition: "{{ state.mode == 'graph' }}"
+
+  # Execute -> Collect Results
+  - from: execute_tasks_sequential
+    to: collect_results
+
+  - from: execute_tasks_parallel
+    to: collect_results
+
+  - from: execute_tasks_graph
+    to: collect_results
+
+  # Collect -> Report -> Notify -> End
+  - from: collect_results
+    to: report_costs
+
+  - from: report_costs
+    to: notify_completion
+
+  - from: notify_completion
+    to: __end__
+
+# =============================================================================
+# INTERRUPT POINTS (for checkpoint/resume)
+# =============================================================================
+
+interrupt_before:
+  - execute_tasks_sequential
+  - execute_tasks_parallel
+  - execute_tasks_graph
+
+# =============================================================================
+# CHECKPOINT CONFIGURATION
+# =============================================================================
+
+checkpoint:
+  enabled: true
+  directory: ".ralphy-checkpoints"
+  auto_save: true
