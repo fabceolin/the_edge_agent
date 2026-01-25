@@ -95,13 +95,24 @@ Alias for `run:`, inspired by GitLab CI:
 
 Execute Lua code instead of Python for cross-runtime compatibility with the Rust implementation.
 
+**Language attribute (recommended):**
+```yaml
+- name: process_lua
+  language: lua
+  run: |
+    local result = {}
+    result.value = state.value * 2
+    result.message = state.name .. "!"
+    return result
+```
+
+**Explicit marker (alternative):**
 ```yaml
 - name: process_lua
   run: |
     -- lua
     local result = {}
     result.value = state.value * 2
-    result.message = state.name .. "!"
     return result
 ```
 

@@ -150,6 +150,8 @@ parts:
         title: "Truth Resolution Agent: Senna 1989 Case Study"
       - file: articles/dot-workflow-orchestration
         title: DOT Workflow Orchestration for AI Pipelines
+      - file: articles/43-stories-one-shot-development
+        title: "43 User Stories Developed in One-Shot"
 
   - caption: Contributing
     chapters:
