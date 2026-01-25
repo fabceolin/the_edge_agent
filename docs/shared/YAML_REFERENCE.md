@@ -754,7 +754,7 @@ Nodes are the building blocks of YAML agents. Each node represents a workflow st
 |--------|--------|-------------|
 | Inline Python | `run:` | Full Python code with state access |
 | Script | `script:` | Alias for run (GitLab CI style) |
-| Lua | `run:` + `-- lua` | Cross-runtime Lua code |
+| Lua | `language: lua` | Cross-runtime Lua code |
 | Prolog | `language: prolog` | Neurosymbolic AI logic |
 | Built-in Action | `uses:` | Pre-built actions |
 | Multi-Step | `steps:` | Sequential steps within node |

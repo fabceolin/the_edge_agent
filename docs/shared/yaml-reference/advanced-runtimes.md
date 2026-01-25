@@ -18,7 +18,7 @@ Both runtimes are sandboxed for security and have timeout protection.
 
 - [Lua Runtime](#lua-runtime)
   - [Enabling Lua](#enabling-lua)
-  - [Syntax Markers](#syntax-markers)
+  - [Syntax Options](#syntax-options)
   - [Auto-Detection](#auto-detection)
   - [Lua Sandbox](#lua-sandbox)
   - [Timeout Protection](#timeout-protection)
@@ -51,16 +51,26 @@ pip install 'the_edge_agent[lua]'
 pip install lupa>=2.0
 ```
 
-### Syntax Markers
+### Syntax Options
 
-**Explicit marker (recommended):**
+**Language attribute (recommended):**
+```yaml
+- name: process_lua
+  language: lua
+  run: |
+    local result = {}
+    result.value = state.value * 2
+    result.message = state.name .. "!"
+    return result
+```
+
+**Explicit marker (alternative):**
 ```yaml
 - name: process_lua
   run: |
     -- lua
     local result = {}
     result.value = state.value * 2
-    result.message = state.name .. "!"
     return result
 ```
 
