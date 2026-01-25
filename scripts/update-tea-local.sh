@@ -89,7 +89,7 @@ rm -f "${DOWNLOAD_DIR}/${RUST_APPIMAGE}"
 
 # Verify
 info "Verifying installation..."
-echo -e "  tea-python: $(tea-python --version 2>/dev/null || echo 'not found')"
-echo -e "  tea-rust:   $(tea-rust --version 2>/dev/null || echo 'not found')"
+echo -e "  tea-python: $(${INSTALL_DIR}/tea-python --version 2>/dev/null || echo 'not found')"
+echo -e "  tea-rust:   $(${INSTALL_DIR}/tea-rust --version 2>/dev/null || echo 'not found')"
 
 info "Done!"
