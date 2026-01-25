@@ -1444,21 +1444,16 @@ function initializeGame() {
         if (params.prompt) {
           prompt = params.prompt;
         } else if (params.instruction) {
-          // Game sends structured request - build prompt from instruction
-          const difficulty = params.difficulty || 'medium';
-          prompt = `You are a word game generator. Difficulty: ${difficulty}.
-
-${params.instruction}
-
-Respond with ONLY valid JSON, no markdown or explanation:
-{"phrase": "The ___ jumped over the fence", "word": "cat", "distractors": ["dog", "bird", "fish", "mouse"]}`;
+          // Game sends structured request - build concise prompt
+          prompt = `Generate a fill-in-the-blank phrase. Return JSON only:
+{"phrase":"The ___ is blue","word":"sky","distractors":["sea","car","hat","pen"]}`;
         } else {
           throw new Error('No prompt or instruction in game LLM request');
         }
 
         const response = await chat(prompt, {
-          maxTokens: params.max_tokens || 200,
-          temperature: params.temperature || 0.7,
+          maxTokens: params.max_tokens || 100,
+          temperature: params.temperature || 0.8,
         });
 
         // Try to extract JSON from the response
