@@ -1437,11 +1437,41 @@ function initializeGame() {
     if (!game_has_llm_handler()) {
       game_set_llm_handler(async (paramsJson) => {
         const params = JSON.parse(paramsJson);
-        const response = await chat(params.prompt, {
-          maxTokens: params.max_tokens || 100,
+        console.log('[TEA-DEMO] Game LLM request:', params);
+
+        // Build prompt from game request (Rust sends type/difficulty/instruction)
+        let prompt;
+        if (params.prompt) {
+          prompt = params.prompt;
+        } else if (params.instruction) {
+          // Game sends structured request - build prompt from instruction
+          const difficulty = params.difficulty || 'medium';
+          prompt = `You are a word game generator. Difficulty: ${difficulty}.
+
+${params.instruction}
+
+Respond with ONLY valid JSON, no markdown or explanation:
+{"phrase": "The ___ jumped over the fence", "word": "cat", "distractors": ["dog", "bird", "fish", "mouse"]}`;
+        } else {
+          throw new Error('No prompt or instruction in game LLM request');
+        }
+
+        const response = await chat(prompt, {
+          maxTokens: params.max_tokens || 200,
           temperature: params.temperature || 0.7,
         });
-        return JSON.stringify({ content: response.content });
+
+        // Try to extract JSON from the response
+        let content = response.content;
+        console.log('[TEA-DEMO] Game LLM raw response:', content);
+
+        // If response contains JSON, extract it
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          content = jsonMatch[0];
+        }
+
+        return content;
       });
       console.log('[TEA-DEMO] Game LLM handler registered');
     }
