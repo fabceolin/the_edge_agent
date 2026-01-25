@@ -12,20 +12,20 @@ export class IntoUnderlyingByteSource {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  start(controller: ReadableByteStreamController): void;
   pull(controller: ReadableByteStreamController): Promise<any>;
+  start(controller: ReadableByteStreamController): void;
   cancel(): void;
-  readonly type: ReadableStreamType;
   readonly autoAllocateChunkSize: number;
+  readonly type: ReadableStreamType;
 }
 
 export class IntoUnderlyingSink {
   private constructor();
   free(): void;
   [Symbol.dispose](): void;
-  write(chunk: any): Promise<any>;
-  close(): Promise<any>;
   abort(reason: any): Promise<any>;
+  close(): Promise<any>;
+  write(chunk: any): Promise<any>;
 }
 
 export class IntoUnderlyingSource {
@@ -34,6 +34,44 @@ export class IntoUnderlyingSource {
   [Symbol.dispose](): void;
   pull(controller: ReadableStreamDefaultController): Promise<any>;
   cancel(): void;
+}
+
+export class MarkdownParseResult {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  /**
+   * Document title (from first H1)
+   */
+  get title(): string | undefined;
+  /**
+   * Document title (from first H1)
+   */
+  set title(value: string | null | undefined);
+  /**
+   * JSON string of parsed sections
+   */
+  sections_json: string;
+  /**
+   * JSON string of variable names
+   */
+  variables_json: string;
+  /**
+   * JSON string of frontmatter (if present)
+   */
+  frontmatter_json: string;
+  /**
+   * JSON string of checklist items
+   */
+  tasks_json: string;
+  /**
+   * JSON string of task summary
+   */
+  task_summary_json: string;
+  /**
+   * JSON string of section edges
+   */
+  edges_json: string;
 }
 
 /**
@@ -211,6 +249,120 @@ export function execute_yaml_workflow(yaml: string, initial_state: string): Prom
  * * Promise resolving to final state JSON string
  */
 export function execute_yaml_workflow_with_vars(yaml: string, initial_state: string, variables: string): Promise<any>;
+
+/**
+ * Clear the LLM callback
+ */
+export function game_clear_llm_handler(): void;
+
+/**
+ * Clear the Opik callback
+ */
+export function game_clear_opik_handler(): void;
+
+/**
+ * Generate a new game round (AC-1)
+ *
+ * This function requires an LLM callback to be set via `game_set_llm_handler`.
+ * The LLM is called to generate a phrase with a missing word.
+ *
+ * Returns a Promise that resolves to a JSON string with round info:
+ * ```json
+ * {"success": true, "data": {"id": "...", "phrase": "The ___ is bright.", "choices": [...]}}
+ * ```
+ */
+export function game_generate_round(): Promise<string>;
+
+/**
+ * Get the leaderboard (AC-1)
+ *
+ * # Arguments
+ * * `limit` - Maximum number of entries to return (default: 10)
+ *
+ * Returns a JSON string with the leaderboard:
+ * ```json
+ * {"success": true, "data": [{"rank": 1, "username": "SwiftFox42", "score": 0.95, ...}]}
+ * ```
+ */
+export function game_get_leaderboard(limit: number): string;
+
+/**
+ * Get current session stats (AC-1)
+ *
+ * Returns a JSON string with session statistics:
+ * ```json
+ * {"success": true, "data": {"id": "...", "username": "...", "score": 0.5, ...}}
+ * ```
+ */
+export function game_get_session_stats(): string;
+
+/**
+ * Check if LLM handler is set
+ */
+export function game_has_llm_handler(): boolean;
+
+/**
+ * Check if Opik handler is set
+ */
+export function game_has_opik_handler(): boolean;
+
+/**
+ * Initialize the game engine
+ *
+ * Must be called before any other game functions.
+ * This creates the in-memory game engine instance.
+ */
+export function game_init(): string;
+
+/**
+ * Set the LLM callback for phrase generation (AC-3)
+ *
+ * The callback should be an async function that takes a JSON string
+ * with the prompt and returns a JSON string with the response.
+ */
+export function game_set_llm_handler(callback: Function): void;
+
+/**
+ * Set the Opik callback for tracing (AC-4)
+ *
+ * The callback should be a function that takes a JSON string with trace data
+ * and sends it to the Opik backend (fire-and-forget).
+ */
+export function game_set_opik_handler(callback: Function): void;
+
+/**
+ * Start a new game session (AC-1)
+ *
+ * Returns a Promise that resolves to a JSON string with session info:
+ * ```json
+ * {"success": true, "data": {"id": "...", "username": "SwiftFox42", ...}}
+ * ```
+ */
+export function game_start_session(): string;
+
+/**
+ * Submit an answer for the current round (AC-1)
+ *
+ * # Arguments
+ * * `choice` - The word the player selected
+ * * `time_ms` - Time taken to answer in milliseconds
+ *
+ * Returns a JSON string with the result:
+ * ```json
+ * {"success": true, "data": {"is_correct": true, "correct_word": "sun", ...}}
+ * ```
+ */
+export function game_submit_answer(choice: string, time_ms: number): string;
+
+/**
+ * Submit the current session to the leaderboard (AC-1)
+ *
+ * Returns a JSON string with the result:
+ * ```json
+ * {"success": true, "data": {"rank": 5, "is_new_best": true, "score": 0.75}}
+ * ```
+ */
+export function game_submit_to_leaderboard(): string;
 
 /**
  * Get list of available/loaded extensions
@@ -438,6 +590,47 @@ export function lua_eval_async(code: string, state_json: string): Promise<string
  * Initialize WASM module with panic hook
  */
 export function main(): void;
+
+/**
+ * Extract checklist items from Markdown content.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string
+ *
+ * # Returns
+ * JSON string with tasks array and summary
+ */
+export function markdown_extract_tasks(content: string): string;
+
+/**
+ * Extract template variables from Markdown content.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string
+ *
+ * # Returns
+ * JSON array of unique variable names
+ */
+export function markdown_extract_variables(content: string): string;
+
+/**
+ * Parse Markdown content into structured document.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string to parse
+ *
+ * # Returns
+ * MarkdownParseResult with JSON strings for each component
+ */
+export function markdown_parse(content: string): MarkdownParseResult;
+
+/**
+ * Parse Markdown and return complete result as JSON string.
+ *
+ * This is a convenience function for JavaScript that returns everything
+ * as a single JSON object.
+ */
+export function markdown_parse_json(content: string): string;
 
 /**
  * Parse YAML and return JSON-serialized config (WASM binding)
@@ -778,95 +971,126 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly configure_ltm: (a: number, b: number) => [number, number, number, number];
-  readonly get_ltm_config: () => [number, number];
-  readonly set_ltm_handler: (a: any) => void;
-  readonly clear_ltm_handler: () => void;
-  readonly has_ltm_handler: () => number;
-  readonly ltm_store_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly ltm_retrieve_async: (a: number, b: number, c: number, d: number) => any;
-  readonly ltm_delete_async: (a: number, b: number) => any;
-  readonly ltm_search_async: (a: number, b: number, c: number, d: number, e: number) => any;
-  readonly ltm_list_async: (a: number, b: number, c: number) => any;
-  readonly ltm_cleanup_expired_async: () => any;
-  readonly ltm_stats_async: () => any;
-  readonly parse_yaml: (a: number, b: number) => [number, number, number, number];
-  readonly validate_yaml: (a: number, b: number) => [number, number, number];
-  readonly set_prolog_handler: (a: any) => void;
-  readonly clear_prolog_handler: () => void;
-  readonly has_prolog_handler: () => number;
-  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
-  readonly set_duckdb_handler: (a: any) => void;
-  readonly clear_duckdb_handler: () => void;
-  readonly has_duckdb_handler: () => number;
-  readonly duckdb_query_async: (a: number, b: number, c: number, d: number) => any;
-  readonly duckdb_execute_async: (a: number, b: number) => any;
-  readonly init_duckdb_async: (a: number, b: number) => any;
-  readonly load_duckdb_extension_async: (a: number, b: number) => any;
-  readonly get_duckdb_extensions_async: () => any;
-  readonly duckdb_begin_async: () => any;
-  readonly duckdb_commit_async: () => any;
-  readonly duckdb_rollback_async: () => any;
-  readonly set_lua_callback: (a: any) => void;
-  readonly clear_lua_callback: () => void;
-  readonly has_lua_callback: () => number;
-  readonly lua_eval_async: (a: number, b: number, c: number, d: number) => any;
-  readonly set_opik_callback: (a: any) => void;
-  readonly clear_opik_callback: () => void;
-  readonly has_opik_callback: () => number;
-  readonly configure_opik: (a: number, b: number) => [number, number];
-  readonly get_opik_config: () => [number, number];
-  readonly is_opik_enabled: () => number;
-  readonly send_opik_trace_async: (a: number, b: number) => any;
-  readonly create_llm_trace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
-  readonly set_llm_handler: (a: any) => void;
   readonly clear_llm_handler: () => void;
   readonly has_llm_handler: () => number;
   readonly llm_call_async: (a: number, b: number, c: number, d: number) => any;
   readonly llm_embed_async: (a: number, b: number, c: number, d: number) => any;
+  readonly parse_yaml: (a: number, b: number) => [number, number, number, number];
+  readonly set_llm_handler: (a: any) => void;
+  readonly validate_yaml: (a: number, b: number) => [number, number, number];
   readonly render_template_wasm: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-  readonly set_storage_credentials: (a: number, b: number, c: number, d: number) => [number, number];
-  readonly clear_storage_credentials: () => void;
-  readonly has_storage_credentials: (a: number, b: number) => number;
-  readonly init_opfs: () => any;
-  readonly is_opfs_available: () => number;
-  readonly init_memory: () => [number, number, number, number];
-  readonly is_memory_available: () => number;
-  readonly storage_read_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_read_binary_async: (a: number, b: number) => any;
-  readonly storage_write_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
-  readonly storage_write_binary_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_exists_async: (a: number, b: number) => any;
-  readonly storage_delete_async: (a: number, b: number) => any;
-  readonly storage_list_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_copy_async: (a: number, b: number, c: number, d: number) => any;
-  readonly storage_supported_schemes: () => [number, number];
-  readonly main: () => void;
   readonly execute_yaml: (a: number, b: number, c: number, d: number) => any;
   readonly has_shared_array_buffer: () => number;
+  readonly main: () => void;
   readonly version: () => [number, number];
+  readonly clear_duckdb_handler: () => void;
+  readonly duckdb_begin_async: () => any;
+  readonly duckdb_commit_async: () => any;
+  readonly duckdb_execute_async: (a: number, b: number) => any;
+  readonly duckdb_query_async: (a: number, b: number, c: number, d: number) => any;
+  readonly duckdb_rollback_async: () => any;
   readonly execute_yaml_workflow: (a: number, b: number, c: number, d: number) => any;
   readonly execute_yaml_workflow_with_vars: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly get_duckdb_extensions_async: () => any;
+  readonly has_duckdb_handler: () => number;
+  readonly init_duckdb_async: (a: number, b: number) => any;
+  readonly load_duckdb_extension_async: (a: number, b: number) => any;
+  readonly set_duckdb_handler: (a: any) => void;
+  readonly clear_lua_callback: () => void;
+  readonly clear_opik_callback: () => void;
+  readonly clear_prolog_handler: () => void;
+  readonly configure_opik: (a: number, b: number) => [number, number];
+  readonly create_llm_trace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+  readonly game_clear_llm_handler: () => void;
+  readonly game_clear_opik_handler: () => void;
+  readonly game_generate_round: () => any;
+  readonly game_get_leaderboard: (a: number) => [number, number];
+  readonly game_get_session_stats: () => [number, number];
+  readonly game_has_llm_handler: () => number;
+  readonly game_has_opik_handler: () => number;
+  readonly game_init: () => [number, number];
+  readonly game_set_llm_handler: (a: any) => void;
+  readonly game_set_opik_handler: (a: any) => void;
+  readonly game_start_session: () => [number, number];
+  readonly game_submit_answer: (a: number, b: number, c: number) => [number, number];
+  readonly game_submit_to_leaderboard: () => [number, number];
+  readonly get_opik_config: () => [number, number];
+  readonly has_lua_callback: () => number;
+  readonly has_opik_callback: () => number;
+  readonly has_prolog_handler: () => number;
+  readonly is_opik_enabled: () => number;
+  readonly lua_eval_async: (a: number, b: number, c: number, d: number) => any;
+  readonly prolog_query_async: (a: number, b: number, c: number, d: number) => any;
+  readonly send_opik_trace_async: (a: number, b: number) => any;
+  readonly set_lua_callback: (a: any) => void;
+  readonly set_opik_callback: (a: any) => void;
+  readonly set_prolog_handler: (a: any) => void;
+  readonly __wbg_get_markdownparseresult_edges_json: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_frontmatter_json: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_sections_json: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_task_summary_json: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_tasks_json: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_title: (a: number) => [number, number];
+  readonly __wbg_get_markdownparseresult_variables_json: (a: number) => [number, number];
+  readonly __wbg_markdownparseresult_free: (a: number, b: number) => void;
+  readonly __wbg_set_markdownparseresult_edges_json: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_frontmatter_json: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_sections_json: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_task_summary_json: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_tasks_json: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_title: (a: number, b: number, c: number) => void;
+  readonly __wbg_set_markdownparseresult_variables_json: (a: number, b: number, c: number) => void;
+  readonly clear_ltm_handler: () => void;
+  readonly configure_ltm: (a: number, b: number) => [number, number, number, number];
+  readonly get_ltm_config: () => [number, number];
+  readonly has_ltm_handler: () => number;
+  readonly ltm_cleanup_expired_async: () => any;
+  readonly ltm_delete_async: (a: number, b: number) => any;
+  readonly ltm_list_async: (a: number, b: number, c: number) => any;
+  readonly ltm_retrieve_async: (a: number, b: number, c: number, d: number) => any;
+  readonly ltm_search_async: (a: number, b: number, c: number, d: number, e: number) => any;
+  readonly ltm_stats_async: () => any;
+  readonly ltm_store_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly markdown_extract_tasks: (a: number, b: number) => [number, number, number, number];
+  readonly markdown_extract_variables: (a: number, b: number) => [number, number, number, number];
+  readonly markdown_parse: (a: number, b: number) => [number, number, number];
+  readonly markdown_parse_json: (a: number, b: number) => [number, number, number, number];
+  readonly set_ltm_handler: (a: any) => void;
+  readonly clear_storage_credentials: () => void;
+  readonly has_storage_credentials: (a: number, b: number) => number;
+  readonly init_memory: () => [number, number, number, number];
+  readonly init_opfs: () => any;
+  readonly is_memory_available: () => number;
+  readonly is_opfs_available: () => number;
+  readonly set_storage_credentials: (a: number, b: number, c: number, d: number) => [number, number];
+  readonly storage_copy_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_delete_async: (a: number, b: number) => any;
+  readonly storage_exists_async: (a: number, b: number) => any;
+  readonly storage_list_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_read_async: (a: number, b: number, c: number, d: number) => any;
+  readonly storage_read_binary_async: (a: number, b: number) => any;
+  readonly storage_supported_schemes: () => [number, number];
+  readonly storage_write_async: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+  readonly storage_write_binary_async: (a: number, b: number, c: number, d: number) => any;
   readonly slugify: (a: number, b: number) => [number, number];
   readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
-  readonly intounderlyingbytesource_type: (a: number) => number;
   readonly intounderlyingbytesource_autoAllocateChunkSize: (a: number) => number;
-  readonly intounderlyingbytesource_start: (a: number, b: any) => void;
-  readonly intounderlyingbytesource_pull: (a: number, b: any) => any;
   readonly intounderlyingbytesource_cancel: (a: number) => void;
-  readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
-  readonly intounderlyingsource_pull: (a: number, b: any) => any;
-  readonly intounderlyingsource_cancel: (a: number) => void;
+  readonly intounderlyingbytesource_pull: (a: number, b: any) => any;
+  readonly intounderlyingbytesource_start: (a: number, b: any) => void;
+  readonly intounderlyingbytesource_type: (a: number) => number;
   readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
-  readonly intounderlyingsink_write: (a: number, b: any) => any;
-  readonly intounderlyingsink_close: (a: number) => any;
+  readonly __wbg_intounderlyingsource_free: (a: number, b: number) => void;
   readonly intounderlyingsink_abort: (a: number, b: any) => any;
-  readonly wasm_bindgen__convert__closures_____invoke__h6419b8df6f0ffaa5: (a: number, b: number) => void;
-  readonly wasm_bindgen__closure__destroy__hd3991ff33f061b2c: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__hb3352bc28e4e4955: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__closure__destroy__h1b1de572005f6a4b: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h0c3d797cdbea5ac4: (a: number, b: number) => number;
-  readonly wasm_bindgen__convert__closures_____invoke__h07cfb4353a163837: (a: number, b: number, c: any, d: any) => void;
+  readonly intounderlyingsink_close: (a: number) => any;
+  readonly intounderlyingsink_write: (a: number, b: any) => any;
+  readonly intounderlyingsource_cancel: (a: number) => void;
+  readonly intounderlyingsource_pull: (a: number, b: any) => any;
+  readonly wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f: (a: number, b: number) => void;
+  readonly wasm_bindgen__closure__destroy__h9eb6f956610eaa1e: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__closure__destroy__ha9e5309a8e8dc2f5: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;
