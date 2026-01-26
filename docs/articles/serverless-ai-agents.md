@@ -4,7 +4,7 @@
 
 *Independent Researcher*
 
-fabceolin@gmail.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

@@ -4,7 +4,7 @@
 
 *Principal Engineer, The Edge Agent Project*
 
-fabricio@rankellix.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 
@@ -189,7 +189,7 @@ The `shell_provider: claude` spawns a fresh Claude Code instance for each node e
 
 With BMad stories ready and TEA workflows defined, we can orchestrate parallel execution using DOT (Graphviz) graphs.
 
-> **For comprehensive DOT orchestration documentation**—including CLI reference, execution modes, verbose output, and best practices—see the [DOT Workflow Orchestration](./dot-workflow-orchestration.md) article.
+> **For comprehensive DOT orchestration documentation**—including CLI reference, execution modes, verbose output, and best practices—see the [DOT Workflow Orchestration](../llm-prompts/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) guide.
 
 ### 4.1 Dependency Analysis
 
@@ -220,7 +220,7 @@ digraph tea_game_001_validation {
     subgraph cluster_phase1 {
         label="1. Foundation";
         story_1 [label="TEA-GAME-001.1",
-                 command="tea-python run examples/workflows/bmad-story-validation.yaml
+                 command="tea run examples/workflows/bmad-story-validation.yaml
                           --input-timeout 54000
                           --input '{\"arg\": \"docs/stories/TEA-GAME-001.1-rust-game-engine-core.md\"}'"];
     }
@@ -254,50 +254,37 @@ digraph tea_game_001_validation {
 
 ### 4.3 Visual Dependency Graph
 
-```
-                    ┌─────────────────┐
-                    │     Start       │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   Story 1       │  Phase 1
-                    │ (Rust Core)     │
-                    └────────┬────────┘
-                             │
-           ┌─────────────────┼─────────────────┐
-           │                 │                 │
-    ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
-    │  Story 2    │   │  Story 4    │   │  Story 8    │  Phase 2
-    │  (DuckDB)   │   │  (LLM Gen)  │   │  (Opik)     │  PARALLEL
-    └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-           │                 │                 │
-    ┌──────▼──────┐          │                 │
-    │  Story 3    │          │                 │  Phase 3
-    │ (Embeddings)│          │                 │
-    └──────┬──────┘          │                 │
-           │                 │                 │
-           └────────┬────────┘                 │
-                    │                          │
-             ┌──────▼──────┐                   │
-             │  Story 5    │                   │  Phase 4
-             │ (GameEngine)│                   │
-             └──────┬──────┘                   │
-                    │                          │
-             ┌──────▼──────┐                   │
-             │  Story 6    │                   │  Phase 5
-             │ (WASM Port) │                   │
-             └──────┬──────┘                   │
-                    │                          │
-             ┌──────▼──────┐                   │
-             │  Story 7    │                   │  Phase 6
-             │ (Browser UI)│                   │
-             └──────┬──────┘                   │
-                    │                          │
-                    └────────────┬─────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │          End            │
-                    └─────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1"]
+        Start([Start]) --> S1["Story 1<br/>(Rust Core)"]
+    end
+
+    subgraph Phase2["Phase 2 - PARALLEL"]
+        S1 --> S2["Story 2<br/>(DuckDB)"]
+        S1 --> S4["Story 4<br/>(LLM Gen)"]
+        S1 --> S8["Story 8<br/>(Opik)"]
+    end
+
+    subgraph Phase3["Phase 3"]
+        S2 --> S3["Story 3<br/>(Embeddings)"]
+    end
+
+    subgraph Phase4["Phase 4"]
+        S3 --> S5["Story 5<br/>(GameEngine)"]
+        S4 --> S5
+    end
+
+    subgraph Phase5["Phase 5"]
+        S5 --> S6["Story 6<br/>(WASM Port)"]
+    end
+
+    subgraph Phase6["Phase 6"]
+        S6 --> S7["Story 7<br/>(Browser UI)"]
+    end
+
+    S7 --> End([End])
+    S8 --> End
 ```
 
 ### 4.4 Efficiency Gain
@@ -329,7 +316,7 @@ Before running TEA workflows that use Claude Code as the LLM backend, you need t
    claude auth
    ```
 
-3. **BMad v4 (Required)** - The Ralphy workflows require BMad v4 story format:
+3. **BMad v4 (Required)** - The workflows require BMad v4 story format:
    ```
    .bmad-core/
    ├── agents/
@@ -407,7 +394,7 @@ Test that Claude Code works as a shell provider:
 echo "Say hello" | claude --print
 
 # Test with TEA
-tea-python run examples/workflows/bmad-story-validation.yaml \
+tea run examples/workflows/bmad-story-validation.yaml \
     --input '{"arg": "docs/stories/TEA-GAME-001.1-rust-game-engine-core.md"}' \
     --dry-run
 ```
@@ -420,24 +407,18 @@ tea-python run examples/workflows/bmad-story-validation.yaml \
 
 The simplest approach is to execute the DOT file directly with tmux-based output.
 
-**Two execution modes:**
-
-#### Mode 1: Command Mode (nodes have `command` attribute)
-
 ```bash
 # Execute DOT directly with tmux output (respects dependency order)
 tea run --from-dot examples/dot/tea-game-001-validation.dot
 
-# Or use the dedicated command with more options
-tea run-from-dot examples/dot/tea-game-001-validation.dot \
-    --session tea-game \
-    --max-parallel 3
+# With additional options
+tea run --from-dot examples/dot/tea-game-001-validation.dot \
+    --dot-session tea-game \
+    --dot-max-parallel 3
 
 # Preview execution plan without running
 tea run --from-dot examples/dot/tea-game-001-validation.dot --dot-dry-run
 ```
-
-#### Mode 2: Workflow Mode (run a workflow for each node)
 
 When nodes represent stories/tasks, use `--dot-workflow` to run a workflow for each:
 
@@ -446,20 +427,10 @@ When nodes represent stories/tasks, use `--dot-workflow` to run a workflow for e
 tea run --from-dot stories.dot \
     --dot-workflow examples/workflows/bmad-story-development.yaml
 
-# With additional input parameters
-tea run-from-dot stories.dot \
-    -w examples/workflows/bmad-story-development.yaml \
-    -i '{"mode": "sequential"}'
-
-# With custom executable (--dot-exec or --exec)
+# With custom executable
 tea run --from-dot stories.dot \
     --dot-workflow examples/workflows/bmad-story-validation.yaml \
     --dot-exec "python -m the_edge_agent"
-
-# Or using run-from-dot with --exec/-e
-tea-python run-from-dot stories.dot \
-    -w examples/workflows/bmad-story-validation.yaml \
-    -e "/path/to/custom/tea-python"
 ```
 
 The node label is passed as `{"arg": "<node_label>"}` to the workflow.
@@ -468,12 +439,13 @@ Monitor progress with: `tmux attach -t tea-dot`
 
 #### Parameter Reference
 
-| `run-from-dot` | `run --from-dot` | Purpose |
-|----------------|------------------|---------|
-| `--workflow`/`-w` | `--dot-workflow` | Workflow YAML file to run for each node |
-| `--max-parallel`/`-m` | `--dot-max-parallel` | Maximum parallel processes |
-| `--exec`/`-e` | `--dot-exec` | Custom executable (default: `tea-python`) |
-| `--session`/`-s` | `--dot-session` | Tmux session name |
+| Parameter | Purpose |
+|-----------|---------|
+| `--dot-workflow` | Workflow YAML file to run for each node |
+| `--dot-max-parallel` | Maximum parallel processes |
+| `--dot-exec` | Custom executable (default: `tea`) |
+| `--dot-session` | Tmux session name |
+| `--dot-dry-run` | Preview execution plan without running |
 
 ### 6.2 Alternative: Execute via YAML
 
@@ -496,28 +468,31 @@ tea run examples/dot/tea-game-001-validation.yaml \
 
 ### 6.3 What Happens During Execution
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  tea-python run tea-game-001-validation.yaml                 │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  [Phase 1]  Story 1 ─────────────────────────► Complete      │
-│                                                              │
-│  [Phase 2]  Story 2 ─────────────────────────►┐              │
-│             Story 4 ─────────────────────────►├─► All Done   │
-│             Story 8 ─────────────────────────►┘              │
-│                                                              │
-│  [Phase 3]  Story 3 ─────────────────────────► Complete      │
-│                                                              │
-│  [Phase 4]  Story 5 ─────────────────────────► Complete      │
-│                                                              │
-│  [Phase 5]  Story 6 ─────────────────────────► Complete      │
-│                                                              │
-│  [Phase 6]  Story 7 ─────────────────────────► Complete      │
-│                                                              │
-│  ═══════════════════════════════════════════════════════════ │
-│  WORKFLOW COMPLETE: 8 stories validated, 6 phases            │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+gantt
+    title TEA Workflow Execution: 8 stories, 6 phases
+    dateFormat X
+    axisFormat %s
+
+    section Phase 1
+    Story 1 (Rust Core)       :done, s1, 0, 10
+
+    section Phase 2
+    Story 2 (DuckDB)          :done, s2, 10, 20
+    Story 4 (LLM Gen)         :done, s4, 10, 20
+    Story 8 (Opik)            :done, s8, 10, 20
+
+    section Phase 3
+    Story 3 (Embeddings)      :done, s3, 20, 30
+
+    section Phase 4
+    Story 5 (GameEngine)      :done, s5, 30, 40
+
+    section Phase 5
+    Story 6 (WASM Port)       :done, s6, 40, 50
+
+    section Phase 6
+    Story 7 (Browser UI)      :done, s7, 50, 60
 ```
 
 ## 7. Real-World Example: Matter Import Resolution Epic
@@ -539,22 +514,20 @@ For this epic, we use **bmad-story-validation** to validate all 46 stories befor
 
 ```bash
 # Actual command running in tmux session 'tea-dot'
-tea-python run-from-dot \
-    examples/dot/matter-import-resolution-workflow-short.dot \
-    --workflow examples/workflows/bmad-story-validation.yaml \
-    --max-parallel 3 \
-    --session tea-dot
+tea run --from-dot examples/dot/matter-import-resolution-workflow-short.dot \
+    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-max-parallel 3 \
+    --dot-session tea-dot
 ```
 
 **Parameters explained:**
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| `run-from-dot` | - | Command to execute DOT workflow |
-| DOT file | `matter-import-resolution-workflow-short.dot` | 46-node dependency graph |
-| `--workflow`/`-w` | `bmad-story-validation.yaml` | QA + SM validation workflow |
-| `--max-parallel`/`-m` | `3` | Limit concurrent processes |
-| `--session`/`-s` | `tea-dot` | Tmux session name |
+| `--from-dot` | DOT file path | 46-node dependency graph |
+| `--dot-workflow` | `bmad-story-validation.yaml` | QA + SM validation workflow |
+| `--dot-max-parallel` | `3` | Limit concurrent processes |
+| `--dot-session` | `tea-dot` | Tmux session name |
 
 ### 7.3 DOT File Structure (Short Labels)
 
@@ -621,20 +594,14 @@ If you need to use a different TEA installation or virtual environment:
 
 ```bash
 # Use a specific virtualenv
-tea-python run-from-dot workflow.dot \
-    -w bmad-story-validation.yaml \
-    --exec "/home/user/.venv/bin/tea-python"
+tea run --from-dot workflow.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-exec "/home/user/.venv/bin/tea"
 
 # Use Python module directly
-tea-python run-from-dot workflow.dot \
-    -w bmad-story-validation.yaml \
-    -e "python -m the_edge_agent"
-
-# Via run --from-dot syntax
-tea-python run agent.yaml --from-dot workflow.dot \
+tea run --from-dot workflow.dot \
     --dot-workflow bmad-story-validation.yaml \
-    --dot-exec "python -m the_edge_agent" \
-    --dot-max-parallel 3
+    --dot-exec "python -m the_edge_agent"
 ```
 
 ---
@@ -689,5 +656,5 @@ As TEA continues to evolve, this meta-development cycle accelerates: better TEA 
 
 - [BMad Method v4](https://github.com/bmad-code-org/BMAD-METHOD) - Breakthrough Method for Agile AI-Driven Development (Required)
 - [TEA Documentation](https://fabceolin.github.io/the_edge_agent/) - The Edge Agent official docs
-- [DOT Workflow Orchestration](./dot-workflow-orchestration.md) - Complete guide to DOT orchestration, CLI reference, and best practices
+- [DOT Workflow Orchestration](../llm-prompts/DOT_WORKFLOW_ORCHESTRATION_LLM_GUIDE.md) - Complete guide to DOT orchestration, CLI reference, and best practices
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - DOT syntax reference

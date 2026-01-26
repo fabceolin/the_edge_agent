@@ -319,6 +319,37 @@ Instead of a database-backed phrase repository, the LLM generates phrases dynami
 
 ---
 
+### Story 9: Phrase Database Integration (Brownfield)
+
+**As a** game developer,
+**I want** the game engine to load and use pre-created phrases from `data/game_phrases.json`,
+**So that** players can play with curated phrases and the LLM only needs to complete (not generate) phrases.
+
+**Acceptance Criteria:**
+
+1. **AC-1**: `phrases` table created in DuckDB with columns: `id`, `phrase`, `correct_word`, `distractors` (JSON), `difficulty`, `category`
+2. **AC-2**: Phrases loaded from embedded JSON (compile-time include) on startup
+3. **AC-3**: `get_random_phrase(min_difficulty, max_difficulty, exclude_ids)` returns phrase matching difficulty range
+4. **AC-4**: Session tracks `used_phrase_ids` to avoid repeats within a game
+5. **AC-5**: `game_generate_round()` uses phrase database instead of LLM phrase generation
+6. **AC-6**: LLM is called only for simple completion: "Complete with ONE word: {phrase}"
+
+**Tasks:**
+
+- [ ] Add `phrases` table DDL to `db.rs`
+- [ ] Define `Phrase` and `PhrasesFile` structs
+- [ ] Implement `include_str!` for WASM build
+- [ ] Load phrases into DuckDB on initialization
+- [ ] Implement `get_random_phrase(min, max, exclude)`
+- [ ] Add `used_phrase_ids` to `GameSession`
+- [ ] Modify `game_generate_round()` to use phrase database
+- [ ] Verify `game.js` UI still works
+- [ ] Tests for phrase loading and selection
+
+**File:** `docs/stories/TEA-GAME-001.9-phrase-database-integration.md`
+
+---
+
 ## Technical Design Notes
 
 ### Score Formula
@@ -509,7 +540,7 @@ CREATE TABLE user_confusions (
 
 ## Definition of Done
 
-- [ ] All 8 stories completed with acceptance criteria met
+- [ ] All 9 stories completed with acceptance criteria met
 - [ ] Game playable in browser with full feature set
 - [ ] Leaderboard persists across sessions
 - [ ] Opik traces visible in dashboard
@@ -594,3 +625,5 @@ Full test matrix available at: `docs/qa/assessments/TEA-GAME-001-test-design-202
 | 2026-01-10 | 0.1 | Initial epic draft | Sarah (PO Agent) |
 | 2026-01-10 | 0.2 | Removed phrases database, added LLM context window generation | Sarah (PO Agent) |
 | 2026-01-12 | 0.3 | Added QA Notes with test coverage analysis | Quinn (QA Agent) |
+| 2026-01-25 | 0.4 | **DESIGN PIVOT**: Re-introduced pre-defined phrase database (1000 phrases). Game now compares player guess vs LLM's actual completion. Distractors are human-curated, not LLM/embedding-generated. See Story 4 v2.0 for details. | Sarah (PO Agent) |
+| 2026-01-25 | 0.5 | Added Story 9 (brownfield): Phrase Database Integration - implements loading of pre-generated 1039 phrases from `data/game_phrases.json`. | Sarah (PO Agent) |

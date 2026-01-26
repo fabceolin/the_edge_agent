@@ -1,0 +1,109 @@
+name: Documentation Validation
+
+on:
+  pull_request:
+    paths:
+      - 'python/src/the_edge_agent/actions/**'
+      - 'docs/python/actions-reference.md'
+      - 'docs/shared/YAML_REFERENCE.md'
+      - 'scripts/extract_action_signatures.py'
+      - '.github/workflows/docs-validation.yaml'
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: 'Strict mode: fail on undocumented actions'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: pip install pyyaml
+
+    - name: Run documentation validation
+      id: validation
+      run: |
+        set +e
+        python scripts/extract_action_signatures.py --validate
+        EXIT_CODE=$?
+        echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        set -e
+        # Always succeed here, handle exit code in later steps
+        exit 0
+
+    - name: Upload validation report
+      uses: actions/upload-artifact@v4
+      with:
+        name: validation-report
+        path: data/validation_report.json
+        if-no-files-found: warn
+
+    - name: Upload action inventory
+      uses: actions/upload-artifact@v4
+      with:
+        name: action-inventory
+        path: |
+          data/action_inventory.json
+          data/action_inventory.yaml
+        if-no-files-found: warn
+
+    - name: Generate step summary
+      run: |
+        echo "## Documentation Validation Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        if [ -f data/validation_report.json ]; then
+          TOTAL=$(python -c "import json; d=json.load(open('data/validation_report.json')); print(d['total_implemented'])")
+          DOCUMENTED=$(python -c "import json; d=json.load(open('data/validation_report.json')); print(d['total_documented'])")
+          COVERAGE=$(python -c "import json; d=json.load(open('data/validation_report.json')); print(d['coverage_percent'])")
+          GAPS=$(python -c "import json; d=json.load(open('data/validation_report.json')); print(d['gaps'])")
+          HALLUCINATIONS=$(python -c "import json; d=json.load(open('data/validation_report.json')); print(d['hallucinations'])")
+
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Implemented | $TOTAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Documented | $DOCUMENTED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | ${COVERAGE}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Undocumented Actions | $GAPS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Hallucinated Actions | $HALLUCINATIONS |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$GAPS" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Undocumented Actions (sample)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            python -c "import json; d=json.load(open('data/validation_report.json')); [print(f\"- \`{a['action']}\` ({a['module']})\") for a in d['undocumented'][:10]]" >> $GITHUB_STEP_SUMMARY
+            REMAINING=$((GAPS - 10))
+            if [ "$REMAINING" -gt 0 ]; then
+              echo "- ... and $REMAINING more" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          if [ "$HALLUCINATIONS" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Hallucinated Actions" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            python -c "import json; d=json.load(open('data/validation_report.json')); [print(f\"- \`{a['action']}\`\") for a in d['hallucinated']]" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo ":warning: Validation report not found" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Check for gaps (strict mode)
+      if: inputs.strict == true
+      run: |
+        EXIT_CODE=${{ steps.validation.outputs.exit_code }}
+        if [ "$EXIT_CODE" != "0" ]; then
+          echo "::error::Documentation validation failed with exit code $EXIT_CODE"
+          echo "Exit codes: 1=gaps, 2=hallucinations, 3=both"
+          exit 1
+        fi

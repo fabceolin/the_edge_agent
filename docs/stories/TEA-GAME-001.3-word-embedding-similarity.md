@@ -2,17 +2,26 @@
 
 ## Status
 
-Done
+Done (Core) / Ready for Development (v2 Enhancements)
 
-**Validation Date:** 2026-01-23
-**QA Gate:** PASS
-**QA Assessment:** All 7 acceptance criteria fully implemented with 17 comprehensive tests. Clean Rust implementation with proper error handling, fallback logic, and documentation.
+**Core Implementation:**
+- **Validation Date:** 2026-01-23
+- **QA Gate:** PASS
+- **QA Assessment:** All 7 acceptance criteria fully implemented with 17 comprehensive tests.
+
+**v2 Enhancements (2026-01-25):**
+- Analytics, validation, and dynamic distractor generation
+- Status: Ready for Development
 
 ## Story
 
 **As a** developer,
 **I want** to find semantically similar words based on difficulty threshold,
 **So that** the game generates appropriate distractor words.
+
+**As a** game designer (v2),
+**I want** to validate pre-defined distractors and track player confusion patterns,
+**So that** I can improve phrase quality and difficulty calibration.
 
 ## Story Context
 
@@ -27,17 +36,112 @@ Done
 
 - Story 2 (TEA-GAME-001.2): DuckDB schema with `words` table
 
-## Acceptance Criteria
+## Acceptance Criteria (Core - DONE)
 
-1. **AC-1**: Pre-computed word embeddings loaded into DuckDB `words` table (common vocabulary ~10k words)
-2. **AC-2**: `find_similar_words(word, n, min_sim, max_sim)` returns words within similarity range
-3. **AC-3**: Difficulty maps to similarity range: Easy (0.1-0.4), Medium (0.4-0.7), Hard (0.7-0.95)
-4. **AC-4**: Similar words exclude the target word itself
-5. **AC-5**: Random selection among qualifying words (not just top-N)
-6. **AC-6**: Fallback behavior when insufficient words in range (widen range progressively)
-7. **AC-7**: Handle case where LLM-generated word is not in vocabulary (return empty or generate embedding)
+1. **AC-1**: Pre-computed word embeddings loaded into DuckDB `words` table (common vocabulary ~10k words) ✅
+2. **AC-2**: `find_similar_words(word, n, min_sim, max_sim)` returns words within similarity range ✅
+3. **AC-3**: Difficulty maps to similarity range: Easy (0.1-0.4), Medium (0.4-0.7), Hard (0.7-0.95) ✅
+4. **AC-4**: Similar words exclude the target word itself ✅
+5. **AC-5**: Random selection among qualifying words (not just top-N) ✅
+6. **AC-6**: Fallback behavior when insufficient words in range (widen range progressively) ✅
+7. **AC-7**: Handle case where LLM-generated word is not in vocabulary (return empty or generate embedding) ✅
 
-## Tasks / Subtasks
+## Acceptance Criteria (v2 Enhancements - NEW)
+
+### Analytics: Track Distractor Confusion
+
+8. **AC-8**: `record_confusion(session_id, correct_word, selected_distractor)` tracks when players choose wrong answers
+9. **AC-9**: `get_confusion_matrix(correct_word)` returns which distractors are most commonly mistaken for correct_word
+10. **AC-10**: `get_hardest_distractors(limit)` returns distractor-correct_word pairs with highest confusion rate
+
+### Difficulty Validation
+
+11. **AC-11**: `validate_phrase_difficulty(phrase_id)` calculates actual difficulty based on:
+    - Semantic similarity between correct_word and each distractor
+    - Historical confusion rates (if available)
+    - Returns suggested difficulty adjustment
+12. **AC-12**: `batch_validate_phrases(phrase_ids)` validates multiple phrases, reports:
+    - Phrases with miscalibrated difficulty
+    - Distractors that are too similar (> 0.9 similarity = unfair)
+    - Distractors that are too different (< 0.1 similarity = too easy)
+
+### Dynamic Distractor Generation (Future)
+
+13. **AC-13**: `generate_distractors(correct_word, difficulty, count)` generates new distractors using existing embedding search
+14. **AC-14**: `augment_phrase_distractors(phrase_id, count)` adds additional distractors to existing phrases
+
+## Tasks / Subtasks (v2 Enhancements)
+
+### Analytics: Track Distractor Confusion (AC-8, AC-9, AC-10)
+
+- [ ] Create confusion tracking schema
+  - [ ] Add `distractor_confusions` table to DuckDB schema
+  - [ ] Schema: `session_id`, `phrase_id`, `correct_word`, `selected_word`, `similarity`, `timestamp`
+  - [ ] Add index on `(correct_word, selected_word)` for aggregation queries
+
+- [ ] Implement `record_confusion()`
+  - [ ] Called when player selects wrong answer
+  - [ ] Calculates similarity between correct and selected word
+  - [ ] Stores in `distractor_confusions` table
+
+- [ ] Implement `get_confusion_matrix(correct_word)`
+  - [ ] Returns `Vec<(distractor, confusion_count, confusion_rate)>`
+  - [ ] Sorted by confusion rate descending
+  - [ ] Includes similarity score for each pair
+
+- [ ] Implement `get_hardest_distractors(limit)`
+  - [ ] Aggregates across all phrases
+  - [ ] Returns pairs where confusion_rate > 0.3 (players often fooled)
+  - [ ] Useful for identifying unfairly hard distractors
+
+### Difficulty Validation (AC-11, AC-12)
+
+- [ ] Implement `validate_phrase_difficulty(phrase_id)`
+  - [ ] Load phrase with correct_word and distractors
+  - [ ] Calculate similarity between correct_word and each distractor
+  - [ ] Calculate average similarity → maps to difficulty
+  - [ ] Compare calculated vs labeled difficulty
+  - [ ] Return `ValidationResult { calculated_difficulty, labeled_difficulty, adjustment, warnings }`
+
+- [ ] Implement `batch_validate_phrases(phrase_ids)`
+  - [ ] Process in batches of 100 for performance
+  - [ ] Generate report with:
+    - [ ] Miscalibrated phrases (|calculated - labeled| > 0.2)
+    - [ ] Unfair distractors (similarity > 0.9)
+    - [ ] Too-easy distractors (similarity < 0.1)
+  - [ ] Export as JSON for review
+
+- [ ] Create validation script
+  - [ ] `scripts/validate_game_phrases.py`
+  - [ ] Validates all 1000 phrases
+  - [ ] Outputs report with suggested fixes
+  - [ ] Can auto-fix difficulty labels with `--fix` flag
+
+### Dynamic Distractor Generation (AC-13, AC-14)
+
+- [ ] Implement `generate_distractors(correct_word, difficulty, count)`
+  - [ ] Wrapper around existing `find_similar_words_with_fallback`
+  - [ ] Returns `Vec<String>` of distractor candidates
+  - [ ] Filters out words already in phrase distractors
+
+- [ ] Implement `augment_phrase_distractors(phrase_id, count)`
+  - [ ] Loads existing phrase
+  - [ ] Generates additional distractors
+  - [ ] Updates phrase in database
+  - [ ] Useful for phrases with insufficient variety
+
+### Tests
+
+- [ ] Test confusion tracking CRUD
+- [ ] Test confusion matrix aggregation
+- [ ] Test difficulty validation accuracy
+- [ ] Test batch validation performance
+- [ ] Test dynamic distractor generation
+- [ ] Integration tests with real phrases
+
+---
+
+## Tasks / Subtasks (Core - DONE)
 
 - [x] Source word embeddings (AC-1)
   - [x] Download or generate embeddings for common English vocabulary
@@ -85,7 +189,141 @@ Done
   - [x] Test fallback behavior
   - [x] Test missing word handling
 
-## Dev Notes
+## Dev Notes (v2 Enhancements)
+
+### Confusion Tracking Schema
+
+```sql
+-- Track which distractors confuse players most
+CREATE TABLE distractor_confusions (
+    id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid()::VARCHAR,
+    session_id VARCHAR REFERENCES game_sessions(id),
+    phrase_id VARCHAR REFERENCES phrases(id),
+    correct_word VARCHAR NOT NULL,
+    selected_word VARCHAR NOT NULL,  -- The wrong answer player chose
+    similarity FLOAT,                 -- Cosine similarity between correct and selected
+    response_time_ms INTEGER,
+    created_at TIMESTAMP DEFAULT now()
+);
+
+CREATE INDEX idx_confusions_words ON distractor_confusions(correct_word, selected_word);
+CREATE INDEX idx_confusions_phrase ON distractor_confusions(phrase_id);
+```
+
+### Confusion Matrix Query
+
+```sql
+-- Get confusion matrix for a specific correct word
+SELECT
+    selected_word AS distractor,
+    COUNT(*) AS confusion_count,
+    COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS confusion_rate,
+    AVG(similarity) AS avg_similarity
+FROM distractor_confusions
+WHERE correct_word = ?
+GROUP BY selected_word
+ORDER BY confusion_count DESC;
+```
+
+### Difficulty Validation Algorithm
+
+```rust
+pub struct ValidationResult {
+    pub phrase_id: String,
+    pub labeled_difficulty: f64,
+    pub calculated_difficulty: f64,
+    pub adjustment: f64,  // calculated - labeled
+    pub warnings: Vec<String>,
+}
+
+pub fn validate_phrase_difficulty(phrase: &Phrase, embeddings: &EmbeddingSearch) -> ValidationResult {
+    let correct_embedding = embeddings.get_word_embedding(&phrase.correct_word);
+
+    let similarities: Vec<f64> = phrase.distractors.iter()
+        .filter_map(|d| {
+            let d_embedding = embeddings.get_word_embedding(d)?;
+            Some(cosine_similarity(&correct_embedding?, &d_embedding))
+        })
+        .collect();
+
+    let avg_similarity = similarities.iter().sum::<f64>() / similarities.len() as f64;
+
+    // Map similarity to difficulty (inverse relationship)
+    // High similarity = hard (distractors are similar to correct)
+    // Low similarity = easy (distractors are obviously different)
+    let calculated_difficulty = avg_similarity;  // Already 0-1 range
+
+    let mut warnings = Vec::new();
+
+    // Check for unfair distractors (too similar)
+    for (d, s) in phrase.distractors.iter().zip(similarities.iter()) {
+        if *s > 0.9 {
+            warnings.push(format!("Unfair distractor '{}' (similarity: {:.2})", d, s));
+        }
+        if *s < 0.1 {
+            warnings.push(format!("Too-easy distractor '{}' (similarity: {:.2})", d, s));
+        }
+    }
+
+    ValidationResult {
+        phrase_id: phrase.id.clone(),
+        labeled_difficulty: phrase.difficulty,
+        calculated_difficulty,
+        adjustment: calculated_difficulty - phrase.difficulty,
+        warnings,
+    }
+}
+```
+
+### Validation Report Format
+
+```json
+{
+  "validation_date": "2026-01-25T20:30:00Z",
+  "total_phrases": 1039,
+  "validated": 1039,
+  "issues": {
+    "miscalibrated": [
+      {
+        "phrase_id": "phrase_0042",
+        "phrase": "The ___ was delicious.",
+        "labeled": 0.2,
+        "calculated": 0.55,
+        "adjustment": 0.35,
+        "suggestion": "Increase difficulty to 0.5-0.6"
+      }
+    ],
+    "unfair_distractors": [
+      {
+        "phrase_id": "phrase_0123",
+        "distractor": "happy",
+        "correct_word": "glad",
+        "similarity": 0.92,
+        "suggestion": "Replace with less similar word"
+      }
+    ],
+    "too_easy_distractors": [
+      {
+        "phrase_id": "phrase_0456",
+        "distractor": "elephant",
+        "correct_word": "sun",
+        "similarity": 0.05,
+        "suggestion": "Replace with more plausible word"
+      }
+    ]
+  },
+  "summary": {
+    "miscalibrated_count": 47,
+    "unfair_distractor_count": 12,
+    "too_easy_distractor_count": 23,
+    "healthy_phrases": 957
+  }
+}
+```
+
+---
+
+## Dev Notes (Core - Original)
 
 ### Similarity Search Query
 
@@ -180,7 +418,7 @@ rust/
 - Test framework: Built-in Rust tests
 - Run with: `cargo test --features game-duckdb`
 
-## Definition of Done
+## Definition of Done (Core - DONE)
 
 - [x] Word embeddings Parquet file created (10k+ words)
 - [x] Embeddings loaded into DuckDB successfully
@@ -188,6 +426,19 @@ rust/
 - [x] Difficulty mapping produces expected ranges
 - [x] Fallback logic handles edge cases
 - [x] Tests pass with real embeddings
+
+## Definition of Done (v2 Enhancements)
+
+- [ ] Confusion tracking table created and indexed
+- [ ] `record_confusion()` stores player mistakes
+- [ ] `get_confusion_matrix()` returns aggregated confusion data
+- [ ] `get_hardest_distractors()` identifies problematic pairs
+- [ ] `validate_phrase_difficulty()` calculates actual difficulty
+- [ ] `batch_validate_phrases()` generates validation report
+- [ ] Validation script runs against all 1039 phrases
+- [ ] `generate_distractors()` creates new distractors dynamically
+- [ ] All new tests pass
+- [ ] Documentation updated
 
 ---
 
@@ -332,6 +583,7 @@ Gate: PASS → docs/qa/gates/TEA-GAME-001.3-word-embedding-similarity.yml
 
 | Date | Version | Description | Author |
 |------|---------|-------------|--------|
+| 2026-01-25 | 2.0 | **v2 ENHANCEMENTS**: Added AC-8 to AC-14 for analytics, difficulty validation, and dynamic distractor generation. Design pivot: pre-defined phrases with curated distractors, embeddings now used for validation and analytics. | Sarah (PO Agent) |
 | 2026-01-23 | 0.3 | Implementation complete, all tests passing | James (Dev Agent) |
 | 2026-01-10 | 0.2 | Added QA Notes section | Quinn (Test Architect) |
 | 2026-01-10 | 0.1 | Initial story creation | Sarah (PO Agent) |

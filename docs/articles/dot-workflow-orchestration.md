@@ -4,7 +4,7 @@
 
 *Principal Engineer, The Edge Agent Project*
 
-fabricio@rankellix.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 
@@ -85,9 +85,9 @@ digraph validation {
     End [label="End", shape=ellipse];
 
     story_1 [label="TEA-GAME-001.1",
-             command="tea-python run workflow.yaml --input '{\"arg\": \"story-1.md\"}'"];
+             command="tea run workflow.yaml --input '{\"arg\": \"story-1.md\"}'"];
     story_2 [label="TEA-GAME-001.2",
-             command="tea-python run workflow.yaml --input '{\"arg\": \"story-2.md\"}'"];
+             command="tea run workflow.yaml --input '{\"arg\": \"story-2.md\"}'"];
 
     Start -> story_1;
     story_1 -> story_2;
@@ -116,7 +116,7 @@ digraph stories {
 Execute with:
 
 ```bash
-tea run-from-dot stories.dot --workflow bmad-story-validation.yaml
+tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml
 ```
 
 The node label is passed as `{"arg": "<label>"}` to the workflow.
@@ -125,57 +125,34 @@ The node label is passed as `{"arg": "<label>"}` to the workflow.
 
 ## 3. CLI Reference
 
-TEA provides two equivalent CLI interfaces:
-
-### 3.1 Dedicated Command: `run-from-dot`
-
 ```bash
-tea-python run-from-dot workflow.dot [OPTIONS]
+tea run --from-dot workflow.dot [OPTIONS]
 ```
 
-| Option | Short | Default | Description |
-|--------|-------|---------|-------------|
-| `--workflow` | `-w` | None | Workflow YAML to run for each node |
-| `--max-parallel` | `-m` | 3 | Maximum parallel tmux windows |
-| `--session` | `-s` | `tea-dot` | Tmux session name |
-| `--input` | `-i` | None | Additional JSON input to merge |
-| `--exec` | `-e` | `tea-python` | Executable for running workflows |
-| `--timeout` | `-t` | 54000 | Command timeout in seconds (15h) |
-| `--dry-run` | | false | Show plan without executing |
-| `--verbose` | `-v` | 0 | Verbosity level (-v, -vv, -vvv) |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dot-workflow` | None | Workflow YAML to run for each node |
+| `--dot-max-parallel` | 3 | Maximum parallel tmux windows |
+| `--dot-session` | `tea-dot` | Tmux session name |
+| `--dot-input` | None | Additional JSON input to merge |
+| `--dot-exec` | `tea` | Executable for running workflows |
+| `--dot-timeout` | 54000 | Command timeout in seconds (15h) |
+| `--dot-dry-run` | false | Show plan without executing |
 
-### 3.2 Run Option: `run --from-dot`
-
-```bash
-tea-python run --from-dot workflow.dot [OPTIONS]
-```
-
-| run-from-dot | run --from-dot |
-|--------------|----------------|
-| `--workflow` | `--dot-workflow` |
-| `--max-parallel` | `--dot-max-parallel` |
-| `--session` | `--dot-session` |
-| `--input` | `--dot-input` |
-| `--exec` | `--dot-exec` |
-| `--dry-run` | `--dot-dry-run` |
-
-### 3.3 Examples
+### 3.1 Examples
 
 ```bash
 # Command Mode: Execute embedded commands
-tea-python run-from-dot workflow.dot --session my-workflow --max-parallel 4
+tea run --from-dot workflow.dot --dot-session my-workflow --dot-max-parallel 4
 
 # Workflow Mode: Run a workflow for each node
-tea-python run-from-dot stories.dot -w bmad-story-validation.yaml -m 3
+tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
 
 # With additional input merged into each execution
-tea-python run-from-dot stories.dot -w dev.yaml -i '{"mode": "sequential"}'
+tea run --from-dot stories.dot --dot-workflow dev.yaml --dot-input '{"mode": "sequential"}'
 
 # Preview execution plan
-tea-python run-from-dot workflow.dot --dry-run
-
-# Using run --from-dot syntax
-tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml
+tea run --from-dot workflow.dot --dot-dry-run
 ```
 
 ## 4. DOT File Structure
@@ -275,11 +252,11 @@ When workflows call `llm.call` with shell providers (e.g., Claude Code), output 
 
 ```bash
 # See Claude Code output while running
-TEA_SHELL_VERBOSE=1 tea-python run-from-dot stories.dot -w dev.yaml
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot --dot-workflow dev.yaml
 
 # Export for all commands in session
 export TEA_SHELL_VERBOSE=1
-tea-python run-from-dot stories.dot -w bmad-story-validation.yaml -m 3
+tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
 ```
 
 This is particularly useful when:
@@ -367,13 +344,13 @@ After generating a DOT file, always provide execution commands:
 
 ```bash
 # Workflow Mode (recommended for story orchestration)
-tea-python run-from-dot examples/dot/tea-game-validation.dot \
-    --workflow examples/workflows/bmad-story-validation.yaml \
-    --max-parallel 4
+tea run --from-dot examples/dot/tea-game-validation.dot \
+    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-max-parallel 4
 
 # With verbose LLM output
-TEA_SHELL_VERBOSE=1 tea-python run-from-dot stories.dot \
-    -w bmad-story-validation.yaml -m 3
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
+    --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
 
 # Monitor progress
 tmux attach -t tea-dot
@@ -437,9 +414,9 @@ Example with short labels and path resolution:
 
 ```bash
 # The workflow resolves short labels to full story paths
-tea-python run-from-dot stories.dot \
-    -w bmad-story-validation.yaml \
-    -m 3
+tea run --from-dot stories.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-max-parallel 3
 ```
 
 The workflow's `resolve_story_path` node handles label → path conversion.
@@ -472,8 +449,8 @@ project/
 
 ### 10.3 Concurrency Guidelines
 
-| Workflow Type | Recommended `--max-parallel` | Rationale |
-|---------------|------------------------------|-----------|
+| Workflow Type | Recommended `--dot-max-parallel` | Rationale |
+|---------------|----------------------------------|-----------|
 | LLM-heavy (Claude Code) | 2-3 | API rate limits, context switching |
 | Compute-bound | CPU cores - 1 | Avoid oversubscription |
 | I/O-bound | 5-10 | Network latency dominates |
@@ -482,9 +459,9 @@ project/
 
 | Workflow Complexity | Recommended Timeout | Flag |
 |--------------------|---------------------|------|
-| Simple validation | 10 min | `--timeout 600` |
-| Story development | 1 hour | `--timeout 3600` |
-| Complex epic | 15 hours | `--timeout 54000` (default) |
+| Simple validation | 10 min | `--dot-timeout 600` |
+| Story development | 1 hour | `--dot-timeout 3600` |
+| Complex epic | 15 hours | `--dot-timeout 54000` (default) |
 
 ## 11. Conclusion
 

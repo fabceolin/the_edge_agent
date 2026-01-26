@@ -4,7 +4,7 @@
 
 *The Edge Agent Project*
 
-fabricio@ceolin.dev
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

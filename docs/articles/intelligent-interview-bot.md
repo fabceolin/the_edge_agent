@@ -4,7 +4,7 @@
 
 *Principal Engineer, Rankellix*
 
-fabricio@rankellix.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

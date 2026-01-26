@@ -15,8 +15,8 @@ export const GameState = {
 };
 
 // Timeout constants (AC-12)
-const LLM_WARNING_TIMEOUT_MS = 10000; // Show "Taking longer than expected..." after 10s
-const LLM_CALL_TIMEOUT_MS = 30000; // 30 second timeout for LLM calls
+const LLM_WARNING_TIMEOUT_MS = 15000; // Show "Taking longer than expected..." after 15s
+const LLM_CALL_TIMEOUT_MS = 90000; // 90 second timeout for LLM calls (browser inference is slow)
 
 /**
  * GameUI - Main game controller class

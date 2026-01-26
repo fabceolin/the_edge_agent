@@ -324,7 +324,6 @@ import init, {
   ltm_stats_async,
   has_shared_array_buffer,
   version,
-  // Game functions (TEA-GAME-001.7)
   game_init,
   game_start_session,
   game_generate_round,
@@ -335,9 +334,9 @@ import init, {
   game_set_llm_handler,
   game_clear_llm_handler,
   game_has_llm_handler,
-  game_set_opik_handler,
-  game_clear_opik_handler,
-  game_has_opik_handler
+  set_game_opik_handler,
+  clear_game_opik_handler,
+  has_game_opik_handler
 } from "./tea_wasm_llm.js";
 
 // js/model-loader.ts
@@ -17042,6 +17041,19 @@ export {
   execute_yaml,
   fetchManifest,
   formatBytes2 as formatBytes,
+  game_clear_llm_handler,
+  clear_game_opik_handler as game_clear_opik_handler,
+  game_generate_round,
+  game_get_leaderboard,
+  game_get_session_stats,
+  game_has_llm_handler,
+  has_game_opik_handler as game_has_opik_handler,
+  game_init,
+  game_set_llm_handler,
+  set_game_opik_handler as game_set_opik_handler,
+  game_start_session,
+  game_submit_answer,
+  game_submit_to_leaderboard,
   getCacheStats,
   getCachedModel,
   getCachedModelEntry,
@@ -17121,20 +17133,6 @@ export {
   startSyncWorker,
   stopSyncWorker,
   verifyChecksum,
-  version,
-  // Game exports (TEA-GAME-001.7)
-  game_init,
-  game_start_session,
-  game_generate_round,
-  game_submit_answer,
-  game_submit_to_leaderboard,
-  game_get_leaderboard,
-  game_get_session_stats,
-  game_set_llm_handler,
-  game_clear_llm_handler,
-  game_has_llm_handler,
-  game_set_opik_handler,
-  game_clear_opik_handler,
-  game_has_opik_handler
+  version
 };
 //# sourceMappingURL=index.js.map

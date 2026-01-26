@@ -109,6 +109,21 @@ import init, {
   ltm_stats_async,
   has_shared_array_buffer,
   version,
+  // Game functions (TEA-GAME-001.7)
+  game_init,
+  game_start_session,
+  game_generate_round,
+  game_submit_answer,
+  game_submit_to_leaderboard,
+  game_get_leaderboard,
+  game_get_session_stats,
+  game_set_llm_handler,
+  game_clear_llm_handler,
+  game_has_llm_handler,
+  // Game opik functions - note: wasm-bindgen uses original names from game_opik.rs
+  set_game_opik_handler,
+  clear_game_opik_handler,
+  has_game_opik_handler,
 } from '../pkg/tea_wasm_llm.js';
 
 // Import model loading modules
@@ -1199,3 +1214,21 @@ export {
 };
 
 // Note: initTeaLlm and executeLlmYaml are already exported above with @deprecated notices
+
+// Re-export game functions (TEA-GAME-001.7)
+export {
+  game_init,
+  game_start_session,
+  game_generate_round,
+  game_submit_answer,
+  game_submit_to_leaderboard,
+  game_get_leaderboard,
+  game_get_session_stats,
+  game_set_llm_handler,
+  game_clear_llm_handler,
+  game_has_llm_handler,
+  // Re-export with game_ prefix for app.js compatibility
+  set_game_opik_handler as game_set_opik_handler,
+  clear_game_opik_handler as game_clear_opik_handler,
+  has_game_opik_handler as game_has_opik_handler,
+};

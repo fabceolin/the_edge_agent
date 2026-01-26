@@ -1,10 +1,10 @@
 # Browser-Based LLM Inference with TEA WASM
 
-**The Edge Agent Team**
+**Fabricio Ceolin**
 
-*Open Source Project*
+*Independent Researcher*
 
-https://github.com/fabceolin/the_edge_agent
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

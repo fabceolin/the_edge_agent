@@ -4,7 +4,7 @@
 
 *Principal Engineer, The Edge Agent Project*
 
-fabricio@rankellix.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

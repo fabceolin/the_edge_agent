@@ -1,4 +1,4 @@
-//! Game WASM Exports (TEA-GAME-001.6)
+//! Game WASM Exports (TEA-GAME-001.6, TEA-GAME-001.9)
 //!
 //! This module provides WASM exports for the "Know Your Model" game engine,
 //! allowing it to run in the browser alongside the existing demo.
@@ -8,21 +8,72 @@
 //! The game engine uses a thread-local singleton pattern (since WASM is single-threaded):
 //! - `GAME_ENGINE`: The GameEngine instance
 //! - `GAME_SESSION_ID`: Current session ID for validation
+//! - `PHRASE_DATABASE`: Pre-loaded phrases from embedded JSON (TEA-GAME-001.9)
 //!
 //! All functions return JSON with a consistent structure:
 //! - Success: `{"success": true, "data": {...}}`
 //! - Error: `{"success": false, "error": "...", "error_type": "..."}`
+//!
+//! ## Phrase Database (TEA-GAME-001.9)
+//!
+//! Phrases are embedded at compile time from `data/game_phrases.json`.
+//! The game selects phrases from this database instead of generating them via LLM.
+//! The LLM is only called for simple word completion to compare with player answers.
 
 use rand::seq::SliceRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 
 use crate::game_opik::{
     has_game_opik_handler, send_game_opik_span, OpikGameSpan,
 };
+
+// =============================================================================
+// Phrase Database (TEA-GAME-001.9)
+// =============================================================================
+
+/// Embedded phrase database JSON (compile-time include)
+const PHRASES_JSON: &str = include_str!("../../../data/game_phrases.json");
+
+/// A phrase from the database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Phrase {
+    pub id: String,
+    pub phrase: String,
+    pub correct_word: String,
+    pub distractors: Vec<String>,
+    pub difficulty: f32,
+    pub category: String,
+}
+
+/// The phrases file structure
+#[derive(Debug, Clone, Deserialize)]
+pub struct PhrasesFile {
+    pub version: String,
+    #[serde(default)]
+    pub total_phrases: usize,
+    pub phrases: Vec<Phrase>,
+}
+
+/// Load phrases from embedded JSON
+fn load_phrases() -> Vec<Phrase> {
+    match serde_json::from_str::<PhrasesFile>(PHRASES_JSON) {
+        Ok(data) => data.phrases,
+        Err(e) => {
+            web_sys::console::error_1(&format!("Failed to parse phrases JSON: {}", e).into());
+            Vec::new()
+        }
+    }
+}
+
+thread_local! {
+    /// Pre-loaded phrase database (TEA-GAME-001.9)
+    static PHRASE_DATABASE: RefCell<Vec<Phrase>> = RefCell::new(load_phrases());
+}
 
 // =============================================================================
 // Thread-Local State
@@ -34,6 +85,80 @@ thread_local! {
 
     /// LLM callback function registered from JavaScript
     static LLM_CALLBACK: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+}
+
+// =============================================================================
+// Phrase Selection (TEA-GAME-001.9)
+// =============================================================================
+
+/// Get a random phrase within difficulty range, excluding already-used phrases
+///
+/// # Arguments
+/// * `min_difficulty` - Minimum difficulty (inclusive)
+/// * `max_difficulty` - Maximum difficulty (inclusive)
+/// * `exclude_ids` - Set of phrase IDs to exclude
+///
+/// # Returns
+/// A matching phrase, or None if no phrases match
+fn get_random_phrase(
+    min_difficulty: f32,
+    max_difficulty: f32,
+    exclude_ids: &HashSet<String>,
+) -> Option<Phrase> {
+    PHRASE_DATABASE.with(|db| {
+        let phrases = db.borrow();
+
+        // Filter phrases by difficulty and exclusion
+        let candidates: Vec<&Phrase> = phrases
+            .iter()
+            .filter(|p| {
+                p.difficulty >= min_difficulty
+                    && p.difficulty <= max_difficulty
+                    && !exclude_ids.contains(&p.id)
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            // Fallback: expand range by 0.1 and retry (NFR recommendation)
+            let expanded_min = (min_difficulty - 0.1).max(0.0);
+            let expanded_max = (max_difficulty + 0.1).min(1.0);
+
+            let expanded_candidates: Vec<&Phrase> = phrases
+                .iter()
+                .filter(|p| {
+                    p.difficulty >= expanded_min
+                        && p.difficulty <= expanded_max
+                        && !exclude_ids.contains(&p.id)
+                })
+                .collect();
+
+            if expanded_candidates.is_empty() {
+                // Last resort: any unused phrase
+                let any_unused: Vec<&Phrase> = phrases
+                    .iter()
+                    .filter(|p| !exclude_ids.contains(&p.id))
+                    .collect();
+
+                if any_unused.is_empty() {
+                    return None;
+                }
+
+                let mut rng = rand::thread_rng();
+                return Some((*any_unused.choose(&mut rng).unwrap()).clone());
+            }
+
+            let mut rng = rand::thread_rng();
+            return Some((*expanded_candidates.choose(&mut rng).unwrap()).clone());
+        }
+
+        let mut rng = rand::thread_rng();
+        Some((*candidates.choose(&mut rng).unwrap()).clone())
+    })
+}
+
+/// Get the total number of phrases in the database
+fn get_phrase_count() -> usize {
+    PHRASE_DATABASE.with(|db| db.borrow().len())
 }
 
 // =============================================================================
@@ -156,6 +281,8 @@ struct GameSessionState {
     current_difficulty: f64,
     sum_difficulty: f64,
     submitted: bool,
+    /// Track used phrase IDs to avoid repeats within a game (TEA-GAME-001.9 AC-4)
+    used_phrase_ids: HashSet<String>,
 }
 
 /// In-memory round state
@@ -165,6 +292,8 @@ struct GameRoundState {
     phrase: String,
     choices: Vec<String>,
     correct_word: String,
+    /// The phrase ID from the database (TEA-GAME-001.9)
+    phrase_id: Option<String>,
 }
 
 impl GameEngineWasm {
@@ -191,6 +320,7 @@ impl GameEngineWasm {
             current_difficulty: 0.5,
             sum_difficulty: 0.0,
             submitted: false,
+            used_phrase_ids: HashSet::new(), // TEA-GAME-001.9 AC-4
         };
 
         self.session = Some(session);
@@ -209,17 +339,36 @@ impl GameEngineWasm {
 
     /// Store a round that was generated externally
     pub fn store_round(&mut self, phrase: String, choices: Vec<String>, correct_word: String) -> Result<GameRoundInfo, (String, GameErrorType)> {
+        self.store_round_with_phrase_id(phrase, choices, correct_word, None)
+    }
+
+    /// Store a round with an optional phrase ID for tracking (TEA-GAME-001.9)
+    pub fn store_round_with_phrase_id(
+        &mut self,
+        phrase: String,
+        choices: Vec<String>,
+        correct_word: String,
+        phrase_id: Option<String>,
+    ) -> Result<GameRoundInfo, (String, GameErrorType)> {
         if self.session.is_none() {
             return Err(("No active session - call start_session() first".to_string(), GameErrorType::SessionError));
         }
 
         let round_id = uuid::Uuid::new_v4().to_string();
 
+        // Track used phrase ID if provided (TEA-GAME-001.9 AC-4)
+        if let Some(ref pid) = phrase_id {
+            if let Some(session) = self.session.as_mut() {
+                session.used_phrase_ids.insert(pid.clone());
+            }
+        }
+
         self.current_round = Some(GameRoundState {
             id: round_id.clone(),
             phrase: phrase.clone(),
             choices: choices.clone(),
             correct_word,
+            phrase_id,
         });
 
         Ok(GameRoundInfo {
@@ -227,6 +376,46 @@ impl GameEngineWasm {
             phrase,
             choices,
         })
+    }
+
+    /// Generate a round from the phrase database (TEA-GAME-001.9 AC-5)
+    ///
+    /// This method selects a phrase from the embedded database and creates a round.
+    /// It does NOT call the LLM - that happens later when comparing answers.
+    pub fn generate_round_from_database(&mut self) -> Result<GameRoundInfo, (String, GameErrorType)> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            ("No active session - call start_session() first".to_string(), GameErrorType::SessionError)
+        })?;
+
+        let difficulty = session.current_difficulty as f32;
+        let used_ids = session.used_phrase_ids.clone();
+
+        // Select phrase from database (AC-3)
+        let phrase = get_random_phrase(
+            difficulty - 0.15,
+            difficulty + 0.15,
+            &used_ids,
+        ).ok_or_else(|| {
+            ("No phrases available - all phrases have been used".to_string(), GameErrorType::DbError)
+        })?;
+
+        // Combine correct word with distractors and shuffle (AC-5)
+        let mut choices: Vec<String> = phrase.distractors.clone();
+        choices.push(phrase.correct_word.clone());
+        choices.shuffle(&mut rand::thread_rng());
+
+        // Store the round with phrase tracking
+        self.store_round_with_phrase_id(
+            phrase.phrase.clone(),
+            choices,
+            phrase.correct_word,
+            Some(phrase.id),
+        )
+    }
+
+    /// Get the number of used phrases in the current session
+    pub fn get_used_phrase_count(&self) -> usize {
+        self.session.as_ref().map(|s| s.used_phrase_ids.len()).unwrap_or(0)
     }
 
     /// Submit an answer
@@ -572,17 +761,69 @@ pub fn game_start_session() -> String {
     })
 }
 
-/// Generate a new game round (AC-1)
+/// Generate a new game round (AC-1, TEA-GAME-001.9 AC-5)
 ///
-/// This function requires an LLM callback to be set via `game_set_llm_handler`.
-/// The LLM is called to generate a phrase with a missing word.
+/// This function now uses the phrase database instead of calling the LLM.
+/// Phrases are pre-loaded at compile time from `data/game_phrases.json`.
+/// The LLM handler is no longer required for round generation.
 ///
-/// Returns a Promise that resolves to a JSON string with round info:
+/// Returns a JSON string with round info:
 /// ```json
 /// {"success": true, "data": {"id": "...", "phrase": "The ___ is bright.", "choices": [...]}}
 /// ```
 #[wasm_bindgen]
-pub async fn game_generate_round() -> String {
+pub fn game_generate_round() -> String {
+    // Generate round from phrase database (TEA-GAME-001.9 AC-5)
+    let result = GAME_ENGINE.with(|engine| {
+        let mut engine = engine.borrow_mut();
+        let engine = match engine.as_mut() {
+            Some(e) => e,
+            None => return Err(error_response("No active session - call game_start_session() first", GameErrorType::SessionError)),
+        };
+
+        match engine.generate_round_from_database() {
+            Ok(round) => Ok((round, engine.get_current_difficulty())),
+            Err((msg, err_type)) => Err(error_response(&msg, err_type)),
+        }
+    });
+
+    match result {
+        Ok((round, difficulty)) => {
+            // Get session ID for parent span linking
+            let session_id = GAME_ENGINE.with(|engine| {
+                engine.borrow().as_ref().and_then(|e| e.session.as_ref().map(|s| s.id.clone()))
+            });
+
+            // Send Opik span for round (AC-1: Round trace with required fields)
+            if has_game_opik_handler() {
+                let span = OpikGameSpan::new_round(
+                    &round.id,
+                    session_id,
+                    json!({
+                        "round_number": GAME_ENGINE.with(|engine| {
+                            engine.borrow().as_ref().map(|e| e.session.as_ref().map(|s| s.total_answers + 1).unwrap_or(1)).unwrap_or(1)
+                        }),
+                        "phrase": round.phrase,
+                        "choices": round.choices,
+                        "difficulty": difficulty,
+                        "source": "phrase_database",  // TEA-GAME-001.9: indicate phrase source
+                    }),
+                );
+                send_game_opik_span(&span);
+            }
+
+            success_response(round)
+        }
+        Err(e) => e,
+    }
+}
+
+/// Generate a new game round using LLM (legacy/fallback)
+///
+/// This is the original LLM-based round generation, kept for backwards compatibility.
+/// Use `game_generate_round()` for the faster phrase database approach.
+#[wasm_bindgen]
+pub async fn game_generate_round_llm() -> String {
     // Check if LLM handler is set
     let has_llm = LLM_CALLBACK.with(|cb| cb.borrow().is_some());
     if !has_llm {
@@ -686,7 +927,6 @@ pub async fn game_generate_round() -> String {
     choices.push(word.clone());
 
     // Shuffle using Fisher-Yates
-    use rand::seq::SliceRandom;
     choices.shuffle(&mut rand::thread_rng());
 
     // Store round in engine
@@ -722,6 +962,7 @@ pub async fn game_generate_round() -> String {
                         "phrase": round.phrase,
                         "choices": round.choices,
                         "difficulty": difficulty,
+                        "source": "llm",
                     }),
                 );
                 send_game_opik_span(&span);
@@ -918,6 +1159,26 @@ pub fn game_get_session_stats() -> String {
         Ok(stats) => success_response(stats),
         Err(e) => e,
     }
+}
+
+/// Get phrase database info (TEA-GAME-001.9)
+///
+/// Returns information about the loaded phrase database:
+/// ```json
+/// {"success": true, "data": {"total_phrases": 1039, "used_phrases": 5}}
+/// ```
+#[wasm_bindgen]
+pub fn game_get_phrase_database_info() -> String {
+    let total = get_phrase_count();
+    let used = GAME_ENGINE.with(|engine| {
+        engine.borrow().as_ref().map(|e| e.get_used_phrase_count()).unwrap_or(0)
+    });
+
+    success_response(json!({
+        "total_phrases": total,
+        "used_phrases": used,
+        "available_phrases": total.saturating_sub(used),
+    }))
 }
 
 // =============================================================================
@@ -1150,5 +1411,175 @@ mod tests {
 
         assert_eq!(parsed["success"], true);
         assert_eq!(parsed["data"]["test"], "data");
+    }
+
+    // =========================================================================
+    // Phrase Database Tests (TEA-GAME-001.9)
+    // =========================================================================
+
+    #[test]
+    fn test_phrase_database_loads() {
+        // The phrase database should be loaded at module initialization
+        let count = get_phrase_count();
+        // Should have loaded 1039 phrases from game_phrases.json
+        assert!(count > 0, "Phrase database should not be empty");
+        assert!(count >= 1000, "Expected at least 1000 phrases, got {}", count);
+    }
+
+    #[test]
+    fn test_phrase_structure() {
+        // Verify phrase structure is correct
+        PHRASE_DATABASE.with(|db| {
+            let phrases = db.borrow();
+            assert!(!phrases.is_empty());
+
+            let first = &phrases[0];
+            assert!(!first.id.is_empty(), "Phrase ID should not be empty");
+            assert!(!first.phrase.is_empty(), "Phrase text should not be empty");
+            assert!(first.phrase.contains("___"), "Phrase should contain blank marker");
+            assert!(!first.correct_word.is_empty(), "Correct word should not be empty");
+            assert_eq!(first.distractors.len(), 4, "Should have 4 distractors");
+            assert!(first.difficulty >= 0.0 && first.difficulty <= 1.0, "Difficulty should be 0-1");
+            assert!(!first.category.is_empty(), "Category should not be empty");
+        });
+    }
+
+    #[test]
+    fn test_get_random_phrase_basic() {
+        let exclude: HashSet<String> = HashSet::new();
+        let phrase = get_random_phrase(0.0, 1.0, &exclude);
+        assert!(phrase.is_some(), "Should return a phrase");
+
+        let phrase = phrase.unwrap();
+        assert!(phrase.difficulty >= 0.0 && phrase.difficulty <= 1.0);
+    }
+
+    #[test]
+    fn test_get_random_phrase_with_difficulty_filter() {
+        let exclude: HashSet<String> = HashSet::new();
+
+        // Get easy phrase
+        let easy = get_random_phrase(0.0, 0.3, &exclude);
+        assert!(easy.is_some());
+        // Note: Due to fallback logic, we might get a phrase outside range if none available
+        // So we just check it returns something
+
+        // Get hard phrase
+        let hard = get_random_phrase(0.7, 1.0, &exclude);
+        assert!(hard.is_some());
+    }
+
+    #[test]
+    fn test_get_random_phrase_with_exclusion() {
+        let mut exclude: HashSet<String> = HashSet::new();
+
+        // Get first phrase
+        let phrase1 = get_random_phrase(0.0, 1.0, &exclude).unwrap();
+        exclude.insert(phrase1.id.clone());
+
+        // Get second phrase, should be different
+        let phrase2 = get_random_phrase(0.0, 1.0, &exclude).unwrap();
+        assert_ne!(phrase1.id, phrase2.id, "Should return different phrase when first is excluded");
+    }
+
+    #[test]
+    fn test_generate_round_from_database() {
+        let mut engine = GameEngineWasm::new();
+        engine.start_session();
+
+        // Generate a round
+        let result = engine.generate_round_from_database();
+        assert!(result.is_ok(), "Should generate round from database");
+
+        let round = result.unwrap();
+        assert!(!round.id.is_empty());
+        assert!(!round.phrase.is_empty());
+        assert!(round.phrase.contains("___"), "Phrase should contain blank");
+        assert_eq!(round.choices.len(), 5, "Should have 5 choices (4 distractors + 1 correct)");
+    }
+
+    #[test]
+    fn test_generate_round_tracks_used_phrases() {
+        let mut engine = GameEngineWasm::new();
+        engine.start_session();
+
+        assert_eq!(engine.get_used_phrase_count(), 0);
+
+        // Generate first round
+        engine.generate_round_from_database().unwrap();
+        assert_eq!(engine.get_used_phrase_count(), 1);
+
+        // Submit answer to clear current round
+        let choices = engine.current_round.as_ref().unwrap().choices.clone();
+        engine.submit_answer(&choices[0], 1000).unwrap();
+
+        // Generate second round
+        engine.generate_round_from_database().unwrap();
+        assert_eq!(engine.get_used_phrase_count(), 2);
+    }
+
+    #[test]
+    fn test_generate_round_no_repeats() {
+        let mut engine = GameEngineWasm::new();
+        engine.start_session();
+
+        let mut seen_phrase_ids: HashSet<String> = HashSet::new();
+
+        // Generate multiple rounds and verify no repeats
+        for _ in 0..10 {
+            let round = engine.generate_round_from_database().unwrap();
+
+            // Get the phrase_id from the internal state
+            let phrase_id = engine.current_round.as_ref().unwrap().phrase_id.clone();
+            if let Some(pid) = phrase_id {
+                assert!(!seen_phrase_ids.contains(&pid), "Phrase should not repeat");
+                seen_phrase_ids.insert(pid);
+            }
+
+            // Submit answer to clear current round
+            let choices = engine.current_round.as_ref().unwrap().choices.clone();
+            engine.submit_answer(&choices[0], 1000).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_generate_round_requires_session() {
+        let mut engine = GameEngineWasm::new();
+
+        // Should fail without session
+        let result = engine.generate_round_from_database();
+        assert!(result.is_err());
+
+        let (_, err_type) = result.unwrap_err();
+        assert_eq!(err_type, GameErrorType::SessionError);
+    }
+
+    #[test]
+    fn test_session_used_phrase_ids_initialized() {
+        let mut engine = GameEngineWasm::new();
+        engine.start_session();
+
+        // Session should have empty used_phrase_ids
+        assert!(engine.session.as_ref().unwrap().used_phrase_ids.is_empty());
+    }
+
+    #[test]
+    fn test_store_round_with_phrase_id() {
+        let mut engine = GameEngineWasm::new();
+        engine.start_session();
+
+        // Store round with phrase_id
+        let result = engine.store_round_with_phrase_id(
+            "The ___ is bright.".to_string(),
+            vec!["sun".to_string(), "moon".to_string(), "star".to_string(), "sky".to_string(), "day".to_string()],
+            "sun".to_string(),
+            Some("phrase_test_001".to_string()),
+        );
+
+        assert!(result.is_ok());
+
+        // Should be tracked in used_phrase_ids
+        assert!(engine.session.as_ref().unwrap().used_phrase_ids.contains("phrase_test_001"));
+        assert_eq!(engine.get_used_phrase_count(), 1);
     }
 }

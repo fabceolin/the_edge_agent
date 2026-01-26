@@ -81,6 +81,51 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         # Primitive types (str, int, float, bool, None)
         return obj
 
+    def _convert_prompt_to_messages(
+        messages: Optional[list],
+        prompt: Optional[str],
+        system: Optional[str],
+    ) -> Optional[list]:
+        """
+        Convert prompt/system to messages format (TEA-LLM-005 - Rust parity).
+
+        This helper provides API parity with the Rust implementation, allowing
+        simpler single-prompt calls without constructing a messages array.
+
+        Args:
+            messages: Existing messages array (takes precedence if provided)
+            prompt: Simple prompt string (converted to user message)
+            system: Optional system message (prepended when using prompt)
+
+        Returns:
+            messages list, or None if neither messages nor prompt provided
+
+        Priority:
+            1. If messages is provided → return messages (unchanged)
+            2. If prompt is provided → convert to messages format
+            3. If neither → return None (caller handles error)
+
+        Examples:
+            >>> _convert_prompt_to_messages(None, "Hello", None)
+            [{"role": "user", "content": "Hello"}]
+
+            >>> _convert_prompt_to_messages(None, "Hello", "You are helpful")
+            [{"role": "system", "content": "You are helpful"},
+             {"role": "user", "content": "Hello"}]
+
+            >>> _convert_prompt_to_messages([{"role": "user", "content": "Hi"}], "Ignored", None)
+            [{"role": "user", "content": "Hi"}]  # messages takes precedence
+        """
+        if messages is not None:
+            return messages
+        if prompt is not None:
+            result = []
+            if system is not None:
+                result.append({"role": "system", "content": system})
+            result.append({"role": "user", "content": prompt})
+            return result
+        return None
+
     # Cache wrapped clients by (provider, api_base, project_name) to reuse across calls
     # This ensures only one track_openai wrapper is created per configuration
     _opik_client_cache: Dict[tuple, Any] = {}
@@ -624,6 +669,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         state,
         model=None,
         messages=None,
+        prompt=None,  # TEA-LLM-005: Rust parity - simple prompt string
+        system=None,  # TEA-LLM-005: Rust parity - system message with prompt
         temperature=0.7,
         max_retries=0,
         base_delay=1.0,
@@ -678,7 +725,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus", or path to .gguf file for local)
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of message dicts with 'role' and 'content'. Takes precedence over prompt.
+            prompt: Simple prompt string (TEA-LLM-005 - Rust parity). Alternative to messages array.
+                   When provided without messages, converts to [{"role": "user", "content": prompt}].
+            system: System message (TEA-LLM-005 - Rust parity). Only used with prompt parameter.
+                   When provided, prepends [{"role": "system", "content": system}] to messages.
             temperature: Sampling temperature (default: 0.7)
             max_retries: Maximum retry attempts (default: 0, no retry)
             base_delay: Initial delay in seconds for exponential backoff (default: 1.0)
@@ -691,6 +742,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             timeout: Request timeout in seconds (default: 300 for slow local models like Ollama)
             shell_provider: Shell provider name when provider="shell" (e.g., "claude", "gemini", "qwen")
             **kwargs: Additional parameters passed to OpenAI/LiteLLM (for local: n_ctx, n_threads, n_gpu_layers, max_tokens, stop)
+
+        Examples:
+            # Using prompt (simple single-turn)
+            result = llm_call(state, model="gpt-4", prompt="What is 2+2?")
+
+            # Using prompt with system message
+            result = llm_call(state, model="gpt-4", prompt="Hello", system="You are a helpful assistant")
+
+            # Using messages (full control)
+            result = llm_call(state, model="gpt-4", messages=[{"role": "user", "content": "Hello"}])
 
         Returns:
             When max_retries=0:
@@ -733,6 +794,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
+
+        # TEA-LLM-005: Convert prompt to messages if provided (Rust parity)
+        messages = _convert_prompt_to_messages(messages, prompt, system)
+        if messages is None:
+            return {
+                "error": "Missing required parameter: prompt or messages",
+                "success": False,
+            }
 
         # Shell provider - execute CLI commands (TEA-LLM-004)
         if resolved_provider == "shell":
@@ -1260,6 +1329,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         state,
         model=None,
         messages=None,
+        prompt=None,  # TEA-LLM-005: Rust parity - simple prompt string
+        system=None,  # TEA-LLM-005: Rust parity - system message with prompt
         temperature=0.7,
         opik_trace=False,
         opik_project_name=None,
@@ -1291,7 +1362,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "llama3.2", "anthropic/claude-3-opus")
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of message dicts with 'role' and 'content'. Takes precedence over prompt.
+            prompt: Simple prompt string (TEA-LLM-005 - Rust parity). Alternative to messages array.
+                   When provided without messages, converts to [{"role": "user", "content": prompt}].
+            system: System message (TEA-LLM-005 - Rust parity). Only used with prompt parameter.
+                   When provided, prepends [{"role": "system", "content": system}] to messages.
             temperature: Sampling temperature (default: 0.7)
             opik_trace: If True, wrap client with Opik's track_openai for rich LLM
                        telemetry. Opik's wrapper handles streaming chunk aggregation.
@@ -1313,9 +1388,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 {"content": str, "usage": {}, "streamed": True, "chunk_count": int, ...}
             Or {"error": str, "success": False} on failure
 
-        Example:
-            result = llm_stream(state, "gpt-4", messages)
-            print(result["content"])
+        Examples:
+            # Using prompt (simple)
+            result = llm_stream(state, "gpt-4", prompt="Tell me a story")
+
+            # Using prompt with system
+            result = llm_stream(state, "gpt-4", prompt="Tell me a story", system="Be brief")
+
+            # Using messages (traditional)
+            result = llm_stream(state, "gpt-4", messages=[{"role": "user", "content": "Hello"}])
         """
         try:
             # Determine provider based on priority (same as llm.call)
@@ -1330,6 +1411,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     resolved_provider = "azure"
                 else:
                     resolved_provider = "openai"
+
+            # TEA-LLM-005: Convert prompt to messages if provided (Rust parity)
+            messages = _convert_prompt_to_messages(messages, prompt, system)
+            if messages is None:
+                return {
+                    "error": "Missing required parameter: prompt or messages",
+                    "success": False,
+                }
 
             # Shell provider - execute CLI commands with streaming (TEA-LLM-004)
             if resolved_provider == "shell":
@@ -1637,6 +1726,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         state,
         model=None,
         messages=None,
+        prompt=None,  # TEA-LLM-005: Rust parity - simple prompt string
+        system=None,  # TEA-LLM-005: Rust parity - system message with prompt
         tools=None,
         tool_choice="auto",
         max_tool_rounds=10,
@@ -1669,7 +1760,11 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         Args:
             state: Current state dictionary
             model: Model name (e.g., "gpt-4", "llama3.1", "anthropic/claude-3-opus")
-            messages: List of message dicts with 'role' and 'content'
+            messages: List of message dicts with 'role' and 'content'. Takes precedence over prompt.
+            prompt: Simple prompt string (TEA-LLM-005 - Rust parity). Alternative to messages array.
+                   When provided without messages, converts to [{"role": "user", "content": prompt}].
+            system: System message (TEA-LLM-005 - Rust parity). Only used with prompt parameter.
+                   When provided, prepends [{"role": "system", "content": system}] to messages.
             tools: List of tool definitions (YAML-style or OpenAI-style)
             tool_choice: Tool selection mode - "auto", "none", or specific tool
             max_tool_rounds: Maximum tool call rounds (default: 10)
@@ -1680,6 +1775,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             provider: LLM provider - "auto" (detect), "openai", "azure", "ollama", or "litellm"
             api_base: Custom API base URL (overrides defaults)
             **kwargs: Additional parameters passed to OpenAI/LiteLLM
+
+        Examples:
+            # Using prompt with tools
+            result = llm_tools(state, model="gpt-4", prompt="What's the weather?", tools=[...])
+
+            # Using prompt with system and tools
+            result = llm_tools(state, model="gpt-4", prompt="Check weather",
+                             system="Use tools when helpful", tools=[...])
 
         Tool definition YAML schema:
             tools:
@@ -1810,6 +1913,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 resolved_provider = "azure"
             else:
                 resolved_provider = "openai"
+
+        # TEA-LLM-005: Convert prompt to messages if provided (Rust parity)
+        messages = _convert_prompt_to_messages(messages, prompt, system)
+        if messages is None:
+            return {
+                "error": "Missing required parameter: prompt or messages",
+                "success": False,
+            }
 
         # Validate model is provided (shell provider not supported for tool calling)
         if not model:

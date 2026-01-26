@@ -214,16 +214,16 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-function wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h71251df66dc1e256(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h71251df66dc1e256(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3636c9768a077c38(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3636c9768a077c38(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325(arg0, arg1, arg2, arg3);
 }
 
 const __wbindgen_enum_ReadableStreamType = ["bytes"];
@@ -246,6 +246,10 @@ const IntoUnderlyingSourceFinalization = (typeof FinalizationRegistry === 'undef
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_intounderlyingsource_free(ptr >>> 0, 1));
 
+const MarkdownParseResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_markdownparseresult_free(ptr >>> 0, 1));
+
 export class IntoUnderlyingByteSource {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -258,13 +262,6 @@ export class IntoUnderlyingByteSource {
         wasm.__wbg_intounderlyingbytesource_free(ptr, 0);
     }
     /**
-     * @returns {ReadableStreamType}
-     */
-    get type() {
-        const ret = wasm.intounderlyingbytesource_type(this.__wbg_ptr);
-        return __wbindgen_enum_ReadableStreamType[ret];
-    }
-    /**
      * @returns {number}
      */
     get autoAllocateChunkSize() {
@@ -273,17 +270,24 @@ export class IntoUnderlyingByteSource {
     }
     /**
      * @param {ReadableByteStreamController} controller
-     */
-    start(controller) {
-        wasm.intounderlyingbytesource_start(this.__wbg_ptr, controller);
-    }
-    /**
-     * @param {ReadableByteStreamController} controller
      * @returns {Promise<any>}
      */
     pull(controller) {
         const ret = wasm.intounderlyingbytesource_pull(this.__wbg_ptr, controller);
         return ret;
+    }
+    /**
+     * @param {ReadableByteStreamController} controller
+     */
+    start(controller) {
+        wasm.intounderlyingbytesource_start(this.__wbg_ptr, controller);
+    }
+    /**
+     * @returns {ReadableStreamType}
+     */
+    get type() {
+        const ret = wasm.intounderlyingbytesource_type(this.__wbg_ptr);
+        return __wbindgen_enum_ReadableStreamType[ret];
     }
     cancel() {
         const ptr = this.__destroy_into_raw();
@@ -304,11 +308,12 @@ export class IntoUnderlyingSink {
         wasm.__wbg_intounderlyingsink_free(ptr, 0);
     }
     /**
-     * @param {any} chunk
+     * @param {any} reason
      * @returns {Promise<any>}
      */
-    write(chunk) {
-        const ret = wasm.intounderlyingsink_write(this.__wbg_ptr, chunk);
+    abort(reason) {
+        const ptr = this.__destroy_into_raw();
+        const ret = wasm.intounderlyingsink_abort(ptr, reason);
         return ret;
     }
     /**
@@ -320,12 +325,11 @@ export class IntoUnderlyingSink {
         return ret;
     }
     /**
-     * @param {any} reason
+     * @param {any} chunk
      * @returns {Promise<any>}
      */
-    abort(reason) {
-        const ptr = this.__destroy_into_raw();
-        const ret = wasm.intounderlyingsink_abort(ptr, reason);
+    write(chunk) {
+        const ret = wasm.intounderlyingsink_write(this.__wbg_ptr, chunk);
         return ret;
     }
 }
@@ -358,10 +362,213 @@ export class IntoUnderlyingSource {
 if (Symbol.dispose) IntoUnderlyingSource.prototype[Symbol.dispose] = IntoUnderlyingSource.prototype.free;
 
 /**
+ * Parsed document result for JavaScript
+ */
+export class MarkdownParseResult {
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(MarkdownParseResult.prototype);
+        obj.__wbg_ptr = ptr;
+        MarkdownParseResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        MarkdownParseResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_markdownparseresult_free(ptr, 0);
+    }
+    /**
+     * Document title (from first H1)
+     * @returns {string | undefined}
+     */
+    get title() {
+        const ret = wasm.__wbg_get_markdownparseresult_title(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Document title (from first H1)
+     * @param {string | null} [arg0]
+     */
+    set title(arg0) {
+        var ptr0 = isLikeNone(arg0) ? 0 : passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_title(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of parsed sections
+     * @returns {string}
+     */
+    get sections_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_sections_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of parsed sections
+     * @param {string} arg0
+     */
+    set sections_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_sections_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of variable names
+     * @returns {string}
+     */
+    get variables_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_variables_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of variable names
+     * @param {string} arg0
+     */
+    set variables_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_variables_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of frontmatter (if present)
+     * @returns {string}
+     */
+    get frontmatter_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_frontmatter_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of frontmatter (if present)
+     * @param {string} arg0
+     */
+    set frontmatter_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_frontmatter_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of checklist items
+     * @returns {string}
+     */
+    get tasks_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_tasks_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of checklist items
+     * @param {string} arg0
+     */
+    set tasks_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_tasks_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of task summary
+     * @returns {string}
+     */
+    get task_summary_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_task_summary_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of task summary
+     * @param {string} arg0
+     */
+    set task_summary_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_task_summary_json(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * JSON string of section edges
+     * @returns {string}
+     */
+    get edges_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.__wbg_get_markdownparseresult_edges_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * JSON string of section edges
+     * @param {string} arg0
+     */
+    set edges_json(arg0) {
+        const ptr0 = passStringToWasm0(arg0, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.__wbg_set_markdownparseresult_edges_json(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) MarkdownParseResult.prototype[Symbol.dispose] = MarkdownParseResult.prototype.free;
+
+/**
  * Clear the DuckDB handler
  */
 export function clear_duckdb_handler() {
     wasm.clear_duckdb_handler();
+}
+
+/**
+ * Clear the game Opik handler (WASM export).
+ */
+export function clear_game_opik_handler() {
+    wasm.clear_game_opik_handler();
 }
 
 /**
@@ -404,6 +611,19 @@ export function clear_prolog_handler() {
  */
 export function clear_storage_credentials() {
     wasm.clear_storage_credentials();
+}
+
+/**
+ * Configure game Opik settings (WASM export).
+ * @param {string} config_json
+ */
+export function configure_game_opik(config_json) {
+    const ptr0 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.configure_game_opik(ptr0, len0);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
 }
 
 /**
@@ -672,12 +892,215 @@ export function execute_yaml_workflow_with_vars(yaml, initial_state, variables) 
 }
 
 /**
+ * Clear the LLM callback
+ */
+export function game_clear_llm_handler() {
+    wasm.game_clear_llm_handler();
+}
+
+/**
+ * Generate a new game round (AC-1)
+ *
+ * This function requires an LLM callback to be set via `game_set_llm_handler`.
+ * The LLM is called to generate a phrase with a missing word.
+ *
+ * Returns a Promise that resolves to a JSON string with round info:
+ * ```json
+ * {"success": true, "data": {"id": "...", "phrase": "The ___ is bright.", "choices": [...]}}
+ * ```
+ * @returns {Promise<string>}
+ */
+export function game_generate_round() {
+    const ret = wasm.game_generate_round();
+    return ret;
+}
+
+/**
+ * Get the leaderboard (AC-1)
+ *
+ * # Arguments
+ * * `limit` - Maximum number of entries to return (default: 10)
+ *
+ * Returns a JSON string with the leaderboard:
+ * ```json
+ * {"success": true, "data": [{"rank": 1, "username": "SwiftFox42", "score": 0.95, ...}]}
+ * ```
+ * @param {number} limit
+ * @returns {string}
+ */
+export function game_get_leaderboard(limit) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.game_get_leaderboard(limit);
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Get current session stats (AC-1)
+ *
+ * Returns a JSON string with session statistics:
+ * ```json
+ * {"success": true, "data": {"id": "...", "username": "...", "score": 0.5, ...}}
+ * ```
+ * @returns {string}
+ */
+export function game_get_session_stats() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.game_get_session_stats();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Check if LLM handler is set
+ * @returns {boolean}
+ */
+export function game_has_llm_handler() {
+    const ret = wasm.game_has_llm_handler();
+    return ret !== 0;
+}
+
+/**
+ * Initialize the game engine
+ *
+ * Must be called before any other game functions.
+ * This creates the in-memory game engine instance.
+ * @returns {string}
+ */
+export function game_init() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.game_init();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Set the LLM callback for phrase generation (AC-3)
+ *
+ * The callback should be an async function that takes a JSON string
+ * with the prompt and returns a JSON string with the response.
+ * @param {Function} callback
+ */
+export function game_set_llm_handler(callback) {
+    wasm.game_set_llm_handler(callback);
+}
+
+/**
+ * Start a new game session (AC-1)
+ *
+ * Returns a Promise that resolves to a JSON string with session info:
+ * ```json
+ * {"success": true, "data": {"id": "...", "username": "SwiftFox42", ...}}
+ * ```
+ * @returns {string}
+ */
+export function game_start_session() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.game_start_session();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Submit an answer for the current round (AC-1)
+ *
+ * # Arguments
+ * * `choice` - The word the player selected
+ * * `time_ms` - Time taken to answer in milliseconds
+ *
+ * Returns a JSON string with the result:
+ * ```json
+ * {"success": true, "data": {"is_correct": true, "correct_word": "sun", ...}}
+ * ```
+ * @param {string} choice
+ * @param {number} time_ms
+ * @returns {string}
+ */
+export function game_submit_answer(choice, time_ms) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(choice, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.game_submit_answer(ptr0, len0, time_ms);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Submit the current session to the leaderboard (AC-1)
+ *
+ * Returns a JSON string with the result:
+ * ```json
+ * {"success": true, "data": {"rank": 5, "is_new_best": true, "score": 0.75}}
+ * ```
+ * @returns {string}
+ */
+export function game_submit_to_leaderboard() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.game_submit_to_leaderboard();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Get list of available/loaded extensions
  * @returns {Promise<string>}
  */
 export function get_duckdb_extensions_async() {
     const ret = wasm.get_duckdb_extensions_async();
     return ret;
+}
+
+/**
+ * Get current game Opik configuration as JSON (WASM export).
+ * @returns {string}
+ */
+export function get_game_opik_config() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.get_game_opik_config();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 /**
@@ -720,6 +1143,15 @@ export function get_opik_config() {
  */
 export function has_duckdb_handler() {
     const ret = wasm.has_duckdb_handler();
+    return ret !== 0;
+}
+
+/**
+ * Check if a game Opik handler is registered (WASM export) (AC-6).
+ * @returns {boolean}
+ */
+export function has_game_opik_handler() {
+    const ret = wasm.has_game_opik_handler();
     return ret !== 0;
 }
 
@@ -1099,6 +1531,120 @@ export function main() {
 }
 
 /**
+ * Extract checklist items from Markdown content.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string
+ *
+ * # Returns
+ * JSON string with tasks array and summary
+ * @param {string} content
+ * @returns {string}
+ */
+export function markdown_extract_tasks(content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.markdown_extract_tasks(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Extract template variables from Markdown content.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string
+ *
+ * # Returns
+ * JSON array of unique variable names
+ * @param {string} content
+ * @returns {string}
+ */
+export function markdown_extract_variables(content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.markdown_extract_variables(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Parse Markdown content into structured document.
+ *
+ * # Arguments
+ * * `content` - Raw Markdown string to parse
+ *
+ * # Returns
+ * MarkdownParseResult with JSON strings for each component
+ * @param {string} content
+ * @returns {MarkdownParseResult}
+ */
+export function markdown_parse(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.markdown_parse(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return MarkdownParseResult.__wrap(ret[0]);
+}
+
+/**
+ * Parse Markdown and return complete result as JSON string.
+ *
+ * This is a convenience function for JavaScript that returns everything
+ * as a single JSON object.
+ * @param {string} content
+ * @returns {string}
+ */
+export function markdown_parse_json(content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.markdown_parse_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Parse YAML and return JSON-serialized config (WASM binding)
  *
  * # Arguments
@@ -1244,6 +1790,17 @@ export function send_opik_trace_async(trace_json) {
  */
 export function set_duckdb_handler(handler) {
     wasm.set_duckdb_handler(handler);
+}
+
+/**
+ * Set the game Opik handler (WASM export) (AC-5).
+ *
+ * The handler should accept a JSON string (OpikGameSpan) and optionally
+ * return a Promise for async sending.
+ * @param {Function} handler
+ */
+export function set_game_opik_handler(handler) {
+    wasm.set_game_opik_handler(handler);
 }
 
 /**
@@ -1687,6 +2244,10 @@ async function __wbg_load(module, imports) {
 function __wbg_get_imports() {
     const imports = {};
     imports.wbg = {};
+    imports.wbg.__wbg_Error_52673b7de5a0ca89 = function(arg0, arg1) {
+        const ret = Error(getStringFromWasm0(arg0, arg1));
+        return ret;
+    };
     imports.wbg.__wbg___wbindgen_debug_string_adfb662ae34724b6 = function(arg0, arg1) {
         const ret = debugString(arg1);
         const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -1918,6 +2479,10 @@ function __wbg_get_imports() {
         const ret = arg0.msCrypto;
         return ret;
     };
+    imports.wbg.__wbg_new_0_23cedd11d9b40c9d = function() {
+        const ret = new Date();
+        return ret;
+    };
     imports.wbg.__wbg_new_1ba21ce319a06297 = function() {
         const ret = new Object();
         return ret;
@@ -1953,7 +2518,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return wasm_bindgen__convert__closures_____invoke__h3636c9768a077c38(a, state0.b, arg0, arg1);
+                    return wasm_bindgen__convert__closures_____invoke__hc599d4e810efe325(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -2141,19 +2706,19 @@ function __wbg_get_imports() {
         const ret = getStringFromWasm0(arg0, arg1);
         return ret;
     };
-    imports.wbg.__wbindgen_cast_8b359520d534b0f2 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 1609, function: Function { arguments: [], shim_idx: 1610, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h1caa76141f4717e5, wasm_bindgen__convert__closures_____invoke__h71251df66dc1e256);
+    imports.wbg.__wbindgen_cast_7c310da1b4e21bc9 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 1889, function: Function { arguments: [Externref], shim_idx: 1890, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha9e5309a8e8dc2f5, wasm_bindgen__convert__closures_____invoke__h993e6cec9bc4ab3e);
+        return ret;
+    };
+    imports.wbg.__wbindgen_cast_a05c46e21695cc12 = function(arg0, arg1) {
+        // Cast intrinsic for `Closure(Closure { dtor_idx: 976, function: Function { arguments: [], shim_idx: 977, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h9eb6f956610eaa1e, wasm_bindgen__convert__closures_____invoke__hde2d95ef604b0a7f);
         return ret;
     };
     imports.wbg.__wbindgen_cast_cb9088102bce6b30 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
         const ret = getArrayU8FromWasm0(arg0, arg1);
-        return ret;
-    };
-    imports.wbg.__wbindgen_cast_d66218ab81a1cb18 = function(arg0, arg1) {
-        // Cast intrinsic for `Closure(Closure { dtor_idx: 1792, function: Function { arguments: [Externref], shim_idx: 1803, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h42b32eebd7bbc581, wasm_bindgen__convert__closures_____invoke__hfb2eaeb84ee8215b);
         return ret;
     };
     imports.wbg.__wbindgen_cast_d6cd19b81560fd6e = function(arg0) {
