@@ -58,7 +58,7 @@ jobs:
         run: |
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:latest -c \
             "cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests && \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests phart && \
              pip install -e . --no-deps && \
              pyinstaller --onefile --name tea-python-linux-x86_64 \
                --hidden-import=the_edge_agent \
@@ -71,6 +71,7 @@ jobs:
                --hidden-import=dotenv \
                --hidden-import=pydantic \
                --hidden-import=pydot \
+               --hidden-import=phart \
                --collect-all the_edge_agent \
                --collect-all pydantic \
                --collect-all pydot \
@@ -90,6 +91,10 @@ jobs:
             echo "Error: Expected 'python', got '$impl'"
             exit 1
           fi
+
+      - name: Smoke test --show-graph
+        run: |
+          ./python/dist/tea-python-linux-x86_64 run examples/basic/simple-workflow.yaml --show-graph
 
       - name: Check binary size
         run: |
@@ -124,7 +129,7 @@ jobs:
           docker run --rm -v "$(pwd):/src" --entrypoint /bin/bash batonogov/pyinstaller-linux:main-trixie -c \
             "apt-get update && apt-get install -y libgomp1 libvulkan-dev vulkan-tools glslang-tools glslc git wget libopenblas-dev gcc-14 g++-14 && \
              cd /src/python && \
-             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+             pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot phart \
                          openai 'numpy<2' chromadb requests RestrictedPython \
                          'pycozo[embedded]' pandas \
                          s3fs gcsfs adlfs lupa kuzu \
@@ -159,6 +164,7 @@ jobs:
                --hidden-import=firebase_admin \
                --hidden-import=duckdb \
                --hidden-import=llama_cpp \
+               --hidden-import=phart \
                --collect-all the_edge_agent \
                --collect-all numpy \
                --collect-all pandas \
@@ -215,7 +221,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests phart
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -233,6 +239,7 @@ jobs:
             --hidden-import=dotenv \
             --hidden-import=pydantic \
             --hidden-import=pydot \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all pydantic \
             --collect-all pydot \
@@ -301,7 +308,7 @@ jobs:
           FORCE_CMAKE: "1"
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot phart \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -344,6 +351,7 @@ jobs:
             --hidden-import=firebase_admin \
             --hidden-import=duckdb \
             --hidden-import=llama_cpp \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all numpy \
             --collect-all pandas \
@@ -400,7 +408,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests phart
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -418,6 +426,7 @@ jobs:
             --hidden-import=dotenv `
             --hidden-import=pydantic `
             --hidden-import=pydot `
+            --hidden-import=phart `
             --collect-all the_edge_agent `
             --collect-all pydantic `
             --collect-all pydot `
@@ -470,7 +479,7 @@ jobs:
       - name: Install Python dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot `
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot phart `
                       openai "numpy<2" chromadb requests RestrictedPython `
                       "pycozo[embedded]" pandas `
                       s3fs gcsfs adlfs lupa kuzu `
@@ -506,6 +515,7 @@ jobs:
             --hidden-import=kuzu `
             --hidden-import=firebase_admin `
             --hidden-import=duckdb `
+            --hidden-import=phart `
             --collect-all the_edge_agent `
             --collect-all numpy `
             --collect-all pandas `
@@ -559,7 +569,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot requests phart
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -577,6 +587,7 @@ jobs:
             --hidden-import=dotenv \
             --hidden-import=pydantic \
             --hidden-import=pydot \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all pydantic \
             --collect-all pydot \
@@ -631,7 +642,7 @@ jobs:
       - name: Install dependencies (full)
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
+          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot phart \
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
@@ -667,6 +678,7 @@ jobs:
             --hidden-import=kuzu \
             --hidden-import=firebase_admin \
             --hidden-import=duckdb \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all numpy \
             --collect-all pandas \

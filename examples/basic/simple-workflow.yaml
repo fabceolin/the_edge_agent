@@ -1,0 +1,19 @@
+# Simple workflow for smoke testing --show-graph functionality
+name: simple-workflow
+description: Minimal workflow for testing graph visualization
+
+state_schema:
+  input: str
+  output: str
+
+nodes:
+  - name: process
+    language: python
+    run: |
+      return {"output": state.get("input", "hello").upper()}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

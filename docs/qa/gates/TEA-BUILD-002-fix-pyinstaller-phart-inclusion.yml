@@ -1,0 +1,43 @@
+# Quality Gate Decision
+# Story: TEA-BUILD-002 - Fix PyInstaller Build - Include phart Module for --show-graph
+
+schema: 1
+story: "TEA-BUILD-002"
+story_title: "Fix PyInstaller Build - Include phart Module for --show-graph"
+gate: PASS
+status_reason: "All 8 PyInstaller builds correctly updated with phart package. Implementation follows established patterns, smoke test added, YAML syntax validated."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-01-26T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+quality_score: 100
+
+evidence:
+  tests_reviewed: 1
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: [8]  # AC 8 requires CI execution post-merge
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "phart is pure Python ASCII rendering, no security implications"
+  performance:
+    status: PASS
+    notes: "Minimal binary size impact expected"
+  reliability:
+    status: PASS
+    notes: "Follows existing build patterns, well-tested approach"
+  maintainability:
+    status: PASS
+    notes: "Clean implementation, consistent with existing workflow structure"
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Consider adding --show-graph smoke test to other platform builds for comprehensive coverage"
+      refs: [".github/workflows/build-python-base.yaml"]
