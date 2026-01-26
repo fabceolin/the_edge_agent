@@ -220,7 +220,7 @@ digraph tea_game_001_validation {
     subgraph cluster_phase1 {
         label="1. Foundation";
         story_1 [label="TEA-GAME-001.1",
-                 command="tea-python run examples/workflows/bmad-story-validation.yaml
+                 command="tea run examples/workflows/bmad-story-validation.yaml
                           --input-timeout 54000
                           --input '{\"arg\": \"docs/stories/TEA-GAME-001.1-rust-game-engine-core.md\"}'"];
     }
@@ -394,7 +394,7 @@ Test that Claude Code works as a shell provider:
 echo "Say hello" | claude --print
 
 # Test with TEA
-tea-python run examples/workflows/bmad-story-validation.yaml \
+tea run examples/workflows/bmad-story-validation.yaml \
     --input '{"arg": "docs/stories/TEA-GAME-001.1-rust-game-engine-core.md"}' \
     --dry-run
 ```
@@ -443,7 +443,7 @@ Monitor progress with: `tmux attach -t tea-dot`
 |-----------|---------|
 | `--dot-workflow` | Workflow YAML file to run for each node |
 | `--dot-max-parallel` | Maximum parallel processes |
-| `--dot-exec` | Custom executable (default: `tea-python`) |
+| `--dot-exec` | Custom executable (default: `tea`) |
 | `--dot-session` | Tmux session name |
 | `--dot-dry-run` | Preview execution plan without running |
 
@@ -596,7 +596,7 @@ If you need to use a different TEA installation or virtual environment:
 # Use a specific virtualenv
 tea run --from-dot workflow.dot \
     --dot-workflow bmad-story-validation.yaml \
-    --dot-exec "/home/user/.venv/bin/tea-python"
+    --dot-exec "/home/user/.venv/bin/tea"
 
 # Use Python module directly
 tea run --from-dot workflow.dot \
