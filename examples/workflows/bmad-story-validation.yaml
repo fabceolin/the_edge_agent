@@ -16,6 +16,7 @@ state_schema:
   risk_profile_output: str
   nfr_assess_output: str
   test_design_output: str
+  trace_requirements_output: str
   sm_checklist_output: str
   final_status: str
 
@@ -136,7 +137,31 @@ nodes:
     output: test_design_output
 
   # ============================================================================
-  # NODE 4: SM story validation using BMad slash command
+  # NODE 4: QA trace-requirements using BMad slash command
+  # ============================================================================
+  - name: qa_trace_requirements
+    description: Execute QA requirements tracing and update story QA notes
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *trace {{ state.story_path }} YOLO mode
+
+            AFTER completing the requirements tracing, you MUST:
+            1. Append a "## QA Notes - Requirements Trace" section to the story file {{ state.story_path }}
+            2. Include: Requirements coverage, traceability matrix, gaps identified, recommendations
+            3. VERIFY the section was written by reading the file
+
+            When done print: TRACE_REQUIREMENTS_COMPLETED
+    output: trace_requirements_output
+
+  # ============================================================================
+  # NODE 5: SM story validation using BMad slash command
   # ============================================================================
   - name: sm_story_checklist
     description: Execute SM story-checklist and update story status
@@ -173,7 +198,7 @@ nodes:
     output: sm_checklist_output
 
   # ============================================================================
-  # NODE 5: Summary
+  # NODE 6: Summary
   # ============================================================================
   - name: summary
     description: Generate final summary of the validation pipeline
@@ -235,6 +260,7 @@ nodes:
       risk_output = get_content(state.get("risk_profile_output", ""))
       nfr_output = get_content(state.get("nfr_assess_output", ""))
       test_output = get_content(state.get("test_design_output", ""))
+      trace_output = get_content(state.get("trace_requirements_output", ""))
       sm_output = get_content(state.get("sm_checklist_output", ""))
 
       story_id = get_story_id(story_path) if story_path != "unknown" else ""
@@ -267,6 +293,14 @@ nodes:
       test_done = test_marker or test_artifact
       test_method = "(via marker)" if test_marker else "(via artifact)" if test_artifact else ""
 
+      # Trace Requirements detection: Check marker first, then story section or assessment file
+      trace_marker = "TRACE_REQUIREMENTS_COMPLETED" in trace_output
+      trace_section = check_story_section(story_path, "## QA Notes - Requirements Trace") if story_path != "unknown" else False
+      trace_file = check_artifact_file(f"docs/qa/assessments/{story_id}-trace-*.md") if story_id else False
+      trace_artifact = trace_section or trace_file
+      trace_done = trace_marker or trace_artifact
+      trace_method = "(via marker)" if trace_marker else "(via artifact)" if trace_artifact else ""
+
       # SM Checklist detection (AC 8): Check marker first, then story section AND status
       sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
       sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
@@ -282,6 +316,7 @@ nodes:
       risk_status = f"{'✓ Completed' if risk_done else '✗ Failed'} {risk_method}"
       nfr_status = f"{'✓ Completed' if nfr_done else '✗ Failed'} {nfr_method}"
       test_status = f"{'✓ Completed' if test_done else '✗ Failed'} {test_method}"
+      trace_status = f"{'✓ Completed' if trace_done else '✗ Failed'} {trace_method}"
       sm_status_str = f"{'✓ Completed' if sm_done else '✗ Failed'} {sm_method}"
 
       summary = f"""
@@ -296,12 +331,13 @@ nodes:
       ║ QA Risk Profile    │ {risk_status:<37} ║
       ║ QA NFR Assessment  │ {nfr_status:<37} ║
       ║ QA Test Design     │ {test_status:<37} ║
+      ║ QA Req Tracing     │ {trace_status:<37} ║
       ║ SM Story Checklist │ {sm_status_str:<37} ║
       ╚════════════════════════════════════════════════════════════╝
       """
 
       print(summary)
-      return {"final_status": "completed" if all([risk_done, nfr_done, test_done, sm_done]) else "incomplete"}
+      return {"final_status": "completed" if all([risk_done, nfr_done, test_done, trace_done, sm_done]) else "incomplete"}
 
 edges:
   - from: __start__
@@ -313,6 +349,8 @@ edges:
   - from: qa_nfr_assess
     to: qa_test_design
   - from: qa_test_design
+    to: qa_trace_requirements
+  - from: qa_trace_requirements
     to: sm_story_checklist
   - from: sm_story_checklist
     to: summary
