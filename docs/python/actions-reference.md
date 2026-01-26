@@ -1,20 +1,144 @@
 # Python Actions Reference
 
+> **Auto-generated summary** | Last updated: 2026-01-25 | Git: `8eb000e`
+>
+> **Total modules:** 51 | **Total actions:** 276
+
 This document lists all built-in actions available in the Python implementation of The Edge Agent.
 
 For complete action documentation including parameters and examples, see the [YAML Reference](../shared/YAML_REFERENCE.md#built-in-actions).
 
-## Action Modules
+## Quick Reference
 
-The Python implementation provides 20+ action modules organized by domain:
+| Module | Actions | Description |
+|--------|---------|-------------|
+| [cache.*](#cache) | 4 | Caching/memoization with LTM backend |
+| [core.*](#core) | 7 | HTTP, file operations, notifications, checkpoints |
+| [data.*](#data) | 16 | JSON/CSV parsing, transformation, validation |
+| [llm.*](#llm) | 4 | LLM calls, streaming, retry, and tool calling |
+| [ltm.*](#ltm) | 4 | Long-term persistent key-value storage with FTS5 |
+| [memory.*](#memory) | 3 | Key-value storage with TTL |
+| [a2a.*](#a2a) | 10 | Inter-agent communication (send, receive, broadcast, delegate) |
+| [agent.*](#agent) | 5 | Multi-agent collaboration (dispatch, parallel, sequential) |
+| [firestore.*](#firestore) | 5 | Firestore CRUD operations |
+| [graph.*](#graph) | 25 | Graph database with Datalog and HNSW vectors |
+| [neo4j_gds.*](#neo4j-gds) | 18 | Neo4j GDS graph analytics algorithms |
+| [neo4j_trigger.*](#neo4j-trigger) | 11 | Neo4j APOC trigger management |
+| [error.*](#error) | 7 | Error handling actions (is_retryable, clear, retry) |
+| [planning.*](#planning) | 4 | Planning/decomposition primitives |
+| [ratelimit.*](#ratelimit) | 1 | Rate limiting with shared named limiters |
+| [reasoning.*](#reasoning) | 7 | Reasoning techniques (CoT, ReAct, self-correct, decompose) |
+| [reflection.*](#reflection) | 3 | Self-reflection loop primitive |
+| [retry.*](#retry) | 1 | General-purpose retry loop with correction |
+| [validation.*](#validation) | 2 | Generic extraction validation with Prolog/probes |
+| [academic.*](#academic) | 3 | Academic research via PubMed, ArXiv, CrossRef APIs |
+| [auth.*](#auth) | 2 | Authentication verification (verify, get_user) |
+| [bmad.*](#bmad) | 2 | BMad story task extraction |
+| [catalog.*](#catalog) | 10 | Data catalog for tables, files, and snapshots |
+| [cloud_memory.*](#cloud-memory) | 5 | Cloud storage with metadata management |
+| [code.*](#code) | 2 | Sandboxed Python code execution |
+| [context.*](#context) | 1 | Context assembly with relevance ranking |
+| [data_tabular.*](#data-tabular) | 6 | Tabular data operations |
+| [dspy.*](#dspy) | 7 | DSPy prompt optimization (cot, react, compile) |
+| [git.*](#git) | 6 | Git worktree actions (execution modes) |
+| [github.*](#github) | 4 | GitHub Issues integration |
+| [http_response.*](#http-response) | 1 | HTTP response for early termination |
+| [input_validation.*](#input-validation) | 2 | Input schema validation |
+| [llamaextract.*](#llamaextract) | 8 | Document extraction via LlamaExtract |
+| [llamaindex.*](#llamaindex) | 6 | LlamaIndex RAG bridge (query, router, subquestion) |
+| [llm_local.*](#llm-local) | 6 | Local LLM inference via llama-cpp-python |
+| [markdown.*](#markdown) | 2 | Markdown parsing with sections, variables, checklists |
+| [mem0.*](#mem0) | 7 | Mem0 universal memory integration |
+| [observability.*](#observability) | 7 | Tracing spans and event logging |
+| [rag.*](#rag) | 4 | Embedding creation, vector storage, semantic search |
+| [schema.*](#schema) | 1 | Schema merge and manipulation |
+| [search.*](#search) | 3 | SQL and full-text search via QueryEngine |
+| [secrets.*](#secrets) | 2 | Secrets access via secrets.get and secrets.has |
+| [semtools.*](#semtools) | 1 | Semantic search using SemTools CLI |
+| [session.*](#session) | 7 | Session lifecycle with archive-based expiration |
+| [session_persistence.*](#session-persistence) | 4 | Session persistence (load, save, delete, exists) |
+| [storage.*](#storage) | 7 | Cloud storage operations via fsspec (S3, GCS, Azure) |
+| [text.*](#text) | 1 | Text processing including citation insertion |
+| [textgrad.*](#textgrad) | 8 | TextGrad learning actions |
+| [tools.*](#tools) | 5 | Bridges to CrewAI, MCP, and LangChain tools |
+| [vector.*](#vector) | 8 | Vector similarity search via VectorIndex |
+| [web.*](#web) | 4 | Web scraping, crawling, search via Firecrawl/Perplexity |
 
-### Core Actions
+## Table of Contents
 
-| Action | Module | Description |
-|--------|--------|-------------|
-| `llm.call` | `llm_actions.py` | Call OpenAI-compatible LLM |
-| `llm.stream` | `llm_actions.py` | Stream LLM response |
-| `llm.tools` | `llm_actions.py` | LLM with tool calling |
+- [Quick Reference](#quick-reference)
+- [Core Actions (P0)](#core-actions-p0)
+- [Integration Actions (P1)](#integration-actions-p1)
+- [Reasoning Actions (P2)](#reasoning-actions-p2)
+- [Utility Actions (P3)](#utility-actions-p3)
+- [Deprecated Actions](#deprecated-actions)
+- [Custom Actions](#custom-actions)
+
+---
+
+## Core Actions (P0)
+
+Core actions provide essential functionality for most workflows.
+
+
+### cache.*
+
+**Module:** `cache_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `cache.wrap` | Wrap any action with automatic caching. |
+| `cache.get` | Retrieve cached value by key without executing any action. |
+| `cache.invalidate` | Invalidate (delete) cached entries by exact key or pattern. |
+| `storage.hash` | Compute hash of file content from any URI. |
+
+### core.*
+
+**Module:** `core_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `http.get` | Make HTTP GET request. |
+| `http.post` | Make HTTP POST request. |
+| `file.write` | Write content to a file (local or remote via fsspec). |
+| `file.read` | Read content from a file (local or remote via fsspec). |
+| `notify` | Send a notification. |
+| `checkpoint.save` | Save checkpoint to specified path. |
+| `checkpoint.load` | Load checkpoint from specified path. |
+
+### data.*
+
+**Module:** `data_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `json.parse` | Parse a JSON string into a Python object. |
+| `json_parse` | Parse a JSON string into a Python object. |
+| `json.transform` | Transform data using JMESPath or JSONPath expressions. |
+| `json_transform` | Transform data using JMESPath or JSONPath expressions. |
+| `json.stringify` | Convert a Python object to a JSON string. |
+| `json_stringify` | Convert a Python object to a JSON string. |
+| `csv.parse` | Parse CSV data from text or file. |
+| `csv_parse` | Parse CSV data from text or file. |
+| `csv.stringify` | Convert a list of dicts or list of lists to a CSV string. |
+| `csv_stringify` | Convert a list of dicts or list of lists to a CSV string. |
+| `data.validate` | Validate data against a JSON Schema. |
+| `data_validate` | Validate data against a JSON Schema. |
+| `data.merge` | Merge multiple dictionaries/objects. |
+| `data_merge` | Merge multiple dictionaries/objects. |
+| `data.filter` | Filter list items using predicate expressions. |
+| `data_filter` | Filter list items using predicate expressions. |
+
+### llm.*
+
+**Module:** `llm_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `llm.call` | Call a language model (supports OpenAI, Azure OpenAI, Ollama, LiteLLM, and Shell CLI) |
+| `llm.stream` | Stream LLM responses token-by-token |
+| `llm.retry` | DEPRECATED: Use llm.call with max_retries parameter instead |
+| `llm.tools` | LLM call with tool/function calling support |
 
 #### LLM Provider Configuration
 
@@ -27,30 +151,6 @@ The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Olla
    - `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` → Azure OpenAI
 3. Default → OpenAI
 
-**Ollama Example:**
-
-```yaml
-# Explicit provider parameter
-- name: ask_local_llm
-  uses: llm.call
-  with:
-    provider: ollama
-    model: llama3.2
-    api_base: http://localhost:11434/v1  # optional, this is the default
-    messages:
-      - role: user
-        content: "{{ state.question }}"
-
-# Environment variable fallback (set OLLAMA_API_BASE)
-- name: ask_llm
-  uses: llm.call
-  with:
-    model: llama3.2
-    messages:
-      - role: user
-        content: "{{ state.question }}"
-```
-
 **Environment Variables:**
 
 | Variable | Provider | Description |
@@ -61,43 +161,23 @@ The LLM actions support multiple providers: **OpenAI**, **Azure OpenAI**, **Olla
 | `AZURE_OPENAI_DEPLOYMENT` | Azure | Deployment name (optional) |
 | `OLLAMA_API_BASE` | Ollama | Ollama API URL (default: `http://localhost:11434/v1`) |
 
-**Ollama Tool Calling:**
-
-Tool calling with Ollama requires models that support it:
-- `llama3.1+`
-- `mistral-nemo`
-- `qwen2.5`
+**Ollama Example:**
 
 ```yaml
-- name: llm_with_tools
-  uses: llm.tools
+- name: ask_local_llm
+  uses: llm.call
   with:
     provider: ollama
-    model: mistral-nemo
+    model: llama3.2
+    api_base: http://localhost:11434/v1
     messages:
       - role: user
-        content: "What's the weather in London?"
-    tools:
-      - name: get_weather
-        description: Get weather for a location
-        parameters:
-          location:
-            type: string
-            required: true
-```
-
-#### LiteLLM Provider (TEA-LLM-003)
-
-LiteLLM provides access to 100+ LLM providers through a unified interface. Install with:
-
-```bash
-pip install the_edge_agent[litellm]
+        content: "{{ state.question }}"
 ```
 
 **LiteLLM Example:**
 
 ```yaml
-# Use Anthropic Claude via LiteLLM
 - name: ask_claude
   uses: llm.call
   with:
@@ -106,314 +186,251 @@ pip install the_edge_agent[litellm]
     messages:
       - role: user
         content: "{{ state.question }}"
-
-# Use Google Gemini via LiteLLM
-- name: ask_gemini
-  uses: llm.call
-  with:
-    provider: litellm
-    model: gemini/gemini-pro
-    messages:
-      - role: user
-        content: "{{ state.question }}"
 ```
 
-**LiteLLM Model Format:** `provider/model-name`
-
-| Provider | Model Example |
-|----------|---------------|
-| Anthropic | `anthropic/claude-3-opus-20240229` |
-| AWS Bedrock | `bedrock/anthropic.claude-v2` |
-| Google Gemini | `gemini/gemini-pro` |
-| Cohere | `cohere/command-r-plus` |
-| Mistral | `mistral/mistral-large-latest` |
-
-**LiteLLM Features:**
-- Built-in cost tracking (`cost_usd` in response)
-- Opik observability integration (`opik_trace=True`)
-- Streaming support (`llm.stream`)
-- Tool calling support (`llm.tools`)
+See [YAML Reference](../shared/YAML_REFERENCE.md) for complete provider documentation.
+
+### ltm.*
+
+**Module:** `ltm_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `ltm.store` | Store a key-value pair persistently with optional metadata. |
+| `ltm.retrieve` | Retrieve a value from long-term memory by key. |
+| `ltm.delete` | Delete a value from long-term memory by key. |
+| `ltm.search` | Search across long-term memory using FTS5 and/or metadata filtering. |
+
+### memory.*
+
+**Module:** `memory_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `memory.store` | Store a key-value pair in memory with optional TTL. |
+| `memory.retrieve` | Retrieve a value from memory by key. |
+| `memory.summarize` | Summarize conversation history using LLM to fit token windows. |
+
+---
+
+## Integration Actions (P1)
+
+Integration actions connect TEA with external systems and enable multi-agent workflows.
+
+
+### a2a.*
+
+**Module:** `a2a_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `a2a.send` | Send a message to a specific agent. |
+| `a2a.receive` | Receive messages from agents. |
+| `a2a.broadcast` | Broadcast message to all agents in namespace. |
+| `a2a.delegate` | Delegate a task to another agent and wait for response. |
+| `a2a.state.get` | Get a value from shared state. |
+| `a2a.state.set` | Set a value in shared state. |
+| `a2a.discover` | Discover available agents in namespace. |
+| `a2a.register` | Register current agent for discovery and broadcasts. |
+| `a2a.unregister` | Unregister current agent. |
+| `a2a.heartbeat` | Send heartbeat to update last_seen timestamp. |
+
+### agent.*
+
+**Module:** `agent_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `agent.dispatch` | Dispatch a task to a single named agent. |
+| `agent.parallel` | Dispatch same task to multiple agents in parallel. |
+| `agent.sequential` | Chain multiple agents where output feeds into next agent's input. |
+| `agent.coordinate` | Coordinator pattern with leader agent dispatching to workers. |
+| `agent.crewai_delegate` | Delegate to CrewAI for complex multi-agent workflows. |
+
+### firestore.*
+
+**Module:** `firestore_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `firestore.get` |  |
+| `firestore.set` |  |
+| `firestore.query` |  |
+| `firestore.delete` |  |
+| `firestore.batch` |  |
+
+### graph.*
+
+**Module:** `graph_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `graph.store_entity` | Store an entity (node) in the graph database. |
+| `graph.store_relation` | Store a relation (edge) between two entities. |
+| `graph.query` | Execute a Cypher/Datalog/SQL-PGQ query or pattern match. |
+| `graph.retrieve_context` | Retrieve relevant subgraph context. |
+| `graph.delete_entity` | Delete an entity (node) from the graph database. |
+| `graph.delete_relation` | Delete a relation (edge) from the graph database. |
+| `graph.update_entity` | Update properties of an entity (node) in the graph database. |
+| `graph.update_relation` | Update properties of a relation (edge) in the graph database. |
+| `graph.add_labels` | Add labels to an entity (node) in the graph database. |
+| `graph.remove_labels` | Remove labels from an entity (node) in the graph database. |
+| `graph.store_entities_batch` | Bulk insert/update multiple entities in a single transaction. |
+| `graph.store_relations_batch` | Bulk create/update multiple relations in a single transaction. |
+| `graph.delete_entities_batch` | Delete multiple entities in a single transaction. |
+| `graph.merge_entity` | Conditional upsert with ON CREATE / ON MATCH semantics. |
+| `graph.merge_relation` | Conditional upsert of a relation with ON CREATE / ON MATCH semantics. |
+| `graph.create` | Create a property graph from vertex and edge tables (DuckPGQ). |
+| `graph.drop` | Drop a property graph (DuckPGQ). |
+| `graph.algorithm` | Run a graph algorithm (DuckPGQ). |
+| `graph.shortest_path` | Find shortest path between two entities (DuckPGQ). |
+| `graph.list_graphs` | List all created property graphs (DuckPGQ). |
+| `graph.vector_search` | Perform vector similarity search using Neo4j Vector Index. |
+| `graph.create_vector_index` | Create a vector index in Neo4j for similarity search. |
+| `graph.drop_vector_index` | Drop a vector index from Neo4j. |
+| `graph.list_vector_indexes` | List all vector indexes in Neo4j. |
+| `graph.check_vector_support` | Check if the Neo4j instance supports vector indexes. |
+
+### neo4j_gds.*
+
+**Module:** `neo4j_gds_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `neo4j.gds_check_available` | Check if Neo4j GDS library is available. |
+| `neo4j.gds_version` | Get the installed Neo4j GDS library version. |
+| `neo4j.gds_project_graph` | Create an in-memory graph projection for GDS algorithms. |
+| `neo4j.gds_drop_graph` | Drop (remove) an in-memory graph projection. |
+| `neo4j.gds_list_graphs` | List all active in-memory graph projections. |
+| `neo4j.gds_estimate_memory` | Estimate memory requirements for a GDS algorithm. |
+| `neo4j.gds_page_rank` | Run PageRank algorithm on a projected graph. |
+| `neo4j.gds_betweenness` | Run Betweenness Centrality algorithm. |
+| `neo4j.gds_degree` | Run Degree Centrality algorithm. |
+| `neo4j.gds_closeness` | Run Closeness Centrality algorithm. |
+| `neo4j.gds_louvain` | Run Louvain community detection algorithm. |
+| `neo4j.gds_label_propagation` | Run Label Propagation community detection algorithm. |
+| `neo4j.gds_wcc` | Run Weakly Connected Components algorithm. |
+| `neo4j.gds_dijkstra` | Find shortest weighted path using Dijkstra's algorithm. |
+| `neo4j.gds_astar` | Find shortest path using A* algorithm with heuristic. |
+| `neo4j.gds_all_shortest_paths` | Find shortest paths from source to all other nodes. |
+| `neo4j.gds_node_similarity` | Compute Jaccard similarity between nodes based on shared neighbors. |
+| `neo4j.gds_knn` | Run K-Nearest Neighbors algorithm on node properties. |
 
-See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for complete list.
-
-#### Shell CLI Provider (TEA-LLM-004)
-
-Execute local CLI commands for LLM calls. Useful for leveraging CLI tools like `claude`, `gemini`, or `qwen`.
-
-**Shell CLI Example:**
-
-```yaml
-- name: ask_claude
-  uses: llm.call
-  with:
-    provider: shell
-    shell_provider: claude          # Which shell provider config to use
-    messages:
-      - role: user
-        content: "{{ state.question }}"
-```
-
-**Built-in Shell Providers:** `claude`, `gemini`, `qwen`
-
-**Custom Shell Provider Configuration:**
-
-```yaml
-settings:
-  llm:
-    shell_providers:
-      my_llm:
-        command: /usr/local/bin/my-llm
-        args: ["--model", "mistral-7b"]
-        stdin_mode: pipe              # pipe (default) or file
-        timeout: 600
-        env:
-          API_KEY: "${MY_API_KEY}"
-```
-
-**Shell Provider Features:**
-- Execute any CLI tool that accepts stdin input
-- Supports streaming via `llm.stream`
-- Environment variable expansion (`${VAR}` syntax)
-- File mode for large contexts
-
-See [YAML Reference](../shared/YAML_REFERENCE.md) for complete documentation.
-
-#### Local LLM Provider (TEA-RELEASE-004)
-
-Run LLM inference locally using bundled GGUF models via llama.cpp. No API keys or network required.
-
-**Installation:**
-
-```bash
-pip install the_edge_agent[llm-local]
-```
-
-**Or use an LLM-bundled AppImage** (recommended):
-
-```bash
-./tea-python-llm-gemma-0.9.5-x86_64.AppImage run workflow.yaml
-```
-
-##### llm.chat (Local Backend)
-
-Generate text using a local llama.cpp model.
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `backend` | string | No | "auto" | "local", "api", or "auto" |
-| `prompt` | string | Yes | - | Text prompt for generation |
-| `system` | string | No | - | System prompt for context |
-| `max_tokens` | int | No | 100 | Maximum tokens to generate |
-| `temperature` | float | No | 0.7 | Sampling temperature (0.0-2.0) |
-| `model_path` | string | No | auto | Path to GGUF model file |
-
-**Returns:**
-
-```json
-{
-  "content": "Generated response text",
-  "backend": "local",
-  "model": "gemma-3n-E4B"
-}
-```
-
-**Settings:**
-
-Configure in workflow `settings.llm`:
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `backend` | string | "auto" | "local", "api", or "auto" |
-| `model_path` | string | auto | Path to GGUF model file |
-| `n_ctx` | int | 2048 | Context window size |
-| `n_gpu_layers` | int | 0 | GPU layers (0=CPU, -1=all GPU) |
-
-**Example:**
-
-```yaml
-settings:
-  llm:
-    backend: local
-    model_path: ~/.cache/tea/models/gemma-3n-E4B-it-Q4_K_M.gguf
-
-nodes:
-  - name: generate
-    action: llm.chat
-    params:
-      prompt: "Explain quantum computing in simple terms."
-      system: "You are a helpful assistant."
-      max_tokens: 200
-    outputs:
-      answer: "{{ action_result.content }}"
-```
-
-##### llm.embed (Local Backend)
+### neo4j_trigger.*
 
-Generate text embeddings using a local model.
+**Module:** `neo4j_trigger_actions.py`
 
-**Parameters:**
+| Action | Description |
+|--------|-------------|
+| `neo4j.check_apoc` | Check if APOC library is installed and available. |
+| `neo4j.get_apoc_version` | Get the installed APOC library version. |
+| `neo4j.check_triggers` | Check if APOC triggers are enabled in Neo4j configuration. |
+| `neo4j.register_trigger` | Register a database trigger using APOC. |
+| `neo4j.unregister_trigger` | Remove a registered trigger. |
+| `neo4j.list_triggers` | List all registered triggers. |
+| `neo4j.pause_trigger` | Temporarily disable a trigger without removing it. |
+| `neo4j.resume_trigger` | Re-enable a paused trigger. |
+| `neo4j.register_callback` | Register a trigger that fires an HTTP webhook on graph changes. |
+| `neo4j.register_state_update` | Register a trigger that writes to a state node for agent consumption. |
+| `neo4j.cleanup_triggers` | Remove triggers by prefix, used for session/agent cleanup. |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `backend` | string | No | "auto" | "local", "api", or "auto" |
-| `text` | string | Yes | - | Text to embed |
-| `model_path` | string | No | auto | Path to embedding model |
+---
 
-**Returns:**
+## Reasoning Actions (P2)
 
-```text
-{
-  "embedding": [0.123, -0.456, ...],
-  "dimensions": 768,
-  "model": "nomic-embed-text"
-}
-```
+Reasoning actions provide advanced AI capabilities for planning, reflection, and error handling.
 
-**Note:** Not all models support embeddings. Use dedicated embedding models like `nomic-embed-text` or `all-MiniLM` for best results.
-
-**Example:**
 
-```yaml
-- name: embed_text
-  action: llm.embed
-  params:
-    backend: local
-    text: "{{ state.document }}"
-  outputs:
-    embedding: "{{ action_result.embedding }}"
-```
+### error.*
 
-##### llm.stream (Local Backend)
+**Module:** `error_actions.py`
 
-Stream LLM responses token-by-token with callback support.
-
-**Parameters:**
+| Action | Description |
+|--------|-------------|
+| `error.is_retryable` |  |
+| `error.clear` |  |
+| `error.get` |  |
+| `error.has` |  |
+| `error.type` |  |
+| `error.retry` |  |
+| `error.respond` |  |
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `backend` | string | No | "auto" | "local", "api", or "auto" |
-| `prompt` | string | Yes | - | Text prompt for generation |
-| `system` | string | No | - | System prompt |
-| `max_tokens` | int | No | 100 | Maximum tokens |
-| `on_token` | callable | No | - | Callback for each token |
+### planning.*
 
-**Returns:**
+**Module:** `planning_actions.py`
 
-```json
-{
-  "content": "Full generated response",
-  "backend": "local",
-  "model": "gemma-3n-E4B",
-  "token_count": 45
-}
-```
+| Action | Description |
+|--------|-------------|
+| `plan.decompose` | Decompose a goal into subtasks using LLM. |
+| `plan.execute` | Execute plan subtasks respecting dependency order. |
+| `plan.replan` | Re-plan from current state, preserving completed subtasks. |
+| `plan.status` | Get current plan execution status. |
 
-**Streaming Callback Pattern:**
-
-```python
-def on_token(token: str):
-    print(token, end="", flush=True)
-
-result = engine.execute(
-    workflow,
-    {"question": "Hello!"},
-    callbacks={"on_token": on_token}
-)
-```
-
-##### Model Path Resolution
-
-Models are discovered in this order:
-
-1. `TEA_MODEL_PATH` environment variable
-2. `params.model_path` in action
-3. `settings.llm.model_path` in YAML
-4. `$APPDIR/usr/share/models/` (AppImage bundle)
-5. `~/.cache/tea/models/` (default cache)
-
-##### Backend Selection: auto vs local vs api
-
-| Backend | Behavior |
-|---------|----------|
-| `auto` | Prefer local if model available, fallback to API |
-| `local` | Force local model, error if not found |
-| `api` | Force API call (requires OPENAI_API_KEY) |
-
-The `auto` backend is recommended for portable workflows that work both offline (with AppImage) and online (with API).
-
-### HTTP Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `http.get` | `http_actions.py` | HTTP GET request |
-| `http.post` | `http_actions.py` | HTTP POST request |
-
-### File Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `file.read` | `file_actions.py` | Read local/remote file |
-| `file.write` | `file_actions.py` | Write local/remote file |
-
-### Storage Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `storage.list` | `storage_actions.py` | List files in directory |
-| `storage.copy` | `storage_actions.py` | Copy files |
-| `storage.delete` | `storage_actions.py` | Delete files |
-
-### Data Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `json.parse` | `data_actions.py` | Parse JSON string |
-| `json.transform` | `data_actions.py` | Transform JSON with JMESPath |
-| `csv.parse` | `data_actions.py` | Parse CSV data |
-| `data.validate` | `data_actions.py` | Validate against JSON Schema |
-
-### Code Execution
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `code.execute` | `code_actions.py` | Execute Python code (sandboxed) |
-| `code.sandbox` | `code_actions.py` | Run in RestrictedPython sandbox |
-
-### Memory Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `memory.store` | `memory_actions.py` | Store in session memory |
-| `memory.retrieve` | `memory_actions.py` | Retrieve from session memory |
-| `ltm.store` | `ltm_actions.py` | Store in long-term memory |
-| `ltm.retrieve` | `ltm_actions.py` | Retrieve from long-term memory |
-
-### Vector/RAG Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `embedding.create` | `vector_actions.py` | Create text embeddings |
-| `vector.store` | `vector_actions.py` | Store in vector database |
-| `vector.query` | `vector_actions.py` | Query vector database |
-
-### Web Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `web.scrape` | `web_actions.py` | Scrape web page (Firecrawl) |
-| `web.crawl` | `web_actions.py` | Crawl multiple pages (Firecrawl) |
-| `web.search` | `web_actions.py` | Web search (Perplexity) |
-| `web.ai_scrape` | `web_actions.py` | AI-powered structured extraction (ScrapeGraphAI) |
-
-### Academic Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `academic.pubmed` | `academic_actions.py` | Search PubMed via NCBI E-utilities |
-| `academic.arxiv` | `academic_actions.py` | Search ArXiv preprint server |
-| `academic.crossref` | `academic_actions.py` | Query CrossRef for DOI metadata |
+### ratelimit.*
+
+**Module:** `ratelimit_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `ratelimit.wrap` | Wrap any action with rate limiting. |
+
+### reasoning.*
+
+**Module:** `reasoning_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `reason.cot` | Chain-of-Thought reasoning action. |
+| `reason.react` | ReAct (Reason-Act) reasoning action. |
+| `reason.self_correct` | Self-correction reasoning action. |
+| `reason.decompose` | Problem decomposition reasoning action. |
+| `reason.dspy.cot` | Chain-of-Thought using DSPy ChainOfThought module. |
+| `reason.dspy.react` | ReAct using DSPy ReAct module with tool bridge. |
+| `reason.dspy.compile` | Compile DSPy module with teleprompter for optimized prompts. |
+
+### reflection.*
+
+**Module:** `reflection_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `reflection.loop` | Execute a generate→evaluate→correct loop (AC: 1, 5, 6). |
+| `reflection.evaluate` | Standalone evaluation action (AC: 7). |
+| `reflection.correct` | Standalone correction action (AC: 8). |
+
+### retry.*
+
+**Module:** `retry_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `retry.loop` | Execute validation with retry loop (TEA-YAML-005). |
+
+### validation.*
+
+**Module:** `validation_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `validate.extraction` | Validate extracted entities and relationships (AC: 16-18). |
+| `validate.generate_prompt` | Generate a schema-guided extraction prompt (AC: 23-27). |
+
+---
+
+## Utility Actions (P3)
+
+Utility actions provide specialized functionality for specific use cases.
+
+
+### academic.*
+
+**Module:** `academic_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `academic.pubmed` | Search PubMed database for scientific articles via NCBI E-utilities |
+| `academic.arxiv` | Search ArXiv preprint server for papers |
+| `academic.crossref` | Query CrossRef API for DOI metadata or search by query string |
 
 #### academic.pubmed
 
@@ -428,63 +445,7 @@ Search the PubMed database for scientific articles using NCBI E-utilities API.
 | `sort_by` | string | "relevance" | Sort order: "relevance" or "date" |
 | `timeout` | int | 30 | Request timeout in seconds |
 
-**Returns:**
-
-```python
-{
-    "success": True,
-    "results": [
-        {
-            "pmid": "12345678",
-            "title": "Article Title",
-            "authors": ["Smith John", "Doe A"],
-            "abstract": "Full abstract text...",
-            "journal": "Nature Medicine",
-            "pub_date": "2024-01-15",
-            "doi": "10.1038/xxxxx",
-            "url": "https://pubmed.ncbi.nlm.nih.gov/12345678/"
-        }
-    ],
-    "query": "machine learning cancer",
-    "total_results": 150,
-    "returned_results": 5
-}
-```
-
-**YAML Example:**
-
-```yaml
-name: search-research
-nodes:
-  - name: find_papers
-    uses: academic.pubmed
-    with:
-      query: "{{ state.research_topic }}"
-      max_results: 10
-      sort_by: date
-    output:
-      articles: "{{ result.results }}"
-
-  - name: summarize
-    uses: llm.call
-    with:
-      model: gpt-4
-      messages:
-        - role: user
-          content: |
-            Summarize these research findings:
-            {% for article in state.articles %}
-            - {{ article.title }} ({{ article.journal }}, {{ article.pub_date }})
-            {% endfor %}
-```
-
 **Rate Limiting:** 3 requests/second (10 req/s with `NCBI_API_KEY`)
-
-**Environment Variables:**
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `NCBI_API_KEY` | No | Increases rate limit from 3 to 10 req/s |
 
 #### academic.arxiv
 
@@ -498,370 +459,47 @@ Search the ArXiv preprint server for research papers.
 | `arxiv_id` | string | optional | Direct paper lookup by ID |
 | `max_results` | int | 5 | Maximum results to return |
 | `sort_by` | string | "relevance" | Sort order: "relevance" or "date" |
-| `timeout` | int | 30 | Request timeout in seconds |
-
-*Note: Either `query` or `arxiv_id` must be provided.*
-
-**Returns:**
-
-```python
-{
-    "success": True,
-    "results": [
-        {
-            "arxiv_id": "2301.00001v2",
-            "title": "Paper Title",
-            "authors": ["Alice Smith", "Bob Jones"],
-            "abstract": "Full abstract...",
-            "categories": ["cs.CL", "cs.AI"],
-            "published": "2023-01-01T00:00:00Z",
-            "updated": "2023-01-15T12:00:00Z",
-            "pdf_url": "https://arxiv.org/pdf/2301.00001"
-        }
-    ],
-    "query": "transformer neural networks",
-    "total_results": 250
-}
-```
-
-**YAML Examples:**
-
-```yaml
-# Search by query
-- name: search_arxiv
-  uses: academic.arxiv
-  with:
-    query: "large language models"
-    max_results: 5
-    sort_by: date
-  output:
-    papers: "{{ result.results }}"
-
-# Direct lookup by ID
-- name: get_paper
-  uses: academic.arxiv
-  with:
-    arxiv_id: "2301.00001"
-  output:
-    paper: "{{ result.results[0] }}"
-```
 
 **Rate Limiting:** 1 request per 3 seconds (per ArXiv terms of service)
 
 #### academic.crossref
 
-Query the CrossRef API for DOI metadata or search by query string. CrossRef provides comprehensive metadata for over 100 million scholarly works across all publishers.
+Query the CrossRef API for DOI metadata or search by query string.
 
 **Parameters:**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `doi` | string | optional | DOI for direct lookup (e.g., "10.1038/nature12373") |
+| `doi` | string | optional | DOI for direct lookup |
 | `query` | string | optional | Search query string |
-| `max_results` | int | 5 | Maximum results to return (for search) |
-| `timeout` | int | 30 | Request timeout in seconds |
-| `mailto` | string | optional | Email for polite pool access (recommended) |
+| `max_results` | int | 5 | Maximum results to return |
+| `mailto` | string | optional | Email for polite pool access (50 req/s) |
 
-*Note: Either `doi` or `query` must be provided.*
+### auth.*
 
-**Returns:**
+**Module:** `auth_actions.py`
 
-```python
-{
-    "success": True,
-    "results": [
-        {
-            "doi": "10.1038/nature12373",
-            "title": "Article Title",
-            "authors": ["Smith, John", "Doe, Alice"],
-            "abstract": "Abstract text (JATS XML stripped)...",
-            "container_title": "Nature",  # journal/book name
-            "published_date": "2023-01-15",
-            "type": "journal-article",  # journal-article, book-chapter, etc.
-            "url": "https://doi.org/10.1038/nature12373"
-        }
-    ],
-    "query": "10.1038/nature12373",
-    "total_results": 1
-}
-```
+| Action | Description |
+|--------|-------------|
+| `auth.verify` | Verify an authentication token |
+| `auth.get_user` | Get full user profile by UID |
 
-**YAML Examples:**
+#### auth.verify
 
-```yaml
-# Direct DOI lookup
-- name: resolve_doi
-  uses: academic.crossref
-  with:
-    doi: "{{ state.doi }}"
-    mailto: "researcher@university.edu"  # recommended for polite pool
-  output:
-    metadata: "{{ result.results[0] }}"
-
-# Search by query
-- name: search_crossref
-  uses: academic.crossref
-  with:
-    query: "machine learning cancer diagnosis"
-    max_results: 10
-    mailto: "researcher@university.edu"
-  output:
-    articles: "{{ result.results }}"
-```
-
-**Complete DOI Resolution Workflow:**
-
-```yaml
-name: resolve-dois
-state_schema:
-  dois: list
-  resolved: list
-
-nodes:
-  - name: resolve_each
-    uses: academic.crossref
-    with:
-      doi: "{{ state.current_doi }}"
-      mailto: "your@email.com"
-    output:
-      resolved: "{{ state.resolved + result.results }}"
-
-edges:
-  - from: __start__
-    to: resolve_each
-  - from: resolve_each
-    to: __end__
-```
-
-**Rate Limiting:**
-- Without `mailto`: 1 request/second
-- With `mailto` (polite pool): 50 requests/second
-
-**Polite Pool Access:**
-
-CrossRef provides higher rate limits for "polite" API users. Include your email in the `mailto` parameter:
-
-```yaml
-- name: crossref_lookup
-  uses: academic.crossref
-  with:
-    doi: "10.1038/nature12373"
-    mailto: "researcher@university.edu"  # enables 50 req/s
-```
-
-This sets the `User-Agent` header to: `TEA-Agent/1.0 (mailto:researcher@university.edu)`
-
-**Error Codes:**
-
-| Error Code | Description |
-|------------|-------------|
-| `empty_query` | Neither doi nor query provided |
-| `not_found` | DOI not found in CrossRef database |
-| `network` | Network connection error |
-| `timeout` | Request timed out |
-| `rate_limit_exhausted` | Rate limit exceeded after retries |
-| `api_error` | Other API errors |
-
-**Error Handling:**
-
-All academic actions return structured errors:
-
-```python
-{
-    "success": False,
-    "error": "Rate limit exceeded. Please wait and try again.",
-    "error_code": "rate_limit"  # empty_query, network, timeout, api_error
-}
-```
-
-### Text Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `text.insert_citations` | `text_actions.py` | Insert citation markers using semantic embedding matching |
-
-#### text.insert_citations
-
-Insert citation markers into text using semantic embedding matching. Uses OpenAI embeddings to compute similarity between sentences and references, placing citations at the most semantically relevant positions.
-
-**Algorithm** (from original Kiroku project):
-1. Tokenize text into sentences using NLTK
-2. Compute embeddings for sentences and references using OpenAI
-3. Calculate similarity matrix via dot product
-4. Insert citations at sentences with highest similarity to each reference
-5. Reorder references by first occurrence in text
-
-**Parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `text` | string | required | Markdown text to process |
-| `references` | list[str] | required | List of reference strings |
-| `model` | string | "text-embedding-3-large" | OpenAI embedding model |
-| `api_key` | string | None | OpenAI API key (uses OPENAI_API_KEY env var if not provided) |
-| `base_url` | string | None | Optional API base URL for compatible endpoints |
-
-**Returns:**
-
-```python
-{
-    "cited_text": "Text with [1] citation markers inserted.",
-    "references_section": "## References\n\n1. Author. Title. 2020.",
-    "citation_map": {1: "Author. Title. 2020."},
-    "text": "Full text with citations and References section"
-}
-```
-
-**Features:**
-- Semantic matching via embeddings (not just keyword matching)
-- Citations placed at most relevant sentences
-- Conclusions section excluded from citation (academic convention)
-- Abstract section excluded from citation
-- References reordered by first occurrence
-- Markdown formatting preserved
-
-**YAML Examples:**
-
-```yaml
-# Basic citation insertion with semantic matching
-name: add-citations
-nodes:
-  - name: cite_draft
-    uses: text.insert_citations
-    with:
-      text: "{{ state.draft }}"
-      references: "{{ state.references }}"
-      model: text-embedding-3-large  # or text-embedding-ada-002 for lower cost
-    output:
-      final_document: "{{ result.text }}"
-
-# Complete academic workflow
-name: academic-writer
-state_schema:
-  topic: str
-  draft: str
-  references: list
-  final_document: str
-
-nodes:
-  - name: research
-    uses: academic.arxiv
-    with:
-      query: "{{ state.topic }}"
-      max_results: 5
-    output:
-      papers: "{{ result.results }}"
-
-  - name: format_refs
-    run: |
-      refs = []
-      for p in state['papers']:
-        ref = f"{', '.join(p['authors'][:3])}. {p['title']}. ArXiv {p['arxiv_id']}. {p['pdf_url']}"
-        refs.append(ref)
-      return {"references": refs}
-
-  - name: write_draft
-    uses: llm.call
-    with:
-      model: gpt-4
-      messages:
-        - role: user
-          content: |
-            Write a research summary on {{ state.topic }}.
-            Reference these papers: {{ state.references | tojson }}
-
-  - name: add_citations
-    uses: text.insert_citations
-    with:
-      text: "{{ state.draft }}"
-      references: "{{ state.references }}"
-    output:
-      final_document: "{{ result.text }}"
-
-edges:
-  - from: __start__
-    to: research
-  - from: research
-    to: format_refs
-  - from: format_refs
-    to: write_draft
-  - from: write_draft
-    to: add_citations
-  - from: add_citations
-    to: __end__
-```
-
-**Input/Output Example:**
-
-```python
-# Input
-text = """
-Machine learning has revolutionized many fields.
-The transformer architecture changed NLP forever.
-"""
-
-references = [
-    "Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762"
-]
-
-# Output
-{
-    "cited_text": """
-Machine learning has revolutionized many fields.
-The transformer architecture changed NLP forever [1].
-""",
-    "references_section": """## References
-
-1. Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762""",
-    "citation_map": {
-        1: "Vaswani, A., et al. Attention Is All You Need. NeurIPS 2017. https://arxiv.org/abs/1706.03762"
-    },
-    "text": "... (full combined document)"
-}
-```
-
-### Graph Actions
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `graph.store_entity` | `graph_actions.py` | Store entity in graph DB |
-| `graph.query` | `graph_actions.py` | Query graph database |
-
-### Observability
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `trace.start` | `observability_actions.py` | Start trace span |
-| `trace.log` | `observability_actions.py` | Log trace event |
-| `trace.end` | `observability_actions.py` | End trace span |
-
-### Authentication (TEA-BUILTIN-015.3)
-
-| Action | Module | Description |
-|--------|--------|-------------|
-| `auth.verify` | `auth_actions.py` | Verify authentication token |
-| `auth.get_user` | `auth_actions.py` | Get full user profile by UID |
-
-**auth.verify** - Verify an authentication token:
+Verify an authentication token. Extracts token from headers if not provided directly.
 
 ```yaml
 - name: verify_token
   uses: auth.verify
   with:
-    token: "{{ state.custom_token }}"  # Optional: extract from headers if omitted
-    headers: "{{ state.request_headers }}"  # Optional headers dict
+    token: "{{ state.custom_token }}"  # Optional
+    headers: "{{ state.request_headers }}"  # Optional
   output: auth_result
-
-- name: check_auth
-  run: |
-    result = state["auth_result"]
-    if result["success"]:
-        return {"user_id": result["user"]["uid"]}
-    else:
-        return {"error": result["error"]}
 ```
 
-**auth.get_user** - Get full user profile:
+#### auth.get_user
+
+Get full user profile by UID from Firebase Authentication.
 
 ```yaml
 - name: get_profile
@@ -871,32 +509,395 @@ The transformer architecture changed NLP forever [1].
   output: full_profile
 ```
 
-## Source Location
+### bmad.*
 
-All action modules are in:
+**Module:** `bmad_actions.py`
 
+| Action | Description |
+|--------|-------------|
+| `bmad.parse_story` | Parse a BMad story file into structured data. |
+| `bmad_parse_story` | Parse a BMad story file into structured data. |
+
+### catalog.*
+
+**Module:** `catalog_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `catalog.register_table` | Register a new table in the DuckLake catalog. |
+| `catalog.get_table` | Get table metadata from the catalog. |
+| `catalog.list_tables` | List tables in the catalog with optional filtering. |
+| `catalog.track_file` | Track a Parquet or delta file in the catalog. |
+| `catalog.get_file` | Get file metadata from the catalog. |
+| `catalog.list_files` | List files for a table with optional filtering. |
+| `catalog.create_snapshot` | Create a point-in-time snapshot for a table. |
+| `catalog.get_latest_snapshot` | Get the most recent snapshot for a table. |
+| `catalog.list_snapshots` | List snapshots for a table. |
+| `catalog.get_changed_files` | Get files that changed since a snapshot. |
+
+### cloud_memory.*
+
+**Module:** `cloud_memory_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `memory.cloud_store` | Store an artifact in cloud storage with metadata and embedding. |
+| `memory.cloud_retrieve` | Retrieve an artifact from cloud storage. |
+| `memory.cloud_list` | List artifacts with filtering. |
+| `memory.manifest_update` | Update metadata only (not file content). |
+| `memory.manifest_search` | Search documents by anchors. |
+
+### code.*
+
+**Module:** `code_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `code.execute` | Execute Python code in a RestrictedPython sandbox. |
+| `code.sandbox` | Manage persistent sandbox sessions for multi-step code execution. |
+
+### context.*
+
+**Module:** `context_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `context.assemble` | Assemble context from configured layers with relevance ranking. |
+
+### data_tabular.*
+
+**Module:** `data_tabular_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `data.create_table` | Register a new tabular table in the catalog. |
+| `data.insert` | Insert rows into a tabular table. |
+| `data.update` | Update rows matching WHERE clause. |
+| `data.delete` | Delete rows matching WHERE clause. |
+| `data.query` | Query tabular data with SQL. |
+| `data.consolidate` | Full compaction: merge N Parquet files + inlined -> 1 Parquet file. |
+
+### dspy.*
+
+**Module:** `dspy_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `reason.dspy.cot` | Chain-of-Thought reasoning using DSPy ChainOfThought module. |
+| `reason.dspy.react` | ReAct reasoning using DSPy ReAct module. |
+| `reason.dspy.compile` | Compile a DSPy module with teleprompter for optimized prompts. |
+| `reason.dspy.optimize` | Run optimization against a validation set. |
+| `reason.dspy.list_compiled` | List all compiled DSPy modules. |
+| `reason.dspy.export` | Export all compiled DSPy prompts for checkpoint persistence. |
+| `reason.dspy.import` | Import compiled DSPy prompts from checkpoint persistence. |
+
+### git.*
+
+**Module:** `git_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `git.worktree_create` |  |
+| `git.worktree_remove` |  |
+| `git.worktree_merge` |  |
+| `git.worktree_list` |  |
+| `git.current_branch` |  |
+| `git.status` |  |
+
+### github.*
+
+**Module:** `github_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `github.list_issues` | List issues from a GitHub repository. |
+| `github.create_issue` | Create a new GitHub issue. |
+| `github.update_issue` | Update an existing GitHub issue. |
+| `github.search_issues` | Search GitHub issues using GitHub search syntax. |
+
+### http_response.*
+
+**Module:** `http_response_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `http.respond` | Synchronous version of http.respond. |
+
+### input_validation.*
+
+**Module:** `input_validation_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `validate.input` | Validate input data against a schema (AC10). |
+| `validate.schema` | Create a reusable schema validator. |
+
+### llamaextract.*
+
+**Module:** `llamaextract_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `llamaextract.extract` | Extract structured data from a document using LlamaExtract. |
+| `llamaextract.upload_agent` | Create or update an extraction agent. |
+| `llamaextract.list_agents` | List available extraction agents. |
+| `llamaextract.get_agent` | Get extraction agent details. |
+| `llamaextract.delete_agent` | Delete an extraction agent. |
+| `llamaextract.submit_job` | Submit async extraction job to LlamaExtract. |
+| `llamaextract.poll_status` | Poll job status from LlamaExtract. |
+| `llamaextract.get_result` | Get extraction result for a completed job. |
+
+### llamaindex.*
+
+**Module:** `llamaindex_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `rag.llamaindex.query` | Execute a simple vector query against a LlamaIndex index. |
+| `rag.llamaindex.router` | Execute a router query that selects the best engine for the query. |
+| `rag.llamaindex.subquestion` | Execute a sub-question query that decomposes complex queries. |
+| `rag.llamaindex.create_index` | Create a new LlamaIndex index from documents or a directory. |
+| `rag.llamaindex.load_index` | Load a persisted LlamaIndex index. |
+| `rag.llamaindex.add_documents` | Add documents to an existing LlamaIndex index. |
+
+### llm_local.*
+
+**Module:** `llm_local_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `llm.local.call` | LLM completion using local or API backend. |
+| `llm.local.chat` | Chat completion using OpenAI-compatible format. |
+| `llm.local.stream` | Streaming LLM generation with token-by-token output. |
+| `llm.local.embed` | Generate text embeddings using local or API backend. |
+| `llm.chat` | Chat completion using OpenAI-compatible format. |
+| `llm.embed` | Generate text embeddings using local or API backend. |
+
+### markdown.*
+
+**Module:** `markdown_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `markdown.parse` | Parse Markdown content into a structured document. |
+| `markdown_parse` | Parse Markdown content into a structured document. |
+
+### mem0.*
+
+**Module:** `mem0_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `memory.mem0.add` | Store messages with automatic fact extraction using Mem0. |
+| `memory.mem0.search` | Search memories by semantic similarity using Mem0. |
+| `memory.mem0.get_all` | Get all memories for a specified scope. |
+| `memory.mem0.get` | Get a specific memory by its ID. |
+| `memory.mem0.update` | Update an existing memory by ID. |
+| `memory.mem0.delete` | Delete memories by ID or scope. |
+| `memory.mem0.test` | Test Mem0 connection and configuration. |
+
+### observability.*
+
+**Module:** `observability_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `trace.start` | Start a new trace span. |
+| `trace.log` | Log an event, metrics, or state snapshot to the current span. |
+| `trace.end` | End the current trace span. |
+| `opik.healthcheck` | Validate Opik connectivity and authentication (TEA-BUILTIN-005.3). |
+| `obs.get_flow_log` | Get the complete flow log from ObservabilityContext (TEA-OBS-001.1). |
+| `obs.log_event` | Log a custom event to the observability stream (TEA-OBS-001.1). |
+| `obs.query_events` | Query events from the observability stream (TEA-OBS-001.1). |
+
+### rag.*
+
+**Module:** `rag_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `embedding.create` | Create embeddings from text. |
+| `vector.store` | Store documents with embeddings in vector store. |
+| `vector.query` | Query vector store for similar documents. |
+| `vector.index_files` | Index files/directories into vector store (AC: 1-13). |
+
+### schema.*
+
+**Module:** `schema_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `schema.merge` | Deep merge multiple JSON Schemas with kubectl-style semantics. |
+
+### search.*
+
+**Module:** `search_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `memory.grep` | Execute grep-like search across agent memory. |
+| `memory.sql_query` | Execute SQL query against agent_memory table with safety controls. |
+| `memory.search_content` | Search for files by structured content field values. |
+
+### secrets.*
+
+**Module:** `secrets_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `secrets.get` | Get a secret value by key. |
+| `secrets.has` | Check if a secret exists. |
+
+### semtools.*
+
+**Module:** `semtools_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `semtools.search` | Semantic search using SemTools CLI. |
+
+### session.*
+
+**Module:** `session_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `session.create` | Create a new session with expiration. |
+| `session.end` | End session and archive its memory. |
+| `session.archive` | Archive session with custom reason. |
+| `session.restore` | Restore archived session. |
+| `session.get` | Get session metadata. |
+| `session.list` | List sessions with optional filtering. |
+| `session.archive_expired` | Archive sessions that have exceeded their TTL. |
+
+### session_persistence.*
+
+**Module:** `session_persistence_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `session.load` | Load session data from the configured session backend. |
+| `session.save` | Save current state to the session backend. |
+| `session.delete` | Delete a session from the backend. |
+| `session.exists` | Check if a session exists. |
+
+### storage.*
+
+**Module:** `storage_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `storage.list` | List files/objects at the given path. |
+| `storage.exists` | Check if a file/object exists. |
+| `storage.delete` | Delete a file/object or directory. |
+| `storage.copy` | Copy a file/object to another location. |
+| `storage.info` | Get metadata/info about a file/object. |
+| `storage.mkdir` | Create a directory/prefix. |
+| `storage.native` | Execute a native filesystem operation not exposed by standard fsspec API. |
+
+### text.*
+
+**Module:** `text_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `text.insert_citations` | Insert citation markers using semantic embedding matching |
+
+#### text.insert_citations
+
+Insert citation markers into text using semantic embedding matching. Uses OpenAI embeddings to compute similarity between sentences and references, placing citations at the most semantically relevant positions.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | string | required | Markdown text to process |
+| `references` | list[str] | required | List of reference strings |
+| `model` | string | "text-embedding-3-large" | OpenAI embedding model |
+| `api_key` | string | None | OpenAI API key (uses env var if not provided) |
+
+**Returns:**
+
+```json
+{
+  "cited_text": "Text with [1] citation markers inserted.",
+  "references_section": "## References\n\n1. Author. Title. 2020.",
+  "citation_map": {"1": "Author. Title. 2020."},
+  "text": "Full text with citations and References section"
+}
 ```
-python/src/the_edge_agent/actions/
-├── __init__.py
-├── llm_actions.py
-├── http_actions.py
-├── file_actions.py
-├── storage_actions.py
-├── data_actions.py
-├── code_actions.py
-├── memory_actions.py
-├── ltm_actions.py
-├── cloud_memory_actions.py
-├── vector_actions.py
-├── graph_actions.py
-├── web_actions.py
-├── academic_actions.py
-├── text_actions.py
-├── tools_actions.py
-├── observability_actions.py
-├── context_actions.py
-└── auth_actions.py
-```
+
+**Features:**
+- Semantic matching via embeddings (not just keyword matching)
+- Citations placed at most relevant sentences
+- Conclusions and Abstract sections excluded from citation
+- References reordered by first occurrence
+- Markdown formatting preserved
+
+### textgrad.*
+
+**Module:** `textgrad_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `learn.textgrad.variable` | Define an optimizable prompt variable (learn.textgrad.variable action). |
+| `learn.textgrad.feedback` | Compute textual gradients from output evaluation (learn.textgrad.feedback action... |
+| `learn.textgrad.optimize_prompt` | Optimize a prompt variable using TextGrad (learn.textgrad.optimize_prompt action... |
+| `learn.textgrad.reflection_corrector` | Corrector for reflection.loop that uses TextGrad for prompt optimization (AC: 4)... |
+| `textgrad.variable` | Define an optimizable prompt variable (learn.textgrad.variable action). |
+| `textgrad.feedback` | Compute textual gradients from output evaluation (learn.textgrad.feedback action... |
+| `textgrad.optimize_prompt` | Optimize a prompt variable using TextGrad (learn.textgrad.optimize_prompt action... |
+| `textgrad.reflection_corrector` | Corrector for reflection.loop that uses TextGrad for prompt optimization (AC: 4)... |
+
+### tools.*
+
+**Module:** `tools_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `tools.crewai` | Execute a CrewAI tool. |
+| `tools.mcp` | Execute a tool from an MCP server. |
+| `tools.langchain` | Execute a LangChain tool. |
+| `tools.discover` | Discover available tools from specified sources. |
+| `tools.clear_cache` | Clear the tool discovery cache. |
+
+### vector.*
+
+**Module:** `vector_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `memory.vector_search` | Semantic search over agent memory using vector similarity. |
+| `memory.vector_search_by_embedding` | Search using a pre-computed embedding vector. |
+| `memory.vector_load_data` | Load vector data from a Parquet file or URL. |
+| `memory.vector_build_index` | Build or rebuild the vector search index. |
+| `memory.vector_stats` | Get statistics about the vector index. |
+| `memory.embed` | Generate embedding for content. |
+| `memory.embed_batch` | Generate embeddings for multiple content strings. |
+| `memory.backfill_embeddings` | Backfill embeddings for documents missing them. |
+
+### web.*
+
+**Module:** `web_actions.py`
+
+| Action | Description |
+|--------|-------------|
+| `web.scrape` | Scrape a URL and extract LLM-ready content via Firecrawl API. |
+| `web.crawl` | Crawl a website recursively via Firecrawl API. |
+| `web.search` | Perform web search via Perplexity API. |
+| `web.ai_scrape` | Extract structured data from a URL using ScrapeGraphAI. |
+
+---
+
+## Deprecated Actions
+
+The following actions have preferred alternatives:
+
+| Deprecated | Use Instead | Notes |
+|------------|-------------|-------|
+| `llm.retry` | `llm.call` with `max_retries` | Built-in retry support |
+
+---
 
 ## Custom Actions
 
@@ -913,5 +914,19 @@ Your module must implement `register_actions()`:
 
 ```python
 def register_actions(registry, engine):
-    registry['my_custom_action'] = my_action_function
+    registry['custom.my_action'] = my_action_function
 ```
+
+---
+
+## Source Location
+
+All action modules are in:
+
+```
+python/src/the_edge_agent/actions/
+```
+
+---
+
+*This document was auto-generated from the codebase. Run `python scripts/extract_action_signatures.py` to update.*

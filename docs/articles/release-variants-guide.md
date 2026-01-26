@@ -4,7 +4,7 @@
 
 *Creator, The Edge Agent*
 
-fabceolin@gmail.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

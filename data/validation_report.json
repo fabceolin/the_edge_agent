@@ -1,0 +1,1070 @@
+{
+  "total_implemented": 476,
+  "total_documented": 266,
+  "coverage_percent": 55.7,
+  "gaps": 211,
+  "hallucinations": 1,
+  "undocumented": [
+    {
+      "action": "actions.a2a_broadcast",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_delegate",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_discover",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_heartbeat",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_receive",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_register",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_send",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_state_get",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_state_set",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.a2a_unregister",
+      "module": "a2a_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.academic_arxiv",
+      "module": "academic_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.academic_crossref",
+      "module": "academic_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.academic_pubmed",
+      "module": "academic_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.agent_coordinate",
+      "module": "agent_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.agent_crewai_delegate",
+      "module": "agent_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.agent_dispatch",
+      "module": "agent_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.agent_parallel",
+      "module": "agent_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.agent_sequential",
+      "module": "agent_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.auth_get_user",
+      "module": "auth_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.auth_verify",
+      "module": "auth_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.cache_get",
+      "module": "cache_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.cache_invalidate",
+      "module": "cache_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.cache_wrap",
+      "module": "cache_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.code_execute",
+      "module": "code_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.code_sandbox",
+      "module": "code_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.embedding_create",
+      "module": "rag_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_clear",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_get",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_has",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_is_retryable",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_respond",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_retry",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.error_type",
+      "module": "error_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.file_read",
+      "module": "core_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.file_write",
+      "module": "core_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.firestore_batch",
+      "module": "firestore_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.firestore_delete",
+      "module": "firestore_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.firestore_get",
+      "module": "firestore_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.firestore_query",
+      "module": "firestore_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.firestore_set",
+      "module": "firestore_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_current_branch",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_status",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_worktree_create",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_worktree_list",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_worktree_merge",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.git_worktree_remove",
+      "module": "git_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.github_create_issue",
+      "module": "github_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.github_list_issues",
+      "module": "github_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.github_search_issues",
+      "module": "github_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.github_update_issue",
+      "module": "github_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_add_labels",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_algorithm",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_check_vector_support",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_create",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_create_vector_index",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_delete_entities_batch",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_delete_entity",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_delete_relation",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_drop",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_drop_vector_index",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_list_graphs",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_list_vector_indexes",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_merge_entity",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_merge_relation",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_query",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_remove_labels",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_retrieve_context",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_shortest_path",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_store_entities_batch",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_store_entity",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_store_relation",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_store_relations_batch",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_update_entity",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_update_relation",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.graph_vector_search",
+      "module": "graph_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.http_get",
+      "module": "core_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.http_post",
+      "module": "core_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.http_respond",
+      "module": "http_response_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_delete_agent",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_extract",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_get_agent",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_get_result",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_list_agents",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_poll_status",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_submit_job",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llamaextract_upload_agent",
+      "module": "llamaextract_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llm_call",
+      "module": "llm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llm_retry",
+      "module": "llm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llm_stream",
+      "module": "llm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.llm_tools",
+      "module": "llm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.ltm_delete",
+      "module": "ltm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.ltm_retrieve",
+      "module": "ltm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.ltm_search",
+      "module": "ltm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.ltm_store",
+      "module": "ltm_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_add",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_delete",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_get",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_get_all",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_search",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_test",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_mem0_update",
+      "module": "mem0_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_retrieve",
+      "module": "memory_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_store",
+      "module": "memory_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.memory_summarize",
+      "module": "memory_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_check_apoc",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_check_triggers",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_cleanup_triggers",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_all_shortest_paths",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_astar",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_betweenness",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_check_available",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_closeness",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_degree",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_dijkstra",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_drop_graph",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_estimate_memory",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_knn",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_label_propagation",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_list_graphs",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_louvain",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_node_similarity",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_page_rank",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_project_graph",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_version",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_gds_wcc",
+      "module": "neo4j_gds_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_get_apoc_version",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_list_triggers",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_pause_trigger",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_register_callback",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_register_state_update",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_register_trigger",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_resume_trigger",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.neo4j_unregister_trigger",
+      "module": "neo4j_trigger_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.notify",
+      "module": "core_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.obs_get_flow_log",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.obs_log_event",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.obs_query_events",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.opik_healthcheck",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.plan_decompose",
+      "module": "planning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.plan_execute",
+      "module": "planning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.plan_replan",
+      "module": "planning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.plan_status",
+      "module": "planning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_add_documents",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_create_index",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_load_index",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_query",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_router",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.rag_llamaindex_subquestion",
+      "module": "llamaindex_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.ratelimit_wrap",
+      "module": "ratelimit_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_cot",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_decompose",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_compile",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_cot",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_export",
+      "module": "dspy_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_import",
+      "module": "dspy_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_list_compiled",
+      "module": "dspy_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_optimize",
+      "module": "dspy_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_dspy_react",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_react",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reason_self_correct",
+      "module": "reasoning_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reflection_correct",
+      "module": "reflection_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reflection_evaluate",
+      "module": "reflection_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.reflection_loop",
+      "module": "reflection_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.retry_loop",
+      "module": "retry_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.schema_merge",
+      "module": "schema_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.secrets_get",
+      "module": "secrets_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.secrets_has",
+      "module": "secrets_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.semtools_search",
+      "module": "semtools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_copy",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_delete",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_exists",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_hash",
+      "module": "cache_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_info",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_list",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_mkdir",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.storage_native",
+      "module": "storage_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.text_insert_citations",
+      "module": "text_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.textgrad_feedback",
+      "module": "textgrad_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.textgrad_optimize_prompt",
+      "module": "textgrad_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.textgrad_reflection_corrector",
+      "module": "textgrad_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.textgrad_variable",
+      "module": "textgrad_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.tools_clear_cache",
+      "module": "tools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.tools_crewai",
+      "module": "tools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.tools_discover",
+      "module": "tools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.tools_langchain",
+      "module": "tools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.tools_mcp",
+      "module": "tools_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.trace_end",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.trace_log",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.trace_start",
+      "module": "observability_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.validate_extraction",
+      "module": "validation_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.validate_generate_prompt",
+      "module": "validation_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.validate_input",
+      "module": "input_validation_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.validate_schema",
+      "module": "input_validation_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.vector_index_files",
+      "module": "rag_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.vector_query",
+      "module": "rag_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.vector_store",
+      "module": "rag_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.web_ai_scrape",
+      "module": "web_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.web_crawl",
+      "module": "web_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.web_scrape",
+      "module": "web_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "actions.web_search",
+      "module": "web_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "bmad_parse_story",
+      "module": "bmad_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "csv_parse",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "csv_stringify",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "data_filter",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "data_merge",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "data_validate",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "json_parse",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "json_stringify",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "json_transform",
+      "module": "data_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "markdown_parse",
+      "module": "markdown_actions.py",
+      "severity": "medium"
+    },
+    {
+      "action": "notify",
+      "module": "core_actions.py",
+      "severity": "medium"
+    }
+  ],
+  "hallucinated": [
+    {
+      "action": "custom.my_action",
+      "documented_in": "actions-reference.md"
+    }
+  ]
+}

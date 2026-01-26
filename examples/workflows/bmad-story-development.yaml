@@ -128,20 +128,49 @@ nodes:
   # NODE 3: Check QA gate status
   # ============================================================================
   - name: check_qa_gate
-    description: Parse QA gate status from story file using grep
+    description: Parse QA gate status from qa_output, story file, or gate file
     run: |
       import subprocess
       import os
-      import glob
+      import re
 
       story_path = state.get("story_path", "")
       qa_gate_status = "UNKNOWN"
 
+      # Helper to extract gate status from text
+      def extract_gate_status(text):
+          if not text:
+              return None
+          # Match patterns like "Gate Status: PASS", "Gate: PASS", "**Gate Status: PASS**"
+          patterns = [
+              r'\*?\*?Gate\s*Status\s*:\s*\*?\*?\s*(PASS|CONCERNS|FAIL|WAIVED)',
+              r'\*?\*?Gate\s*:\s*\*?\*?\s*(PASS|CONCERNS|FAIL|WAIVED)',
+              r'gate:\s*(PASS|CONCERNS|FAIL|WAIVED)',
+          ]
+          for pattern in patterns:
+              match = re.search(pattern, text, re.IGNORECASE)
+              if match:
+                  return match.group(1).upper()
+          return None
+
+      # Priority 1: Parse from qa_output content (most reliable - direct from QA agent)
+      qa_output = state.get("qa_output", {})
+      if isinstance(qa_output, dict):
+          qa_text = qa_output.get("content", "")
+      else:
+          qa_text = str(qa_output) if qa_output else ""
+
+      status = extract_gate_status(qa_text)
+      if status:
+          qa_gate_status = status
+          print(f"QA Gate Status from qa_output: {qa_gate_status}")
+          return {"qa_gate_status": qa_gate_status}
+
+      # Priority 2: Parse from story file
       if story_path and os.path.exists(story_path):
-          # Use grep to find "Gate:" lines, then filter out "Previous QA Gate:"
           try:
               result = subprocess.run(
-                  ["grep", "-E", r"Gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", story_path],
+                  ["grep", "-E", r"Gate.*:(.*)(PASS|CONCERNS|FAIL|WAIVED)", story_path],
                   capture_output=True,
                   text=True
               )
@@ -151,41 +180,35 @@ nodes:
                       # Skip historical entries like "Previous QA Gate:"
                       if "Previous" in line:
                           continue
-                      # Extract gate status
-                      for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
-                          if status in line.upper():
-                              qa_gate_status = status
-                              break
-                      if qa_gate_status != "UNKNOWN":
+                      status = extract_gate_status(line)
+                      if status:
+                          qa_gate_status = status
                           break
           except Exception as e:
               print(f"grep error: {e}")
 
-      # Fallback: check gate YAML file
-      if qa_gate_status == "UNKNOWN":
-          # Extract story ID from path for gate file lookup
-          story_id = os.path.basename(story_path).replace(".md", "")
-          gate_patterns = [
-              f"docs/qa/gates/{story_id}.yml",
-              f"docs/qa/gates/{story_id}.yaml",
-          ]
-          for pattern in gate_patterns:
-              if os.path.exists(pattern):
-                  try:
-                      result = subprocess.run(
-                          ["grep", "-E", r"^gate:\s*(PASS|CONCERNS|FAIL|WAIVED)", pattern],
-                          capture_output=True,
-                          text=True
-                      )
-                      if result.returncode == 0:
-                          line = result.stdout.strip()
-                          for status in ["CONCERNS", "PASS", "FAIL", "WAIVED"]:
-                              if status in line.upper():
-                                  qa_gate_status = status
-                                  break
-                  except Exception:
-                      pass
-                  break
+      if qa_gate_status != "UNKNOWN":
+          print(f"QA Gate Status from story file: {qa_gate_status}")
+          return {"qa_gate_status": qa_gate_status}
+
+      # Priority 3: Check gate YAML file
+      story_id = os.path.basename(story_path).replace(".md", "")
+      gate_patterns = [
+          f"docs/qa/gates/{story_id}.yml",
+          f"docs/qa/gates/{story_id}.yaml",
+      ]
+      for pattern in gate_patterns:
+          if os.path.exists(pattern):
+              try:
+                  with open(pattern, 'r') as f:
+                      content = f.read()
+                  status = extract_gate_status(content)
+                  if status:
+                      qa_gate_status = status
+                      print(f"QA Gate Status from gate file: {qa_gate_status}")
+                      break
+              except Exception:
+                  pass
 
       print(f"QA Gate Status: {qa_gate_status}")
       return {"qa_gate_status": qa_gate_status}
@@ -263,17 +286,86 @@ nodes:
   - name: summary
     description: Generate final summary of the development pipeline
     run: |
+      import os
+      import re
+      import glob
+
       arg = state.get("arg", "unknown")
       story_path = state.get("story_path", "unknown")
-      dev_output = state.get("dev_output", "")
-      qa_output = state.get("qa_output", "")
-      sm_output = state.get("sm_output", "")
       qa_gate_status = state.get("qa_gate_status", "UNKNOWN")
 
-      # Extract completion markers
-      dev_done = "DEV_STORY_COMPLETED" in dev_output or "DEV_REVIEW_QA_COMPLETED" in dev_output
-      qa_done = "QA_REVIEW_COMPLETED" in qa_output
-      sm_done = "SM_STATUS_UPDATED" in sm_output
+      # ========================================================================
+      # Helper functions for artifact-based detection (TEA-RALPHY-002.4)
+      # ========================================================================
+
+      def check_story_status(story_path, expected_statuses):
+          """Check if story status matches expected values (case-insensitive)."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              # Match ## Status section and capture the status value
+              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+              if match:
+                  status = match.group(1).strip().split('\n')[0].strip()
+                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+          except Exception:
+              pass
+          return False
+
+      def check_artifact_file(pattern):
+          """Check if artifact file(s) matching glob pattern exist."""
+          return len(glob.glob(pattern)) > 0
+
+      def get_story_id(story_path):
+          """Extract story ID from path (e.g., 'TEA-RALPHY-002.4' from 'docs/stories/TEA-RALPHY-002.4-name.md')."""
+          basename = os.path.basename(story_path).replace(".md", "")
+          # Match pattern like TEA-XXX-NNN.N or similar
+          match = re.match(r'^([A-Z]+-[A-Z]+-\d+\.\d+)', basename)
+          if match:
+              return match.group(1)
+          return basename
+
+      # Helper to extract content from output objects
+      # llm.call stores {"content": "...", "usage": {}, "provider": "..."} objects
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
+
+      dev_output = get_content(state.get("dev_output", ""))
+      qa_output = get_content(state.get("qa_output", ""))
+      sm_output = get_content(state.get("sm_output", ""))
+
+      # ========================================================================
+      # Detection logic: marker-first, artifact-fallback (AC 9)
+      # ========================================================================
+
+      # Dev detection (AC 1): Check marker first, then story status for "Ready for Review" or "Review"
+      dev_marker = "DEV_STORY_COMPLETED" in dev_output or "DEV_REVIEW_QA_COMPLETED" in dev_output
+      dev_artifact = check_story_status(story_path, ["Ready for Review", "Review"]) if story_path != "unknown" else False
+      dev_done = dev_marker or dev_artifact
+      dev_method = "(via marker)" if dev_marker else "(via artifact)" if dev_artifact else ""
+
+      # QA detection (AC 2, 4): Check marker first, then gate file existence
+      qa_marker = "QA_REVIEW_COMPLETED" in qa_output
+      story_id = get_story_id(story_path) if story_path != "unknown" else ""
+      qa_artifact = check_artifact_file(f"docs/qa/gates/{story_id}*.yml") if story_id else False
+      qa_done = qa_marker or qa_artifact
+      qa_method = "(via marker)" if qa_marker else "(via artifact)" if qa_artifact else ""
+
+      # SM detection (AC 3): Check marker first, then story status for final states
+      sm_marker = "SM_STATUS_UPDATED" in sm_output
+      sm_artifact = check_story_status(story_path, ["Done", "Changes Required", "Done (Waived)"]) if story_path != "unknown" else False
+      sm_done = sm_marker or sm_artifact
+      sm_method = "(via marker)" if sm_marker else "(via artifact)" if sm_artifact else ""
+
+      # ========================================================================
+      # Generate summary with detection method indicators (AC 12)
+      # ========================================================================
+
+      dev_status = f"{'✓ Completed' if dev_done else '✗ Failed'} {dev_method}"
+      qa_status = f"{'✓ Completed' if qa_done else '✗ Failed'} {qa_method}"
+      sm_status = f"{'✓ Completed' if sm_done else '✗ Failed'} {sm_method}"
 
       summary = f"""
       ╔════════════════════════════════════════════════════════════╗
@@ -285,9 +377,9 @@ nodes:
       ╠════════════════════════════════════════════════════════════╣
       ║ Phase           │ Status                                   ║
       ╠═════════════════╪══════════════════════════════════════════╣
-      ║ Dev Agent       │ {'✓ Completed' if dev_done else '✗ Failed':<40} ║
-      ║ QA Agent        │ {'✓ Completed' if qa_done else '✗ Failed':<40} ║
-      ║ SM Agent        │ {'✓ Completed' if sm_done else '✗ Failed':<40} ║
+      ║ Dev Agent       │ {dev_status:<40} ║
+      ║ QA Agent        │ {qa_status:<40} ║
+      ║ SM Agent        │ {sm_status:<40} ║
       ╚════════════════════════════════════════════════════════════╝
       """
 

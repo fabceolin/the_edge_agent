@@ -1,0 +1,652 @@
+[
+  {
+    "id": "phrase_001",
+    "phrase": "The ___ rises in the east.",
+    "correct_word": "sun",
+    "distractors": [
+      "moon",
+      "star",
+      "light",
+      "day"
+    ],
+    "difficulty": 0.2,
+    "category": "nature"
+  },
+  {
+    "id": "phrase_002",
+    "phrase": "She felt ___ after hearing the good news.",
+    "correct_word": "happy",
+    "distractors": [
+      "excited",
+      "relieved",
+      "grateful",
+      "proud"
+    ],
+    "difficulty": 0.3,
+    "category": "emotions"
+  },
+  {
+    "id": "phrase_003",
+    "phrase": "The ___ barked loudly at the stranger.",
+    "correct_word": "dog",
+    "distractors": [
+      "cat",
+      "guard",
+      "neighbor",
+      "child"
+    ],
+    "difficulty": 0.1,
+    "category": "animals"
+  },
+  {
+    "id": "phrase_004",
+    "phrase": "I drink ___ every morning to wake up.",
+    "correct_word": "coffee",
+    "distractors": [
+      "tea",
+      "water",
+      "juice",
+      "milk"
+    ],
+    "difficulty": 0.3,
+    "category": "food"
+  },
+  {
+    "id": "phrase_005",
+    "phrase": "The sky turned ___ before the storm.",
+    "correct_word": "dark",
+    "distractors": [
+      "gray",
+      "cloudy",
+      "black",
+      "gloomy"
+    ],
+    "difficulty": 0.4,
+    "category": "weather"
+  },
+  {
+    "id": "phrase_006",
+    "phrase": "Water ___ at one hundred degrees Celsius.",
+    "correct_word": "boils",
+    "distractors": [
+      "evaporates",
+      "heats",
+      "steams",
+      "bubbles"
+    ],
+    "difficulty": 0.2,
+    "category": "science"
+  },
+  {
+    "id": "phrase_007",
+    "phrase": "The ___ flew south for the winter.",
+    "correct_word": "birds",
+    "distractors": [
+      "geese",
+      "swans",
+      "ducks",
+      "sparrows"
+    ],
+    "difficulty": 0.3,
+    "category": "animals"
+  },
+  {
+    "id": "phrase_008",
+    "phrase": "He ___ the door and walked inside.",
+    "correct_word": "opened",
+    "distractors": [
+      "pushed",
+      "unlocked",
+      "closed",
+      "slammed"
+    ],
+    "difficulty": 0.3,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_009",
+    "phrase": "Please pass me the ___ and pepper.",
+    "correct_word": "salt",
+    "distractors": [
+      "sugar",
+      "butter",
+      "sauce",
+      "spice"
+    ],
+    "difficulty": 0.1,
+    "category": "food"
+  },
+  {
+    "id": "phrase_010",
+    "phrase": "The ___ on my phone is almost dead.",
+    "correct_word": "battery",
+    "distractors": [
+      "screen",
+      "signal",
+      "charger",
+      "power"
+    ],
+    "difficulty": 0.2,
+    "category": "technology"
+  },
+  {
+    "id": "phrase_011",
+    "phrase": "They have been ___ for over ten years.",
+    "correct_word": "married",
+    "distractors": [
+      "together",
+      "friends",
+      "dating",
+      "engaged"
+    ],
+    "difficulty": 0.5,
+    "category": "relationships"
+  },
+  {
+    "id": "phrase_012",
+    "phrase": "The baby started to ___ when she was hungry.",
+    "correct_word": "cry",
+    "distractors": [
+      "scream",
+      "fuss",
+      "whine",
+      "yell"
+    ],
+    "difficulty": 0.3,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_013",
+    "phrase": "I need to ___ my teeth before bed.",
+    "correct_word": "brush",
+    "distractors": [
+      "clean",
+      "wash",
+      "floss",
+      "rinse"
+    ],
+    "difficulty": 0.2,
+    "category": "daily_life"
+  },
+  {
+    "id": "phrase_014",
+    "phrase": "The ___ was shining brightly in the clear sky.",
+    "correct_word": "sun",
+    "distractors": [
+      "moon",
+      "star",
+      "light",
+      "beacon"
+    ],
+    "difficulty": 0.2,
+    "category": "nature"
+  },
+  {
+    "id": "phrase_015",
+    "phrase": "She sat down on the comfortable ___.",
+    "correct_word": "chair",
+    "distractors": [
+      "couch",
+      "sofa",
+      "bench",
+      "seat"
+    ],
+    "difficulty": 0.5,
+    "category": "objects"
+  },
+  {
+    "id": "phrase_016",
+    "phrase": "The ___ fell gently from the clouds.",
+    "correct_word": "rain",
+    "distractors": [
+      "snow",
+      "hail",
+      "water",
+      "mist"
+    ],
+    "difficulty": 0.3,
+    "category": "weather"
+  },
+  {
+    "id": "phrase_017",
+    "phrase": "He felt ___ after staying up all night.",
+    "correct_word": "tired",
+    "distractors": [
+      "exhausted",
+      "sleepy",
+      "drained",
+      "weak"
+    ],
+    "difficulty": 0.4,
+    "category": "emotions"
+  },
+  {
+    "id": "phrase_018",
+    "phrase": "The Earth ___ around the sun once a year.",
+    "correct_word": "orbits",
+    "distractors": [
+      "revolves",
+      "rotates",
+      "circles",
+      "spins"
+    ],
+    "difficulty": 0.5,
+    "category": "science"
+  },
+  {
+    "id": "phrase_019",
+    "phrase": "I like to ___ books before going to sleep.",
+    "correct_word": "read",
+    "distractors": [
+      "browse",
+      "scan",
+      "study",
+      "review"
+    ],
+    "difficulty": 0.2,
+    "category": "daily_life"
+  },
+  {
+    "id": "phrase_020",
+    "phrase": "The ___ meowed and rubbed against my leg.",
+    "correct_word": "cat",
+    "distractors": [
+      "kitten",
+      "pet",
+      "animal",
+      "feline"
+    ],
+    "difficulty": 0.2,
+    "category": "animals"
+  },
+  {
+    "id": "phrase_021",
+    "phrase": "She ___ the letter and put it in the envelope.",
+    "correct_word": "folded",
+    "distractors": [
+      "wrote",
+      "sealed",
+      "signed",
+      "placed"
+    ],
+    "difficulty": 0.4,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_022",
+    "phrase": "The ___ rang and I answered it quickly.",
+    "correct_word": "phone",
+    "distractors": [
+      "bell",
+      "alarm",
+      "doorbell",
+      "timer"
+    ],
+    "difficulty": 0.3,
+    "category": "technology"
+  },
+  {
+    "id": "phrase_023",
+    "phrase": "Ice ___ when the temperature rises above zero.",
+    "correct_word": "melts",
+    "distractors": [
+      "thaws",
+      "dissolves",
+      "softens",
+      "liquefies"
+    ],
+    "difficulty": 0.3,
+    "category": "science"
+  },
+  {
+    "id": "phrase_024",
+    "phrase": "The ___ bloomed beautifully in the spring garden.",
+    "correct_word": "flowers",
+    "distractors": [
+      "roses",
+      "plants",
+      "tulips",
+      "blossoms"
+    ],
+    "difficulty": 0.3,
+    "category": "nature"
+  },
+  {
+    "id": "phrase_025",
+    "phrase": "He was ___ to see his old friend again.",
+    "correct_word": "glad",
+    "distractors": [
+      "happy",
+      "pleased",
+      "thrilled",
+      "delighted"
+    ],
+    "difficulty": 0.6,
+    "category": "emotions"
+  },
+  {
+    "id": "phrase_026",
+    "phrase": "I need to ___ the groceries from the car.",
+    "correct_word": "carry",
+    "distractors": [
+      "bring",
+      "take",
+      "fetch",
+      "move"
+    ],
+    "difficulty": 0.5,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_027",
+    "phrase": "The ___ was too hot to drink right away.",
+    "correct_word": "coffee",
+    "distractors": [
+      "tea",
+      "soup",
+      "cocoa",
+      "drink"
+    ],
+    "difficulty": 0.5,
+    "category": "food"
+  },
+  {
+    "id": "phrase_028",
+    "phrase": "She wore a warm ___ because it was cold outside.",
+    "correct_word": "coat",
+    "distractors": [
+      "jacket",
+      "sweater",
+      "scarf",
+      "blanket"
+    ],
+    "difficulty": 0.4,
+    "category": "objects"
+  },
+  {
+    "id": "phrase_029",
+    "phrase": "The children ___ happily in the playground.",
+    "correct_word": "played",
+    "distractors": [
+      "ran",
+      "laughed",
+      "jumped",
+      "shouted"
+    ],
+    "difficulty": 0.3,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_030",
+    "phrase": "My ___ and I went to dinner last night.",
+    "correct_word": "friend",
+    "distractors": [
+      "wife",
+      "husband",
+      "partner",
+      "colleague"
+    ],
+    "difficulty": 0.6,
+    "category": "relationships"
+  },
+  {
+    "id": "phrase_031",
+    "phrase": "The ___ was covered with fresh white snow.",
+    "correct_word": "ground",
+    "distractors": [
+      "field",
+      "yard",
+      "street",
+      "roof"
+    ],
+    "difficulty": 0.5,
+    "category": "nature"
+  },
+  {
+    "id": "phrase_032",
+    "phrase": "He ___ his hand to ask a question.",
+    "correct_word": "raised",
+    "distractors": [
+      "lifted",
+      "waved",
+      "held",
+      "moved"
+    ],
+    "difficulty": 0.3,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_033",
+    "phrase": "The ___ blew strongly from the north.",
+    "correct_word": "wind",
+    "distractors": [
+      "breeze",
+      "gust",
+      "air",
+      "storm"
+    ],
+    "difficulty": 0.3,
+    "category": "weather"
+  },
+  {
+    "id": "phrase_034",
+    "phrase": "I ___ my keys somewhere in the house.",
+    "correct_word": "lost",
+    "distractors": [
+      "left",
+      "dropped",
+      "misplaced",
+      "forgot"
+    ],
+    "difficulty": 0.4,
+    "category": "daily_life"
+  },
+  {
+    "id": "phrase_035",
+    "phrase": "The ___ swam gracefully in the pond.",
+    "correct_word": "fish",
+    "distractors": [
+      "duck",
+      "swan",
+      "frog",
+      "turtle"
+    ],
+    "difficulty": 0.5,
+    "category": "animals"
+  },
+  {
+    "id": "phrase_036",
+    "phrase": "She ___ the cake with her best friend.",
+    "correct_word": "shared",
+    "distractors": [
+      "split",
+      "divided",
+      "ate",
+      "cut"
+    ],
+    "difficulty": 0.4,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_037",
+    "phrase": "The ___ in the room was too dim to read.",
+    "correct_word": "light",
+    "distractors": [
+      "lamp",
+      "glow",
+      "brightness",
+      "bulb"
+    ],
+    "difficulty": 0.4,
+    "category": "objects"
+  },
+  {
+    "id": "phrase_038",
+    "phrase": "He felt ___ when nobody came to his party.",
+    "correct_word": "sad",
+    "distractors": [
+      "lonely",
+      "upset",
+      "disappointed",
+      "hurt"
+    ],
+    "difficulty": 0.5,
+    "category": "emotions"
+  },
+  {
+    "id": "phrase_039",
+    "phrase": "The computer ___ crashed and I lost my work.",
+    "correct_word": "suddenly",
+    "distractors": [
+      "unexpectedly",
+      "completely",
+      "finally",
+      "totally"
+    ],
+    "difficulty": 0.6,
+    "category": "technology"
+  },
+  {
+    "id": "phrase_040",
+    "phrase": "Plants need ___ and water to grow.",
+    "correct_word": "sunlight",
+    "distractors": [
+      "light",
+      "warmth",
+      "air",
+      "soil"
+    ],
+    "difficulty": 0.4,
+    "category": "science"
+  },
+  {
+    "id": "phrase_041",
+    "phrase": "She ___ her eyes and made a wish.",
+    "correct_word": "closed",
+    "distractors": [
+      "shut",
+      "covered",
+      "squeezed",
+      "lowered"
+    ],
+    "difficulty": 0.4,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_042",
+    "phrase": "The ___ was delicious and freshly baked.",
+    "correct_word": "bread",
+    "distractors": [
+      "cake",
+      "pie",
+      "pastry",
+      "cookie"
+    ],
+    "difficulty": 0.5,
+    "category": "food"
+  },
+  {
+    "id": "phrase_043",
+    "phrase": "I ___ wake up at seven every morning.",
+    "correct_word": "usually",
+    "distractors": [
+      "always",
+      "often",
+      "sometimes",
+      "normally"
+    ],
+    "difficulty": 0.6,
+    "category": "daily_life"
+  },
+  {
+    "id": "phrase_044",
+    "phrase": "The ___ jumped from branch to branch quickly.",
+    "correct_word": "squirrel",
+    "distractors": [
+      "monkey",
+      "bird",
+      "cat",
+      "chipmunk"
+    ],
+    "difficulty": 0.5,
+    "category": "animals"
+  },
+  {
+    "id": "phrase_045",
+    "phrase": "He ___ the ball as far as he could.",
+    "correct_word": "threw",
+    "distractors": [
+      "kicked",
+      "tossed",
+      "hurled",
+      "pitched"
+    ],
+    "difficulty": 0.4,
+    "category": "actions"
+  },
+  {
+    "id": "phrase_046",
+    "phrase": "The ___ between them grew stronger over time.",
+    "correct_word": "bond",
+    "distractors": [
+      "friendship",
+      "connection",
+      "relationship",
+      "trust"
+    ],
+    "difficulty": 0.6,
+    "category": "relationships"
+  },
+  {
+    "id": "phrase_047",
+    "phrase": "She looked out the ___ at the beautiful view.",
+    "correct_word": "window",
+    "distractors": [
+      "door",
+      "balcony",
+      "porch",
+      "glass"
+    ],
+    "difficulty": 0.2,
+    "category": "objects"
+  },
+  {
+    "id": "phrase_048",
+    "phrase": "The ___ set slowly behind the mountains.",
+    "correct_word": "sun",
+    "distractors": [
+      "moon",
+      "sky",
+      "light",
+      "day"
+    ],
+    "difficulty": 0.2,
+    "category": "nature"
+  },
+  {
+    "id": "phrase_049",
+    "phrase": "He ___ nervously before the big presentation.",
+    "correct_word": "waited",
+    "distractors": [
+      "paced",
+      "stood",
+      "sat",
+      "sweated"
+    ],
+    "difficulty": 0.7,
+    "category": "emotions"
+  },
+  {
+    "id": "phrase_050",
+    "phrase": "The ___ was frozen solid after the cold night.",
+    "correct_word": "lake",
+    "distractors": [
+      "pond",
+      "river",
+      "water",
+      "stream"
+    ],
+    "difficulty": 0.5,
+    "category": "nature"
+  }
+]

@@ -4,7 +4,7 @@
 
 *The Edge Agent Project*
 
-fabceolin@gmail.com
+https://www.linkedin.com/in/fabceolin/
 
 ---
 

@@ -17,6 +17,7 @@ state_schema:
   nfr_assess_output: str
   test_design_output: str
   sm_checklist_output: str
+  final_status: str
 
 # TEA-RALPHY-002.3: Enable verbose output for Claude Code shell provider
 settings:
@@ -171,6 +172,137 @@ nodes:
             When done print: SM_CHECKLIST_COMPLETED
     output: sm_checklist_output
 
+  # ============================================================================
+  # NODE 5: Summary
+  # ============================================================================
+  - name: summary
+    description: Generate final summary of the validation pipeline
+    run: |
+      import os
+      import re
+      import glob
+
+      arg = state.get("arg", "unknown")
+      story_path = state.get("story_path", "unknown")
+
+      # ========================================================================
+      # Helper functions for artifact-based detection (TEA-RALPHY-002.4)
+      # ========================================================================
+
+      def check_story_section(story_path, section_name):
+          """Check if a section exists in the story file."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              return section_name in content
+          except Exception:
+              return False
+
+      def check_story_status(story_path, expected_statuses):
+          """Check if story status matches expected values (case-insensitive)."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              # Match ## Status section and capture the status value
+              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+              if match:
+                  status = match.group(1).strip().split('\n')[0].strip()
+                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+          except Exception:
+              pass
+          return False
+
+      def check_artifact_file(pattern):
+          """Check if artifact file(s) matching glob pattern exist."""
+          return len(glob.glob(pattern)) > 0
+
+      def get_story_id(story_path):
+          """Extract story ID from path (e.g., 'TEA-RALPHY-002.4' from 'docs/stories/TEA-RALPHY-002.4-name.md')."""
+          basename = os.path.basename(story_path).replace(".md", "")
+          # Match pattern like TEA-XXX-NNN.N or similar
+          match = re.match(r'^([A-Z]+-[A-Z]+-\d+\.\d+)', basename)
+          if match:
+              return match.group(1)
+          return basename
+
+      # Helper to extract content from output objects
+      # llm.call stores {"content": "...", "usage": {}, "provider": "..."} objects
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
+
+      risk_output = get_content(state.get("risk_profile_output", ""))
+      nfr_output = get_content(state.get("nfr_assess_output", ""))
+      test_output = get_content(state.get("test_design_output", ""))
+      sm_output = get_content(state.get("sm_checklist_output", ""))
+
+      story_id = get_story_id(story_path) if story_path != "unknown" else ""
+
+      # ========================================================================
+      # Detection logic: marker-first, artifact-fallback (AC 9)
+      # ========================================================================
+
+      # Risk Profile detection (AC 5): Check marker first, then story section or assessment file
+      risk_marker = "RISK_PROFILE_COMPLETED" in risk_output
+      risk_section = check_story_section(story_path, "## QA Notes - Risk Profile") if story_path != "unknown" else False
+      risk_file = check_artifact_file(f"docs/qa/assessments/{story_id}-risk-*.md") if story_id else False
+      risk_artifact = risk_section or risk_file
+      risk_done = risk_marker or risk_artifact
+      risk_method = "(via marker)" if risk_marker else "(via artifact)" if risk_artifact else ""
+
+      # NFR Assessment detection (AC 6): Check marker first, then story section or assessment file
+      nfr_marker = "NFR_ASSESS_COMPLETED" in nfr_output
+      nfr_section = check_story_section(story_path, "## QA Notes - NFR Assessment") if story_path != "unknown" else False
+      nfr_file = check_artifact_file(f"docs/qa/assessments/{story_id}-nfr-*.md") if story_id else False
+      nfr_artifact = nfr_section or nfr_file
+      nfr_done = nfr_marker or nfr_artifact
+      nfr_method = "(via marker)" if nfr_marker else "(via artifact)" if nfr_artifact else ""
+
+      # Test Design detection (AC 7): Check marker first, then story section or assessment file
+      test_marker = "TEST_DESIGN_COMPLETED" in test_output
+      test_section = check_story_section(story_path, "## QA Notes - Test Design") if story_path != "unknown" else False
+      test_file = check_artifact_file(f"docs/qa/assessments/{story_id}-test-design-*.md") if story_id else False
+      test_artifact = test_section or test_file
+      test_done = test_marker or test_artifact
+      test_method = "(via marker)" if test_marker else "(via artifact)" if test_artifact else ""
+
+      # SM Checklist detection (AC 8): Check marker first, then story section AND status
+      sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
+      sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
+      sm_status = check_story_status(story_path, ["Ready for Development", "Needs Revision"]) if story_path != "unknown" else False
+      sm_artifact = sm_section and sm_status
+      sm_done = sm_marker or sm_artifact
+      sm_method = "(via marker)" if sm_marker else "(via artifact)" if sm_artifact else ""
+
+      # ========================================================================
+      # Generate summary with detection method indicators (AC 12)
+      # ========================================================================
+
+      risk_status = f"{'✓ Completed' if risk_done else '✗ Failed'} {risk_method}"
+      nfr_status = f"{'✓ Completed' if nfr_done else '✗ Failed'} {nfr_method}"
+      test_status = f"{'✓ Completed' if test_done else '✗ Failed'} {test_method}"
+      sm_status_str = f"{'✓ Completed' if sm_done else '✗ Failed'} {sm_method}"
+
+      summary = f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad Story Validation Pipeline Complete           ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {arg:<52} ║
+      ║ Path:  {story_path:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Phase              │ Status                                ║
+      ╠════════════════════╪═══════════════════════════════════════╣
+      ║ QA Risk Profile    │ {risk_status:<37} ║
+      ║ QA NFR Assessment  │ {nfr_status:<37} ║
+      ║ QA Test Design     │ {test_status:<37} ║
+      ║ SM Story Checklist │ {sm_status_str:<37} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """
+
+      print(summary)
+      return {"final_status": "completed" if all([risk_done, nfr_done, test_done, sm_done]) else "incomplete"}
+
 edges:
   - from: __start__
     to: resolve_story_path
@@ -183,4 +315,6 @@ edges:
   - from: qa_test_design
     to: sm_story_checklist
   - from: sm_story_checklist
+    to: summary
+  - from: summary
     to: __end__
