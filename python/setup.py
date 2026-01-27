@@ -63,7 +63,7 @@ setup(
             "litellm>=1.0.0",  # For LiteLLM provider tests (TEA-LLM-003)
             "requests>=2.32.5",  # For web actions tests
             "RestrictedPython>=8.0",  # For code execution tests
-            "duckdb>=0.10.0",  # For tabular data tests (data_query, data_consolidate)
+            "duckdb>=0.10.0,<=1.2.2",  # Pinned: DuckPGQ extension only available up to v1.2.2
             "opik>=1.9.0",  # For observability tests
             "pygraphviz>=1.13",  # For graph visualization tests (requires libgraphviz-dev)
             "pycozo[embedded]>=0.7.0",  # For graph memory tests (CozoDB backend)
