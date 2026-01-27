@@ -421,6 +421,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             params["messages"].insert(
                 0, {"role": "system", "content": agent.system_prompt}
             )
+            # Remove system_prompt from params - it's now in messages
+            # OpenAI API doesn't accept system_prompt as a kwarg
+            params.pop("system_prompt", None)
 
         # Merge extra params
         if extra_params:

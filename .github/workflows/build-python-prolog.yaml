@@ -401,7 +401,7 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin 'duckdb<=1.2.2'
 
           # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
@@ -600,7 +600,7 @@ jobs:
                       openai 'numpy<2' chromadb requests RestrictedPython \
                       'pycozo[embedded]' pandas \
                       s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin duckdb
+                      firebase-admin 'duckdb<=1.2.2'
 
           # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
