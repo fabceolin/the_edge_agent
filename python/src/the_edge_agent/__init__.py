@@ -162,6 +162,8 @@ __all__ = [
     "KUZU_AVAILABLE",
     # Opik Exporter (TEA-BUILTIN-005.1)
     "OpikExporter",
+    # Bug Reporting (TEA-REPORT-001d)
+    "report_cli",
     # DOT Parser and StateGraph Integration (TEA-GAME-001)
     "dot_to_stategraph",
     "run_dot",
@@ -172,4 +174,4 @@ __all__ = [
     # Version
     "__version__",
 ]
-__version__ = "0.9.89"
+__version__ = "0.9.90"
