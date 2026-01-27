@@ -462,7 +462,7 @@ impl StateGraph {
             initial_state: None,
             variables: HashMap::new(),
             name: String::from("unnamed"),
-            allow_cycles: false,
+            allow_cycles: true, // Default: true for Python parity (cycles validated at runtime via max_iterations)
             max_iterations: 1000, // Default safety limit
             llm_config: None,
         };

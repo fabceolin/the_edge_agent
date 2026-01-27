@@ -95,8 +95,8 @@ pub struct SettingsConfig {
     pub rate_limiters: HashMap<String, RateLimiterConfig>,
 
     /// Allow cycles in the graph (for feedback loops like QA retry patterns)
-    /// Default: false (cycles will cause "Cycle detected in graph" error)
-    #[serde(default)]
+    /// Default: true (for Python parity - cycles validated at runtime via max_iterations)
+    #[serde(default = "default_allow_cycles")]
     pub allow_cycles: bool,
 
     /// Maximum iterations for cyclic graphs (prevents infinite loops)
@@ -362,6 +362,10 @@ pub struct ErrorPolicyConfig {
     /// Failure behavior: checkpoint_and_exit, continue, or fallback
     #[serde(default = "default_on_failure")]
     pub on_failure: String,
+}
+
+fn default_allow_cycles() -> bool {
+    true // Python parity: cycles allowed by default, validated at runtime via max_iterations
 }
 
 fn default_max_retries() -> u32 {
