@@ -679,6 +679,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         opik_project_name=None,
         provider="auto",
         api_base=None,
+        deployment=None,  # Azure deployment name (Rust parity)
         timeout=300,
         shell_provider=None,
         **kwargs,
@@ -693,11 +694,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
            - AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT → Azure OpenAI
         3. Default → OpenAI
 
-        Automatically detects Azure OpenAI configuration via environment variables:
-        - AZURE_OPENAI_API_KEY: Azure OpenAI API key
-        - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-        - AZURE_OPENAI_DEPLOYMENT: Deployment name (defaults to model param)
+        Azure OpenAI configuration (supports both YAML params and environment variables):
+        - deployment: Azure deployment name (YAML param, Rust parity)
+        - AZURE_OPENAI_API_KEY: Azure OpenAI API key (env var)
+        - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL (env var, or use api_base)
+        - AZURE_OPENAI_DEPLOYMENT: Deployment name fallback (env var)
         - OPENAI_API_VERSION: API version (defaults to 2024-02-15-preview)
+
+        Deployment resolution order: deployment param → AZURE_OPENAI_DEPLOYMENT env → model param
 
         For Ollama:
         - OLLAMA_API_BASE: Ollama API endpoint (default: http://localhost:11434/v1)
@@ -1101,7 +1105,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             )
             # Ollama doesn't require API key but OpenAI SDK needs one, use dummy value
             client = OpenAI(base_url=ollama_base, api_key="ollama", timeout=timeout)
-            deployment = model
+            resolved_deployment = model
             is_ollama = True
         elif resolved_provider == "azure":
             # Azure OpenAI
@@ -1113,14 +1117,15 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
                 timeout=timeout,
             )
-            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+            # Deployment resolution: YAML param → env var → model (Rust parity)
+            resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
         else:
             # Standard OpenAI
             if api_base:
                 client = OpenAI(base_url=api_base, timeout=timeout)
             else:
                 client = OpenAI(timeout=timeout)
-            deployment = model
+            resolved_deployment = model
 
         # TEA-BUILTIN-005.6: Wrap client with track_openai for Opik tracing
         # This provides rich LLM telemetry (model, tokens, latency) in Opik dashboard
@@ -1199,7 +1204,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         def make_api_call():
             """Make the OpenAI API call (wrapped by track_openai if opik_trace=True)."""
             return client.chat.completions.create(
-                model=deployment,
+                model=resolved_deployment,
                 messages=messages,
                 temperature=temperature,
                 **filtered_kwargs,
@@ -1336,6 +1341,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         opik_project_name=None,
         provider="auto",
         api_base=None,
+        deployment=None,  # Azure deployment name (Rust parity)
         timeout=300,
         shell_provider=None,
         **kwargs,
@@ -1350,6 +1356,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         1. Explicit `provider` parameter
         2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
         3. Default → OpenAI
+
+        Azure deployment resolution: deployment param → AZURE_OPENAI_DEPLOYMENT env → model param
 
         For LiteLLM (TEA-LLM-003):
         - Supports 100+ LLM providers via unified streaming interface
@@ -1565,7 +1573,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "OLLAMA_API_BASE", "http://localhost:11434/v1"
                 )
                 client = OpenAI(base_url=ollama_base, api_key="ollama")
-                deployment = model
+                resolved_deployment = model
                 is_ollama = True
             elif resolved_provider == "azure":
                 azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
@@ -1575,13 +1583,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     azure_endpoint=azure_endpoint,
                     api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
                 )
-                deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+                # Deployment resolution: YAML param → env var → model (Rust parity)
+                resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
             else:
                 if api_base:
                     client = OpenAI(base_url=api_base)
                 else:
                     client = OpenAI()
-                deployment = model
+                resolved_deployment = model
 
             # Apply Opik tracing wrapper if requested
             if opik_trace:
@@ -1617,7 +1626,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             }
 
             stream = client.chat.completions.create(
-                model=deployment,
+                model=resolved_deployment,
                 messages=messages,
                 temperature=temperature,
                 stream=True,
@@ -1736,6 +1745,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         opik_project_name=None,
         provider="auto",
         api_base=None,
+        deployment=None,  # Azure deployment name (Rust parity)
         **kwargs,
     ):
         """
@@ -1748,6 +1758,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         1. Explicit `provider` parameter
         2. Environment variable detection (OLLAMA_API_BASE, AZURE_OPENAI_*)
         3. Default → OpenAI
+
+        Azure deployment resolution: deployment param → AZURE_OPENAI_DEPLOYMENT env → model param
 
         For LiteLLM (TEA-LLM-003):
         - Supports 100+ LLM providers with tool calling via unified interface
@@ -2098,7 +2110,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 "OLLAMA_API_BASE", "http://localhost:11434/v1"
             )
             client = OpenAI(base_url=ollama_base, api_key="ollama")
-            deployment = model
+            resolved_deployment = model
         elif resolved_provider == "azure":
             azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
             azure_endpoint = api_base or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -2107,13 +2119,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 azure_endpoint=azure_endpoint,
                 api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
             )
-            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", model)
+            # Deployment resolution: YAML param → env var → model (Rust parity)
+            resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
         else:
             if api_base:
                 client = OpenAI(base_url=api_base)
             else:
                 client = OpenAI()
-            deployment = model
+            resolved_deployment = model
 
         # Apply Opik tracing wrapper if requested (for OpenAI/Azure/Ollama)
         if opik_trace:
@@ -2139,7 +2152,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         while rounds < max_tool_rounds:
             try:
                 response = client.chat.completions.create(
-                    model=deployment,
+                    model=resolved_deployment,
                     messages=current_messages,
                     tools=openai_tools if openai_tools else None,
                     tool_choice=tool_choice if openai_tools else None,
