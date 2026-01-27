@@ -204,23 +204,71 @@ struct StreamingRequest {
     max_tokens: Option<u32>,
 }
 
-/// Call LLM completion API
-pub fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
-    // Get provider config
-    let provider = params
-        .get("provider")
-        .and_then(|v| v.as_str())
-        .unwrap_or("openai");
+/// Provider configuration for LLM API calls
+struct ProviderConfig {
+    /// Full URL to call (includes /chat/completions endpoint)
+    url: String,
+    /// API key (if required)
+    api_key: Option<String>,
+    /// If true, use "api-key" header (Azure); if false, use "Authorization: Bearer" (OpenAI)
+    use_api_key_header: bool,
+}
 
-    let (api_base, api_key) = match provider {
+/// Build provider configuration based on provider type and parameters
+fn build_provider_config(provider: &str, params: &HashMap<String, JsonValue>) -> ProviderConfig {
+    match provider {
         "ollama" => {
             let base = params
                 .get("api_base")
                 .and_then(|v| v.as_str())
                 .unwrap_or("http://localhost:11434/v1");
-            (base.to_string(), None)
+            ProviderConfig {
+                url: format!("{}/chat/completions", base.trim_end_matches('/')),
+                api_key: None,
+                use_api_key_header: false,
+            }
+        }
+        "azure" | "azure_openai" | "azureopenai" => {
+            // Azure OpenAI configuration
+            let endpoint = params
+                .get("api_base")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| std::env::var("AZURE_OPENAI_ENDPOINT").ok())
+                .unwrap_or_default();
+            let api_key = params
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| std::env::var("AZURE_OPENAI_API_KEY").ok());
+            let deployment = params
+                .get("deployment")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| std::env::var("AZURE_OPENAI_DEPLOYMENT").ok())
+                .or_else(|| {
+                    params
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "gpt-4".to_string());
+            let api_version = std::env::var("OPENAI_API_VERSION")
+                .unwrap_or_else(|_| "2024-02-15-preview".to_string());
+
+            ProviderConfig {
+                url: format!(
+                    "{}/openai/deployments/{}/chat/completions?api-version={}",
+                    endpoint.trim_end_matches('/'),
+                    deployment,
+                    api_version
+                ),
+                api_key,
+                use_api_key_header: true,
+            }
         }
         _ => {
+            // Default: OpenAI or compatible API
             let base = params
                 .get("api_base")
                 .and_then(|v| v.as_str())
@@ -230,9 +278,24 @@ pub fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-            (base.to_string(), key)
+            ProviderConfig {
+                url: format!("{}/chat/completions", base.trim_end_matches('/')),
+                api_key: key,
+                use_api_key_header: false,
+            }
         }
-    };
+    }
+}
+
+/// Call LLM completion API
+pub fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
+    // Get provider config
+    let provider = params
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("openai");
+
+    let config = build_provider_config(provider, params);
 
     // Get model
     let model = params
@@ -305,12 +368,16 @@ pub fn llm_call(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaRe
         .build()
         .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
 
-    let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+    let mut http_req = client.post(&config.url).json(&request);
 
-    let mut http_req = client.post(&url).json(&request);
-
-    if let Some(ref key) = api_key {
-        http_req = http_req.header("Authorization", format!("Bearer {}", key));
+    if let Some(ref key) = config.api_key {
+        if config.use_api_key_header {
+            // Azure OpenAI uses "api-key" header
+            http_req = http_req.header("api-key", key);
+        } else {
+            // OpenAI and others use "Authorization: Bearer" header
+            http_req = http_req.header("Authorization", format!("Bearer {}", key));
+        }
     }
 
     let response = http_req.send().map_err(|e| TeaError::Http(e.to_string()))?;
@@ -428,27 +495,7 @@ fn llm_stream(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
         .and_then(|v| v.as_str())
         .unwrap_or("openai");
 
-    let (api_base, api_key) = match provider {
-        "ollama" => {
-            let base = params
-                .get("api_base")
-                .and_then(|v| v.as_str())
-                .unwrap_or("http://localhost:11434/v1");
-            (base.to_string(), None)
-        }
-        _ => {
-            let base = params
-                .get("api_base")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.openai.com/v1");
-            let key = params
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-            (base.to_string(), key)
-        }
-    };
+    let config = build_provider_config(provider, params);
 
     // Get model
     let model = params
@@ -516,12 +563,16 @@ fn llm_stream(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResu
         .build()
         .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
 
-    let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+    let mut http_req = client.post(&config.url).json(&request);
 
-    let mut http_req = client.post(&url).json(&request);
-
-    if let Some(ref key) = api_key {
-        http_req = http_req.header("Authorization", format!("Bearer {}", key));
+    if let Some(ref key) = config.api_key {
+        if config.use_api_key_header {
+            // Azure OpenAI uses "api-key" header
+            http_req = http_req.header("api-key", key);
+        } else {
+            // OpenAI and others use "Authorization: Bearer" header
+            http_req = http_req.header("Authorization", format!("Bearer {}", key));
+        }
     }
 
     let response = http_req.send().map_err(|e| TeaError::Http(e.to_string()))?;
@@ -662,27 +713,7 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
         .and_then(|v| v.as_str())
         .unwrap_or("openai");
 
-    let (api_base, api_key) = match provider {
-        "ollama" => {
-            let base = params
-                .get("api_base")
-                .and_then(|v| v.as_str())
-                .unwrap_or("http://localhost:11434/v1");
-            (base.to_string(), None)
-        }
-        _ => {
-            let base = params
-                .get("api_base")
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://api.openai.com/v1");
-            let key = params
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok());
-            (base.to_string(), key)
-        }
-    };
+    let config = build_provider_config(provider, params);
 
     let model = params
         .get("model")
@@ -758,8 +789,6 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
         .build()
         .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
 
-    let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
-
     let mut all_tool_calls: Vec<JsonValue> = vec![];
     let mut all_tool_results: Vec<JsonValue> = vec![];
     let mut rounds = 0;
@@ -786,10 +815,16 @@ fn llm_tools(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResul
                 .map(|n| n as u32),
         };
 
-        let mut http_req = client.post(&url).json(&request);
+        let mut http_req = client.post(&config.url).json(&request);
 
-        if let Some(ref key) = api_key {
-            http_req = http_req.header("Authorization", format!("Bearer {}", key));
+        if let Some(ref key) = config.api_key {
+            if config.use_api_key_header {
+                // Azure OpenAI uses "api-key" header
+                http_req = http_req.header("api-key", key);
+            } else {
+                // OpenAI and others use "Authorization: Bearer" header
+                http_req = http_req.header("Authorization", format!("Bearer {}", key));
+            }
         }
 
         if let Some(timeout) = params.get("timeout").and_then(|v| v.as_u64()) {
@@ -1796,6 +1831,113 @@ mod tests {
         // The error should be connection-related, not API key-related
         let err = result.unwrap_err().to_string();
         assert!(!err.contains("API key"));
+    }
+
+    #[test]
+    fn test_azure_provider_config() {
+        // Test Azure provider configuration building
+        let params: HashMap<String, JsonValue> = [
+            ("model".to_string(), json!("gpt-4o")),
+            ("provider".to_string(), json!("azure")),
+        ]
+        .into_iter()
+        .collect();
+
+        // Set environment variables for test
+        std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test-resource.openai.azure.com");
+        std::env::set_var("AZURE_OPENAI_API_KEY", "test-azure-key");
+        std::env::set_var("AZURE_OPENAI_DEPLOYMENT", "my-deployment");
+        std::env::set_var("OPENAI_API_VERSION", "2024-02-15-preview");
+
+        let config = build_provider_config("azure", &params);
+
+        // Verify Azure URL format
+        assert!(config.url.contains("openai.azure.com"), "URL should contain Azure domain");
+        assert!(config.url.contains("/openai/deployments/"), "URL should contain deployments path");
+        assert!(config.url.contains("my-deployment"), "URL should contain deployment name");
+        assert!(config.url.contains("api-version="), "URL should contain api-version");
+
+        // Verify Azure uses api-key header
+        assert!(config.use_api_key_header, "Azure should use api-key header");
+
+        // Verify API key is set
+        assert!(config.api_key.is_some(), "API key should be set");
+        assert_eq!(config.api_key.as_ref().unwrap(), "test-azure-key");
+
+        // Clean up environment variables
+        std::env::remove_var("AZURE_OPENAI_ENDPOINT");
+        std::env::remove_var("AZURE_OPENAI_API_KEY");
+        std::env::remove_var("AZURE_OPENAI_DEPLOYMENT");
+        std::env::remove_var("OPENAI_API_VERSION");
+    }
+
+    #[test]
+    fn test_azure_provider_aliases() {
+        // Test that azure_openai and azureopenai are also recognized
+        let params: HashMap<String, JsonValue> = [
+            ("model".to_string(), json!("gpt-4")),
+        ]
+        .into_iter()
+        .collect();
+
+        std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com");
+        std::env::set_var("AZURE_OPENAI_API_KEY", "test-key");
+
+        // Test azure_openai alias
+        let config1 = build_provider_config("azure_openai", &params);
+        assert!(config1.use_api_key_header, "azure_openai should use api-key header");
+        assert!(config1.url.contains("openai.azure.com"));
+
+        // Test azureopenai alias
+        let config2 = build_provider_config("azureopenai", &params);
+        assert!(config2.use_api_key_header, "azureopenai should use api-key header");
+        assert!(config2.url.contains("openai.azure.com"));
+
+        std::env::remove_var("AZURE_OPENAI_ENDPOINT");
+        std::env::remove_var("AZURE_OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_azure_deployment_fallback_to_model() {
+        // Test that deployment falls back to model if AZURE_OPENAI_DEPLOYMENT not set
+        let params: HashMap<String, JsonValue> = [
+            ("model".to_string(), json!("my-custom-model")),
+        ]
+        .into_iter()
+        .collect();
+
+        std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com");
+        std::env::set_var("AZURE_OPENAI_API_KEY", "test-key");
+        std::env::remove_var("AZURE_OPENAI_DEPLOYMENT"); // Ensure not set
+
+        let config = build_provider_config("azure", &params);
+
+        // URL should contain the model name as deployment
+        assert!(config.url.contains("my-custom-model"), "Deployment should fall back to model name");
+
+        std::env::remove_var("AZURE_OPENAI_ENDPOINT");
+        std::env::remove_var("AZURE_OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_openai_provider_uses_bearer_auth() {
+        // Verify OpenAI uses Bearer auth, not api-key header
+        let params: HashMap<String, JsonValue> = [
+            ("model".to_string(), json!("gpt-4")),
+        ]
+        .into_iter()
+        .collect();
+
+        std::env::set_var("OPENAI_API_KEY", "test-openai-key");
+
+        let config = build_provider_config("openai", &params);
+
+        // OpenAI should NOT use api-key header
+        assert!(!config.use_api_key_header, "OpenAI should use Bearer auth, not api-key header");
+        assert!(config.url.contains("api.openai.com"), "URL should be OpenAI");
+        assert!(config.api_key.is_some());
+
+        std::env::remove_var("OPENAI_API_KEY");
     }
 
     // =============================================================================

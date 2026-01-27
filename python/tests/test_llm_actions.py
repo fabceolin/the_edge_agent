@@ -601,10 +601,20 @@ class TestShellProviderConfig:
 
         llm_actions.register_actions(mock_registry, mock_engine)
 
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("the_edge_agent.actions.llm_actions.subprocess.Popen") as mock_popen:
             mock_proc = MagicMock()
             mock_proc.returncode = 0
-            mock_proc.communicate.return_value = ("OpenCode response", "")
+            # Mock stdin for pipe mode
+            mock_stdin = MagicMock()
+            mock_proc.stdin = mock_stdin
+            # Mock stdout for reading output
+            mock_stdout = MagicMock()
+            mock_stdout.readline.side_effect = ["OpenCode response\n", ""]
+            mock_stdout.read.return_value = ""
+            mock_proc.stdout = mock_stdout
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = ""
+            mock_proc.wait.return_value = 0
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -632,10 +642,20 @@ class TestShellProviderConfig:
 
         llm_actions.register_actions(mock_registry, mock_engine)
 
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("the_edge_agent.actions.llm_actions.subprocess.Popen") as mock_popen:
             mock_proc = MagicMock()
             mock_proc.returncode = 0
-            mock_proc.communicate.return_value = ("Cursor response", "")
+            # Mock stdin for pipe mode
+            mock_stdin = MagicMock()
+            mock_proc.stdin = mock_stdin
+            # Mock stdout for reading output
+            mock_stdout = MagicMock()
+            mock_stdout.readline.side_effect = ["Cursor response\n", ""]
+            mock_stdout.read.return_value = ""
+            mock_proc.stdout = mock_stdout
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = ""
+            mock_proc.wait.return_value = 0
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -700,10 +720,20 @@ class TestShellProviderInvocation:
 
         llm_actions.register_actions(mock_registry, mock_engine)
 
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("the_edge_agent.actions.llm_actions.subprocess.Popen") as mock_popen:
             mock_proc = MagicMock()
             mock_proc.returncode = 0
-            mock_proc.communicate.return_value = ("Implementation complete", "")
+            # Mock stdin for pipe mode
+            mock_stdin = MagicMock()
+            mock_proc.stdin = mock_stdin
+            # Mock stdout for reading output
+            mock_stdout = MagicMock()
+            mock_stdout.readline.side_effect = ["Implementation complete\n", ""]
+            mock_stdout.read.return_value = ""
+            mock_proc.stdout = mock_stdout
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = ""
+            mock_proc.wait.return_value = 0
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -735,10 +765,20 @@ class TestShellProviderInvocation:
 
         llm_actions.register_actions(mock_registry, mock_engine)
 
-        with patch("subprocess.Popen") as mock_popen:
+        with patch("the_edge_agent.actions.llm_actions.subprocess.Popen") as mock_popen:
             mock_proc = MagicMock()
             mock_proc.returncode = 0
-            mock_proc.communicate.return_value = ("Code review complete", "")
+            # Mock stdin for pipe mode
+            mock_stdin = MagicMock()
+            mock_proc.stdin = mock_stdin
+            # Mock stdout for reading output
+            mock_stdout = MagicMock()
+            mock_stdout.readline.side_effect = ["Code review complete\n", ""]
+            mock_stdout.read.return_value = ""
+            mock_proc.stdout = mock_stdout
+            mock_proc.stderr = MagicMock()
+            mock_proc.stderr.read.return_value = ""
+            mock_proc.wait.return_value = 0
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
