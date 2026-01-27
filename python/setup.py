@@ -1,5 +1,4 @@
 from setuptools import setup, find_packages
-import sys
 from pathlib import Path
 
 # Read README.md from parent directory if available (for development installs)
@@ -12,7 +11,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.89",
+    version="0.9.90",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
