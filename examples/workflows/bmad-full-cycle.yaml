@@ -242,6 +242,36 @@ nodes:
           except Exception:
               return False
 
+      def check_sm_validation_ready(story_path):
+          """Check if SM Validation section indicates READY FOR DEVELOPMENT.
+
+          This is a fallback for when the SM agent updates the SM Validation
+          section but forgets to update the ## Status section.
+          """
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+
+              # Find SM Validation section
+              match = re.search(r'## SM Validation.*?(?=\n## |\Z)', content, re.DOTALL)
+              if not match:
+                  return False
+
+              sm_section = match.group(0).lower()
+              # Check for ready indicators in SM Validation section
+              ready_indicators = [
+                  "ready for development",
+                  "ready for dev",
+                  "✅ ready",
+                  "approved",
+              ]
+              for indicator in ready_indicators:
+                  if indicator in sm_section:
+                      return True
+              return False
+          except Exception:
+              return False
+
       def extract_story_status(story_path):
           """Extract raw status string from story file.
 
@@ -431,7 +461,10 @@ nodes:
       sm_done = sm_marker or sm_section or sm_status  # Changed: OR instead of AND
 
       # Check if story is ready for development (using category-based detection)
-      ready_for_dev = check_story_status(story_path, ["ready_dev"]) if story_path != "unknown" else False
+      # Primary: check ## Status section; Fallback: check ## SM Validation section
+      ready_from_status = check_story_status(story_path, ["ready_dev"]) if story_path != "unknown" else False
+      ready_from_sm_validation = check_sm_validation_ready(story_path) if story_path != "unknown" else False
+      ready_for_dev = ready_from_status or ready_from_sm_validation
 
       # Determine validation status
       all_phases_done = all([risk_done, nfr_done, test_done, trace_done, sm_done])

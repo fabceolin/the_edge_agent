@@ -170,6 +170,9 @@ tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml 
 | `--dot-poll-interval` | 5 | Seconds between completion checks |
 | `--dot-dry-run` | false | Show plan without executing |
 | `--dot-stop-on-failure/--no-dot-stop-on-failure` | true | Stop execution after current phase if any node fails (TEA-CLI-008) |
+| `--dot-start-wave` | 1 | Start from wave N (1-based). Waves 1 to N-1 are skipped (TEA-CLI-009) |
+| `--dot-start-step` | 1 | Start from step M in the starting wave (1-based). Steps 1 to M-1 are skipped (TEA-CLI-009) |
+| `--dot-start-from` | None | Start from the node with this label. Mutually exclusive with `--dot-start-wave/--dot-start-step` (TEA-CLI-009) |
 | `--verbose` / `-v` | 0 | Verbosity level (-v, -vv, -vvv) |
 
 **Exit Code Behavior (TEA-CLI-008):**
@@ -182,6 +185,35 @@ tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml 
 **Summary output includes:**
 - Failed nodes with their exit codes or error messages
 - Skipped phases (when stopped due to failure)
+
+**Resuming Failed Workflows (TEA-CLI-009):**
+
+When a workflow fails mid-execution, you can resume from a specific point without re-executing completed phases:
+
+```bash
+# Resume from wave 3 (skips waves 1-2)
+tea-python run --from-dot workflow.dot --dot-start-wave 3
+
+# Resume from step 2 of wave 1 (skips step 1)
+tea-python run --from-dot workflow.dot --dot-start-step 2
+
+# Resume from wave 2, step 3 (skips wave 1, and steps 1-2 of wave 2)
+tea-python run --from-dot workflow.dot --dot-start-wave 2 --dot-start-step 3
+
+# Resume from a specific node label (finds the wave/step automatically)
+tea-python run --from-dot workflow.dot --dot-start-from "Build"
+
+# Preview what will be skipped/executed
+tea-python run --from-dot workflow.dot --dot-start-wave 2 --dot-dry-run
+```
+
+**Resume options summary:**
+- `--dot-start-wave N`: Skip waves 1 to N-1, start execution from wave N
+- `--dot-start-step M`: Skip steps 1 to M-1 in the starting wave
+- `--dot-start-from <label>`: Find the node with this label and start from its wave/step
+- Use `--dot-dry-run` to preview execution plan with skipped items marked `[SKIPPED]`
+
+**Note:** `--dot-start-from` is mutually exclusive with `--dot-start-wave` and `--dot-start-step`.
 
 **Custom executable examples:**
 

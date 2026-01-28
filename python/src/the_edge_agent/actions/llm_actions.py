@@ -200,7 +200,12 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         return {
             "claude": {
                 "command": "claude",
-                "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+                "args": [
+                    "-p",
+                    "{prompt}",
+                    "--dangerously-skip-permissions",
+                    "--no-session-persistence",
+                ],
                 "timeout": 108000,  # 1800 minutes
             },
             "codex": {

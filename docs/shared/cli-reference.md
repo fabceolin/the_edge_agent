@@ -101,11 +101,23 @@ tea run --from-dot stories.dot --dot-workflow dev.yaml --dot-input '{"mode": "qu
 # Stop-on-failure control (TEA-CLI-008)
 tea run --from-dot stories.dot --dot-stop-on-failure      # Default: stop after phase if any node fails
 tea run --from-dot stories.dot --no-dot-stop-on-failure   # Continue all phases regardless of failures
+
+# Resume from specific wave/step (TEA-CLI-009)
+tea run --from-dot workflow.dot --dot-start-wave 3        # Skip waves 1-2, start from wave 3
+tea run --from-dot workflow.dot --dot-start-step 2        # Skip step 1 in wave 1
+tea run --from-dot workflow.dot --dot-start-wave 2 --dot-start-step 3  # Skip wave 1, skip steps 1-2 in wave 2
+tea run --from-dot workflow.dot --dot-start-from "Build"  # Start from node "Build" (finds wave/step)
+tea run --from-dot workflow.dot --dot-start-wave 2 --dot-dry-run  # Preview skipped/executed nodes
 ```
 
 Exit code behavior for `--from-dot`:
 - Exit code 0: All nodes completed successfully
 - Exit code 1: One or more nodes failed (actual exit codes captured)
+
+Wave/step selection options (TEA-CLI-009):
+- `--dot-start-wave N`: Skip waves 1 to N-1, start from wave N (1-based)
+- `--dot-start-step M`: Skip steps 1 to M-1 in the starting wave (1-based)
+- `--dot-start-from <label>`: Start from node with this label (mutually exclusive with wave/step options)
 
 ## Version and Implementation Info
 

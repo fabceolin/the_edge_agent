@@ -47,7 +47,7 @@ import pickle
 import time
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from enum import Enum
 from datetime import datetime, timezone
 
@@ -658,6 +658,27 @@ def run(
         "Can be specified multiple times (any match triggers exit 1). "
         "Example: --fail-on-state 'final_status=failed'",
     ),
+    # TEA-CLI-009: Wave and step selection for DOT workflow execution
+    dot_start_wave: int = typer.Option(
+        1,
+        "--dot-start-wave",
+        help="Start from wave N (1-based). Waves 1 to N-1 are skipped. "
+        "Example: --dot-start-wave 3 skips waves 1-2.",
+        min=1,
+    ),
+    dot_start_step: int = typer.Option(
+        1,
+        "--dot-start-step",
+        help="Start from step M in the starting wave (1-based). Steps 1 to M-1 are skipped. "
+        "Example: --dot-start-step 2 skips step 1 in the starting wave.",
+        min=1,
+    ),
+    dot_start_from: Optional[str] = typer.Option(
+        None,
+        "--dot-start-from",
+        help="Start from the node with this label. Finds the wave containing the node and "
+        "starts from that step. Mutually exclusive with --dot-start-wave/--dot-start-step.",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -759,15 +780,99 @@ def run(
                 f"Graph loaded: {total_nodes} nodes in {len(levels)} phases", err=True
             )
 
-            # Show execution plan
+            # TEA-CLI-009: Build label-to-location mapping for --dot-start-from
+            label_map: Dict[str, Tuple[int, int]] = {}
+            for wave_idx, level in enumerate(levels, 1):
+                for step_idx, node_id in enumerate(level, 1):
+                    node = parsed.nodes.get(node_id)
+                    label = node.label if node else node_id
+                    label_map[label] = (wave_idx, step_idx)
+
+            # TEA-CLI-009: Validate and resolve start position
+            start_wave = dot_start_wave
+            start_step = dot_start_step
+
+            # TEA-CLI-009: Handle --dot-start-from (AC-16, AC-17, AC-18)
+            if dot_start_from is not None:
+                # Check mutual exclusivity (AC-18 via TECH-003 mitigation)
+                if dot_start_wave != 1 or dot_start_step != 1:
+                    typer.echo(
+                        "Error: --dot-start-from is mutually exclusive with "
+                        "--dot-start-wave and --dot-start-step",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+                # Resolve label to wave/step position
+                if dot_start_from not in label_map:
+                    available_labels = list(label_map.keys())[:10]
+                    available_str = ", ".join(f"'{l}'" for l in available_labels)
+                    suffix = "..." if len(label_map) > 10 else ""
+                    typer.echo(
+                        f"Error: Label '{dot_start_from}' not found. "
+                        f"Available: {available_str}{suffix}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+                start_wave, start_step = label_map[dot_start_from]
+                typer.echo(
+                    f"Resolved --dot-start-from '{dot_start_from}' to wave {start_wave}, step {start_step}",
+                    err=True,
+                )
+
+            # TEA-CLI-009: Validate wave bounds (AC-4)
+            if start_wave > len(levels):
+                typer.echo(
+                    f"Error: Wave {start_wave} exceeds total waves ({len(levels)}). "
+                    f"Valid range: 1-{len(levels)}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # TEA-CLI-009: Validate step bounds within starting wave (AC-10)
+            starting_wave_size = len(levels[start_wave - 1])
+            if start_step > starting_wave_size:
+                typer.echo(
+                    f"Error: Step {start_step} exceeds steps in wave {start_wave} "
+                    f"({starting_wave_size} steps). Valid range: 1-{starting_wave_size}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # TEA-CLI-009: Print skip summary messages (AC-3, AC-9)
+            if start_wave > 1:
+                typer.echo(
+                    f"Skipping waves 1-{start_wave - 1}, starting from wave {start_wave}",
+                    err=True,
+                )
+            if start_step > 1:
+                typer.echo(
+                    f"Skipping steps 1-{start_step - 1} in wave {start_wave}, starting from step {start_step}",
+                    err=True,
+                )
+
+            # Show execution plan (AC-6, AC-15: show skipped items in dry-run)
             typer.echo("\n=== Execution Plan ===", err=True)
             for i, level in enumerate(levels, 1):
                 parallel_marker = " (parallel)" if len(level) > 1 else ""
-                typer.echo(f"Phase {i}{parallel_marker}:", err=True)
-                for node_id in level:
-                    node = parsed.nodes.get(node_id)
-                    label = node.label if node else node_id
-                    typer.echo(f"  - {label}", err=True)
+                # TEA-CLI-009: Mark skipped waves (AC-6)
+                if i < start_wave:
+                    typer.echo(f"Phase {i}{parallel_marker}: [SKIPPED]", err=True)
+                    for node_id in level:
+                        node = parsed.nodes.get(node_id)
+                        label = node.label if node else node_id
+                        typer.echo(f"  - {label} [SKIPPED]", err=True)
+                else:
+                    typer.echo(f"Phase {i}{parallel_marker}:", err=True)
+                    for step_idx, node_id in enumerate(level, 1):
+                        node = parsed.nodes.get(node_id)
+                        label = node.label if node else node_id
+                        # TEA-CLI-009: Mark skipped steps in starting wave (AC-15)
+                        if i == start_wave and step_idx < start_step:
+                            typer.echo(f"  - {label} [SKIPPED]", err=True)
+                        else:
+                            typer.echo(f"  - {label}", err=True)
 
             typer.echo(f"\nTmux session: {dot_session}", err=True)
             typer.echo(f"Attach with: tmux attach -t {dot_session}", err=True)
@@ -796,8 +901,19 @@ def run(
             # TEA-CLI-008: Track skipped phases for stop-on-failure (AC-11)
             skipped_phases = []
             stopped_due_to_failure = False
+            # TEA-CLI-009: Track skipped nodes for final summary (AC-14)
+            skipped_count = 0
 
             for phase_idx, level in enumerate(levels, 1):
+                # TEA-CLI-009: Skip entire waves before start_wave (AC-2)
+                if phase_idx < start_wave:
+                    typer.echo(
+                        f"\n>>> Phase {phase_idx}/{len(levels)}: {len(level)} node(s) [SKIPPED]",
+                        err=True,
+                    )
+                    skipped_count += len(level)
+                    continue
+
                 phase_size = len(level)
                 typer.echo(
                     f"\n>>> Phase {phase_idx}/{len(levels)}: {phase_size} node(s)...",
@@ -811,6 +927,13 @@ def run(
                     for node_id in batch:
                         node = parsed.nodes.get(node_id)
                         label = node.label if node else node_id
+
+                        # TEA-CLI-009: Skip steps before start_step in starting wave only (AC-8, AC-12)
+                        step_idx = level.index(node_id) + 1  # 1-based step index
+                        if phase_idx == start_wave and step_idx < start_step:
+                            typer.echo(f"  Skipping step {step_idx}: {label}", err=True)
+                            skipped_count += 1
+                            continue
 
                         # Determine command: workflow mode or command mode
                         if dot_workflow:
@@ -988,11 +1111,21 @@ def run(
                     break
 
             # Summary (AC-11: show failed nodes and skipped phases)
+            # TEA-CLI-009: Include skipped count in summary (AC-14)
             elapsed = time.time() - start_time
             success_count = sum(1 for r in results if r.get("success", False))
+            executed_count = len(results)
             typer.echo(f"\n=== Summary ===", err=True)
             typer.echo(f"Total time: {elapsed:.1f}s", err=True)
-            typer.echo(f"Nodes: {success_count}/{len(results)} succeeded", err=True)
+            if skipped_count > 0:
+                typer.echo(
+                    f"Nodes: {success_count}/{executed_count} succeeded, {skipped_count} skipped",
+                    err=True,
+                )
+            else:
+                typer.echo(
+                    f"Nodes: {success_count}/{executed_count} succeeded", err=True
+                )
 
             # TEA-CLI-008: Show failed nodes (AC-11)
             if errors:
