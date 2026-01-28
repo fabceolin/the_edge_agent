@@ -1844,7 +1844,10 @@ mod tests {
         .collect();
 
         // Set environment variables for test
-        std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test-resource.openai.azure.com");
+        std::env::set_var(
+            "AZURE_OPENAI_ENDPOINT",
+            "https://test-resource.openai.azure.com",
+        );
         std::env::set_var("AZURE_OPENAI_API_KEY", "test-azure-key");
         std::env::set_var("AZURE_OPENAI_DEPLOYMENT", "my-deployment");
         std::env::set_var("OPENAI_API_VERSION", "2024-02-15-preview");
@@ -1852,10 +1855,22 @@ mod tests {
         let config = build_provider_config("azure", &params);
 
         // Verify Azure URL format
-        assert!(config.url.contains("openai.azure.com"), "URL should contain Azure domain");
-        assert!(config.url.contains("/openai/deployments/"), "URL should contain deployments path");
-        assert!(config.url.contains("my-deployment"), "URL should contain deployment name");
-        assert!(config.url.contains("api-version="), "URL should contain api-version");
+        assert!(
+            config.url.contains("openai.azure.com"),
+            "URL should contain Azure domain"
+        );
+        assert!(
+            config.url.contains("/openai/deployments/"),
+            "URL should contain deployments path"
+        );
+        assert!(
+            config.url.contains("my-deployment"),
+            "URL should contain deployment name"
+        );
+        assert!(
+            config.url.contains("api-version="),
+            "URL should contain api-version"
+        );
 
         // Verify Azure uses api-key header
         assert!(config.use_api_key_header, "Azure should use api-key header");
@@ -1874,23 +1889,27 @@ mod tests {
     #[test]
     fn test_azure_provider_aliases() {
         // Test that azure_openai and azureopenai are also recognized
-        let params: HashMap<String, JsonValue> = [
-            ("model".to_string(), json!("gpt-4")),
-        ]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> = [("model".to_string(), json!("gpt-4"))]
+            .into_iter()
+            .collect();
 
         std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com");
         std::env::set_var("AZURE_OPENAI_API_KEY", "test-key");
 
         // Test azure_openai alias
         let config1 = build_provider_config("azure_openai", &params);
-        assert!(config1.use_api_key_header, "azure_openai should use api-key header");
+        assert!(
+            config1.use_api_key_header,
+            "azure_openai should use api-key header"
+        );
         assert!(config1.url.contains("openai.azure.com"));
 
         // Test azureopenai alias
         let config2 = build_provider_config("azureopenai", &params);
-        assert!(config2.use_api_key_header, "azureopenai should use api-key header");
+        assert!(
+            config2.use_api_key_header,
+            "azureopenai should use api-key header"
+        );
         assert!(config2.url.contains("openai.azure.com"));
 
         std::env::remove_var("AZURE_OPENAI_ENDPOINT");
@@ -1900,11 +1919,9 @@ mod tests {
     #[test]
     fn test_azure_deployment_fallback_to_model() {
         // Test that deployment falls back to model if AZURE_OPENAI_DEPLOYMENT not set
-        let params: HashMap<String, JsonValue> = [
-            ("model".to_string(), json!("my-custom-model")),
-        ]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> = [("model".to_string(), json!("my-custom-model"))]
+            .into_iter()
+            .collect();
 
         std::env::set_var("AZURE_OPENAI_ENDPOINT", "https://test.openai.azure.com");
         std::env::set_var("AZURE_OPENAI_API_KEY", "test-key");
@@ -1913,7 +1930,10 @@ mod tests {
         let config = build_provider_config("azure", &params);
 
         // URL should contain the model name as deployment
-        assert!(config.url.contains("my-custom-model"), "Deployment should fall back to model name");
+        assert!(
+            config.url.contains("my-custom-model"),
+            "Deployment should fall back to model name"
+        );
 
         std::env::remove_var("AZURE_OPENAI_ENDPOINT");
         std::env::remove_var("AZURE_OPENAI_API_KEY");
@@ -1922,19 +1942,23 @@ mod tests {
     #[test]
     fn test_openai_provider_uses_bearer_auth() {
         // Verify OpenAI uses Bearer auth, not api-key header
-        let params: HashMap<String, JsonValue> = [
-            ("model".to_string(), json!("gpt-4")),
-        ]
-        .into_iter()
-        .collect();
+        let params: HashMap<String, JsonValue> = [("model".to_string(), json!("gpt-4"))]
+            .into_iter()
+            .collect();
 
         std::env::set_var("OPENAI_API_KEY", "test-openai-key");
 
         let config = build_provider_config("openai", &params);
 
         // OpenAI should NOT use api-key header
-        assert!(!config.use_api_key_header, "OpenAI should use Bearer auth, not api-key header");
-        assert!(config.url.contains("api.openai.com"), "URL should be OpenAI");
+        assert!(
+            !config.use_api_key_header,
+            "OpenAI should use Bearer auth, not api-key header"
+        );
+        assert!(
+            config.url.contains("api.openai.com"),
+            "URL should be OpenAI"
+        );
         assert!(config.api_key.is_some());
 
         std::env::remove_var("OPENAI_API_KEY");
