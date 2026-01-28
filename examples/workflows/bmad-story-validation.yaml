@@ -6,7 +6,8 @@ description: |
   1. QA risk-profile → update story QA notes
   2. QA nfr-assess → update story QA notes
   3. QA test-design → update story QA notes
-  4. SM story-checklist → update story status
+  4. QA trace-requirements → update story QA notes (RTM)
+  5. SM story-checklist → update story status
 
   Uses BMad agents directly via slash commands for simplified context loading.
 
@@ -184,7 +185,7 @@ nodes:
             - Dependencies are identified
             - Technical approach is documented
             - Story is properly sized
-            - QA notes sections are present (Risk Profile, NFR, Test Design)
+            - QA notes sections are present (Risk Profile, NFR, Test Design, Requirements Trace)
             - No blocking issues or unknowns
 
             AFTER completing validation, you MUST update the story file {{ state.story_path }}:

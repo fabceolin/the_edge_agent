@@ -260,4 +260,8 @@ docs/stories/TEA-BOOK-001.1-repository-setup.md
 docs/stories/TEA-BOOK-001.2-chapters-foundations.md
 docs/stories/TEA-BOOK-001.3-chapters-operations.md
 docs/stories/TEA-BOOK-001.4-chapters-advanced-publication.md
-
+.github/workflows/build-python-base.yaml.orig
+docs/shared/YAML_REFERENCE.md.orig
+python/src/the_edge_agent/__init__.py.orig
+rust/Cargo.lock.orig
+rust/Cargo.toml.orig
