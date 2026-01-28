@@ -607,7 +607,7 @@ class TestShellProviderConfig:
             # Mock stdin for pipe mode
             mock_stdin = MagicMock()
             mock_proc.stdin = mock_stdin
-            # Mock stdout for reading output
+            # Mock stdout for reading output (readline for verbose mode)
             mock_stdout = MagicMock()
             mock_stdout.readline.side_effect = ["OpenCode response\n", ""]
             mock_stdout.read.return_value = ""
@@ -615,6 +615,8 @@ class TestShellProviderConfig:
             mock_proc.stderr = MagicMock()
             mock_proc.stderr.read.return_value = ""
             mock_proc.wait.return_value = 0
+            # Mock communicate() for non-verbose mode (default)
+            mock_proc.communicate.return_value = ("OpenCode response", "")
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -648,7 +650,7 @@ class TestShellProviderConfig:
             # Mock stdin for pipe mode
             mock_stdin = MagicMock()
             mock_proc.stdin = mock_stdin
-            # Mock stdout for reading output
+            # Mock stdout for reading output (readline for verbose mode)
             mock_stdout = MagicMock()
             mock_stdout.readline.side_effect = ["Cursor response\n", ""]
             mock_stdout.read.return_value = ""
@@ -656,6 +658,8 @@ class TestShellProviderConfig:
             mock_proc.stderr = MagicMock()
             mock_proc.stderr.read.return_value = ""
             mock_proc.wait.return_value = 0
+            # Mock communicate() for non-verbose mode (default)
+            mock_proc.communicate.return_value = ("Cursor response", "")
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -726,7 +730,7 @@ class TestShellProviderInvocation:
             # Mock stdin for pipe mode
             mock_stdin = MagicMock()
             mock_proc.stdin = mock_stdin
-            # Mock stdout for reading output
+            # Mock stdout for reading output (readline for verbose mode)
             mock_stdout = MagicMock()
             mock_stdout.readline.side_effect = ["Implementation complete\n", ""]
             mock_stdout.read.return_value = ""
@@ -734,6 +738,8 @@ class TestShellProviderInvocation:
             mock_proc.stderr = MagicMock()
             mock_proc.stderr.read.return_value = ""
             mock_proc.wait.return_value = 0
+            # Mock communicate() for non-verbose mode (default)
+            mock_proc.communicate.return_value = ("Implementation complete", "")
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
@@ -771,7 +777,7 @@ class TestShellProviderInvocation:
             # Mock stdin for pipe mode
             mock_stdin = MagicMock()
             mock_proc.stdin = mock_stdin
-            # Mock stdout for reading output
+            # Mock stdout for reading output (readline for verbose mode)
             mock_stdout = MagicMock()
             mock_stdout.readline.side_effect = ["Code review complete\n", ""]
             mock_stdout.read.return_value = ""
@@ -779,6 +785,8 @@ class TestShellProviderInvocation:
             mock_proc.stderr = MagicMock()
             mock_proc.stderr.read.return_value = ""
             mock_proc.wait.return_value = 0
+            # Mock communicate() for non-verbose mode (default)
+            mock_proc.communicate.return_value = ("Code review complete", "")
             mock_popen.return_value = mock_proc
 
             result = mock_registry["llm.call"](
