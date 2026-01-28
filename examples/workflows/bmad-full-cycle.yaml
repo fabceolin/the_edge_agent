@@ -243,14 +243,74 @@ nodes:
               return False
 
       def check_story_status(story_path, expected_statuses):
-          """Check if story status matches expected values (case-insensitive)."""
+          """Check if story status matches expected values (case-insensitive).
+
+          Supports multiple formats (from story_status_audit.py):
+          - Format 1: ## Status\n\nStatusValue
+          - Format 2: ## Status: StatusValue
+          - Format 3: Table under ## Status
+          - Format 4: Table under ## Epic Overview
+          - Format 5: Table under ## Story Metadata
+          - Format 6: Table under ## Story Overview
+          """
           try:
               with open(story_path, 'r') as f:
                   content = f.read()
-              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+
+              status_raw = None
+
+              # Format 1: Status on separate line (## Status\n\nValue)
+              match = re.search(r'^## Status\s*\n+(.+?)$', content, re.MULTILINE)
               if match:
-                  status = match.group(1).strip().split('\n')[0].strip()
-                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+                  status_raw = match.group(1).strip()
+                  # Check if this is actually a table header
+                  if status_raw.startswith('|'):
+                      status_raw = None
+
+              # Format 2: Status with colon on same line (## Status: Value)
+              if not status_raw:
+                  match = re.search(r'^## Status:\s*(.+?)$', content, re.MULTILINE)
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 3: Table under ## Status
+              if not status_raw:
+                  match = re.search(
+                      r'^## Status\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 4: Table under ## Epic Overview
+              if not status_raw:
+                  match = re.search(
+                      r'^## Epic Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 5: Table under ## Story Metadata
+              if not status_raw:
+                  match = re.search(
+                      r'^## Story Metadata\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 6: Table under ## Story Overview
+              if not status_raw:
+                  match = re.search(
+                      r'^## Story Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              if status_raw:
+                  return any(exp.lower() in status_raw.lower() for exp in expected_statuses)
           except Exception:
               pass
           return False
@@ -766,14 +826,74 @@ nodes:
       # ========================================================================
 
       def check_story_status(story_path, expected_statuses):
-          """Check if story status matches expected values (case-insensitive)."""
+          """Check if story status matches expected values (case-insensitive).
+
+          Supports multiple formats (from story_status_audit.py):
+          - Format 1: ## Status\n\nStatusValue
+          - Format 2: ## Status: StatusValue
+          - Format 3: Table under ## Status
+          - Format 4: Table under ## Epic Overview
+          - Format 5: Table under ## Story Metadata
+          - Format 6: Table under ## Story Overview
+          """
           try:
               with open(story_path, 'r') as f:
                   content = f.read()
-              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+
+              status_raw = None
+
+              # Format 1: Status on separate line (## Status\n\nValue)
+              match = re.search(r'^## Status\s*\n+(.+?)$', content, re.MULTILINE)
               if match:
-                  status = match.group(1).strip().split('\n')[0].strip()
-                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+                  status_raw = match.group(1).strip()
+                  # Check if this is actually a table header
+                  if status_raw.startswith('|'):
+                      status_raw = None
+
+              # Format 2: Status with colon on same line (## Status: Value)
+              if not status_raw:
+                  match = re.search(r'^## Status:\s*(.+?)$', content, re.MULTILINE)
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 3: Table under ## Status
+              if not status_raw:
+                  match = re.search(
+                      r'^## Status\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 4: Table under ## Epic Overview
+              if not status_raw:
+                  match = re.search(
+                      r'^## Epic Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 5: Table under ## Story Metadata
+              if not status_raw:
+                  match = re.search(
+                      r'^## Story Metadata\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              # Format 6: Table under ## Story Overview
+              if not status_raw:
+                  match = re.search(
+                      r'^## Story Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                      content, re.MULTILINE | re.DOTALL
+                  )
+                  if match:
+                      status_raw = match.group(1).strip()
+
+              if status_raw:
+                  return any(exp.lower() in status_raw.lower() for exp in expected_statuses)
           except Exception:
               pass
           return False
