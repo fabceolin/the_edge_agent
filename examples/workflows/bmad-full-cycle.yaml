@@ -1,0 +1,967 @@
+name: bmad-full-cycle
+description: |
+  BMad Full Cycle Pipeline - Validation + Development in sequence with correction loop.
+
+  Sequence:
+  1. VALIDATION PHASE (from bmad-story-validation.yaml):
+     - QA risk-profile → update story QA notes
+     - QA nfr-assess → update story QA notes
+     - QA test-design → update story QA notes
+     - QA trace-requirements → update story QA notes (RTM)
+     - SM story-checklist → update story status
+     - Check validation status
+
+  2. CORRECTION LOOP (if validation failed, max 1 iteration):
+     - Architect *correct-course → fix technical/architecture issues
+     - PO *correct-course → fix product/business issues
+     - Re-run validation phase
+     - If still fails → INTERRUPT
+
+  3. DEVELOPMENT PHASE (from bmad-story-development.yaml):
+     - Dev develop-story → implement the story
+     - QA review → review implementation
+     - Check QA gate → route based on status
+     - Dev review-qa (if CONCERNS) → fix issues
+     - SM status-update → finalize story status
+
+  Usage: tea run examples/workflows/bmad-full-cycle.yaml --arg="TEA-STORY-001"
+
+state_schema:
+  arg: str
+  story_path: str
+  # Validation phase outputs
+  risk_profile_output: str
+  nfr_assess_output: str
+  test_design_output: str
+  trace_requirements_output: str
+  sm_checklist_output: str
+  validation_status: str
+  # Correction loop tracking (max 1 iteration)
+  correction_attempt: int
+  architect_output: str
+  po_output: str
+  # Development phase outputs
+  dev_output: str
+  qa_output: str
+  qa_gate_status: str
+  # QA concerns loop tracking (max 1 iteration)
+  qa_concerns_attempt: int
+  sm_output: str
+  final_status: str
+
+# TEA-RALPHY-002.3: Enable verbose output for Claude Code shell provider
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # NODE 0: Resolve story path from arg
+  # ============================================================================
+  - name: resolve_story_path
+    description: Convert short label to full story path if needed
+    run: |
+      import os
+      import glob
+
+      arg = state.get("arg", "")
+
+      # If arg is already a full path that exists, use it directly
+      if os.path.isfile(arg):
+          return {"story_path": arg}
+
+      # Otherwise, search for matching story file
+      stories_dir = "docs/stories"
+
+      # Try exact match first
+      pattern = os.path.join(stories_dir, f"{arg}.md")
+      matches = glob.glob(pattern)
+      if matches:
+          return {"story_path": matches[0]}
+
+      # Try prefix match
+      pattern = os.path.join(stories_dir, f"{arg}*.md")
+      matches = glob.glob(pattern)
+      if matches:
+          return {"story_path": matches[0]}
+
+      # Fallback: return arg as-is
+      return {"story_path": arg}
+
+  # ============================================================================
+  # VALIDATION PHASE - Nodes from bmad-story-validation.yaml
+  # ============================================================================
+
+  # NODE 1: QA risk-profile
+  - name: qa_risk_profile
+    description: Execute QA risk-profile and update story QA notes
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *risk-profile {{ state.story_path }} YOLO mode
+
+            AFTER completing the risk-profile analysis, you MUST:
+            1. Append a "## QA Notes - Risk Profile" section to the story file {{ state.story_path }}
+            2. Include: Risk level, identified risks, mitigations, testing priorities
+            3. VERIFY the section was written by reading the file
+
+            When done print: RISK_PROFILE_COMPLETED
+    output: risk_profile_output
+
+  # NODE 2: QA nfr-assess
+  - name: qa_nfr_assess
+    description: Execute QA NFR assessment and update story QA notes
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *nfr-assess {{ state.story_path }} YOLO mode
+
+            AFTER completing the NFR assessment, you MUST:
+            1. Append a "## QA Notes - NFR Assessment" section to the story file {{ state.story_path }}
+            2. Include: NFR coverage, missing considerations, test recommendations, acceptance criteria
+            3. VERIFY the section was written by reading the file
+
+            When done print: NFR_ASSESS_COMPLETED
+    output: nfr_assess_output
+
+  # NODE 3: QA test-design
+  - name: qa_test_design
+    description: Execute QA test-design and update story QA notes
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *test-design {{ state.story_path }} YOLO mode
+
+            AFTER completing the test design, you MUST:
+            1. Append a "## QA Notes - Test Design" section to the story file {{ state.story_path }}
+            2. Include: Test coverage matrix, scenarios with expected results, test data/environment requirements
+            3. VERIFY the section was written by reading the file
+
+            When done print: TEST_DESIGN_COMPLETED
+    output: test_design_output
+
+  # NODE 4: QA trace-requirements
+  - name: qa_trace_requirements
+    description: Execute QA requirements tracing and update story QA notes
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *trace {{ state.story_path }} YOLO mode
+
+            AFTER completing the requirements tracing, you MUST:
+            1. Append a "## QA Notes - Requirements Trace" section to the story file {{ state.story_path }}
+            2. Include: Requirements coverage, traceability matrix, gaps identified, recommendations
+            3. VERIFY the section was written by reading the file
+
+            When done print: TRACE_REQUIREMENTS_COMPLETED
+    output: trace_requirements_output
+
+  # NODE 5: SM story validation
+  - name: sm_story_checklist
+    description: Execute SM story-checklist and update story status
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:sm YOLO mode
+
+            Execute the story validation checklist for {{ state.story_path }}
+
+            Validate against Definition of Ready:
+            - Story has clear title and description
+            - Acceptance criteria are defined and testable
+            - Dependencies are identified
+            - Technical approach is documented
+            - Story is properly sized
+            - QA notes sections are present (Risk Profile, NFR, Test Design, Requirements Trace)
+            - No blocking issues or unknowns
+
+            AFTER completing validation, you MUST update the story file {{ state.story_path }}:
+            1. Add "## SM Validation" section with checklist results
+            2. Update "## Status" section:
+               - If ALL criteria passed: Set to "Ready for Development"
+               - If ANY criteria failed: Set to "Needs Revision" with notes
+            3. VERIFY the sections were written by reading the file
+
+            When done print: SM_CHECKLIST_COMPLETED
+    output: sm_checklist_output
+
+  # NODE 6: Check validation status
+  - name: check_validation_status
+    description: Determine if validation passed and story is ready for development
+    run: |
+      import os
+      import re
+      import glob
+
+      story_path = state.get("story_path", "unknown")
+
+      # ========================================================================
+      # Helper functions for artifact-based detection
+      # ========================================================================
+
+      def check_story_section(story_path, section_name):
+          """Check if a section exists in the story file."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              return section_name in content
+          except Exception:
+              return False
+
+      def check_story_status(story_path, expected_statuses):
+          """Check if story status matches expected values (case-insensitive)."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+              if match:
+                  status = match.group(1).strip().split('\n')[0].strip()
+                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+          except Exception:
+              pass
+          return False
+
+      def get_story_id(story_path):
+          """Extract story ID from path."""
+          basename = os.path.basename(story_path).replace(".md", "")
+          match = re.match(r'^([A-Z]+-[A-Z]+-\d+\.?\d*)', basename)
+          if match:
+              return match.group(1)
+          return basename
+
+      def check_artifact_file(pattern):
+          """Check if artifact file(s) matching glob pattern exist."""
+          return len(glob.glob(pattern)) > 0
+
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
+
+      # Get outputs
+      risk_output = get_content(state.get("risk_profile_output", ""))
+      nfr_output = get_content(state.get("nfr_assess_output", ""))
+      test_output = get_content(state.get("test_design_output", ""))
+      trace_output = get_content(state.get("trace_requirements_output", ""))
+      sm_output = get_content(state.get("sm_checklist_output", ""))
+
+      story_id = get_story_id(story_path) if story_path != "unknown" else ""
+
+      # ========================================================================
+      # Detection logic: marker-first, artifact-fallback
+      # ========================================================================
+
+      # Risk Profile detection
+      risk_marker = "RISK_PROFILE_COMPLETED" in risk_output
+      risk_section = check_story_section(story_path, "## QA Notes - Risk Profile") if story_path != "unknown" else False
+      risk_file = check_artifact_file(f"docs/qa/assessments/{story_id}-risk-*.md") if story_id else False
+      risk_done = risk_marker or risk_section or risk_file
+
+      # NFR Assessment detection
+      nfr_marker = "NFR_ASSESS_COMPLETED" in nfr_output
+      nfr_section = check_story_section(story_path, "## QA Notes - NFR Assessment") if story_path != "unknown" else False
+      nfr_file = check_artifact_file(f"docs/qa/assessments/{story_id}-nfr-*.md") if story_id else False
+      nfr_done = nfr_marker or nfr_section or nfr_file
+
+      # Test Design detection
+      test_marker = "TEST_DESIGN_COMPLETED" in test_output
+      test_section = check_story_section(story_path, "## QA Notes - Test Design") if story_path != "unknown" else False
+      test_file = check_artifact_file(f"docs/qa/assessments/{story_id}-test-design-*.md") if story_id else False
+      test_done = test_marker or test_section or test_file
+
+      # Trace Requirements detection
+      trace_marker = "TRACE_REQUIREMENTS_COMPLETED" in trace_output
+      trace_section = check_story_section(story_path, "## QA Notes - Requirements Trace") if story_path != "unknown" else False
+      trace_file = check_artifact_file(f"docs/qa/assessments/{story_id}-trace-*.md") if story_id else False
+      trace_done = trace_marker or trace_section or trace_file
+
+      # SM Checklist detection
+      sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
+      sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
+      sm_status = check_story_status(story_path, ["Ready for Development", "Needs Revision"]) if story_path != "unknown" else False
+      sm_done = sm_marker or (sm_section and sm_status)
+
+      # Check if story is ready for development
+      ready_for_dev = check_story_status(story_path, ["Ready for Development"]) if story_path != "unknown" else False
+
+      # Determine validation status
+      all_phases_done = all([risk_done, nfr_done, test_done, trace_done, sm_done])
+
+      if all_phases_done and ready_for_dev:
+          validation_status = "PASSED"
+      elif all_phases_done and not ready_for_dev:
+          validation_status = "FAILED_NOT_READY"
+      else:
+          validation_status = "FAILED_INCOMPLETE"
+
+      # Print validation summary
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              VALIDATION PHASE COMPLETE                      ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('arg', 'unknown'):<52} ║
+      ║ Path:  {story_path:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Phase              │ Status                                ║
+      ╠════════════════════╪═══════════════════════════════════════╣
+      ║ QA Risk Profile    │ {'✓' if risk_done else '✗':<37} ║
+      ║ QA NFR Assessment  │ {'✓' if nfr_done else '✗':<37} ║
+      ║ QA Test Design     │ {'✓' if test_done else '✗':<37} ║
+      ║ QA Req Tracing     │ {'✓' if trace_done else '✗':<37} ║
+      ║ SM Story Checklist │ {'✓' if sm_done else '✗':<37} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Ready for Dev: {ready_for_dev!s:<44} ║
+      ║ VALIDATION STATUS: {validation_status:<40} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if validation_status != "PASSED":
+          print("\n⚠️  VALIDATION FAILED - Development phase will be SKIPPED")
+          print("    Fix the issues above and re-run the workflow.")
+      else:
+          print("\n✓ VALIDATION PASSED - Proceeding to development phase...")
+
+      return {"validation_status": validation_status}
+
+  # ============================================================================
+  # DEVELOPMENT PHASE - Nodes from bmad-story-development.yaml
+  # (Only executed if validation_status == "PASSED")
+  # ============================================================================
+
+  # NODE 7: Dev agent develop-story
+  - name: run_dev_develop_story
+    description: Execute Dev agent *develop-story command
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:dev *develop-story {{ state.story_path }} YOLO mode
+
+            INSTRUCTIONS:
+            1. Follow the develop-story command order-of-execution exactly:
+               - Read each task → Implement task and subtasks → Write tests → Execute validations
+               - Only mark checkbox [x] if ALL validations pass
+               - Update File List with new/modified/deleted files
+               - Repeat until all tasks complete
+            2. Run ALL tests and confirm they pass
+            3. Set story status to "Ready for Review" when complete
+
+            CRITICAL: Do NOT skip any steps. Implement ALL tasks sequentially.
+            CRITICAL: Write proper tests for each implementation.
+            CRITICAL: Update the File List section accurately.
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  # NODE 8: QA agent review
+  - name: run_qa_review
+    description: Execute QA agent *review command
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 1200
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:qa *review-story {{ state.story_path }} YOLO mode
+
+            INSTRUCTIONS:
+            1. Perform comprehensive review following the review-story task:
+               - Risk Assessment (determines review depth)
+               - Requirements Traceability
+               - Code Quality Review
+               - Test Architecture Assessment
+               - NFR Validation
+               - Standards Compliance Check
+            2. Update ONLY the "## QA Results" section in the story file
+            3. Create quality gate file in docs/qa/gates/
+            4. Determine gate status: PASS | CONCERNS | FAIL | WAIVED
+
+            CRITICAL: Only modify the QA Results section of the story.
+            CRITICAL: Create the gate file with proper status.
+
+            When done print: QA_REVIEW_COMPLETED
+    output: qa_output
+
+  # NODE 9: Check QA gate status
+  - name: check_qa_gate
+    description: Parse QA gate status from qa_output, story file, or gate file
+    run: |
+      import subprocess
+      import os
+      import re
+
+      story_path = state.get("story_path", "")
+      qa_gate_status = "UNKNOWN"
+
+      def extract_gate_status(text):
+          if not text:
+              return None
+          patterns = [
+              r'\*?\*?Gate\s*Status\s*:\s*\*?\*?\s*(PASS|CONCERNS|FAIL|WAIVED)',
+              r'\*?\*?Gate\s*:\s*\*?\*?\s*(PASS|CONCERNS|FAIL|WAIVED)',
+              r'gate:\s*(PASS|CONCERNS|FAIL|WAIVED)',
+          ]
+          for pattern in patterns:
+              match = re.search(pattern, text, re.IGNORECASE)
+              if match:
+                  return match.group(1).upper()
+          return None
+
+      # Priority 1: Parse from qa_output content
+      qa_output = state.get("qa_output", {})
+      if isinstance(qa_output, dict):
+          qa_text = qa_output.get("content", "")
+      else:
+          qa_text = str(qa_output) if qa_output else ""
+
+      status = extract_gate_status(qa_text)
+      if status:
+          qa_gate_status = status
+          print(f"QA Gate Status from qa_output: {qa_gate_status}")
+          return {"qa_gate_status": qa_gate_status}
+
+      # Priority 2: Parse from story file
+      if story_path and os.path.exists(story_path):
+          try:
+              result = subprocess.run(
+                  ["grep", "-E", r"Gate.*:(.*)(PASS|CONCERNS|FAIL|WAIVED)", story_path],
+                  capture_output=True,
+                  text=True
+              )
+              if result.returncode == 0:
+                  lines = result.stdout.strip().split('\n')
+                  for line in lines:
+                      if "Previous" in line:
+                          continue
+                      status = extract_gate_status(line)
+                      if status:
+                          qa_gate_status = status
+                          break
+          except Exception as e:
+              print(f"grep error: {e}")
+
+      if qa_gate_status != "UNKNOWN":
+          print(f"QA Gate Status from story file: {qa_gate_status}")
+          return {"qa_gate_status": qa_gate_status}
+
+      # Priority 3: Check gate YAML file
+      story_id = os.path.basename(story_path).replace(".md", "")
+      gate_patterns = [
+          f"docs/qa/gates/{story_id}.yml",
+          f"docs/qa/gates/{story_id}.yaml",
+      ]
+      for pattern in gate_patterns:
+          if os.path.exists(pattern):
+              try:
+                  with open(pattern, 'r') as f:
+                      content = f.read()
+                  status = extract_gate_status(content)
+                  if status:
+                      qa_gate_status = status
+                      print(f"QA Gate Status from gate file: {qa_gate_status}")
+                      break
+              except Exception:
+                  pass
+
+      print(f"QA Gate Status: {qa_gate_status}")
+      return {"qa_gate_status": qa_gate_status}
+
+  # NODE 10: Dev agent review-qa to address concerns
+  - name: run_dev_review_qa
+    description: Execute Dev agent *review-qa command to address QA concerns
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:dev *review-qa {{ state.story_path }} YOLO mode
+
+            The QA review returned CONCERNS. You must address them.
+
+            INSTRUCTIONS:
+            1. Read the "## QA Results" section to understand the concerns
+            2. Address each concern raised by the QA agent:
+               - Fix code issues
+               - Add missing tests
+               - Update documentation as needed
+            3. Run ALL tests and confirm they pass
+            4. Update the Dev Agent Record section with your fixes
+
+            CRITICAL: Address ALL QA concerns before completing.
+            CRITICAL: Do NOT skip any concerns. Fix them all.
+
+            When done print: DEV_REVIEW_QA_COMPLETED
+    output: dev_output
+
+  # NODE 10.5: Increment QA concerns attempt counter
+  - name: increment_qa_concerns_attempt
+    description: Track that we've done one QA concerns fix iteration
+    run: |
+      current = state.get("qa_concerns_attempt", 0)
+      new_attempt = current + 1
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        QA CONCERNS FIX COMPLETED (Attempt {new_attempt})               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Dev *review-qa: ✓ Done                                     ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Re-running QA review...                                    ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      # Clear previous QA output for fresh re-review
+      return {
+          "qa_concerns_attempt": new_attempt,
+          "qa_output": "",
+          "qa_gate_status": ""
+      }
+
+  # NODE 11: SM agent status update
+  - name: run_sm_status_update
+    description: Execute SM agent to update story status based on QA results
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:sm YOLO mode
+
+            TASK: Update story status for {{ state.story_path }} based on QA review results.
+
+            INSTRUCTIONS:
+            1. Read the "## QA Results" section to determine gate status
+            2. Check the gate file in docs/qa/gates/ for the gate decision
+            3. Update the story status based on the gate:
+               - If gate is PASS: Set status to "Done"
+               - If gate is CONCERNS: Set status to "Done" with QA notes
+               - If gate is FAIL: Set status to "Changes Required"
+               - If gate is WAIVED: Set status to "Done (Waived)"
+            4. Update the "## Status" section in the story file
+
+            CRITICAL: Only update the Status section based on QA gate decision.
+            CRITICAL: Do NOT modify code or other sections.
+
+            When done print: SM_STATUS_UPDATED with the final status.
+    output: sm_output
+
+  # ============================================================================
+  # NODE 12: Architect correct-course (first step of correction loop)
+  # ============================================================================
+  - name: architect_correct_course
+    description: Execute Architect agent *correct-course to fix story issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:architect *correct-course {{ state.story_path }} YOLO mode
+
+            The story validation FAILED. You need to correct course.
+
+            INSTRUCTIONS:
+            1. Read the story file {{ state.story_path }} completely
+            2. Review the "## SM Validation" section for failed checklist items
+            3. Review any "## QA Notes" sections for issues identified
+            4. Analyze the technical approach and architecture
+            5. Make corrections to:
+               - Technical approach if flawed
+               - Architecture decisions if needed
+               - Dependencies if missing
+               - Implementation details if unclear
+            6. Update the story file with your corrections
+            7. VERIFY the corrections were written by reading the file
+
+            CRITICAL: Focus on TECHNICAL and ARCHITECTURAL corrections.
+            CRITICAL: Do NOT change business requirements (that's PO's job).
+
+            When done print: ARCHITECT_CORRECT_COURSE_COMPLETED
+    output: architect_output
+
+  # ============================================================================
+  # NODE 13: PO correct-course (second step of correction loop)
+  # ============================================================================
+  - name: po_correct_course
+    description: Execute PO agent *correct-course to fix story issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            /BMad:agents:po *correct-course {{ state.story_path }} YOLO mode
+
+            The story validation FAILED and Architect has made technical corrections.
+            Now you need to correct course from a product perspective.
+
+            INSTRUCTIONS:
+            1. Read the story file {{ state.story_path }} completely
+            2. Review the "## SM Validation" section for failed checklist items
+            3. Review any "## QA Notes" sections for issues identified
+            4. Analyze the business requirements and acceptance criteria
+            5. Make corrections to:
+               - Story title and description if unclear
+               - Acceptance criteria if not testable
+               - Business value if not articulated
+               - User stories if incomplete
+               - Priority and sizing if incorrect
+            6. Update the story file with your corrections
+            7. Reset the "## Status" section to allow re-validation
+            8. VERIFY the corrections were written by reading the file
+
+            CRITICAL: Focus on PRODUCT and BUSINESS corrections.
+            CRITICAL: Ensure acceptance criteria are clear and testable.
+
+            When done print: PO_CORRECT_COURSE_COMPLETED
+    output: po_output
+
+  # ============================================================================
+  # NODE 14: Increment correction attempt counter
+  # ============================================================================
+  - name: increment_correction_attempt
+    description: Track that we've done one correction iteration
+    run: |
+      current = state.get("correction_attempt", 0)
+      new_attempt = current + 1
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           CORRECTION LOOP COMPLETED (Attempt {new_attempt})             ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Architect *correct-course: ✓ Done                          ║
+      ║ PO *correct-course: ✓ Done                                 ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Re-running validation phase...                             ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      # Clear previous validation outputs for fresh re-validation
+      return {
+          "correction_attempt": new_attempt,
+          "risk_profile_output": "",
+          "nfr_assess_output": "",
+          "test_design_output": "",
+          "trace_requirements_output": "",
+          "sm_checklist_output": "",
+          "validation_status": ""
+      }
+
+  # ============================================================================
+  # NODE 15: Validation Failed After Correction - Final Stop
+  # ============================================================================
+  - name: validation_failed
+    description: Handle validation failure after correction attempt - skip development phase
+    run: |
+      story_path = state.get("story_path", "unknown")
+      validation_status = state.get("validation_status", "UNKNOWN")
+      correction_attempt = state.get("correction_attempt", 0)
+
+      if correction_attempt > 0:
+          correction_msg = f"Correction attempts: {correction_attempt} (max reached)"
+      else:
+          correction_msg = "No correction attempted (unexpected state)"
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad Full Cycle - INTERRUPTED                     ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('arg', 'unknown'):<52} ║
+      ║ Path:  {story_path:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ VALIDATION: {validation_status:<47} ║
+      ║ {correction_msg:<58} ║
+      ║ DEVELOPMENT: SKIPPED                                       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                                                            ║
+      ║  ⚠️  The story did not pass validation after correction.    ║
+      ║                                                            ║
+      ║  The Architect and PO have already attempted to fix the    ║
+      ║  issues, but validation still failed.                      ║
+      ║                                                            ║
+      ║  Next steps (manual intervention required):                ║
+      ║  1. Review the story file for remaining issues             ║
+      ║  2. Manually address the validation failures               ║
+      ║  3. Re-run: tea run examples/workflows/bmad-full-cycle.yaml ║
+      ║                                                            ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {"final_status": "validation_failed_after_correction"}
+
+  # ============================================================================
+  # NODE 16: Final Summary
+  # ============================================================================
+  - name: summary
+    description: Generate final summary of the full cycle pipeline
+    run: |
+      import os
+      import re
+      import glob
+
+      arg = state.get("arg", "unknown")
+      story_path = state.get("story_path", "unknown")
+      validation_status = state.get("validation_status", "UNKNOWN")
+      qa_gate_status = state.get("qa_gate_status", "UNKNOWN")
+      correction_attempt = state.get("correction_attempt", 0)
+
+      # ========================================================================
+      # Helper functions
+      # ========================================================================
+
+      def check_story_status(story_path, expected_statuses):
+          """Check if story status matches expected values (case-insensitive)."""
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read()
+              match = re.search(r'##\s*Status\s*\n+\s*(\S+[\S\s]*?)(?=\n##|\n\n##|\Z)', content)
+              if match:
+                  status = match.group(1).strip().split('\n')[0].strip()
+                  return any(exp.lower() in status.lower() for exp in expected_statuses)
+          except Exception:
+              pass
+          return False
+
+      def check_artifact_file(pattern):
+          """Check if artifact file(s) matching glob pattern exist."""
+          return len(glob.glob(pattern)) > 0
+
+      def get_story_id(story_path):
+          """Extract story ID from path."""
+          basename = os.path.basename(story_path).replace(".md", "")
+          match = re.match(r'^([A-Z]+-[A-Z]+-\d+\.?\d*)', basename)
+          if match:
+              return match.group(1)
+          return basename
+
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
+
+      dev_output = get_content(state.get("dev_output", ""))
+      qa_output = get_content(state.get("qa_output", ""))
+      sm_output = get_content(state.get("sm_output", ""))
+      architect_output = get_content(state.get("architect_output", ""))
+      po_output = get_content(state.get("po_output", ""))
+
+      # ========================================================================
+      # Detection logic
+      # ========================================================================
+
+      # Correction loop detection
+      architect_marker = "ARCHITECT_CORRECT_COURSE_COMPLETED" in architect_output
+      po_marker = "PO_CORRECT_COURSE_COMPLETED" in po_output
+      correction_done = correction_attempt > 0
+
+      # Dev detection
+      dev_marker = "DEV_STORY_COMPLETED" in dev_output or "DEV_REVIEW_QA_COMPLETED" in dev_output
+      dev_artifact = check_story_status(story_path, ["Ready for Review", "Review"]) if story_path != "unknown" else False
+      dev_done = dev_marker or dev_artifact
+      dev_method = "(via marker)" if dev_marker else "(via artifact)" if dev_artifact else ""
+
+      # QA detection
+      qa_marker = "QA_REVIEW_COMPLETED" in qa_output
+      story_id = get_story_id(story_path) if story_path != "unknown" else ""
+      qa_artifact = check_artifact_file(f"docs/qa/gates/{story_id}*.yml") if story_id else False
+      qa_done = qa_marker or qa_artifact
+      qa_method = "(via marker)" if qa_marker else "(via artifact)" if qa_artifact else ""
+
+      # SM detection
+      sm_marker = "SM_STATUS_UPDATED" in sm_output
+      sm_artifact = check_story_status(story_path, ["Done", "Changes Required", "Done (Waived)"]) if story_path != "unknown" else False
+      sm_done = sm_marker or sm_artifact
+      sm_method = "(via marker)" if sm_marker else "(via artifact)" if sm_artifact else ""
+
+      # ========================================================================
+      # Generate summary
+      # ========================================================================
+
+      validation_str = f"{'✓ PASSED' if validation_status == 'PASSED' else '✗ ' + validation_status}"
+      correction_str = f"{'✓ Applied (' + str(correction_attempt) + ' iteration)' if correction_done else 'Not needed'}"
+      architect_str = f"{'✓' if architect_marker else '–'}"
+      po_str = f"{'✓' if po_marker else '–'}"
+      dev_status = f"{'✓ Completed' if dev_done else '✗ Failed/Skipped'} {dev_method}"
+      qa_status = f"{'✓ Completed' if qa_done else '✗ Failed/Skipped'} {qa_method}"
+      sm_status = f"{'✓ Completed' if sm_done else '✗ Failed/Skipped'} {sm_method}"
+
+      all_done = validation_status == "PASSED" and all([dev_done, qa_done, sm_done])
+      final_result = "SUCCESS" if all_done else "INCOMPLETE"
+
+      summary = f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad Full Cycle Pipeline Complete                 ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {arg:<52} ║
+      ║ Path:  {story_path:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    VALIDATION PHASE                        ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Status: {validation_str:<51} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    CORRECTION LOOP                         ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Correction: {correction_str:<47} ║
+      ║ Architect *correct-course: {architect_str:<31} ║
+      ║ PO *correct-course: {po_str:<38} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    DEVELOPMENT PHASE                       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Dev Agent       │ {dev_status:<40} ║
+      ║ QA Agent        │ {qa_status:<40} ║
+      ║ SM Agent        │ {sm_status:<40} ║
+      ║ QA Gate         │ {qa_gate_status:<40} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ FINAL RESULT: {final_result:<45} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """
+
+      print(summary)
+      return {"final_status": "completed" if all_done else "incomplete"}
+
+edges:
+  # ============================================================================
+  # VALIDATION PHASE - Sequential execution
+  # ============================================================================
+  - from: __start__
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: qa_risk_profile
+  - from: qa_risk_profile
+    to: qa_nfr_assess
+  - from: qa_nfr_assess
+    to: qa_test_design
+  - from: qa_test_design
+    to: qa_trace_requirements
+  - from: qa_trace_requirements
+    to: sm_story_checklist
+  - from: sm_story_checklist
+    to: check_validation_status
+
+  # ============================================================================
+  # CONDITIONAL ROUTING - Based on validation status
+  # ============================================================================
+
+  # If validation PASSED: proceed to development
+  - from: check_validation_status
+    to: run_dev_develop_story
+    when: "state.get('validation_status') == 'PASSED'"
+
+  # If validation FAILED and NO correction attempt yet: try correction loop
+  - from: check_validation_status
+    to: architect_correct_course
+    when: "state.get('validation_status') != 'PASSED' and state.get('correction_attempt', 0) == 0"
+
+  # If validation FAILED and already tried correction: give up
+  - from: check_validation_status
+    to: validation_failed
+    when: "state.get('validation_status') != 'PASSED' and state.get('correction_attempt', 0) >= 1"
+
+  # ============================================================================
+  # CORRECTION LOOP - Architect → PO → Re-validate (max 1 iteration)
+  # ============================================================================
+  - from: architect_correct_course
+    to: po_correct_course
+
+  - from: po_correct_course
+    to: increment_correction_attempt
+
+  # After correction, re-run validation from the beginning
+  - from: increment_correction_attempt
+    to: qa_risk_profile
+
+  # Validation failed after correction → end
+  - from: validation_failed
+    to: __end__
+
+  # ============================================================================
+  # DEVELOPMENT PHASE - Sequential with QA gate loop
+  # ============================================================================
+  - from: run_dev_develop_story
+    to: run_qa_review
+  - from: run_qa_review
+    to: check_qa_gate
+
+  # QA gate routing
+  # If CONCERNS and no fix attempt yet: route to dev to fix
+  - from: check_qa_gate
+    to: run_dev_review_qa
+    when: "state.get('qa_gate_status') == 'CONCERNS' and state.get('qa_concerns_attempt', 0) == 0"
+
+  # If CONCERNS but already tried fixing: proceed to SM anyway
+  - from: check_qa_gate
+    to: run_sm_status_update
+    when: "state.get('qa_gate_status') == 'CONCERNS' and state.get('qa_concerns_attempt', 0) >= 1"
+
+  # If NOT CONCERNS (PASS, FAIL, WAIVED, UNKNOWN): proceed to SM
+  - from: check_qa_gate
+    to: run_sm_status_update
+    when: "state.get('qa_gate_status') != 'CONCERNS'"
+
+  # After dev fixes concerns, increment counter then re-run QA review
+  - from: run_dev_review_qa
+    to: increment_qa_concerns_attempt
+  - from: increment_qa_concerns_attempt
+    to: run_qa_review
+
+  # Final steps
+  - from: run_sm_status_update
+    to: summary
+  - from: summary
+    to: __end__
