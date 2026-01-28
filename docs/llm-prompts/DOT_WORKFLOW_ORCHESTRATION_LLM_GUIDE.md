@@ -169,7 +169,19 @@ tea-python run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml 
 | `--dot-timeout` | 54000 | Command timeout in seconds (15h) |
 | `--dot-poll-interval` | 5 | Seconds between completion checks |
 | `--dot-dry-run` | false | Show plan without executing |
+| `--dot-stop-on-failure/--no-dot-stop-on-failure` | true | Stop execution after current phase if any node fails (TEA-CLI-008) |
 | `--verbose` / `-v` | 0 | Verbosity level (-v, -vv, -vvv) |
+
+**Exit Code Behavior (TEA-CLI-008):**
+
+- Exit code 0: All nodes completed successfully
+- Exit code 1: One or more nodes failed (captured from actual workflow exit codes)
+- With `--dot-stop-on-failure` (default): Stops after current phase completes if any node fails, skips remaining phases
+- With `--no-dot-stop-on-failure`: Continues all phases regardless of failures, reports failures at the end
+
+**Summary output includes:**
+- Failed nodes with their exit codes or error messages
+- Skipped phases (when stopped due to failure)
 
 **Custom executable examples:**
 

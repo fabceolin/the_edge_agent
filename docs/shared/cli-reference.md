@@ -69,6 +69,44 @@ tea run workflow.yaml -vvv    # trace
 tea run workflow.yaml -q      # quiet (errors only)
 ```
 
+## Exit Condition Control (TEA-CLI-008)
+
+```bash
+# Exit with code 1 if final state matches condition
+tea run workflow.yaml --fail-on-state 'final_status=failed'
+tea run workflow.yaml --fail-on-state 'final_status=failed' --fail-on-state 'error=true'
+
+# Useful for CI/CD pipelines to detect workflow failures
+tea run workflow.yaml --fail-on-state 'validation_status=incomplete' && echo "Success" || echo "Failed"
+```
+
+The `--fail-on-state` option checks the final workflow state against key=value conditions:
+- Specify multiple conditions (any match triggers exit 1)
+- Comparison is string-based (numeric values are compared as strings)
+- Works with `--stream`, `--show-graph`, and default output modes
+
+## DOT File Execution (Python Only, TEA-GAME-001)
+
+```bash
+# Execute DOT files with tmux (phases respect dependencies)
+tea run --from-dot workflow.dot
+tea run --from-dot workflow.dot --dot-session my-session
+tea run --from-dot workflow.dot --dot-max-parallel 4
+tea run --from-dot workflow.dot --dot-dry-run
+
+# Workflow mode: run a YAML for each DOT node
+tea run --from-dot stories.dot --dot-workflow bmad-validation.yaml
+tea run --from-dot stories.dot --dot-workflow dev.yaml --dot-input '{"mode": "quick"}'
+
+# Stop-on-failure control (TEA-CLI-008)
+tea run --from-dot stories.dot --dot-stop-on-failure      # Default: stop after phase if any node fails
+tea run --from-dot stories.dot --no-dot-stop-on-failure   # Continue all phases regardless of failures
+```
+
+Exit code behavior for `--from-dot`:
+- Exit code 0: All nodes completed successfully
+- Exit code 1: One or more nodes failed (actual exit codes captured)
+
 ## Version and Implementation Info
 
 ```bash

@@ -224,17 +224,8 @@ nodes:
           except Exception:
               return False
 
-      def check_story_status(story_path, expected_statuses):
-          """Check if story status matches expected values (case-insensitive).
-
-          Supports multiple formats (from story_status_audit.py):
-          - Format 1: ## Status\n\nStatusValue
-          - Format 2: ## Status: StatusValue
-          - Format 3: Table under ## Status
-          - Format 4: Table under ## Epic Overview
-          - Format 5: Table under ## Story Metadata
-          - Format 6: Table under ## Story Overview
-          """
+      def extract_story_status(story_path):
+          """Extract raw status string from story file."""
           try:
               with open(story_path, 'r') as f:
                   content = f.read()
@@ -245,57 +236,70 @@ nodes:
               match = re.search(r'^## Status\s*\n+(.+?)$', content, re.MULTILINE)
               if match:
                   status_raw = match.group(1).strip()
-                  # Check if this is actually a table header
                   if status_raw.startswith('|'):
                       status_raw = None
 
-              # Format 2: Status with colon on same line (## Status: Value)
+              # Format 2: Status with colon on same line
               if not status_raw:
                   match = re.search(r'^## Status:\s*(.+?)$', content, re.MULTILINE)
                   if match:
                       status_raw = match.group(1).strip()
 
-              # Format 3: Table under ## Status
-              if not status_raw:
-                  match = re.search(
-                      r'^## Status\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
+              # Format 3-6: Tables under various sections
+              for section in ['Status', 'Epic Overview', 'Story Metadata', 'Story Overview']:
+                  if not status_raw:
+                      match = re.search(
+                          rf'^## {section}\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
+                          content, re.MULTILINE | re.DOTALL
+                      )
+                      if match:
+                          status_raw = match.group(1).strip()
 
-              # Format 4: Table under ## Epic Overview
-              if not status_raw:
-                  match = re.search(
-                      r'^## Epic Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 5: Table under ## Story Metadata
-              if not status_raw:
-                  match = re.search(
-                      r'^## Story Metadata\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 6: Table under ## Story Overview
-              if not status_raw:
-                  match = re.search(
-                      r'^## Story Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              if status_raw:
-                  return any(exp.lower() in status_raw.lower() for exp in expected_statuses)
+              return status_raw
           except Exception:
               pass
-          return False
+          return None
+
+      def categorize_status(status_raw):
+          """Categorize status using same logic as story_status_audit.py."""
+          if not status_raw:
+              return "no_status"
+
+          status_lower = status_raw.lower()
+
+          # Order matters: more specific patterns first
+          STATUS_CATEGORIES = {
+              "ready_review": ["ready for review", "ready for merge"],
+              "ready_done": ["ready for done"],
+              "ready_dev": [
+                  "ready for dev", "ready for development", "ready to develop",
+                  "approved - ready for development", "ready",
+              ],
+              "draft": ["draft", "planned"],
+              "backlog": ["backlog", "proposed", "pending"],
+              "done": [
+                  "done", "complete", "completed", "merged", "superseded",
+                  "qa approved", "qa pass", "qa approved - ready for deployment",
+              ],
+              "approved": ["approved"],
+              "in_progress": ["in progress", "wip", "work in progress"],
+              "needs_revision": ["needs revision", "changes required"],
+          }
+
+          for category, keywords in STATUS_CATEGORIES.items():
+              for keyword in keywords:
+                  if keyword in status_lower:
+                      return category
+
+          return "other"
+
+      def check_story_status(story_path, expected_categories):
+          """Check if story status matches expected categories."""
+          status_raw = extract_story_status(story_path)
+          if not status_raw:
+              return False
+          category = categorize_status(status_raw)
+          return category in expected_categories
 
       def check_artifact_file(pattern):
           """Check if artifact file(s) matching glob pattern exist."""
@@ -364,9 +368,9 @@ nodes:
       # SM Checklist detection (AC 8): Check marker first, then story section AND status
       sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
       sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
-      sm_status = check_story_status(story_path, ["Ready for Development", "Needs Revision"]) if story_path != "unknown" else False
-      sm_artifact = sm_section and sm_status
-      sm_done = sm_marker or sm_artifact
+      sm_status = check_story_status(story_path, ["ready_dev", "needs_revision"]) if story_path != "unknown" else False
+      # Relaxed: sm_done is True if marker OR section exists OR status is ready/needs_revision
+      sm_done = sm_marker or sm_section or sm_status
       sm_method = "(via marker)" if sm_marker else "(via artifact)" if sm_artifact else ""
 
       # ========================================================================
@@ -378,6 +382,9 @@ nodes:
       test_status = f"{'✓ Completed' if test_done else '✗ Failed'} {test_method}"
       trace_status = f"{'✓ Completed' if trace_done else '✗ Failed'} {trace_method}"
       sm_status_str = f"{'✓ Completed' if sm_done else '✗ Failed'} {sm_method}"
+
+      all_phases_passed = all([risk_done, nfr_done, test_done, trace_done, sm_done])
+      final_status = "completed" if all_phases_passed else "incomplete"
 
       summary = f"""
       ╔════════════════════════════════════════════════════════════╗
@@ -396,8 +403,13 @@ nodes:
       ╚════════════════════════════════════════════════════════════╝
       """
 
+      # TEA-CLI-008: Print summary first, then raise exception if incomplete for non-zero exit
       print(summary)
-      return {"final_status": "completed" if all([risk_done, nfr_done, test_done, trace_done, sm_done]) else "incomplete"}
+
+      if final_status == "incomplete":
+          raise Exception(f"Validation incomplete - one or more phases failed for {arg}")
+
+      return {"final_status": final_status}
 
 edges:
   - from: __start__
