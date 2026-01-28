@@ -137,6 +137,15 @@ pub struct SettingsConfig {
 /// LLM backend configuration (TEA-RELEASE-004.4)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmConfig {
+    /// LLM provider: "openai", "azure", "ollama", or "auto" (default)
+    ///
+    /// - `openai`: Use OpenAI API (default)
+    /// - `azure`: Use Azure OpenAI (requires AZURE_OPENAI_* env vars)
+    /// - `ollama`: Use local Ollama instance
+    /// - `auto`: Auto-detect based on environment variables
+    #[serde(default)]
+    pub provider: Option<String>,
+
     /// Backend type: "local", "api", or "auto" (default)
     ///
     /// - `local`: Use local llama.cpp backend (requires llm-local feature)
