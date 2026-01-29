@@ -35,6 +35,10 @@ state_schema:
   test_design_output: str
   trace_requirements_output: str
   sm_checklist_output: str
+  # LLM-based status classification (TEA-BMAD-001)
+  story_content: str
+  llm_status_result: str
+  status_category: str
   validation_status: str
   # Correction loop tracking (max 1 iteration)
   correction_attempt: int
@@ -219,185 +223,85 @@ nodes:
             When done print: SM_CHECKLIST_COMPLETED
     output: sm_checklist_output
 
-  # NODE 6: Check validation status
+  # NODE 6: Read story file content for LLM classification
+  - name: read_story_for_classification
+    description: Read story file content into state for LLM analysis
+    uses: file.read
+    with:
+      path: "{{ state.story_path }}"
+    output: story_content
+
+  # NODE 6.5: LLM-based status classification (replaces fragile regex)
+  # Uses Claude Code shell provider for robust status extraction
+  - name: llm_classify_status
+    description: Use LLM to classify story status (more robust than regex)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 120
+      messages:
+        - role: user
+          content: |
+            Analyze this story file and extract its development status.
+
+            Story file path: {{ state.story_path }}
+
+            Story content:
+            ```markdown
+            {{ state.story_content }}
+            ```
+
+            TASK: Determine the story's current status category.
+
+            STATUS CATEGORIES (choose exactly one):
+            - "ready_dev": Ready for development (includes: "Ready for Development", "Ready for Dev", "Approved - Ready for Development", "Ready")
+            - "needs_revision": Needs changes (includes: "Needs Revision", "Changes Required")
+            - "done": Completed (includes: "Done", "Complete", "Completed", "Merged", "QA Approved", "QA Pass")
+            - "in_progress": Work in progress (includes: "In Progress", "WIP", "Work in Progress")
+            - "draft": Draft or planned (includes: "Draft", "Planned")
+            - "ready_review": Ready for review (includes: "Ready for Review", "Ready for Merge")
+            - "unknown": Cannot determine status
+
+            ALSO CHECK:
+            1. Does "## SM Validation" section exist? (true/false)
+            2. Does "## QA Notes - Risk Profile" section exist? (true/false)
+            3. Does "## QA Notes - NFR Assessment" section exist? (true/false)
+            4. Does "## QA Notes - Test Design" section exist? (true/false)
+            5. Does "## QA Notes - Requirements Trace" section exist? (true/false)
+
+            RESPOND WITH ONLY A JSON OBJECT (no markdown, no explanation):
+            {
+              "status_category": "<one of the categories above>",
+              "status_raw": "<exact status text found in the document>",
+              "sm_validation_exists": true/false,
+              "qa_risk_profile_exists": true/false,
+              "qa_nfr_exists": true/false,
+              "qa_test_design_exists": true/false,
+              "qa_trace_exists": true/false,
+              "confidence": 0.0-1.0
+            }
+    output: llm_status_result
+
+  # NODE 6.5: Parse LLM result and determine validation status
   - name: check_validation_status
-    description: Determine if validation passed and story is ready for development
+    description: Parse LLM classification and determine if validation passed
     run: |
       import os
       import re
+      import json
       import glob
 
       story_path = state.get("story_path", "unknown")
 
       # ========================================================================
-      # Helper functions for artifact-based detection
+      # Helper functions
       # ========================================================================
 
-      def check_story_section(story_path, section_name):
-          """Check if a section exists in the story file."""
-          try:
-              with open(story_path, 'r') as f:
-                  content = f.read()
-              return section_name in content
-          except Exception:
-              return False
-
-      def check_sm_validation_ready(story_path):
-          """Check if SM Validation section indicates READY FOR DEVELOPMENT.
-
-          This is a fallback for when the SM agent updates the SM Validation
-          section but forgets to update the ## Status section.
-          """
-          try:
-              with open(story_path, 'r') as f:
-                  content = f.read()
-
-              # Find SM Validation section
-              match = re.search(r'## SM Validation.*?(?=\n## |\Z)', content, re.DOTALL)
-              if not match:
-                  return False
-
-              sm_section = match.group(0).lower()
-              # Check for ready indicators in SM Validation section
-              ready_indicators = [
-                  "ready for development",
-                  "ready for dev",
-                  "✅ ready",
-                  "approved",
-              ]
-              for indicator in ready_indicators:
-                  if indicator in sm_section:
-                      return True
-              return False
-          except Exception:
-              return False
-
-      def extract_story_status(story_path):
-          """Extract raw status string from story file.
-
-          Supports multiple formats (from story_status_audit.py):
-          - Format 1: ## Status\n\nStatusValue
-          - Format 2: ## Status: StatusValue
-          - Format 3: Table under ## Status
-          - Format 4: Table under ## Epic Overview
-          - Format 5: Table under ## Story Metadata
-          - Format 6: Table under ## Story Overview
-
-          Returns: (status_raw, category) tuple
-          """
-          try:
-              with open(story_path, 'r') as f:
-                  content = f.read()
-
-              status_raw = None
-
-              # Format 1: Status on separate line (## Status\n\nValue)
-              match = re.search(r'^## Status\s*\n+(.+?)$', content, re.MULTILINE)
-              if match:
-                  status_raw = match.group(1).strip()
-                  # Check if this is actually a table header
-                  if status_raw.startswith('|'):
-                      status_raw = None
-
-              # Format 2: Status with colon on same line (## Status: Value)
-              if not status_raw:
-                  match = re.search(r'^## Status:\s*(.+?)$', content, re.MULTILINE)
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 3: Table under ## Status
-              if not status_raw:
-                  match = re.search(
-                      r'^## Status\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 4: Table under ## Epic Overview
-              if not status_raw:
-                  match = re.search(
-                      r'^## Epic Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 5: Table under ## Story Metadata
-              if not status_raw:
-                  match = re.search(
-                      r'^## Story Metadata\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              # Format 6: Table under ## Story Overview
-              if not status_raw:
-                  match = re.search(
-                      r'^## Story Overview\s*\n+\|.*?\*\*Status\*\*\s*\|\s*(.+?)\s*\|',
-                      content, re.MULTILINE | re.DOTALL
-                  )
-                  if match:
-                      status_raw = match.group(1).strip()
-
-              return status_raw
-          except Exception:
-              pass
-          return None
-
-      def categorize_status(status_raw):
-          """Categorize status using same logic as story_status_audit.py."""
-          if not status_raw:
-              return "no_status"
-
-          status_lower = status_raw.lower()
-
-          # Order matters: more specific patterns first (from story_status_audit.py)
-          STATUS_CATEGORIES = {
-              "ready_review": ["ready for review", "ready for merge"],
-              "ready_done": ["ready for done"],
-              "ready_dev": [
-                  "ready for dev",
-                  "ready for development",
-                  "ready to develop",
-                  "approved - ready for development",
-                  "ready",  # Generic "ready" MUST come after others
-              ],
-              "draft": ["draft", "planned"],
-              "backlog": ["backlog", "proposed", "pending"],
-              "done": [
-                  "done", "complete", "completed", "merged", "superseded",
-                  "qa approved", "qa pass", "qa approved - ready for deployment",
-              ],
-              "approved": ["approved"],
-              "in_progress": ["in progress", "wip", "work in progress"],
-              "needs_revision": ["needs revision", "changes required"],
-          }
-
-          for category, keywords in STATUS_CATEGORIES.items():
-              for keyword in keywords:
-                  if keyword in status_lower:
-                      return category
-
-          return "other"
-
-      def check_story_status(story_path, expected_categories):
-          """Check if story status matches expected categories.
-
-          Args:
-              story_path: Path to the story file
-              expected_categories: List of category names (e.g., ["ready_dev"])
-
-          Returns:
-              bool: True if status matches any expected category
-          """
-          status_raw = extract_story_status(story_path)
-          if not status_raw:
-              return False
-
-          category = categorize_status(status_raw)
-          return category in expected_categories
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
 
       def get_story_id(story_path):
           """Extract story ID from path."""
@@ -411,12 +315,36 @@ nodes:
           """Check if artifact file(s) matching glob pattern exist."""
           return len(glob.glob(pattern)) > 0
 
-      def get_content(output):
-          if isinstance(output, dict):
-              return output.get("content", "")
-          return str(output) if output else ""
+      # ========================================================================
+      # Parse LLM classification result
+      # ========================================================================
 
-      # Get outputs
+      llm_result = get_content(state.get("llm_status_result", ""))
+
+      # Extract JSON from LLM response (handle potential markdown wrapping)
+      json_match = re.search(r'\{[^{}]*\}', llm_result, re.DOTALL)
+      if json_match:
+          try:
+              classification = json.loads(json_match.group(0))
+          except json.JSONDecodeError:
+              classification = {}
+      else:
+          classification = {}
+
+      # Extract values with defaults
+      status_category = classification.get("status_category", "unknown")
+      status_raw = classification.get("status_raw", "")
+      sm_validation_exists = classification.get("sm_validation_exists", False)
+      qa_risk_exists = classification.get("qa_risk_profile_exists", False)
+      qa_nfr_exists = classification.get("qa_nfr_exists", False)
+      qa_test_exists = classification.get("qa_test_design_exists", False)
+      qa_trace_exists = classification.get("qa_trace_exists", False)
+      confidence = classification.get("confidence", 0.0)
+
+      # ========================================================================
+      # Fallback: Check completion markers from previous nodes
+      # ========================================================================
+
       risk_output = get_content(state.get("risk_profile_output", ""))
       nfr_output = get_content(state.get("nfr_assess_output", ""))
       test_output = get_content(state.get("test_design_output", ""))
@@ -425,48 +353,35 @@ nodes:
 
       story_id = get_story_id(story_path) if story_path != "unknown" else ""
 
-      # ========================================================================
-      # Detection logic: marker-first, artifact-fallback
-      # ========================================================================
-
-      # Risk Profile detection
+      # Risk Profile: LLM detection OR marker OR artifact file
       risk_marker = "RISK_PROFILE_COMPLETED" in risk_output
-      risk_section = check_story_section(story_path, "## QA Notes - Risk Profile") if story_path != "unknown" else False
       risk_file = check_artifact_file(f"docs/qa/assessments/{story_id}-risk-*.md") if story_id else False
-      risk_done = risk_marker or risk_section or risk_file
+      risk_done = qa_risk_exists or risk_marker or risk_file
 
-      # NFR Assessment detection
+      # NFR Assessment: LLM detection OR marker OR artifact file
       nfr_marker = "NFR_ASSESS_COMPLETED" in nfr_output
-      nfr_section = check_story_section(story_path, "## QA Notes - NFR Assessment") if story_path != "unknown" else False
       nfr_file = check_artifact_file(f"docs/qa/assessments/{story_id}-nfr-*.md") if story_id else False
-      nfr_done = nfr_marker or nfr_section or nfr_file
+      nfr_done = qa_nfr_exists or nfr_marker or nfr_file
 
-      # Test Design detection
+      # Test Design: LLM detection OR marker OR artifact file
       test_marker = "TEST_DESIGN_COMPLETED" in test_output
-      test_section = check_story_section(story_path, "## QA Notes - Test Design") if story_path != "unknown" else False
       test_file = check_artifact_file(f"docs/qa/assessments/{story_id}-test-design-*.md") if story_id else False
-      test_done = test_marker or test_section or test_file
+      test_done = qa_test_exists or test_marker or test_file
 
-      # Trace Requirements detection
+      # Trace Requirements: LLM detection OR marker OR artifact file
       trace_marker = "TRACE_REQUIREMENTS_COMPLETED" in trace_output
-      trace_section = check_story_section(story_path, "## QA Notes - Requirements Trace") if story_path != "unknown" else False
       trace_file = check_artifact_file(f"docs/qa/assessments/{story_id}-trace-*.md") if story_id else False
-      trace_done = trace_marker or trace_section or trace_file
+      trace_done = qa_trace_exists or trace_marker or trace_file
 
-      # SM Checklist detection
-      # Relaxed: sm_done is True if marker OR section exists OR status is ready/needs_revision
+      # SM Checklist: LLM detection OR marker OR status category indicates it
       sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
-      sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
-      sm_status = check_story_status(story_path, ["ready_dev", "needs_revision"]) if story_path != "unknown" else False
-      sm_done = sm_marker or sm_section or sm_status  # Changed: OR instead of AND
+      sm_done = sm_validation_exists or sm_marker or status_category in ["ready_dev", "needs_revision"]
 
-      # Check if story is ready for development (using category-based detection)
-      # Primary: check ## Status section; Fallback: check ## SM Validation section
-      ready_from_status = check_story_status(story_path, ["ready_dev"]) if story_path != "unknown" else False
-      ready_from_sm_validation = check_sm_validation_ready(story_path) if story_path != "unknown" else False
-      ready_for_dev = ready_from_status or ready_from_sm_validation
-
+      # ========================================================================
       # Determine validation status
+      # ========================================================================
+
+      ready_for_dev = status_category == "ready_dev"
       all_phases_done = all([risk_done, nfr_done, test_done, trace_done, sm_done])
 
       if all_phases_done and ready_for_dev:
@@ -483,6 +398,11 @@ nodes:
       ╠════════════════════════════════════════════════════════════╣
       ║ Story: {state.get('arg', 'unknown'):<52} ║
       ║ Path:  {story_path:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ LLM Classification (confidence: {confidence:.0%})                   ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Status Category: {status_category:<42} ║
+      ║ Status Raw: {status_raw[:45]:<47} ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Phase              │ Status                                ║
       ╠════════════════════╪═══════════════════════════════════════╣
@@ -503,7 +423,7 @@ nodes:
       else:
           print("\n✓ VALIDATION PASSED - Proceeding to development phase...")
 
-      return {"validation_status": validation_status}
+      return {"validation_status": validation_status, "status_category": status_category}
 
   # ============================================================================
   # DEVELOPMENT PHASE - Nodes from bmad-story-development.yaml
@@ -1102,6 +1022,10 @@ edges:
   - from: qa_trace_requirements
     to: sm_story_checklist
   - from: sm_story_checklist
+    to: read_story_for_classification
+  - from: read_story_for_classification
+    to: llm_classify_status
+  - from: llm_classify_status
     to: check_validation_status
 
   # ============================================================================
