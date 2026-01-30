@@ -1,0 +1,18 @@
+// Special characters in labels test fixture for TEA-CLI-009
+// Tests DATA-001 risk mitigation: nodes with spaces, dashes, underscores, dots
+
+digraph special_chars {
+    rankdir=TB;
+
+    // Nodes with various special characters in labels
+    node1 [label="Process Data" shape=box command="echo 'Processing data'"];
+    node2 [label="build-stage" shape=box command="echo 'Build stage'"];
+    node3 [label="test_runner" shape=box command="echo 'Test runner'"];
+    node4 [label="deploy.prod" shape=box command="echo 'Deploy to prod'"];
+    node5 [label="final step" shape=box command="echo 'Final step'"];
+
+    // Create 2 waves: nodes 1-3 in wave 1, nodes 4-5 in wave 2
+    node1 -> node4;
+    node2 -> node4;
+    node3 -> node5;
+}

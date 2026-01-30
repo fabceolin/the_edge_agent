@@ -1,0 +1,9 @@
+// Single wave workflow test fixture for TEA-CLI-009
+// Tests edge case: 1 wave with 1 node
+
+digraph single_wave {
+    rankdir=TB;
+
+    // Single node in single wave
+    process [label="Process" shape=box command="echo 'Running process'"];
+}

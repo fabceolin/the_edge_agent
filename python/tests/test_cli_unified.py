@@ -459,7 +459,9 @@ class TestCliHelp(unittest.TestCase):
         self.assertIn("--secrets", output)
         self.assertIn("--secrets-env", output)
         self.assertIn("--stream", output)
-        self.assertIn("--interrupt-before", output)
+        # Note: typer may truncate long option names in help output (e.g., "--interrupt-befo...")
+        # We check for the prefix that will always be present
+        self.assertIn("--interrupt-befo", output)
         self.assertIn("--interrupt-after", output)
         self.assertIn("--auto-continue", output)
         self.assertIn("--verbose", output)

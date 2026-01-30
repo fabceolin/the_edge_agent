@@ -47,7 +47,7 @@ import pickle
 import time
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from enum import Enum
 from datetime import datetime, timezone
 
@@ -386,6 +386,73 @@ def handle_interrupt_interactive(
         return None
 
 
+# =============================================================================
+# TEA-CLI-008: Fail-on-state helper functions
+# =============================================================================
+
+
+def parse_fail_on_state(conditions: Optional[List[str]]) -> List[tuple]:
+    """
+    Parse --fail-on-state conditions into (key, value) tuples.
+
+    Args:
+        conditions: List of "key=value" strings
+
+    Returns:
+        List of (key, value) tuples
+
+    Raises:
+        typer.Exit: On malformed input (missing '=', empty key/value)
+    """
+    if not conditions:
+        return []
+
+    result = []
+    for cond in conditions:
+        if "=" not in cond:
+            typer.echo(
+                f"Error: Invalid --fail-on-state format '{cond}'. Expected 'key=value'.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        key, value = cond.split("=", 1)  # Split on first '=' only
+        key = key.strip()
+        value = value.strip()
+
+        if not key:
+            typer.echo(
+                f"Error: Invalid --fail-on-state format '{cond}'. Key cannot be empty.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        result.append((key, value))
+
+    return result
+
+
+def check_fail_on_state(
+    final_state: Dict[str, Any], conditions: List[tuple]
+) -> Optional[str]:
+    """
+    Check if final state matches any fail-on-state condition.
+
+    Args:
+        final_state: The final workflow state dictionary
+        conditions: List of (key, value) tuples to check
+
+    Returns:
+        The matched condition string "key=value" if any matches, None otherwise
+    """
+    for key, expected_value in conditions:
+        actual_value = final_state.get(key)
+        # Compare as strings for consistent matching
+        if str(actual_value) == expected_value:
+            return f"{key}={expected_value}"
+    return None
+
+
 @app.command()
 def run(
     file: Optional[Path] = typer.Argument(
@@ -576,9 +643,48 @@ def run(
         help="Executable to use for running workflows in --from-dot mode (default: tea-python). "
         "Examples: 'tea-python', 'python -m the_edge_agent', '/path/to/tea'",
     ),
+    # TEA-CLI-008: Stop execution on node failure in --from-dot mode (AC-10, AC-11, AC-12)
+    dot_stop_on_failure: bool = typer.Option(
+        True,
+        "--dot-stop-on-failure/--no-dot-stop-on-failure",
+        help="Stop DOT execution after current phase if any node fails (default: True). "
+        "Use --no-dot-stop-on-failure to continue all phases regardless of failures.",
+    ),
+    # TEA-CLI-008: Exit condition based on final state
+    fail_on_state: Optional[List[str]] = typer.Option(
+        None,
+        "--fail-on-state",
+        help="Exit with code 1 if final state matches 'key=value'. "
+        "Can be specified multiple times (any match triggers exit 1). "
+        "Example: --fail-on-state 'final_status=failed'",
+    ),
+    # TEA-CLI-009: Wave and step selection for DOT workflow execution
+    dot_start_wave: int = typer.Option(
+        1,
+        "--dot-start-wave",
+        help="Start from wave N (1-based). Waves 1 to N-1 are skipped. "
+        "Example: --dot-start-wave 3 skips waves 1-2.",
+        min=1,
+    ),
+    dot_start_step: int = typer.Option(
+        1,
+        "--dot-start-step",
+        help="Start from step M in the starting wave (1-based). Steps 1 to M-1 are skipped. "
+        "Example: --dot-start-step 2 skips step 1 in the starting wave.",
+        min=1,
+    ),
+    dot_start_from: Optional[str] = typer.Option(
+        None,
+        "--dot-start-from",
+        help="Start from the node with this label. Finds the wave containing the node and "
+        "starts from that step. Mutually exclusive with --dot-start-wave/--dot-start-step.",
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
+
+    # TEA-CLI-008: Parse --fail-on-state conditions early (validates format)
+    fail_conditions = parse_fail_on_state(fail_on_state)
 
     # TEA-GAME-001: Handle --from-dot mode (DOT file execution with tmux)
     if from_dot is not None:
@@ -674,15 +780,99 @@ def run(
                 f"Graph loaded: {total_nodes} nodes in {len(levels)} phases", err=True
             )
 
-            # Show execution plan
+            # TEA-CLI-009: Build label-to-location mapping for --dot-start-from
+            label_map: Dict[str, Tuple[int, int]] = {}
+            for wave_idx, level in enumerate(levels, 1):
+                for step_idx, node_id in enumerate(level, 1):
+                    node = parsed.nodes.get(node_id)
+                    label = node.label if node else node_id
+                    label_map[label] = (wave_idx, step_idx)
+
+            # TEA-CLI-009: Validate and resolve start position
+            start_wave = dot_start_wave
+            start_step = dot_start_step
+
+            # TEA-CLI-009: Handle --dot-start-from (AC-16, AC-17, AC-18)
+            if dot_start_from is not None:
+                # Check mutual exclusivity (AC-18 via TECH-003 mitigation)
+                if dot_start_wave != 1 or dot_start_step != 1:
+                    typer.echo(
+                        "Error: --dot-start-from is mutually exclusive with "
+                        "--dot-start-wave and --dot-start-step",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+                # Resolve label to wave/step position
+                if dot_start_from not in label_map:
+                    available_labels = list(label_map.keys())[:10]
+                    available_str = ", ".join(f"'{l}'" for l in available_labels)
+                    suffix = "..." if len(label_map) > 10 else ""
+                    typer.echo(
+                        f"Error: Label '{dot_start_from}' not found. "
+                        f"Available: {available_str}{suffix}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+                start_wave, start_step = label_map[dot_start_from]
+                typer.echo(
+                    f"Resolved --dot-start-from '{dot_start_from}' to wave {start_wave}, step {start_step}",
+                    err=True,
+                )
+
+            # TEA-CLI-009: Validate wave bounds (AC-4)
+            if start_wave > len(levels):
+                typer.echo(
+                    f"Error: Wave {start_wave} exceeds total waves ({len(levels)}). "
+                    f"Valid range: 1-{len(levels)}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # TEA-CLI-009: Validate step bounds within starting wave (AC-10)
+            starting_wave_size = len(levels[start_wave - 1])
+            if start_step > starting_wave_size:
+                typer.echo(
+                    f"Error: Step {start_step} exceeds steps in wave {start_wave} "
+                    f"({starting_wave_size} steps). Valid range: 1-{starting_wave_size}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # TEA-CLI-009: Print skip summary messages (AC-3, AC-9)
+            if start_wave > 1:
+                typer.echo(
+                    f"Skipping waves 1-{start_wave - 1}, starting from wave {start_wave}",
+                    err=True,
+                )
+            if start_step > 1:
+                typer.echo(
+                    f"Skipping steps 1-{start_step - 1} in wave {start_wave}, starting from step {start_step}",
+                    err=True,
+                )
+
+            # Show execution plan (AC-6, AC-15: show skipped items in dry-run)
             typer.echo("\n=== Execution Plan ===", err=True)
             for i, level in enumerate(levels, 1):
                 parallel_marker = " (parallel)" if len(level) > 1 else ""
-                typer.echo(f"Phase {i}{parallel_marker}:", err=True)
-                for node_id in level:
-                    node = parsed.nodes.get(node_id)
-                    label = node.label if node else node_id
-                    typer.echo(f"  - {label}", err=True)
+                # TEA-CLI-009: Mark skipped waves (AC-6)
+                if i < start_wave:
+                    typer.echo(f"Phase {i}{parallel_marker}: [SKIPPED]", err=True)
+                    for node_id in level:
+                        node = parsed.nodes.get(node_id)
+                        label = node.label if node else node_id
+                        typer.echo(f"  - {label} [SKIPPED]", err=True)
+                else:
+                    typer.echo(f"Phase {i}{parallel_marker}:", err=True)
+                    for step_idx, node_id in enumerate(level, 1):
+                        node = parsed.nodes.get(node_id)
+                        label = node.label if node else node_id
+                        # TEA-CLI-009: Mark skipped steps in starting wave (AC-15)
+                        if i == start_wave and step_idx < start_step:
+                            typer.echo(f"  - {label} [SKIPPED]", err=True)
+                        else:
+                            typer.echo(f"  - {label}", err=True)
 
             typer.echo(f"\nTmux session: {dot_session}", err=True)
             typer.echo(f"Attach with: tmux attach -t {dot_session}", err=True)
@@ -704,8 +894,26 @@ def run(
             errors = []
             poll_interval = 5
             timeout_secs = 54000
+            # TEA-CLI-008: Generate unique run ID for exit code temp files
+            import uuid
+
+            run_id = uuid.uuid4().hex[:8]
+            # TEA-CLI-008: Track skipped phases for stop-on-failure (AC-11)
+            skipped_phases = []
+            stopped_due_to_failure = False
+            # TEA-CLI-009: Track skipped nodes for final summary (AC-14)
+            skipped_count = 0
 
             for phase_idx, level in enumerate(levels, 1):
+                # TEA-CLI-009: Skip entire waves before start_wave (AC-2)
+                if phase_idx < start_wave:
+                    typer.echo(
+                        f"\n>>> Phase {phase_idx}/{len(levels)}: {len(level)} node(s) [SKIPPED]",
+                        err=True,
+                    )
+                    skipped_count += len(level)
+                    continue
+
                 phase_size = len(level)
                 typer.echo(
                     f"\n>>> Phase {phase_idx}/{len(levels)}: {phase_size} node(s)...",
@@ -719,6 +927,13 @@ def run(
                     for node_id in batch:
                         node = parsed.nodes.get(node_id)
                         label = node.label if node else node_id
+
+                        # TEA-CLI-009: Skip steps before start_step in starting wave only (AC-8, AC-12)
+                        step_idx = level.index(node_id) + 1  # 1-based step index
+                        if phase_idx == start_wave and step_idx < start_step:
+                            typer.echo(f"  Skipping step {step_idx}: {label}", err=True)
+                            skipped_count += 1
+                            continue
 
                         # Determine command: workflow mode or command mode
                         if dot_workflow:
@@ -747,7 +962,11 @@ def run(
                                 )
                                 continue
 
-                        window_name = re.sub(r"[^a-zA-Z0-9_-]", "_", label)[:30]
+                        # TEA-CLI-008: Include unique index in window name to prevent collision (TECH-002)
+                        window_name = re.sub(r"[^a-zA-Z0-9_-]", "_", label)[:25]
+                        # Add batch index to ensure uniqueness
+                        window_idx = batch_start + batch.index(node_id)
+                        window_name = f"{window_name}_{phase_idx}_{window_idx}"
                         typer.echo(f"  Starting: {label}", err=True)
 
                         subprocess.run(
@@ -756,18 +975,25 @@ def run(
                             executable="/bin/bash",
                         )
                         time.sleep(0.3)
+                        # TEA-CLI-008: Capture exit code to temp file (AC-7)
+                        exit_code_file = f"/tmp/tea_dot_exit_{run_id}_{window_name}"
                         subprocess.run(
                             [
                                 "tmux",
                                 "send-keys",
                                 "-t",
                                 f"{dot_session}:{window_name}",
-                                f"{cmd}; exit",
+                                f"{cmd}; echo $? > {exit_code_file}; exit",
                                 "Enter",
                             ],
                             check=True,
                         )
-                        active_windows[window_name] = (node_id, label, time.time())
+                        active_windows[window_name] = (
+                            node_id,
+                            label,
+                            time.time(),
+                            exit_code_file,
+                        )
 
                     typer.echo(
                         f"  Waiting for {len(active_windows)} window(s)...", err=True
@@ -780,6 +1006,7 @@ def run(
                             node_id,
                             label,
                             start,
+                            exit_code_file,
                         ) in active_windows.items():
                             result = subprocess.run(
                                 f"tmux list-windows -t {dot_session} 2>/dev/null | grep -q '{window_name}'",
@@ -787,19 +1014,70 @@ def run(
                                 executable="/bin/bash",
                             )
                             if result.returncode != 0:
+                                # Window closed - read exit code from temp file (AC-7, AC-8)
                                 elapsed = time.time() - start
-                                typer.echo(
-                                    f"  ✓ Completed: {label} ({elapsed:.1f}s)", err=True
-                                )
-                                results.append(
-                                    {
-                                        "node": label,
-                                        "success": True,
-                                        "elapsed": round(elapsed, 1),
-                                    }
-                                )
+                                exit_code = None
+                                node_success = False
+                                error_msg = None
+
+                                try:
+                                    if os.path.exists(exit_code_file):
+                                        with open(exit_code_file, "r") as f:
+                                            exit_code_str = f.read().strip()
+                                            exit_code = (
+                                                int(exit_code_str)
+                                                if exit_code_str
+                                                else None
+                                            )
+                                        # Clean up temp file immediately after reading
+                                        os.remove(exit_code_file)
+                                    else:
+                                        error_msg = "Exit code file not found"
+                                except (ValueError, IOError) as read_err:
+                                    error_msg = f"Failed to read exit code: {read_err}"
+
+                                if exit_code == 0:
+                                    node_success = True
+                                    typer.echo(
+                                        f"  ✓ Completed: {label} ({elapsed:.1f}s)",
+                                        err=True,
+                                    )
+                                elif exit_code is not None:
+                                    error_msg = f"Exit code {exit_code}"
+                                    typer.echo(
+                                        f"  ✗ Failed: {label} (exit code {exit_code}, {elapsed:.1f}s)",
+                                        err=True,
+                                    )
+                                else:
+                                    # exit_code is None, error_msg is already set
+                                    typer.echo(
+                                        f"  ✗ Failed: {label} ({error_msg}, {elapsed:.1f}s)",
+                                        err=True,
+                                    )
+
+                                result_entry = {
+                                    "node": label,
+                                    "success": node_success,
+                                    "elapsed": round(elapsed, 1),
+                                }
+                                if exit_code is not None:
+                                    result_entry["exit_code"] = exit_code
+                                if error_msg:
+                                    result_entry["error"] = error_msg
+
+                                results.append(result_entry)
+                                if not node_success:
+                                    errors.append(
+                                        {
+                                            "node": label,
+                                            "error": error_msg
+                                            or f"Exit code {exit_code}",
+                                        }
+                                    )
+
                                 completed.append(window_name)
                             elif time.time() - start > timeout_secs:
+                                # Timeout case (AC-9 - preserve existing timeout logic)
                                 typer.echo(f"  ✗ Timeout: {label}", err=True)
                                 results.append(
                                     {
@@ -814,16 +1092,59 @@ def run(
                                     shell=True,
                                     executable="/bin/bash",
                                 )
+                                # Clean up temp file if it exists
+                                if os.path.exists(exit_code_file):
+                                    try:
+                                        os.remove(exit_code_file)
+                                    except OSError:
+                                        pass
                                 completed.append(window_name)
                         for w in completed:
                             del active_windows[w]
 
-            # Summary
+                # TEA-CLI-008: Check for stop-on-failure after phase completes (AC-10, AC-12)
+                if errors and dot_stop_on_failure:
+                    # Calculate skipped phases
+                    remaining_phases = list(range(phase_idx + 1, len(levels) + 1))
+                    skipped_phases = remaining_phases
+                    stopped_due_to_failure = True
+                    break
+
+            # Summary (AC-11: show failed nodes and skipped phases)
+            # TEA-CLI-009: Include skipped count in summary (AC-14)
             elapsed = time.time() - start_time
             success_count = sum(1 for r in results if r.get("success", False))
+            executed_count = len(results)
             typer.echo(f"\n=== Summary ===", err=True)
             typer.echo(f"Total time: {elapsed:.1f}s", err=True)
-            typer.echo(f"Nodes: {success_count}/{len(results)} succeeded", err=True)
+            if skipped_count > 0:
+                typer.echo(
+                    f"Nodes: {success_count}/{executed_count} succeeded, {skipped_count} skipped",
+                    err=True,
+                )
+            else:
+                typer.echo(
+                    f"Nodes: {success_count}/{executed_count} succeeded", err=True
+                )
+
+            # TEA-CLI-008: Show failed nodes (AC-11)
+            if errors:
+                typer.echo(f"\nFailed nodes:", err=True)
+                for err in errors:
+                    typer.echo(
+                        f"  - {err['node']}: {err.get('error', 'Unknown error')}",
+                        err=True,
+                    )
+
+            # TEA-CLI-008: Show skipped phases if stopped due to failure (AC-11)
+            if stopped_due_to_failure and skipped_phases:
+                phases_str = ", ".join(str(p) for p in skipped_phases)
+                typer.echo(f"\nSkipped phases: {phases_str}", err=True)
+                typer.echo(
+                    f"  (Use --no-dot-stop-on-failure to continue all phases)", err=True
+                )
+
+            # AC-13: Exit code 1 when any node failed
             if errors:
                 raise typer.Exit(1)
             return
@@ -1349,6 +1670,11 @@ def run(
                             with open(output_file, "w") as f:
                                 json.dump(final_state, f, indent=2, cls=TeaJSONEncoder)
                         emit_ndjson_event("complete", state=final_state)
+                        # TEA-CLI-008: Check fail-on-state conditions (AC-2, AC-5)
+                        matched = check_fail_on_state(final_state, fail_conditions)
+                        if matched:
+                            typer.echo(f"Exit condition matched: {matched}", err=True)
+                            raise typer.Exit(1)
                         completed = True
                         break
                     elif event_type == "error":
@@ -1506,6 +1832,11 @@ def run(
                             typer.echo(
                                 f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
                             )
+                        # TEA-CLI-008: Check fail-on-state conditions (AC-2, AC-5)
+                        matched = check_fail_on_state(final_state, fail_conditions)
+                        if matched:
+                            typer.echo(f"Exit condition matched: {matched}", err=True)
+                            raise typer.Exit(1)
                         completed = True
                         break
                 else:
@@ -1568,6 +1899,11 @@ def run(
                             typer.echo(
                                 f"Final state: {json.dumps(final_state, indent=2, cls=TeaJSONEncoder)}"
                             )
+                        # TEA-CLI-008: Check fail-on-state conditions (AC-2, AC-5)
+                        matched = check_fail_on_state(final_state, fail_conditions)
+                        if matched:
+                            typer.echo(f"Exit condition matched: {matched}", err=True)
+                            raise typer.Exit(1)
                         completed = True
                         break
 

@@ -1,0 +1,50 @@
+# The Edge Agent (TEA)
+
+> TEA is a lightweight, LLM-agnostic state graph library for building AI agents on edge computing environments. It features declarative YAML-based workflows, neurosymbolic AI patterns (Prolog integration), checkpoint persistence, and parallel execution with fan-out/fan-in patterns. Polyglot implementation in Python and Rust.
+
+## Core Documentation
+
+- [CLAUDE.md](CLAUDE.md): Primary project context with quick start, commands, and LTM backend selection guide
+- [YAML Reference](docs/shared/YAML_REFERENCE.md): Complete YAML agent specification reference
+- [Core Concepts](docs/shared/architecture/concepts.md): StateGraph, nodes, edges, fan-in, interrupts explained
+- [Checkpoint Guide](docs/shared/architecture/checkpoint-guide.md): Save/resume workflow execution
+- [CLI Reference](docs/shared/cli-reference.md): Command-line interface documentation
+
+## Python Implementation
+
+- [Getting Started (Python)](docs/python/getting-started.md): Installation and first agent
+- [Development Guide](docs/python/development-guide.md): Python development workflow
+- [Actions Reference](docs/python/actions-reference.md): Built-in actions (llm.call, http.request, etc.)
+- [Custom Actions](docs/python/custom-actions.md): Creating custom action handlers
+- [Experiments Guide](docs/python/experiments-guide.md): Agent evaluation with Comet Opik
+- [Tech Stack](docs/python/tech-stack.md): Dependencies and architecture decisions
+
+## Rust Implementation
+
+- [Getting Started (Rust)](docs/rust/getting-started.md): Installation and first agent
+- [Development Guide](docs/rust/development-guide.md): Rust development workflow
+- [Actions Reference](docs/rust/actions-reference.md): Rust built-in actions
+
+## Neurosymbolic AI
+
+- [Neurosymbolic Patterns](docs/shared/architecture/neurosymbolic-patterns.md): Combining LLMs with symbolic reasoning
+- [Tutorial: First Neurosymbolic Agent](docs/shared/tutorials/neurosymbolic-first-agent.md): Step-by-step guide
+- [Prolog Guide (Python)](docs/python/prolog-guide.md): Prolog integration in Python
+- [Prolog Guide (Rust)](docs/rust/prolog-guide.md): Prolog integration in Rust
+
+## Examples
+
+- [examples/yaml_agent_example.yaml](examples/yaml_agent_example.yaml): Basic YAML agent structure
+- [examples/prolog/neurosymbolic/](examples/prolog/neurosymbolic/): Neurosymbolic agent examples
+- [examples/strawberry/](examples/strawberry/): Letter counting comparison (LLM vs neurosymbolic)
+- [examples/safety/](examples/safety/): Safety-critical AI patterns
+- [examples/workflows/](examples/workflows/): Multi-step workflow orchestration
+
+## Optional
+
+- [Human-in-the-Loop Guide](docs/guides/human-in-the-loop.md): Interactive workflows with interrupts
+- [Parallel Workflow Orchestration](docs/guides/parallel-workflow-orchestration.md): Fan-out/fan-in patterns
+- [Docker Installation](docs/shared/docker-installation.md): Container deployment
+- [Wozniak Coffee Test Article](docs/articles/wozniak-coffee-test.md): AI reasoning benchmark implementation
+- [Serverless AI Agents Article](docs/articles/serverless-ai-agents.md): Edge deployment patterns
+- [Medium: Neurosymbolic AI](docs/articles/medium-neurosymbolic-ai.md): Introduction to the approach
