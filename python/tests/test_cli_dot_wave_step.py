@@ -45,7 +45,8 @@ class TestDotStartWaveOption(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         # Note: typer may truncate long option names in help output (e.g., "--dot-start-wav...")
         # We check for the prefix that will always be present
-        self.assertIn("--dot-start-wav", result.output)
+        # Strip ANSI codes as Rich/Typer may insert them between dashes
+        self.assertIn("--dot-start-wav", strip_ansi(result.output))
 
     def test_dot_start_wave_valid_minimum(self):
         """CLI009-UNIT-001: Valid minimum wave (--dot-start-wave 1) is accepted."""
@@ -161,7 +162,8 @@ class TestDotStartStepOption(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         # Note: typer may truncate long option names in help output
         # We check for the prefix that will always be present
-        self.assertIn("--dot-start-ste", result.output)
+        # Strip ANSI codes as Rich/Typer may insert them between dashes
+        self.assertIn("--dot-start-ste", strip_ansi(result.output))
 
     def test_dot_start_step_valid_minimum(self):
         """CLI009-UNIT-008: Valid minimum step (--dot-start-step 1) is accepted."""
@@ -316,7 +318,8 @@ class TestDotStartFromOption(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         # Note: typer may truncate long option names in help output
         # We check for the prefix that will always be present
-        self.assertIn("--dot-start-fro", result.output)
+        # Strip ANSI codes as Rich/Typer may insert them between dashes
+        self.assertIn("--dot-start-fro", strip_ansi(result.output))
 
     def test_dot_start_from_mutual_exclusivity(self):
         """CLI009-UNIT-013: --dot-start-from is mutually exclusive with --dot-start-wave."""

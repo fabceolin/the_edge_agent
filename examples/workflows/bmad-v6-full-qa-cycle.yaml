@@ -612,6 +612,8 @@ nodes:
       else:
           text = str(output) if output else ""
 
+      review_fix_attempt = state.get("review_fix_attempt", 0)
+
       if "REVIEW_APPROVED" in text or "Approve" in text:
           review_status = "APPROVED"
       elif "REVIEW_BLOCKED" in text:
@@ -619,7 +621,13 @@ nodes:
       else:
           review_status = "CHANGES_REQUESTED"
 
-      print(f"Review Status: {review_status}")
+      # Force exit after max attempts regardless of status
+      if review_fix_attempt >= 2 and review_status != "APPROVED":
+          print(f"Review Status: {review_status} (Max attempts {review_fix_attempt} reached - forcing exit)")
+          review_status = "MAX_ATTEMPTS_REACHED"
+      else:
+          print(f"Review Status: {review_status} (Attempt: {review_fix_attempt}/2)")
+
       return {"review_status": review_status}
 
   - name: dev_fix_review
@@ -644,7 +652,10 @@ nodes:
     description: Track review fix iteration
     run: |
       current = state.get("review_fix_attempt", 0)
-      return {"review_fix_attempt": current + 1, "review_output": "", "review_status": ""}
+      new_attempt = current + 1
+      print(f"Review Fix Attempt: {new_attempt} of 2")
+      # Don't clear review_status here - let check_review_status handle it
+      return {"review_fix_attempt": new_attempt, "review_output": ""}
 
   - name: sprint_status
     description: Update sprint status
@@ -681,6 +692,12 @@ nodes:
           review_status == "APPROVED"
       )
 
+      # Partial success if max attempts reached
+      partial_success = (
+          state.get("validation_status") == "PASSED" and
+          review_status == "MAX_ATTEMPTS_REACHED"
+      )
+
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
       ║           BMad v6 Full QA Cycle Complete                   ║
@@ -704,11 +721,12 @@ nodes:
       ║ TEA Test Review: ✓                                         ║
       ║ Code Review: {review_status:<46} ║
       ╠════════════════════════════════════════════════════════════╣
-      ║ FINAL RESULT: {'SUCCESS' if all_done else 'INCOMPLETE':<45} ║
+      ║ FINAL RESULT: {'SUCCESS' if all_done else ('PARTIAL (max review attempts)' if partial_success else 'INCOMPLETE'):<45} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
 
-      return {"final_status": "completed" if all_done else "incomplete"}
+      final = "completed" if all_done else ("partial" if partial_success else "incomplete")
+      return {"final_status": final}
 
 edges:
   # PREPARATION
@@ -769,17 +787,15 @@ edges:
     to: check_review_status
 
   # REVIEW ROUTING
+  # Exit conditions (APPROVED or max attempts reached)
   - from: check_review_status
     to: sprint_status
-    when: "state.get('review_status') == 'APPROVED'"
+    when: "state.get('review_status') in ['APPROVED', 'MAX_ATTEMPTS_REACHED', 'BLOCKED']"
 
+  # Continue fixing only if CHANGES_REQUESTED (max attempts check is in check_review_status node)
   - from: check_review_status
     to: dev_fix_review
-    when: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) < 2"
-
-  - from: check_review_status
-    to: sprint_status
-    when: "state.get('review_status') != 'APPROVED' and state.get('review_fix_attempt', 0) >= 2"
+    when: "state.get('review_status') == 'CHANGES_REQUESTED'"
 
   - from: dev_fix_review
     to: increment_review_fix_attempt
