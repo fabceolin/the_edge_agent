@@ -1,0 +1,657 @@
+name: bmad-v6-story-cycle
+description: |
+  BMad v6 Story Cycle Pipeline - Adaptado do bmad-story-full-cycle.yaml para BMAD v6.
+
+  Fluxo:
+  1. FASE DE PREPARACAO:
+     - Resolve story path
+     - Create Story (CS) se necessario
+     - Validate Story (VS) - checklist de qualidade competitivo
+
+  2. LOOP DE CORRECAO (se validacao falhou, max 1 iteracao):
+     - Correct Course (CC) - analisa impacto e propoe solucoes
+     - Re-run validacao
+     - Se ainda falha → INTERRUPT
+
+  3. FASE DE DESENVOLVIMENTO:
+     - Dev Story (DS) - implementa com Definition of Done
+     - Code Review (CR) - review adversarial (3-10 issues)
+     - Se CHANGES_REQUESTED → DS (fixes) → CR (re-review)
+     - Sprint Status (SS) - finaliza status
+
+  Mudancas v4→v6:
+  - QA risk-profile/nfr-assess/test-design/trace → Removidos (nao existem no v6 core)
+  - Validate Story (VS) substitui SM story-checklist com checklist mais robusto
+  - Code Review adversarial substitui QA review
+  - Correct Course e unificado (nao separado architect/po)
+
+  Usage: tea run examples/workflows/bmad-v6-story-cycle.yaml --arg="epic-1-story-1"
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  # Validation phase
+  create_story_output: str
+  validate_story_output: str
+  validation_status: str
+  # Correction loop tracking (max 1 iteration)
+  correction_attempt: int
+  correct_course_output: str
+  # Development phase
+  dev_output: str
+  review_output: str
+  review_status: str
+  # Review fix loop tracking (max 2 iterations)
+  review_fix_attempt: int
+  sprint_status_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # NODE 0: Resolve story path from arg
+  # ============================================================================
+  - name: resolve_story_path
+    description: Convert story key to full story path, detect if story exists
+    run: |
+      import os
+      import glob
+      import yaml
+
+      arg = state.get("arg", "")
+
+      # If arg is already a full path that exists, use it
+      if os.path.isfile(arg):
+          story_key = os.path.basename(arg).replace(".md", "")
+          return {"story_path": arg, "story_key": story_key}
+
+      # Try to find config to get implementation_artifacts path
+      config_paths = [
+          "_bmad/bmm/config.yaml",
+          ".bmad/bmm/config.yaml"
+      ]
+
+      impl_artifacts = "_bmad-output/implementation-artifacts"
+      for config_path in config_paths:
+          if os.path.exists(config_path):
+              try:
+                  with open(config_path, 'r') as f:
+                      config = yaml.safe_load(f)
+                  impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                  break
+              except:
+                  pass
+
+      # Search for story file
+      patterns = [
+          os.path.join(impl_artifacts, f"{arg}.md"),
+          os.path.join(impl_artifacts, f"*{arg}*.md"),
+          f"**/{arg}.md",
+          f"**/*{arg}*.md"
+      ]
+
+      for pattern in patterns:
+          matches = glob.glob(pattern, recursive=True)
+          if matches:
+              story_path = matches[0]
+              story_key = os.path.basename(story_path).replace(".md", "")
+              return {"story_path": story_path, "story_key": story_key}
+
+      # Story not found - will need to create it
+      story_key = arg
+      story_path = os.path.join(impl_artifacts, f"{arg}.md")
+      return {"story_path": story_path, "story_key": story_key, "story_needs_creation": True}
+
+  # ============================================================================
+  # PREPARATION PHASE
+  # ============================================================================
+
+  # NODE 1: Create Story (if needed) or skip if exists
+  - name: create_story
+    description: Create story file using bmad-bmm-create-story if it doesn't exist
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Check if story file exists at: {{ state.story_path }}
+
+            If the file EXISTS and has content:
+              - Print: STORY_EXISTS_SKIPPING_CREATION
+              - Do NOT run create-story workflow
+
+            If the file does NOT exist or is empty:
+              - Run the create-story workflow: bmad-bmm-create-story
+              - When prompted for story, use: {{ state.story_key }}
+              - Follow the workflow completely
+              - Print: STORY_CREATED when done
+
+            CRITICAL: Only create if file doesn't exist. Do not overwrite existing stories.
+    output: create_story_output
+
+  # NODE 2: Validate Story (VS) - Competitive quality checklist
+  - name: validate_story
+    description: Execute bmad-bmm-create-story in validate mode (-v)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute story validation for: {{ state.story_path }}
+
+            Run command: bmad-bmm-create-story -v {{ state.story_path }}
+
+            This runs the competitive quality validation checklist that:
+            - Exhaustively analyzes source documents (epics, architecture, previous stories)
+            - Identifies disaster prevention gaps (wrong libraries, file locations, regressions)
+            - Checks for LLM optimization issues (verbosity, ambiguity, missing signals)
+            - Presents improvement suggestions interactively
+
+            INSTRUCTIONS:
+            1. Run the validation workflow completely
+            2. If critical issues are found, apply the fixes
+            3. Record the validation result
+
+            When done, determine validation status:
+            - If all critical issues were fixed or none found: Print VALIDATION_PASSED
+            - If critical issues remain unfixed: Print VALIDATION_FAILED
+
+            Print the validation summary at the end.
+    output: validate_story_output
+
+  # NODE 3: Check validation status
+  - name: check_validation_status
+    description: Parse validation output and determine if story is ready for development
+    run: |
+      import re
+
+      output = state.get("validate_story_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      # Check for explicit status markers
+      if "VALIDATION_PASSED" in text:
+          validation_status = "PASSED"
+      elif "VALIDATION_FAILED" in text:
+          validation_status = "FAILED"
+      elif "Story Ready for Review" in text or "PASS" in text.upper():
+          validation_status = "PASSED"
+      elif "critical issues" in text.lower() and "unfixed" in text.lower():
+          validation_status = "FAILED"
+      else:
+          # Default to passed if no clear failure indicators
+          validation_status = "PASSED"
+
+      correction_attempt = state.get("correction_attempt", 0)
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              STORY VALIDATION COMPLETE                     ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Path:  {state.get('story_path', 'unknown')[:52]:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ VALIDATION STATUS: {validation_status:<40} ║
+      ║ Correction Attempts: {correction_attempt:<38} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if validation_status != "PASSED":
+          print("\n⚠️  VALIDATION FAILED - Will attempt correction...")
+      else:
+          print("\n✓ VALIDATION PASSED - Proceeding to development phase...")
+
+      return {"validation_status": validation_status}
+
+  # ============================================================================
+  # CORRECTION LOOP
+  # ============================================================================
+
+  # NODE 4: Correct Course (unified architect + pm corrections)
+  - name: correct_course
+    description: Execute bmad-bmm-correct-course to fix story issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            The story validation FAILED. Execute course correction.
+
+            Run command: bmad-bmm-correct-course
+
+            Story file: {{ state.story_path }}
+
+            The Correct Course workflow will:
+            1. Analyze the impact of required changes
+            2. Review PRD, epics, architecture for alignment
+            3. Propose solutions for the validation failures
+            4. Update the story with corrections
+
+            INSTRUCTIONS:
+            1. Run the correct-course workflow completely
+            2. Apply the recommended corrections to the story
+            3. Ensure both technical (architecture) and product (requirements) issues are addressed
+
+            When done print: CORRECT_COURSE_COMPLETED
+    output: correct_course_output
+
+  # NODE 5: Increment correction attempt counter
+  - name: increment_correction_attempt
+    description: Track correction iteration and clear previous outputs
+    run: |
+      current = state.get("correction_attempt", 0)
+      new_attempt = current + 1
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        CORRECTION LOOP COMPLETED (Attempt {new_attempt})               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Correct Course: ✓ Done                                     ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Re-running story validation...                             ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {
+          "correction_attempt": new_attempt,
+          "validate_story_output": "",
+          "validation_status": ""
+      }
+
+  # NODE 6: Validation failed after correction
+  - name: validation_failed
+    description: Handle validation failure after correction attempt
+    run: |
+      story_path = state.get("story_path", "unknown")
+      correction_attempt = state.get("correction_attempt", 0)
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad v6 Story Cycle - INTERRUPTED                ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Path:  {story_path[:52]:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ VALIDATION: FAILED (after {correction_attempt} correction attempt)       ║
+      ║ DEVELOPMENT: SKIPPED                                       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                                                            ║
+      ║  ⚠️  Story did not pass validation after correction.        ║
+      ║                                                            ║
+      ║  Next steps (manual intervention required):                ║
+      ║  1. Review the story file for remaining issues             ║
+      ║  2. Run: bmad-bmm-create-story -v {state.get('story_key', '')}             ║
+      ║  3. Fix issues manually                                    ║
+      ║  4. Re-run this workflow                                   ║
+      ║                                                            ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      raise Exception(f"Validation failed after correction for {state.get('story_key', 'unknown')}")
+
+  # ============================================================================
+  # DEVELOPMENT PHASE
+  # ============================================================================
+
+  # NODE 7: Dev Story (DS)
+  - name: dev_story
+    description: Execute bmad-bmm-dev-story to implement the story
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Execute story development for: {{ state.story_path }}
+
+            Run command: bmad-bmm-dev-story {{ state.story_path }}
+
+            The Dev Story workflow will:
+            1. Read each task from the story
+            2. Implement task and all subtasks
+            3. Write comprehensive tests
+            4. Execute validations
+            5. Mark checkbox [x] only if ALL validations pass
+            6. Update File List with new/modified/deleted files
+            7. Repeat until all tasks complete
+
+            INSTRUCTIONS:
+            1. Follow the workflow order-of-execution EXACTLY
+            2. Do NOT skip any steps
+            3. Write proper tests for EACH implementation
+            4. Update the File List section accurately
+            5. Set story status to "review" when complete
+
+            CRITICAL: Implement ALL tasks sequentially. No shortcuts.
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  # NODE 8: Code Review (CR) - Adversarial review
+  - name: code_review
+    description: Execute bmad-bmm-code-review for adversarial senior dev review
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute adversarial code review for: {{ state.story_path }}
+
+            Run command: bmad-bmm-code-review {{ state.story_path }}
+
+            The Code Review workflow performs ADVERSARIAL Senior Developer review that:
+            - Finds 3-10 specific problems in EVERY story
+            - Challenges code quality, test coverage, architecture compliance
+            - Reviews security and performance
+            - NEVER accepts "looks good" - must find minimum issues
+            - Can auto-fix issues with user approval
+
+            INSTRUCTIONS:
+            1. Run the code review workflow completely
+            2. Document all issues found
+            3. Apply auto-fixes if approved
+            4. Record the review outcome
+
+            Review outcomes:
+            - APPROVED: Print REVIEW_APPROVED
+            - CHANGES_REQUESTED: Print REVIEW_CHANGES_REQUESTED
+            - BLOCKED: Print REVIEW_BLOCKED
+
+            Print the review summary with all issues found.
+    output: review_output
+
+  # NODE 9: Check review status
+  - name: check_review_status
+    description: Parse review output and determine next action
+    run: |
+      import re
+
+      output = state.get("review_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      # Check for explicit status markers
+      if "REVIEW_APPROVED" in text or "Approve" in text:
+          review_status = "APPROVED"
+      elif "REVIEW_BLOCKED" in text or "Blocked" in text:
+          review_status = "BLOCKED"
+      elif "REVIEW_CHANGES_REQUESTED" in text or "Changes Requested" in text:
+          review_status = "CHANGES_REQUESTED"
+      else:
+          # Default based on content
+          if "changes required" in text.lower() or "must fix" in text.lower():
+              review_status = "CHANGES_REQUESTED"
+          else:
+              review_status = "APPROVED"
+
+      review_fix_attempt = state.get("review_fix_attempt", 0)
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              CODE REVIEW COMPLETE                          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ REVIEW STATUS: {review_status:<44} ║
+      ║ Fix Attempts: {review_fix_attempt:<45} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {"review_status": review_status}
+
+  # NODE 10: Dev fixes review issues
+  - name: dev_fix_review
+    description: Dev addresses code review issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            The code review found issues that need to be fixed.
+
+            Story file: {{ state.story_path }}
+
+            INSTRUCTIONS:
+            1. Read the "Senior Developer Review (AI)" section in the story file
+            2. Address EACH issue raised by the reviewer:
+               - Fix code issues
+               - Add missing tests
+               - Update documentation as needed
+            3. Run ALL tests and confirm they pass
+            4. Update the Dev Agent Record with your fixes
+            5. Mark review follow-up tasks as completed
+
+            CRITICAL: Address ALL review concerns before completing.
+
+            When done print: DEV_FIXES_COMPLETED
+    output: dev_output
+
+  # NODE 11: Increment review fix attempt
+  - name: increment_review_fix_attempt
+    description: Track review fix iteration
+    run: |
+      current = state.get("review_fix_attempt", 0)
+      new_attempt = current + 1
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        REVIEW FIXES COMPLETED (Attempt {new_attempt})                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Dev Fixes: ✓ Done                                          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Re-running code review...                                  ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {
+          "review_fix_attempt": new_attempt,
+          "review_output": "",
+          "review_status": ""
+      }
+
+  # NODE 12: Sprint Status update
+  - name: sprint_status
+    description: Execute bmad-bmm-sprint-status to finalize story status
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      model: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            Update sprint status after story completion.
+
+            Run command: bmad-bmm-sprint-status
+
+            The Sprint Status workflow will:
+            1. Summarize current sprint status
+            2. Update the sprint-status.yaml file
+            3. Route to next workflow if needed
+
+            Story completed: {{ state.story_key }}
+            Review status: {{ state.review_status }}
+
+            INSTRUCTIONS:
+            1. Run the sprint status workflow
+            2. Mark the story as complete in sprint tracking
+            3. Report the overall sprint progress
+
+            When done print: SPRINT_STATUS_UPDATED
+    output: sprint_status_output
+
+  # NODE 13: Final Summary
+  - name: summary
+    description: Generate final summary of the story cycle
+    run: |
+      import os
+
+      story_key = state.get("story_key", "unknown")
+      story_path = state.get("story_path", "unknown")
+      validation_status = state.get("validation_status", "UNKNOWN")
+      review_status = state.get("review_status", "UNKNOWN")
+      correction_attempt = state.get("correction_attempt", 0)
+      review_fix_attempt = state.get("review_fix_attempt", 0)
+
+      def get_content(output):
+          if isinstance(output, dict):
+              return output.get("content", "")
+          return str(output) if output else ""
+
+      dev_output = get_content(state.get("dev_output", ""))
+      review_output = get_content(state.get("review_output", ""))
+
+      # Detection
+      dev_done = "DEV_STORY_COMPLETED" in dev_output or "DEV_FIXES_COMPLETED" in dev_output
+      review_approved = review_status == "APPROVED"
+
+      all_done = validation_status == "PASSED" and dev_done and review_approved
+      final_result = "SUCCESS" if all_done else "INCOMPLETE"
+
+      summary = f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad v6 Story Cycle Complete                     ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ║ Path:  {story_path[:52]:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    VALIDATION PHASE                        ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story Validation: {'✓ PASSED' if validation_status == 'PASSED' else '✗ ' + validation_status:<40} ║
+      ║ Corrections Applied: {correction_attempt:<38} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    DEVELOPMENT PHASE                       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Dev Story: {'✓ Completed' if dev_done else '✗ Failed':<48} ║
+      ║ Code Review: {review_status:<46} ║
+      ║ Review Fixes: {review_fix_attempt:<45} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ FINAL RESULT: {final_result:<45} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """
+
+      print(summary)
+      return {"final_status": "completed" if all_done else "incomplete"}
+
+edges:
+  # ============================================================================
+  # PREPARATION PHASE
+  # ============================================================================
+  - from: __start__
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: create_story
+  - from: create_story
+    to: validate_story
+  - from: validate_story
+    to: check_validation_status
+
+  # ============================================================================
+  # VALIDATION ROUTING
+  # ============================================================================
+
+  # If validation PASSED: proceed to development
+  - from: check_validation_status
+    to: dev_story
+    when: "state.get('validation_status') == 'PASSED'"
+
+  # If validation FAILED and NO correction attempt yet: try correction
+  - from: check_validation_status
+    to: correct_course
+    when: "state.get('validation_status') != 'PASSED' and state.get('correction_attempt', 0) == 0"
+
+  # If validation FAILED and already tried correction: give up
+  - from: check_validation_status
+    to: validation_failed
+    when: "state.get('validation_status') != 'PASSED' and state.get('correction_attempt', 0) >= 1"
+
+  # ============================================================================
+  # CORRECTION LOOP
+  # ============================================================================
+  - from: correct_course
+    to: increment_correction_attempt
+  - from: increment_correction_attempt
+    to: validate_story
+  - from: validation_failed
+    to: __end__
+
+  # ============================================================================
+  # DEVELOPMENT PHASE
+  # ============================================================================
+  - from: dev_story
+    to: code_review
+  - from: code_review
+    to: check_review_status
+
+  # ============================================================================
+  # REVIEW ROUTING
+  # ============================================================================
+
+  # If APPROVED: proceed to sprint status
+  - from: check_review_status
+    to: sprint_status
+    when: "state.get('review_status') == 'APPROVED'"
+
+  # If CHANGES_REQUESTED and attempts < 2: fix and re-review
+  - from: check_review_status
+    to: dev_fix_review
+    when: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) < 2"
+
+  # If CHANGES_REQUESTED but max attempts reached: proceed anyway with notes
+  - from: check_review_status
+    to: sprint_status
+    when: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) >= 2"
+
+  # If BLOCKED: proceed to sprint status (will mark as blocked)
+  - from: check_review_status
+    to: sprint_status
+    when: "state.get('review_status') == 'BLOCKED'"
+
+  # Review fix loop
+  - from: dev_fix_review
+    to: increment_review_fix_attempt
+  - from: increment_review_fix_attempt
+    to: code_review
+
+  # ============================================================================
+  # FINAL
+  # ============================================================================
+  - from: sprint_status
+    to: summary
+  - from: summary
+    to: __end__
