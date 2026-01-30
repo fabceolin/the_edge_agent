@@ -200,7 +200,12 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         return {
             "claude": {
                 "command": "claude",
-                "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+                "args": [
+                    "-p",
+                    "{prompt}",
+                    "--dangerously-skip-permissions",
+                    "--no-session-persistence",
+                ],
                 "timeout": 108000,  # 1800 minutes
             },
             "codex": {
@@ -1118,7 +1123,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 timeout=timeout,
             )
             # Deployment resolution: YAML param → env var → model (Rust parity)
-            resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+            resolved_deployment = (
+                deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+            )
         else:
             # Standard OpenAI
             if api_base:
@@ -1584,7 +1591,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
                 )
                 # Deployment resolution: YAML param → env var → model (Rust parity)
-                resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+                resolved_deployment = (
+                    deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+                )
             else:
                 if api_base:
                     client = OpenAI(base_url=api_base)
@@ -2120,7 +2129,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
             )
             # Deployment resolution: YAML param → env var → model (Rust parity)
-            resolved_deployment = deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+            resolved_deployment = (
+                deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT") or model
+            )
         else:
             if api_base:
                 client = OpenAI(base_url=api_base)
