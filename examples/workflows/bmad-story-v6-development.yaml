@@ -1,0 +1,465 @@
+name: bmad-story-v6-development
+description: |
+  BMad v6 Development Workflow - Implementation Phase.
+
+  PREREQUISITE: Story must pass validation (run bmad-story-v6-validation.yaml first)
+
+  Development flow:
+  1. DEVELOPMENT PHASE:
+     - ATDD (AT) - generate acceptance tests (red phase)
+     - Dev Story (DS) - implement (green phase)
+     - Test Automation (TA) - expand coverage
+     - Test Review (RV) - quality scoring
+     - Code Review (CR) - adversarial review
+     - Sprint Status (SS)
+
+  Input: story_path and optionally risk_level from validation phase.
+
+  Usage: tea run examples/workflows/bmad-story-v6-development.yaml --input '{"arg": "path/to/story.md"}'
+
+  Or with full state from validation:
+    tea run examples/workflows/bmad-story-v6-development.yaml \
+      --input '{"story_path": "path/to/story.md", "risk_level": "HIGH", "gate_decision": "PASS"}'
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  # Validation phase inputs (optional, from validation workflow)
+  risk_level: str
+  gate_decision: str
+  validation_status: str
+  # Development phase
+  atdd_output: str
+  dev_output: str
+  test_automation_output: str
+  test_review_output: str
+  quality_score: str
+  review_output: str
+  review_status: str
+  review_fix_attempt: int
+  sprint_status_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # INITIALIZATION
+  # ============================================================================
+
+  - name: resolve_story_path
+    description: Resolve story path from arg if needed
+    run: |
+      import os
+      import glob
+      import yaml
+
+      # If story_path already set (from chained workflow), use it
+      if state.get("story_path"):
+          story_path = state.get("story_path")
+          story_key = state.get("story_key") or os.path.basename(story_path).replace(".md", "")
+          return {"story_path": story_path, "story_key": story_key}
+
+      arg = state.get("arg", "")
+
+      if os.path.isfile(arg):
+          story_key = os.path.basename(arg).replace(".md", "")
+          return {"story_path": arg, "story_key": story_key}
+
+      config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+      impl_artifacts = "_bmad-output/implementation-artifacts"
+
+      for config_path in config_paths:
+          if os.path.exists(config_path):
+              try:
+                  with open(config_path, 'r') as f:
+                      config = yaml.safe_load(f)
+                  impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                  break
+              except:
+                  pass
+
+      patterns = [
+          os.path.join(impl_artifacts, f"{arg}.md"),
+          os.path.join(impl_artifacts, f"*{arg}*.md"),
+          f"**/{arg}.md"
+      ]
+
+      for pattern in patterns:
+          matches = glob.glob(pattern, recursive=True)
+          if matches:
+              story_path = matches[0]
+              story_key = os.path.basename(story_path).replace(".md", "")
+              return {"story_path": story_path, "story_key": story_key}
+
+      story_key = arg
+      story_path = os.path.join(impl_artifacts, f"{arg}.md")
+      return {"story_path": story_path, "story_key": story_key}
+
+  - name: extract_risk_from_story
+    description: Extract risk level from story file if not provided
+    run: |
+      import re
+      import os
+
+      # If risk_level already set (from validation workflow), use it
+      if state.get("risk_level"):
+          print(f"Using provided risk level: {state.get('risk_level')}")
+          return {}
+
+      story_path = state.get("story_path", "")
+      if not os.path.isfile(story_path):
+          print("Story file not found, defaulting to MEDIUM risk")
+          return {"risk_level": "MEDIUM", "gate_decision": "CONDITIONAL"}
+
+      try:
+          with open(story_path, 'r') as f:
+              content = f.read()
+
+          # Extract risk level from TEA Test Design section
+          risk_match = re.search(r'Risk Level:\s*(Critical|High|Medium|Low)', content, re.IGNORECASE)
+          if risk_match:
+              risk_level = risk_match.group(1).upper()
+          else:
+              risk_level = "MEDIUM"
+
+          # Extract gate decision
+          gate_match = re.search(r'Gate Decision:\s*(PASS|CONDITIONAL|FAIL)', content, re.IGNORECASE)
+          if gate_match:
+              gate_decision = gate_match.group(1).upper()
+          else:
+              gate_decision = "CONDITIONAL"
+
+          print(f"Extracted from story - Risk Level: {risk_level}, Gate Decision: {gate_decision}")
+          return {"risk_level": risk_level, "gate_decision": gate_decision}
+
+      except Exception as e:
+          print(f"Error reading story: {e}, defaulting to MEDIUM risk")
+          return {"risk_level": "MEDIUM", "gate_decision": "CONDITIONAL"}
+
+  # ============================================================================
+  # DEVELOPMENT PHASE
+  # ============================================================================
+
+  # NODE: TEA ATDD (AT) - Generate acceptance tests (red phase)
+  - name: tea_atdd
+    description: Generate failing acceptance tests using TEA ATDD
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA ATDD (AT) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-atdd
+
+            The ATDD workflow will:
+            1. Generate acceptance tests based on story criteria
+            2. Create failing tests (TDD red phase)
+            3. Tests should fail until implementation is complete
+
+            INSTRUCTIONS:
+            1. Run the workflow completely
+            2. Verify tests are created and currently failing
+
+            Print: ATDD_COMPLETED
+    output: atdd_output
+
+  # NODE: Dev Story (DS)
+  - name: dev_story
+    description: Implement story (green phase)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Execute story development for: {{ state.story_path }}
+
+            Run command: bmad-bmm-dev-story {{ state.story_path }}
+
+            Risk Level: {{ state.risk_level }}
+
+            INSTRUCTIONS:
+            1. Implement all tasks sequentially
+            2. Make acceptance tests PASS (green phase)
+            3. Write unit tests for all functionality
+            4. Update File List and Dev Agent Record
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  # NODE: TEA Test Automation (TA)
+  - name: tea_test_automation
+    description: Expand test coverage using TEA
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA Test Automation (TA) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-automate
+
+            Risk Level: {{ state.risk_level }}
+
+            The Test Automation workflow will:
+            1. Expand automation coverage based on risk
+            2. Add edge case tests
+            3. Add integration tests
+            4. Ensure coverage meets gate requirements
+
+            Print: TEST_AUTOMATION_COMPLETED
+    output: test_automation_output
+
+  # NODE: TEA Test Review (RV) - Quality Scoring
+  - name: tea_test_review
+    description: Execute TEA Test Review with quality scoring
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA Test Review (RV) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-review
+
+            The Test Review workflow will:
+            1. Evaluate test quality
+            2. Calculate QUALITY SCORE
+            3. Check coverage against requirements
+            4. Provide improvement recommendations
+
+            Append to story file:
+            ## TEA - Test Review
+            - Quality Score: [score]
+            - Coverage: [percentage]
+            - Recommendations: [list]
+
+            Print QUALITY_SCORE:[0-100] at the end
+            Print: TEST_REVIEW_COMPLETED
+    output: test_review_output
+
+  # NODE: Extract quality score
+  - name: extract_quality_score
+    description: Parse quality score from test review
+    run: |
+      import re
+
+      output = state.get("test_review_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      score_match = re.search(r'QUALITY_SCORE:\s*(\d+)', text)
+      if score_match:
+          quality_score = score_match.group(1)
+      else:
+          quality_score = "N/A"
+
+      print(f"Quality Score: {quality_score}")
+      return {"quality_score": quality_score}
+
+  # NODE: Code Review (CR)
+  - name: code_review
+    description: Adversarial code review
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute code review for: {{ state.story_path }}
+
+            Run command: bmad-bmm-code-review {{ state.story_path }}
+
+            Quality Score from TEA: {{ state.quality_score }}
+            Risk Level: {{ state.risk_level }}
+
+            Review outcomes:
+            - APPROVED: Print REVIEW_APPROVED
+            - CHANGES_REQUESTED: Print REVIEW_CHANGES_REQUESTED
+            - BLOCKED: Print REVIEW_BLOCKED
+    output: review_output
+
+  - name: check_review_status
+    description: Parse review outcome
+    run: |
+      output = state.get("review_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      review_fix_attempt = state.get("review_fix_attempt", 0)
+
+      if "REVIEW_APPROVED" in text or "Approve" in text:
+          review_status = "APPROVED"
+      elif "REVIEW_BLOCKED" in text:
+          review_status = "BLOCKED"
+      else:
+          review_status = "CHANGES_REQUESTED"
+
+      # Force exit after max attempts regardless of status
+      if review_fix_attempt >= 2 and review_status != "APPROVED":
+          print(f"Review Status: {review_status} (Max attempts {review_fix_attempt} reached - forcing exit)")
+          review_status = "MAX_ATTEMPTS_REACHED"
+      else:
+          print(f"Review Status: {review_status} (Attempt: {review_fix_attempt}/2)")
+
+      return {"review_status": review_status}
+
+  - name: dev_fix_review
+    description: Fix review issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Fix code review issues for: {{ state.story_path }}
+
+            Read Senior Developer Review section and address ALL issues.
+            Run tests to confirm fixes.
+
+            Print: DEV_FIXES_COMPLETED
+    output: dev_output
+
+  - name: increment_review_fix_attempt
+    description: Track review fix iteration
+    run: |
+      current = state.get("review_fix_attempt", 0)
+      new_attempt = current + 1
+      print(f"Review Fix Attempt: {new_attempt} of 2")
+      # Don't clear review_status here - let check_review_status handle it
+      return {"review_fix_attempt": new_attempt, "review_output": ""}
+
+  - name: sprint_status
+    description: Update sprint status
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            Update sprint status.
+            Run command: bmad-bmm-sprint-status
+
+            Story: {{ state.story_key }}
+            Quality Score: {{ state.quality_score }}
+            Review Status: {{ state.review_status }}
+
+            Print: SPRINT_STATUS_UPDATED
+    output: sprint_status_output
+
+  # NODE: Final Summary
+  - name: summary
+    description: Generate final summary with QA metrics
+    run: |
+      story_key = state.get("story_key", "unknown")
+      risk_level = state.get("risk_level", "UNKNOWN")
+      gate_decision = state.get("gate_decision", "UNKNOWN")
+      quality_score = state.get("quality_score", "N/A")
+      review_status = state.get("review_status", "UNKNOWN")
+
+      all_done = review_status == "APPROVED"
+
+      # Partial success if max attempts reached
+      partial_success = review_status == "MAX_ATTEMPTS_REACHED"
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad v6 Development Phase Complete               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    QA METRICS                              ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Risk Level: {risk_level:<47} ║
+      ║ Gate Decision: {gate_decision:<44} ║
+      ║ Quality Score: {quality_score:<44} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    WORKFLOW STATUS                         ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ TEA ATDD: ✓                                                ║
+      ║ Dev Story: ✓                                               ║
+      ║ TEA Test Automation: ✓                                     ║
+      ║ TEA Test Review: ✓                                         ║
+      ║ Code Review: {review_status:<46} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ FINAL RESULT: {'SUCCESS' if all_done else ('PARTIAL (max review attempts)' if partial_success else 'INCOMPLETE'):<45} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      final = "completed" if all_done else ("partial" if partial_success else "incomplete")
+      return {"final_status": final}
+
+edges:
+  # INITIALIZATION
+  - from: __start__
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: extract_risk_from_story
+  - from: extract_risk_from_story
+    to: tea_atdd
+
+  # DEVELOPMENT PHASE
+  - from: tea_atdd
+    to: dev_story
+  - from: dev_story
+    to: tea_test_automation
+  - from: tea_test_automation
+    to: tea_test_review
+  - from: tea_test_review
+    to: extract_quality_score
+  - from: extract_quality_score
+    to: code_review
+  - from: code_review
+    to: check_review_status
+
+  # REVIEW ROUTING
+  # Exit conditions (APPROVED or max attempts reached)
+  - from: check_review_status
+    to: sprint_status
+    when: "state.get('review_status') in ['APPROVED', 'MAX_ATTEMPTS_REACHED', 'BLOCKED']"
+
+  # Continue fixing only if CHANGES_REQUESTED (max attempts check is in check_review_status node)
+  - from: check_review_status
+    to: dev_fix_review
+    when: "state.get('review_status') == 'CHANGES_REQUESTED'"
+
+  - from: dev_fix_review
+    to: increment_review_fix_attempt
+  - from: increment_review_fix_attempt
+    to: code_review
+
+  # FINAL
+  - from: sprint_status
+    to: summary
+  - from: summary
+    to: __end__

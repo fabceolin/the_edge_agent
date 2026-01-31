@@ -1,35 +1,29 @@
-name: bmad-v6-full-qa-cycle
+name: bmad-story-v6-validation
 description: |
-  BMad v6 Full QA Cycle - Com QA Gates Formais usando modulo TEA.
+  BMad v6 Validation Workflow - QA Gates Phase using TEA module.
 
-  REQUISITO: Instalar o modulo TEA (Test Architect Enterprise)
-  Comando: npx bmad-method install → Selecionar "Test Architect (TEA)"
+  REQUIREMENT: Install TEA module (Test Architect Enterprise)
+  Command: npx bmad-method install → Select "Test Architect (TEA)"
 
-  Fluxo completo com QA Gates:
-  1. FASE DE PREPARACAO:
+  Validation flow:
+  1. PREPARATION PHASE:
      - Resolve story path
      - Create Story (CS)
 
-  2. FASE DE VALIDACAO QA (TEA Module):
+  2. QA VALIDATION PHASE (TEA Module):
      - Test Design (TD) - risk assessment + test strategy
-     - NFR Assessment (NR) - requisitos nao-funcionais
-     - Requirements Tracing (TR) - rastreabilidade + gate decision
-     - SM Validate Story (VS) - checklist final
+     - NFR Assessment (NR) - non-functional requirements
+     - Requirements Tracing (TR) - traceability + gate decision
+     - SM Validate Story (VS) - final checklist
 
-  3. LOOP DE CORRECAO (se validacao falhou, max 1 iteracao):
+  3. CORRECTION LOOP (if validation failed, max 1 iteration):
      - Correct Course (CC)
-     - Re-run validacao QA
-     - Se ainda falha → INTERRUPT
+     - Re-run QA validation
+     - If still fails → INTERRUPT
 
-  4. FASE DE DESENVOLVIMENTO:
-     - ATDD (AT) - gera testes de aceitacao (red phase)
-     - Dev Story (DS) - implementa (green phase)
-     - Test Automation (TA) - expande cobertura
-     - Test Review (RV) - quality scoring
-     - Code Review (CR) - review adversarial
-     - Sprint Status (SS)
+  Output: Validated story ready for development phase.
 
-  Usage: tea run examples/workflows/bmad-v6-full-qa-cycle.yaml --arg="epic-1-story-1"
+  Usage: tea run examples/workflows/bmad-story-v6-validation.yaml --input '{"arg": "epic-1-story-1"}'
 
 state_schema:
   arg: str
@@ -46,17 +40,6 @@ state_schema:
   # Correction loop tracking
   correction_attempt: int
   correct_course_output: str
-  # Development phase
-  atdd_output: str
-  dev_output: str
-  test_automation_output: str
-  test_review_output: str
-  quality_score: str
-  review_output: str
-  review_status: str
-  review_fix_attempt: int
-  sprint_status_output: str
-  final_status: str
 
 settings:
   shell_providers:
@@ -445,288 +428,26 @@ nodes:
       raise Exception(f"QA Gate FAILED for {state.get('story_key', 'unknown')}")
 
   # ============================================================================
-  # DEVELOPMENT PHASE
+  # VALIDATION COMPLETE
   # ============================================================================
 
-  # NODE: TEA ATDD (AT) - Generate acceptance tests (red phase)
-  - name: tea_atdd
-    description: Generate failing acceptance tests using TEA ATDD
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Execute TEA ATDD (AT) for story: {{ state.story_path }}
-
-            Run command: bmad-tea-atdd
-
-            The ATDD workflow will:
-            1. Generate acceptance tests based on story criteria
-            2. Create failing tests (TDD red phase)
-            3. Tests should fail until implementation is complete
-
-            INSTRUCTIONS:
-            1. Run the workflow completely
-            2. Verify tests are created and currently failing
-
-            Print: ATDD_COMPLETED
-    output: atdd_output
-
-  # NODE: Dev Story (DS)
-  - name: dev_story
-    description: Implement story (green phase)
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 7200
-      messages:
-        - role: user
-          content: |
-            Execute story development for: {{ state.story_path }}
-
-            Run command: bmad-bmm-dev-story {{ state.story_path }}
-
-            Risk Level: {{ state.risk_level }}
-
-            INSTRUCTIONS:
-            1. Implement all tasks sequentially
-            2. Make acceptance tests PASS (green phase)
-            3. Write unit tests for all functionality
-            4. Update File List and Dev Agent Record
-
-            When done print: DEV_STORY_COMPLETED
-    output: dev_output
-
-  # NODE: TEA Test Automation (TA)
-  - name: tea_test_automation
-    description: Expand test coverage using TEA
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Execute TEA Test Automation (TA) for story: {{ state.story_path }}
-
-            Run command: bmad-tea-automate
-
-            Risk Level: {{ state.risk_level }}
-
-            The Test Automation workflow will:
-            1. Expand automation coverage based on risk
-            2. Add edge case tests
-            3. Add integration tests
-            4. Ensure coverage meets gate requirements
-
-            Print: TEST_AUTOMATION_COMPLETED
-    output: test_automation_output
-
-  # NODE: TEA Test Review (RV) - Quality Scoring
-  - name: tea_test_review
-    description: Execute TEA Test Review with quality scoring
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Execute TEA Test Review (RV) for story: {{ state.story_path }}
-
-            Run command: bmad-tea-review
-
-            The Test Review workflow will:
-            1. Evaluate test quality
-            2. Calculate QUALITY SCORE
-            3. Check coverage against requirements
-            4. Provide improvement recommendations
-
-            Append to story file:
-            ## TEA - Test Review
-            - Quality Score: [score]
-            - Coverage: [percentage]
-            - Recommendations: [list]
-
-            Print QUALITY_SCORE:[0-100] at the end
-            Print: TEST_REVIEW_COMPLETED
-    output: test_review_output
-
-  # NODE: Extract quality score
-  - name: extract_quality_score
-    description: Parse quality score from test review
+  - name: validation_complete
+    description: Validation phase complete - ready for development
     run: |
-      import re
-
-      output = state.get("test_review_output", {})
-      if isinstance(output, dict):
-          text = output.get("content", "")
-      else:
-          text = str(output) if output else ""
-
-      score_match = re.search(r'QUALITY_SCORE:\s*(\d+)', text)
-      if score_match:
-          quality_score = score_match.group(1)
-      else:
-          quality_score = "N/A"
-
-      print(f"Quality Score: {quality_score}")
-      return {"quality_score": quality_score}
-
-  # NODE: Code Review (CR)
-  - name: code_review
-    description: Adversarial code review
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Execute code review for: {{ state.story_path }}
-
-            Run command: bmad-bmm-code-review {{ state.story_path }}
-
-            Quality Score from TEA: {{ state.quality_score }}
-            Risk Level: {{ state.risk_level }}
-
-            Review outcomes:
-            - APPROVED: Print REVIEW_APPROVED
-            - CHANGES_REQUESTED: Print REVIEW_CHANGES_REQUESTED
-            - BLOCKED: Print REVIEW_BLOCKED
-    output: review_output
-
-  - name: check_review_status
-    description: Parse review outcome
-    run: |
-      output = state.get("review_output", {})
-      if isinstance(output, dict):
-          text = output.get("content", "")
-      else:
-          text = str(output) if output else ""
-
-      review_fix_attempt = state.get("review_fix_attempt", 0)
-
-      if "REVIEW_APPROVED" in text or "Approve" in text:
-          review_status = "APPROVED"
-      elif "REVIEW_BLOCKED" in text:
-          review_status = "BLOCKED"
-      else:
-          review_status = "CHANGES_REQUESTED"
-
-      # Force exit after max attempts regardless of status
-      if review_fix_attempt >= 2 and review_status != "APPROVED":
-          print(f"Review Status: {review_status} (Max attempts {review_fix_attempt} reached - forcing exit)")
-          review_status = "MAX_ATTEMPTS_REACHED"
-      else:
-          print(f"Review Status: {review_status} (Attempt: {review_fix_attempt}/2)")
-
-      return {"review_status": review_status}
-
-  - name: dev_fix_review
-    description: Fix review issues
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Fix code review issues for: {{ state.story_path }}
-
-            Read Senior Developer Review section and address ALL issues.
-            Run tests to confirm fixes.
-
-            Print: DEV_FIXES_COMPLETED
-    output: dev_output
-
-  - name: increment_review_fix_attempt
-    description: Track review fix iteration
-    run: |
-      current = state.get("review_fix_attempt", 0)
-      new_attempt = current + 1
-      print(f"Review Fix Attempt: {new_attempt} of 2")
-      # Don't clear review_status here - let check_review_status handle it
-      return {"review_fix_attempt": new_attempt, "review_output": ""}
-
-  - name: sprint_status
-    description: Update sprint status
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 600
-      messages:
-        - role: user
-          content: |
-            Update sprint status.
-            Run command: bmad-bmm-sprint-status
-
-            Story: {{ state.story_key }}
-            Quality Score: {{ state.quality_score }}
-            Review Status: {{ state.review_status }}
-
-            Print: SPRINT_STATUS_UPDATED
-    output: sprint_status_output
-
-  # NODE: Final Summary
-  - name: summary
-    description: Generate final summary with QA metrics
-    run: |
-      story_key = state.get("story_key", "unknown")
-      risk_level = state.get("risk_level", "UNKNOWN")
-      gate_decision = state.get("gate_decision", "UNKNOWN")
-      quality_score = state.get("quality_score", "N/A")
-      review_status = state.get("review_status", "UNKNOWN")
-
-      all_done = (
-          state.get("validation_status") == "PASSED" and
-          review_status == "APPROVED"
-      )
-
-      # Partial success if max attempts reached
-      partial_success = (
-          state.get("validation_status") == "PASSED" and
-          review_status == "MAX_ATTEMPTS_REACHED"
-      )
-
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
-      ║           BMad v6 Full QA Cycle Complete                   ║
+      ║        VALIDATION PHASE COMPLETE - READY FOR DEV           ║
       ╠════════════════════════════════════════════════════════════╣
-      ║ Story: {story_key:<52} ║
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Story Path: {state.get('story_path', 'unknown'):<47} ║
+      ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
+      ║ Gate Decision: {state.get('gate_decision', 'UNKNOWN'):<44} ║
+      ║ Validation Status: {state.get('validation_status', 'UNKNOWN'):<40} ║
       ╠════════════════════════════════════════════════════════════╣
-      ║                    QA METRICS                              ║
-      ╠════════════════════════════════════════════════════════════╣
-      ║ Risk Level: {risk_level:<47} ║
-      ║ Gate Decision: {gate_decision:<44} ║
-      ║ Quality Score: {quality_score:<44} ║
-      ╠════════════════════════════════════════════════════════════╣
-      ║                    WORKFLOW STATUS                         ║
-      ╠════════════════════════════════════════════════════════════╣
-      ║ TEA Test Design: ✓                                         ║
-      ║ TEA NFR Assessment: ✓                                      ║
-      ║ TEA Requirements Trace: ✓                                  ║
-      ║ TEA ATDD: ✓                                                ║
-      ║ Dev Story: ✓                                               ║
-      ║ TEA Test Automation: ✓                                     ║
-      ║ TEA Test Review: ✓                                         ║
-      ║ Code Review: {review_status:<46} ║
-      ╠════════════════════════════════════════════════════════════╣
-      ║ FINAL RESULT: {'SUCCESS' if all_done else ('PARTIAL (max review attempts)' if partial_success else 'INCOMPLETE'):<45} ║
+      ║ Next: Run bmad-story-v6-development.yaml with same story_path ║
       ╚════════════════════════════════════════════════════════════╝
       """)
-
-      final = "completed" if all_done else ("partial" if partial_success else "incomplete")
-      return {"final_status": final}
+      return {}
 
 edges:
   # PREPARATION
@@ -753,7 +474,7 @@ edges:
 
   # VALIDATION ROUTING
   - from: check_validation_status
-    to: tea_atdd
+    to: validation_complete
     when: "state.get('validation_status') == 'PASSED'"
 
   - from: check_validation_status
@@ -772,38 +493,6 @@ edges:
   - from: validation_failed
     to: __end__
 
-  # DEVELOPMENT PHASE
-  - from: tea_atdd
-    to: dev_story
-  - from: dev_story
-    to: tea_test_automation
-  - from: tea_test_automation
-    to: tea_test_review
-  - from: tea_test_review
-    to: extract_quality_score
-  - from: extract_quality_score
-    to: code_review
-  - from: code_review
-    to: check_review_status
-
-  # REVIEW ROUTING
-  # Exit conditions (APPROVED or max attempts reached)
-  - from: check_review_status
-    to: sprint_status
-    when: "state.get('review_status') in ['APPROVED', 'MAX_ATTEMPTS_REACHED', 'BLOCKED']"
-
-  # Continue fixing only if CHANGES_REQUESTED (max attempts check is in check_review_status node)
-  - from: check_review_status
-    to: dev_fix_review
-    when: "state.get('review_status') == 'CHANGES_REQUESTED'"
-
-  - from: dev_fix_review
-    to: increment_review_fix_attempt
-  - from: increment_review_fix_attempt
-    to: code_review
-
   # FINAL
-  - from: sprint_status
-    to: summary
-  - from: summary
+  - from: validation_complete
     to: __end__
