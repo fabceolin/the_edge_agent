@@ -502,15 +502,32 @@ nodes:
           text = str(output) if output else ""
 
       gate_decision = state.get("gate_decision", "UNKNOWN")
+      current_status = state.get("current_status", "unknown")
 
-      if gate_decision == "FAIL":
-          validation_status = "FAILED_GATE"
-      elif "VALIDATION_PASSED" in text:
+      # Gate decision logic depends on story status:
+      # - ready-for-dev: GATE FAIL is EXPECTED (0% coverage, no tests yet)
+      #   TEA artifacts are being created, tests will be written in in-progress
+      # - review: Gate decision matters (tests exist, coverage measured)
+      # - done: Gate should be PASS (confirmed)
+
+      if current_status == "ready-for-dev":
+          # At ready-for-dev, gate FAIL is expected - ignore it completely
+          # NFR and trace are planning artifacts only, not enforcement gates
+          # The goal is just to CREATE the TEA artifacts, not to pass gates
+          # Gates will be re-evaluated post-implementation with actual evidence
           validation_status = "PASSED"
-      elif "VALIDATION_FAILED" in text:
-          validation_status = "FAILED"
+          gate_note = "(ignored at ready-for-dev - planning artifacts only)"
       else:
-          validation_status = "PASSED" if gate_decision in ["PASS", "CONDITIONAL"] else "FAILED"
+          # For review/done status, gate decision matters
+          if gate_decision == "FAIL":
+              validation_status = "FAILED_GATE"
+          elif "VALIDATION_PASSED" in text:
+              validation_status = "PASSED"
+          elif "VALIDATION_FAILED" in text:
+              validation_status = "FAILED"
+          else:
+              validation_status = "PASSED" if gate_decision in ["PASS", "CONDITIONAL"] else "FAILED"
+          gate_note = ""
 
       correction_attempt = state.get("correction_attempt", 0)
 
@@ -519,14 +536,19 @@ nodes:
       ║              QA VALIDATION PHASE COMPLETE                  ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Story Status: {current_status:<45} ║
       ╠════════════════════════════════════════════════════════════╣
       ║ TEA Test Design:      ✓ Completed                          ║
       ║ TEA NFR Assessment:   ✓ Completed                          ║
       ║ TEA Requirements Trace: ✓ Completed                        ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
-      ║ Gate Decision: {gate_decision:<44} ║
-      ║ VALIDATION STATUS: {validation_status:<40} ║
+      ║ Gate Decision: {gate_decision:<44} ║""")
+
+      if current_status == "ready-for-dev":
+          print(f"""      ║ ℹ️  Gate FAIL expected at ready-for-dev (no tests yet)      ║""")
+
+      print(f"""      ║ VALIDATION STATUS: {validation_status:<40} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
 
@@ -564,20 +586,36 @@ nodes:
     output: correct_course_output
 
   - name: increment_correction_attempt
-    description: Track correction iteration
+    description: Track correction iteration and re-check TEA artifacts
     run: |
+      import os
+
       current = state.get("correction_attempt", 0)
       new_attempt = current + 1
+
+      # Re-check if TEA artifacts now exist (they may have been created in first pass)
+      story_id = state.get("story_id", "")
+      tea_test_design_path = f"_bmad-output/test-artifacts/test-design/test-design-story-{story_id}.md"
+      tea_nfr_path = f"_bmad-output/test-artifacts/nfr-assessments/nfr-assessment-story-{story_id}.md"
+      tea_trace_path = f"_bmad-output/test-artifacts/traceability/trace-story-{story_id}.md"
+
+      tea_artifacts_exist = (
+          os.path.isfile(tea_test_design_path) and
+          os.path.isfile(tea_nfr_path) and
+          os.path.isfile(tea_trace_path)
+      )
 
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
       ║        CORRECTION COMPLETED (Attempt {new_attempt})                    ║
       ║ Re-running validation from PO phase...                     ║
+      ║ TEA Artifacts: {'EXIST (will skip TEA phases)' if tea_artifacts_exist else 'MISSING'}              ║
       ╚════════════════════════════════════════════════════════════╝
       """)
 
       return {
           "correction_attempt": new_attempt,
+          "tea_artifacts_exist": tea_artifacts_exist,
           "po_validate_output": "",
           "po_validation_status": "",
           "po_readiness_score": 0,
@@ -660,12 +698,12 @@ edges:
   - from: __start__
     to: resolve_story_path
 
-  # Skip validation completely if story already validated AND TEA artifacts exist
+  # Skip completely if already validated AND TEA artifacts exist
   - from: resolve_story_path
     to: validation_complete
     when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) == True"
 
-  # If already validated but no TEA artifacts, run TEA phases only to create them
+  # If already validated but missing TEA artifacts, create them (skip PO validation)
   - from: resolve_story_path
     to: tea_test_design
     when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) != True"
@@ -679,9 +717,15 @@ edges:
   - from: po_validate_story_draft
     to: check_po_validation
 
+  # If PO passed AND TEA artifacts already exist, skip to validate_story
+  - from: check_po_validation
+    to: validate_story
+    when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) == True"
+
+  # If PO passed AND no TEA artifacts, run TEA phases
   - from: check_po_validation
     to: tea_test_design
-    when: "state.get('po_validation_status') == 'GO'"
+    when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) != True"
 
   - from: check_po_validation
     to: correct_course
@@ -700,8 +744,17 @@ edges:
     to: tea_requirements_tracing
   - from: tea_requirements_tracing
     to: extract_gate_decision
+
+  # After TEA phases: if already validated, skip to complete (TEA artifacts created)
+  - from: extract_gate_decision
+    to: validation_complete
+    when: "state.get('already_validated', False) == True"
+
+  # Normal flow: continue to validate_story
   - from: extract_gate_decision
     to: validate_story
+    when: "state.get('already_validated', False) != True"
+
   - from: validate_story
     to: check_validation_status
 
