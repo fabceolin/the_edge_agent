@@ -4,6 +4,37 @@
 
 This document provides instructions for generating DOT (Graphviz) files that orchestrate sequential and parallel execution of stories, tasks, or any workflow items using TEA agents.
 
+## Workflow Selection (CRITICAL - Ask First!)
+
+**Before generating any DOT file, you MUST determine which workflow to use.**
+
+### Available Workflows
+
+| Workflow | Purpose | When to Use |
+|----------|---------|-------------|
+| `bmad-story-validation.yaml` | Validate story quality (risk-profile, NFR, test-design, review) | **Before development** - ensure stories are well-written and complete |
+| `bmad-story-development.yaml` | Implement code based on story requirements (Dev → QA → SM cycle) | **During development** - implement features described in stories |
+
+### Decision Matrix
+
+| User Request | Workflow to Use |
+|--------------|-----------------|
+| "validate stories", "check stories", "review stories" | `bmad-story-validation.yaml` |
+| "develop stories", "implement stories", "build features" | `bmad-story-development.yaml` |
+| "run stories", "execute stories" (ambiguous) | **ASK THE USER** |
+| Documentation-only stories (schemas, specs, mappings) | **ASK THE USER** - may need validation or custom workflow |
+
+### LLM Instruction
+
+**If the user's intent is unclear, ALWAYS ask:**
+
+> "Which workflow should I use for this DOT file?
+> - `bmad-story-validation.yaml` - Validate story quality before development
+> - `bmad-story-development.yaml` - Implement code based on stories
+> - Other (specify)"
+
+**Never assume the workflow. Always make it explicit in the generated DOT file and execution commands.**
+
 ## Version Requirements
 
 - **Minimum version**: 0.9.82
@@ -94,6 +125,20 @@ The project root (`PROJECT_ROOT`) can be:
 ---
 
 ## Quick Start
+
+### Step 0: Determine Workflow (REQUIRED)
+
+Before generating any DOT file, determine the workflow:
+
+1. **Ask the user** if intent is unclear
+2. **Select workflow** from the table above
+3. **Store the workflow path** for use in commands
+
+```bash
+# Common workflow paths (discover actual paths at runtime)
+VALIDATION_WORKFLOW="<PROJECT_ROOT>/examples/workflows/bmad-story-validation.yaml"
+DEVELOPMENT_WORKFLOW="<PROJECT_ROOT>/examples/workflows/bmad-story-development.yaml"
+```
 
 ### Step 1: Generate DOT File
 
@@ -548,9 +593,28 @@ tea-rust run workflow.yaml
 
 When asked to create a workflow orchestration DOT file:
 
-### 0. Discover Paths (CRITICAL - Do This First!)
+### 0. Determine Workflow (CRITICAL - Ask First!)
 
-**Before generating any DOT file, use tools to discover actual paths:**
+**Before discovering paths or generating anything:**
+
+1. **Check if workflow is specified** in the user's request
+2. **If not specified, ASK:**
+   > "Which workflow should I use?
+   > - `bmad-story-validation.yaml` - Validate story quality
+   > - `bmad-story-development.yaml` - Implement features
+   > - Other (specify)"
+
+3. **Store the selected workflow** for use in all commands
+
+| Story Type | Recommended Workflow |
+|------------|---------------------|
+| Code implementation stories | `bmad-story-development.yaml` |
+| Documentation/spec stories | Ask user (may need validation or custom) |
+| QA/validation tasks | `bmad-story-validation.yaml` |
+
+### 1. Discover Paths (CRITICAL)
+
+**After determining workflow, use tools to discover actual paths:**
 
 ```bash
 # Step 1: Find BMAD workflow files in the project
@@ -575,21 +639,21 @@ glob_pattern: "**/stories/*.md"
 
 **Store discovered WORKFLOW_PATH and STORIES_PATH for use in all commands.**
 
-### 1. Identify Stories/Tasks
+### 2. Identify Stories/Tasks
 
 Extract the list of items to orchestrate:
 - Story IDs (e.g., `TEA-PARALLEL-001.1`)
 - File paths discovered in Step 0 (e.g., `<STORIES_PATH>/TEA-PARALLEL-001.1-executor-abstraction.md`)
 - Dependencies between items
 
-### 2. Determine Phase Structure
+### 3. Determine Phase Structure
 
 Group items into phases based on:
 - Dependencies (items with no deps go in early phases)
 - Logical grouping (related items in same phase)
 - Parallelization opportunity (independent items in same phase run in parallel)
 
-### 3. Generate DOT File
+### 4. Generate DOT File
 
 ```dot
 digraph <workflow_name> {
@@ -613,7 +677,7 @@ digraph <workflow_name> {
 }
 ```
 
-### 4. Save DOT File
+### 5. Save DOT File
 
 Save the DOT file to the standard location:
 
@@ -622,20 +686,24 @@ Save the DOT file to the standard location:
 examples/dot/<workflow-name>.dot
 ```
 
-### 5. Output Commands (REQUIRED)
+### 6. Output Commands (REQUIRED)
 
-**After generating the DOT file, ALWAYS output these commands with full discovered paths:**
+**After generating the DOT file, ALWAYS output these commands with the SELECTED WORKFLOW:**
 
 #### Workflow Mode (RECOMMENDED for story orchestration):
 ```bash
+# IMPORTANT: Use the workflow selected in Step 0!
+# For validation: bmad-story-validation.yaml
+# For development: bmad-story-development.yaml
+
 # Run a workflow for each DOT node (node label becomes state.arg)
 tea-python run --from-dot <DOT_OUTPUT>/<filename>.dot \
-    --dot-workflow <WORKFLOW_PATH>/bmad-story-validation.yaml \
+    --dot-workflow <SELECTED_WORKFLOW_PATH> \
     --dot-max-parallel 4
 
 # With verbose LLM output
 TEA_SHELL_VERBOSE=1 tea-python run --from-dot <DOT_OUTPUT>/<filename>.dot \
-    --dot-workflow <WORKFLOW_PATH>/bmad-story-validation.yaml --dot-max-parallel 3
+    --dot-workflow <SELECTED_WORKFLOW_PATH> --dot-max-parallel 3
 ```
 
 #### Command Mode (for DOT files with embedded commands):
