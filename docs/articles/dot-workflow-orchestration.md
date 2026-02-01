@@ -309,15 +309,51 @@ glob_pattern: "**/docs/stories/*.md"
 Labels are used as:
 - Dictionary keys in execution tracking
 - tmux window names (truncated to ~30 chars)
-- `state.arg` values in Workflow Mode
+- `state.arg` values in Workflow Mode (passed to `resolve_story_path`)
+
+#### CRITICAL: Labels Must Match File Names in Workflow Mode
+
+When using Workflow Mode (`--dot-workflow`), the label is passed to the workflow's `resolve_story_path` node, which uses glob patterns like `*{arg}*` to find files. **Labels must be substrings that uniquely match the target file name.**
+
+| Label in DOT | Actual File Name | Match? | Why |
+|--------------|------------------|--------|-----|
+| `1-1-init-project` | `1-1-init-project.md` | ✅ | Exact match |
+| `3-2-create-ontology-class` | `3-2-create-ontology-class.md` | ✅ | Exact match |
+| `3-2-create-class` | `3-2-create-ontology-class.md` | ❌ | `create-class` is not a substring (has `-ontology-` in between) |
+| `3-4-directed-relation` | `3-4-create-directed-ontology-relation.md` | ❌ | `directed-relation` is not a substring |
+
+**Best Practice: Use Exact File Basenames**
+
+Before generating DOT labels, discover actual file names:
+
+```bash
+# Discover actual file names
+ls _bmad-output/implementation-artifacts/*.md | xargs -I{} basename {} .md
+```
+
+Then use the **exact basename** (without `.md`) as the label:
+
+```dot
+// CORRECT - Labels match actual file basenames exactly
+story_1_2 [label="1-2-environment-configuration"];
+story_3_2 [label="3-2-create-ontology-class"];
+story_3_4 [label="3-4-create-directed-ontology-relation"];
+
+// WRONG - Labels are abbreviated and won't match files
+story_1_2 [label="1-2-environment-config"];        // Missing "-uration"
+story_3_2 [label="3-2-create-class"];              // Missing "-ontology-"
+story_3_4 [label="3-4-directed-relation"];         // Missing "create-" and "-ontology-"
+```
 
 | DO | DON'T |
 |----|-------|
-| `PIR.1.person-table` | `/home/user/docs/stories/PIR.1.person-table-row-level-accept-reject.md` |
-| `TEA-GAME-001.1` | `TEA-GAME-001.1-rust-game-engine-core-with-duckdb` |
-| `story_1_core` | `Story 1: Core Implementation (Phase 1)` |
+| `1-2-environment-configuration` | `1-2-environment-config` (abbreviated) |
+| `3-2-create-ontology-class` | `3-2-create-class` (abbreviated) |
+| `PIR.1.person-table` (if file is `PIR.1.person-table.md`) | `PIR.1.person` (truncated) |
 
-**Why this matters:** tmux truncates window names. Two labels starting with the same 30 characters will collide, causing execution tracking failures.
+**Why this matters:**
+1. tmux truncates window names - two labels starting with the same 30 characters will collide
+2. Workflow Mode relies on substring matching - abbreviated labels that skip middle words will fail to find files
 
 ### 8.3 Complete Example
 

@@ -558,7 +558,7 @@ yaml_content = dot_to_yaml(
 tea-python run workflow.yaml
 
 # With extended timeout (900 minutes = 54000 seconds)
-tea-python run workflow.yaml 
+tea-python run workflow.yaml
 
 # With visual graph progress (shows ASCII workflow diagram with running/completed states)
 tea-python run workflow.yaml  --show-graph
@@ -639,21 +639,38 @@ glob_pattern: "**/stories/*.md"
 
 **Store discovered WORKFLOW_PATH and STORIES_PATH for use in all commands.**
 
-### 2. Identify Stories/Tasks
+### 2. Discover Actual File Names (CRITICAL)
+
+**Before generating any labels, discover the actual file basenames:**
+
+```bash
+# List all story files and extract basenames (without .md)
+ls <STORIES_PATH>/*.md | xargs -I{} basename {} .md
+
+# Example output:
+# 1-1-init-project
+# 1-2-environment-configuration
+# 3-2-create-ontology-class
+# 3-4-create-directed-ontology-relation
+```
+
+**Store these exact basenames for use as DOT labels.** Do NOT abbreviate or modify them.
+
+### 3. Identify Stories/Tasks
 
 Extract the list of items to orchestrate:
-- Story IDs (e.g., `TEA-PARALLEL-001.1`)
-- File paths discovered in Step 0 (e.g., `<STORIES_PATH>/TEA-PARALLEL-001.1-executor-abstraction.md`)
+- Story IDs from the discovered file basenames
+- File paths discovered in Step 1 (e.g., `<STORIES_PATH>/TEA-PARALLEL-001.1-executor-abstraction.md`)
 - Dependencies between items
 
-### 3. Determine Phase Structure
+### 4. Determine Phase Structure
 
 Group items into phases based on:
 - Dependencies (items with no deps go in early phases)
 - Logical grouping (related items in same phase)
 - Parallelization opportunity (independent items in same phase run in parallel)
 
-### 4. Generate DOT File
+### 5. Generate DOT File (Use Discovered Basenames as Labels)
 
 ```dot
 digraph <workflow_name> {
@@ -677,7 +694,7 @@ digraph <workflow_name> {
 }
 ```
 
-### 5. Save DOT File
+### 6. Save DOT File
 
 Save the DOT file to the standard location:
 
@@ -686,7 +703,7 @@ Save the DOT file to the standard location:
 examples/dot/<workflow-name>.dot
 ```
 
-### 6. Output Commands (REQUIRED)
+### 7. Output Commands (REQUIRED)
 
 **After generating the DOT file, ALWAYS output these commands with the SELECTED WORKFLOW:**
 
@@ -850,15 +867,58 @@ tmux attach -t tea-dot
 - **Store PROJECT_ROOT** (derived from discovered workflow path) and reuse it for all command paths
 
 ### Labels (CRITICAL for Workflow Mode)
+- **Labels MUST match actual file basenames** when using Workflow Mode
 - **Keep labels SHORT (max 30 chars recommended)**: Use IDs like `PIR.1.person-table-accept` instead of full paths
 - **Avoid full file paths as labels**: tmux window names are truncated to 30 chars, causing collisions
 - **Avoid special characters**: No newlines (`\n`), quotes, or special chars in labels
 - Labels are used as dict keys, tmux window names, AND passed as `state.arg` in Workflow Mode
 
+#### CRITICAL: Labels Must Match File Names Exactly
+
+When using Workflow Mode (`--dot-workflow`), the label is passed to the workflow's `resolve_story_path` node, which uses glob patterns like `*{arg}*` to find files. **Labels must be exact file basenames or unique substrings that match the target file.**
+
+**Step 1: Discover actual file names BEFORE generating DOT:**
+
+```bash
+# Discover actual file basenames (without .md extension)
+ls <STORIES_PATH>/*.md | xargs -I{} basename {} .md
+```
+
+**Step 2: Use exact basenames as labels:**
+
+| Label in DOT | Actual File Name | Match? | Why |
+|--------------|------------------|--------|-----|
+| `1-1-init-project` | `1-1-init-project.md` | ✅ | Exact match |
+| `3-2-create-ontology-class` | `3-2-create-ontology-class.md` | ✅ | Exact match |
+| `3-2-create-class` | `3-2-create-ontology-class.md` | ❌ | `create-class` not a substring (has `-ontology-` between) |
+| `3-4-directed-relation` | `3-4-create-directed-ontology-relation.md` | ❌ | `directed-relation` not a substring |
+
+**Example - Correct vs Incorrect Labels:**
+
+```dot
+// CORRECT - Labels are exact file basenames
+story_1_2 [label="1-2-environment-configuration"];
+story_3_2 [label="3-2-create-ontology-class"];
+story_3_4 [label="3-4-create-directed-ontology-relation"];
+
+// WRONG - Abbreviated labels that won't match files via glob
+story_1_2 [label="1-2-environment-config"];        // Missing "-uration"
+story_3_2 [label="3-2-create-class"];              // Missing "-ontology-"
+story_3_4 [label="3-4-directed-relation"];         // Missing "create-" and "-ontology-"
+```
+
+**Why abbreviated labels fail:**
+
+The workflow uses `glob.glob(f"*{arg}*.md")` to find files. For `3-4-directed-relation`:
+- Looking for: `*3-4-directed-relation*.md`
+- Actual file: `3-4-create-directed-ontology-relation.md`
+- The string `directed-relation` is NOT a substring of `create-directed-ontology-relation`
+- Glob fails → file not found → workflow fails
+
 **Example - Good vs Bad Labels:**
 
 ```dot
-// GOOD - Short, unique labels that work well with tmux
+// GOOD - Short, unique labels that match actual file basenames
 PIR_1 [label="PIR.1.person-table-accept"];
 MIR_2 [label="MIR.2.matter-table-expand"];
 
