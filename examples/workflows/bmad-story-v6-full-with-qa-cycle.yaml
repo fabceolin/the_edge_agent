@@ -39,6 +39,15 @@ state_schema:
   arg: str
   story_path: str
   story_key: str
+  story_id: str
+  # Skip validation check
+  already_validated: bool
+  current_status: str
+  # TEA artifacts check
+  tea_artifacts_exist: bool
+  tea_test_design_path: str
+  tea_nfr_path: str
+  tea_trace_path: str
   # PO Validation phase
   po_validate_output: str
   po_validation_status: str
@@ -76,57 +85,134 @@ settings:
 
 nodes:
   # ============================================================================
-  # NODE 0: Resolve story path
+  # NODE 0: Resolve story path, check status, and check TEA artifacts
   # ============================================================================
   - name: resolve_story_path
-    description: Convert story key to full story path
+    description: Convert story key to full story path, check if already validated, check TEA artifacts
     run: |
       import os
       import glob
       import yaml
+      import re
 
       arg = state.get("arg", "")
+      story_path = None
+      story_key = None
 
       if os.path.isfile(arg):
+          story_path = arg
           story_key = os.path.basename(arg).replace(".md", "")
-          return {"story_path": arg, "story_key": story_key}
+      else:
+          config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+          impl_artifacts = "_bmad-output/implementation-artifacts"
 
-      config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
-      impl_artifacts = "_bmad-output/implementation-artifacts"
+          for config_path in config_paths:
+              if os.path.exists(config_path):
+                  try:
+                      with open(config_path, 'r') as f:
+                          config = yaml.safe_load(f)
+                      impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                      break
+                  except:
+                      pass
 
-      for config_path in config_paths:
-          if os.path.exists(config_path):
-              try:
-                  with open(config_path, 'r') as f:
-                      config = yaml.safe_load(f)
-                  impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+          patterns = [
+              os.path.join(impl_artifacts, f"{arg}.md"),
+              os.path.join(impl_artifacts, f"*{arg}*.md"),
+              f"**/{arg}.md"
+          ]
+
+          for pattern in patterns:
+              matches = glob.glob(pattern, recursive=True)
+              if matches:
+                  story_path = matches[0]
+                  story_key = os.path.basename(story_path).replace(".md", "")
                   break
-              except:
-                  pass
 
-      patterns = [
-          os.path.join(impl_artifacts, f"{arg}.md"),
-          os.path.join(impl_artifacts, f"*{arg}*.md"),
-          f"**/{arg}.md"
-      ]
+          if not story_path:
+              story_key = arg
+              story_path = os.path.join(impl_artifacts, f"{arg}.md")
 
-      for pattern in patterns:
-          matches = glob.glob(pattern, recursive=True)
-          if matches:
-              story_path = matches[0]
-              story_key = os.path.basename(story_path).replace(".md", "")
-              return {"story_path": story_path, "story_key": story_key}
+      # Extract story_id from story_key (e.g., "1-3-neo4j-connection" -> "1-3")
+      story_id = story_key
+      id_match = re.match(r'^(\d+-\d+)', story_key)
+      if id_match:
+          story_id = id_match.group(1)
 
-      story_key = arg
-      story_path = os.path.join(impl_artifacts, f"{arg}.md")
-      return {"story_path": story_path, "story_key": story_key}
+      # Check if story is already in ready-for-dev, done, review, or in-progress status
+      already_validated = False
+      current_status = "unknown"
+      if story_path and os.path.isfile(story_path):
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read(500)  # Read first 500 chars for status
+              status_match = re.search(r'^Status:\s*(\S+)', content, re.MULTILINE)
+              if status_match:
+                  current_status = status_match.group(1).lower()
+                  if current_status in ['ready-for-dev', 'done', 'review', 'in-progress']:
+                      already_validated = True
+          except:
+              pass
+
+      # Check if TEA artifacts already exist
+      tea_test_design_path = f"_bmad-output/test-artifacts/test-design/test-design-story-{story_id}.md"
+      tea_nfr_path = f"_bmad-output/test-artifacts/nfr-assessments/nfr-assessment-story-{story_id}.md"
+      tea_trace_path = f"_bmad-output/test-artifacts/traceability/trace-story-{story_id}.md"
+
+      tea_artifacts_exist = (
+          os.path.isfile(tea_test_design_path) and
+          os.path.isfile(tea_nfr_path) and
+          os.path.isfile(tea_trace_path)
+      )
+
+      if already_validated:
+          print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        STORY ALREADY VALIDATED - SKIPPING VALIDATION       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ║ Status: {current_status:<51} ║
+      ║ TEA Artifacts: {'EXIST' if tea_artifacts_exist else 'MISSING':<43} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story is already in a validated state.                     ║
+      ║ Skipping PO validation phase.                              ║
+      {'║ TEA artifacts exist - skipping TEA QA phase.               ║' if tea_artifacts_exist else '║ TEA artifacts missing - will run TEA QA phase.             ║'}
+      ╚════════════════════════════════════════════════════════════╝
+          """)
+      elif tea_artifacts_exist:
+          print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        TEA ARTIFACTS FOUND - WILL SKIP TEA PHASES          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ║ Status: {current_status:<51} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ TEA Test Design: ✓ EXISTS                                  ║
+      ║ TEA NFR Assessment: ✓ EXISTS                               ║
+      ║ TEA Traceability: ✓ EXISTS                                 ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Will run PO validation, skip TEA phases.                   ║
+      ╚════════════════════════════════════════════════════════════╝
+          """)
+
+      return {
+          "story_path": story_path,
+          "story_key": story_key,
+          "story_id": story_id,
+          "already_validated": already_validated,
+          "current_status": current_status,
+          "tea_artifacts_exist": tea_artifacts_exist,
+          "tea_test_design_path": tea_test_design_path,
+          "tea_nfr_path": tea_nfr_path,
+          "tea_trace_path": tea_trace_path
+      }
 
   # ============================================================================
   # PO VALIDATION PHASE (Story Conformance)
   # ============================================================================
 
   - name: po_validate_story_draft
-    description: Execute PO validate-story-draft for comprehensive story validation
+    description: Validate story using create-story checklist
     uses: llm.call
     with:
       provider: shell
@@ -135,30 +221,31 @@ nodes:
       messages:
         - role: user
           content: |
-            Execute PO Story Draft Validation for: {{ state.story_path }}
+            Validate this story using the create-story checklist:
+            {{ state.story_path }}
 
-            Run command: bmad-bmm-validate-story-draft {{ state.story_path }}
-
-            The PO Validate Story Draft workflow will:
-            1. Template completeness validation (all sections present)
-            2. File structure and source tree validation
-            3. UI/Frontend completeness (if applicable)
-            4. Acceptance criteria satisfaction assessment
-            5. Testing instructions review
-            6. Security considerations assessment
-            7. Tasks/subtasks sequence validation
-            8. Anti-hallucination verification (source references check)
-            9. Dev agent implementation readiness assessment
+            This will:
+            1. Load the story file
+            2. Load workflow.yaml for variable context
+            3. Load source documents (epics, architecture, etc.)
+            4. Run the systematic 5-step analysis from the checklist
+            5. Present findings with critical/enhancement/optimization categories
 
             INSTRUCTIONS:
-            1. Run the workflow completely
-            2. Capture the GO/NO-GO decision
-            3. Capture the Implementation Readiness Score (1-10)
+            1. Run the validation completely
+            2. Review all findings
+            3. If there are CRITICAL issues that block development, note them
+            4. If no critical blockers, the story is ready
 
-            After completion, print:
-            - PO_VALIDATION_GO or PO_VALIDATION_NOGO
-            - READINESS_SCORE:[1-10]
-            - Summary of critical issues (if any)
+            After validation, determine readiness:
+            - Count critical issues found
+            - Assess overall implementation readiness (1-10 scale)
+
+            At the end, print EXACTLY these lines:
+            - If ready: PO_VALIDATION_GO
+            - If not ready: PO_VALIDATION_NOGO
+            - Always print: READINESS_SCORE:[1-10] (e.g., READINESS_SCORE:8)
+            - Summary of critical issues if any
     output: po_validate_output
 
   - name: check_po_validation
@@ -230,7 +317,7 @@ nodes:
           content: |
             Execute TEA Test Design (TD) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-test-design
+            Run command: bmad-tea-testarch-test-design
 
             The Test Design workflow will:
             1. Analyze story requirements
@@ -295,7 +382,7 @@ nodes:
           content: |
             Execute TEA NFR Assessment (NR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-nfr
+            Run command: bmad-tea-testarch-nfr
 
             The NFR Assessment workflow will:
             1. Evaluate non-functional requirements coverage
@@ -332,7 +419,7 @@ nodes:
           content: |
             Execute TEA Requirements Tracing (TR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-trace
+            Run command: bmad-tea-testarch-trace
 
             The Requirements Tracing workflow will:
             1. Map all requirements to test coverage
@@ -542,7 +629,7 @@ nodes:
           content: |
             Execute TEA ATDD (AT) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-atdd
+            Run command: bmad-tea-testarch-atdd
 
             The ATDD workflow will:
             1. Generate acceptance tests based on story criteria
@@ -595,7 +682,7 @@ nodes:
           content: |
             Execute TEA Test Automation (TA) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-automate
+            Run command: bmad-tea-testarch-automate
 
             Risk Level: {{ state.risk_level }}
 
@@ -621,7 +708,7 @@ nodes:
           content: |
             Execute TEA Test Review (RV) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-review
+            Run command: bmad-tea-testarch-test-review
 
             The Test Review workflow will:
             1. Evaluate test quality
@@ -821,16 +908,35 @@ edges:
   # PREPARATION
   - from: __start__
     to: resolve_story_path
+
+  # Skip to development if story already validated AND TEA artifacts exist
+  - from: resolve_story_path
+    to: tea_atdd
+    when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) == True"
+
+  # If already validated but no TEA artifacts, run TEA phases only
+  - from: resolve_story_path
+    to: tea_test_design
+    when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) != True"
+
+  # Normal flow: proceed to PO validation if not already validated
   - from: resolve_story_path
     to: po_validate_story_draft
+    when: "state.get('already_validated', False) != True"
 
   # PO VALIDATION ROUTING
   - from: po_validate_story_draft
     to: check_po_validation
 
+  # If PO validation passed AND TEA artifacts exist, skip to development
+  - from: check_po_validation
+    to: tea_atdd
+    when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) == True"
+
+  # If PO validation passed AND no TEA artifacts, run TEA phases
   - from: check_po_validation
     to: tea_test_design
-    when: "state.get('po_validation_status') == 'GO'"
+    when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) != True"
 
   - from: check_po_validation
     to: correct_course
