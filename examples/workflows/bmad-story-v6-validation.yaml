@@ -7,18 +7,22 @@ description: |
 
   Validation flow:
   1. PREPARATION PHASE:
-     - Resolve story path
-     - Create Story (CS)
+     - Resolve story path (story must already exist)
 
-  2. QA VALIDATION PHASE (TEA Module):
+  2. PO VALIDATION PHASE (Story Conformance):
+     - PO Validate Story Draft - comprehensive story validation
+     - Anti-hallucination verification, template completeness
+     - GO/NO-GO decision before TEA QA
+
+  3. QA VALIDATION PHASE (TEA Module):
      - Test Design (TD) - risk assessment + test strategy
      - NFR Assessment (NR) - non-functional requirements
      - Requirements Tracing (TR) - traceability + gate decision
-     - SM Validate Story (VS) - final checklist
+     - Final Validate Story (VS) - checklist
 
-  3. CORRECTION LOOP (if validation failed, max 1 iteration):
+  4. CORRECTION LOOP (if validation failed, max 1 iteration):
      - Correct Course (CC)
-     - Re-run QA validation
+     - Re-run validation from PO phase
      - If still fails → INTERRUPT
 
   Output: Validated story ready for development phase.
@@ -29,6 +33,10 @@ state_schema:
   arg: str
   story_path: str
   story_key: str
+  # PO Validation phase
+  po_validate_output: str
+  po_validation_status: str
+  po_readiness_score: int
   # QA Validation phase (TEA module)
   test_design_output: str
   risk_level: str
@@ -97,11 +105,11 @@ nodes:
       return {"story_path": story_path, "story_key": story_key}
 
   # ============================================================================
-  # PREPARATION PHASE
+  # PO VALIDATION PHASE (Story Conformance)
   # ============================================================================
 
-  - name: create_story
-    description: Create story if needed using bmad-bmm-create-story
+  - name: po_validate_story_draft
+    description: Execute PO validate-story-draft for comprehensive story validation
     uses: llm.call
     with:
       provider: shell
@@ -110,13 +118,83 @@ nodes:
       messages:
         - role: user
           content: |
-            Check if story file exists at: {{ state.story_path }}
+            Execute PO Story Draft Validation for: {{ state.story_path }}
 
-            If EXISTS with content: Print STORY_EXISTS_SKIPPING_CREATION
-            If NOT exists or empty: Run bmad-bmm-create-story for {{ state.story_key }}
+            Run command: bmad-bmm-validate-story-draft {{ state.story_path }}
 
-            When done with creation print: STORY_CREATED
-    output: create_story_output
+            The PO Validate Story Draft workflow will:
+            1. Template completeness validation (all sections present)
+            2. File structure and source tree validation
+            3. UI/Frontend completeness (if applicable)
+            4. Acceptance criteria satisfaction assessment
+            5. Testing instructions review
+            6. Security considerations assessment
+            7. Tasks/subtasks sequence validation
+            8. Anti-hallucination verification (source references check)
+            9. Dev agent implementation readiness assessment
+
+            INSTRUCTIONS:
+            1. Run the workflow completely
+            2. Capture the GO/NO-GO decision
+            3. Capture the Implementation Readiness Score (1-10)
+
+            After completion, print:
+            - PO_VALIDATION_GO or PO_VALIDATION_NOGO
+            - READINESS_SCORE:[1-10]
+            - Summary of critical issues (if any)
+    output: po_validate_output
+
+  - name: check_po_validation
+    description: Parse PO validation output and determine if story is ready for TEA QA
+    run: |
+      import re
+
+      output = state.get("po_validate_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      # Extract readiness score
+      score_match = re.search(r'READINESS_SCORE:\s*(\d+)', text)
+      if score_match:
+          readiness_score = int(score_match.group(1))
+      else:
+          readiness_score = 5  # Default to middle score
+
+      # Determine GO/NO-GO
+      if "PO_VALIDATION_GO" in text:
+          po_validation_status = "GO"
+      elif "PO_VALIDATION_NOGO" in text or "NO-GO" in text.upper():
+          po_validation_status = "NOGO"
+      elif readiness_score >= 7:
+          po_validation_status = "GO"
+      else:
+          po_validation_status = "NOGO"
+
+      correction_attempt = state.get("correction_attempt", 0)
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              PO VALIDATION PHASE COMPLETE                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Implementation Readiness Score: {readiness_score}/10                      ║
+      ║ PO Validation Status: {po_validation_status:<37} ║
+      ║ Correction Attempts: {correction_attempt:<38} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if po_validation_status == "GO":
+          print("\n✓ PO VALIDATION PASSED - Proceeding to TEA QA phase...")
+      else:
+          print("\n⚠️  PO VALIDATION FAILED - Story needs correction before TEA QA...")
+
+      return {
+          "po_validation_status": po_validation_status,
+          "po_readiness_score": readiness_score
+      }
 
   # ============================================================================
   # QA VALIDATION PHASE (TEA Module)
@@ -397,12 +475,15 @@ nodes:
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
       ║        CORRECTION COMPLETED (Attempt {new_attempt})                    ║
-      ║ Re-running QA validation phase...                          ║
+      ║ Re-running validation from PO phase...                     ║
       ╚════════════════════════════════════════════════════════════╝
       """)
 
       return {
           "correction_attempt": new_attempt,
+          "po_validate_output": "",
+          "po_validation_status": "",
+          "po_readiness_score": 0,
           "test_design_output": "",
           "nfr_output": "",
           "trace_output": "",
@@ -440,6 +521,10 @@ nodes:
       ╠════════════════════════════════════════════════════════════╣
       ║ Story: {state.get('story_key', 'unknown'):<52} ║
       ║ Story Path: {state.get('story_path', 'unknown'):<47} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ PO Readiness Score: {state.get('po_readiness_score', 0)}/10                               ║
+      ║ PO Validation: {state.get('po_validation_status', 'UNKNOWN'):<44} ║
+      ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
       ║ Gate Decision: {state.get('gate_decision', 'UNKNOWN'):<44} ║
       ║ Validation Status: {state.get('validation_status', 'UNKNOWN'):<40} ║
@@ -454,9 +539,23 @@ edges:
   - from: __start__
     to: resolve_story_path
   - from: resolve_story_path
-    to: create_story
-  - from: create_story
+    to: po_validate_story_draft
+
+  # PO VALIDATION ROUTING
+  - from: po_validate_story_draft
+    to: check_po_validation
+
+  - from: check_po_validation
     to: tea_test_design
+    when: "state.get('po_validation_status') == 'GO'"
+
+  - from: check_po_validation
+    to: correct_course
+    when: "state.get('po_validation_status') != 'GO' and state.get('correction_attempt', 0) == 0"
+
+  - from: check_po_validation
+    to: validation_failed
+    when: "state.get('po_validation_status') != 'GO' and state.get('correction_attempt', 0) >= 1"
 
   # QA VALIDATION PHASE (TEA)
   - from: tea_test_design
@@ -489,7 +588,7 @@ edges:
   - from: correct_course
     to: increment_correction_attempt
   - from: increment_correction_attempt
-    to: tea_test_design
+    to: po_validate_story_draft
   - from: validation_failed
     to: __end__
 
