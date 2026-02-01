@@ -68,11 +68,33 @@ digraph pipeline {
 
 This automatically parallelizes TaskA and TaskB, then runs TaskC after both complete.
 
-## 2. Execution Modes
+## 2. Workflow Selection (Critical First Step)
+
+Before creating a DOT file, determine which workflow to use:
+
+### 2.1 Available Workflows
+
+| Workflow | Purpose | When to Use |
+|----------|---------|-------------|
+| `bmad-story-validation.yaml` | Validate story quality (risk-profile, NFR, test-design, review) | **Before development** - ensure stories are well-written |
+| `bmad-story-development.yaml` | Implement code based on story requirements (Dev → QA → SM cycle) | **During development** - implement features |
+
+### 2.2 Decision Matrix
+
+| User Request | Workflow |
+|--------------|----------|
+| "validate stories", "check stories", "review stories" | `bmad-story-validation.yaml` |
+| "develop stories", "implement stories", "build features" | `bmad-story-development.yaml` |
+| "run stories" (ambiguous) | Ask for clarification |
+| Documentation/spec stories | Ask - may need validation or custom workflow |
+
+**Key principle:** Never assume the workflow. Make it explicit in DOT files and execution commands.
+
+## 3. Execution Modes
 
 TEA supports two execution modes for DOT workflows:
 
-### 2.1 Command Mode
+### 3.1 Command Mode
 
 Each node contains an embedded `command` attribute specifying what to execute:
 
@@ -97,7 +119,7 @@ digraph validation {
 
 **Best for:** Self-contained workflows where each node has distinct execution requirements.
 
-### 2.2 Workflow Mode (Recommended)
+### 3.2 Workflow Mode (Recommended)
 
 Nodes represent items (stories, tasks, documents), and a single workflow is applied to each:
 
@@ -123,7 +145,7 @@ The node label is passed as `{"arg": "<label>"}` to the workflow.
 
 **Best for:** Homogeneous operations (validation, development, testing) across multiple items.
 
-## 3. CLI Reference
+## 4. CLI Reference
 
 ```bash
 tea run --from-dot workflow.dot [OPTIONS]
@@ -139,7 +161,7 @@ tea run --from-dot workflow.dot [OPTIONS]
 | `--dot-timeout` | 54000 | Command timeout in seconds (15h) |
 | `--dot-dry-run` | false | Show plan without executing |
 
-### 3.1 Examples
+### 4.1 Examples
 
 ```bash
 # Command Mode: Execute embedded commands
@@ -155,9 +177,9 @@ tea run --from-dot stories.dot --dot-workflow dev.yaml --dot-input '{"mode": "se
 tea run --from-dot workflow.dot --dot-dry-run
 ```
 
-## 4. DOT File Structure
+## 5. DOT File Structure
 
-### 4.1 Required Elements
+### 5.1 Required Elements
 
 | Element | Purpose | Example |
 |---------|---------|---------|
@@ -167,7 +189,7 @@ tea run --from-dot workflow.dot --dot-dry-run
 | `subgraph cluster_*` | Phase grouping | `subgraph cluster_phase1 {}` |
 | Edges | Execution order | `task_a -> task_b;` |
 
-### 4.2 Node Attributes
+### 5.2 Node Attributes
 
 ```dot
 node_id [
@@ -176,15 +198,15 @@ node_id [
 ];
 ```
 
-### 4.3 Escaping Rules
+### 5.3 Escaping Rules
 
 - Use `\"` for quotes inside command strings
 - Commands are wrapped in double quotes in DOT format
 - Avoid special characters in labels (see Best Practices)
 
-## 5. Parallel Execution Patterns
+## 6. Parallel Execution Patterns
 
-### 5.1 Pattern 1: Sequential
+### 6.1 Pattern 1: Sequential
 
 All nodes execute one after another.
 
@@ -196,7 +218,7 @@ digraph sequential {
 
 **Execution phases:** A, B, C (3 phases)
 
-### 5.2 Pattern 2: Parallel Within Phases
+### 6.2 Pattern 2: Parallel Within Phases
 
 Nodes without dependencies run simultaneously.
 
@@ -216,7 +238,7 @@ digraph parallel_phases {
 1. Phase 1: A, B, C (parallel)
 2. Phase 2: D
 
-### 5.3 Pattern 3: Mixed Dependencies
+### 6.3 Pattern 3: Mixed Dependencies
 
 Some nodes depend on specific predecessors.
 
@@ -238,7 +260,7 @@ digraph mixed {
 2. Phase 2: FeatureA, FeatureB, FeatureC (parallel)
 3. Phase 3: Integration
 
-### 5.4 Efficiency Analysis
+### 6.4 Efficiency Analysis
 
 | Topology | Sequential Time | Parallel Time | Improvement |
 |----------|-----------------|---------------|-------------|
@@ -246,7 +268,7 @@ digraph mixed {
 | Diamond (1→2→1) | 4x | 3x | 25% reduction |
 | Wide fan-out (1→5→1) | 7x | 3x | 57% reduction |
 
-## 6. Verbose Mode for LLM Shell Providers
+## 7. Verbose Mode for LLM Shell Providers
 
 When workflows call `llm.call` with shell providers (e.g., Claude Code), output is captured but not displayed by default. Use `TEA_SHELL_VERBOSE=1` to see LLM output in real-time:
 
@@ -264,9 +286,9 @@ This is particularly useful when:
 - Monitoring LLM reasoning in real-time
 - Understanding why a particular node takes longer than expected
 
-## 7. Generating DOT Files
+## 8. Generating DOT Files
 
-### 7.1 Path Discovery (Critical)
+### 8.1 Path Discovery (Critical)
 
 Before generating a DOT file, discover actual paths using Glob tools:
 
@@ -282,7 +304,7 @@ glob_pattern: "**/docs/stories/*.md"
 
 **Store discovered paths for use in all commands.**
 
-### 7.2 Label Best Practices
+### 8.2 Label Best Practices
 
 Labels are used as:
 - Dictionary keys in execution tracking
@@ -297,7 +319,7 @@ Labels are used as:
 
 **Why this matters:** tmux truncates window names. Two labels starting with the same 30 characters will collide, causing execution tracking failures.
 
-### 7.3 Complete Example
+### 8.3 Complete Example
 
 ```dot
 digraph tea_game_validation {
@@ -338,7 +360,7 @@ digraph tea_game_validation {
 }
 ```
 
-### 7.4 Output Commands
+### 8.4 Output Commands
 
 After generating a DOT file, always provide execution commands:
 
@@ -356,9 +378,9 @@ TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
 tmux attach -t tea-dot
 ```
 
-## 8. Monitoring and Debugging
+## 9. Monitoring and Debugging
 
-### 8.1 tmux Session Management
+### 9.1 tmux Session Management
 
 ```bash
 # Attach to execution session
@@ -371,7 +393,7 @@ tmux list-windows -t tea-dot
 tmux select-window -t tea-dot:window-name
 ```
 
-### 8.2 Execution Output
+### 9.2 Execution Output
 
 The orchestrator provides progress updates:
 
@@ -392,7 +414,7 @@ Phase 2 (parallel): 11 nodes
   ✓ Completed: MIR.1.matter-deduplication (433.1s)
 ```
 
-### 8.3 Troubleshooting
+### 9.3 Troubleshooting
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
@@ -401,7 +423,7 @@ Phase 2 (parallel): 11 nodes
 | `Circular dependency` | A → B → A | Redesign to remove cycle |
 | `File not found` | Wrong path in command | Discover paths dynamically |
 
-## 9. Integration with BMad Workflows
+## 10. Integration with BMad Workflows
 
 TEA provides pre-built BMad workflows for story development:
 
@@ -421,9 +443,9 @@ tea run --from-dot stories.dot \
 
 The workflow's `resolve_story_path` node handles label → path conversion.
 
-## 10. Best Practices
+## 11. Best Practices
 
-### 10.1 File Organization
+### 11.1 File Organization
 
 ```
 project/
@@ -439,7 +461,7 @@ project/
         └── *.md
 ```
 
-### 10.2 Naming Conventions
+### 11.2 Naming Conventions
 
 | File Type | Convention | Example |
 |-----------|------------|---------|
@@ -447,7 +469,7 @@ project/
 | Workflows | `<action>-<type>.yaml` | `bmad-story-development.yaml` |
 | Sessions | lowercase, hyphenated | `tea-dot`, `epic-impl` |
 
-### 10.3 Concurrency Guidelines
+### 11.3 Concurrency Guidelines
 
 | Workflow Type | Recommended `--dot-max-parallel` | Rationale |
 |---------------|----------------------------------|-----------|
@@ -455,7 +477,7 @@ project/
 | Compute-bound | CPU cores - 1 | Avoid oversubscription |
 | I/O-bound | 5-10 | Network latency dominates |
 
-### 10.4 Timeout Planning
+### 11.4 Timeout Planning
 
 | Workflow Complexity | Recommended Timeout | Flag |
 |--------------------|---------------------|------|
@@ -463,7 +485,7 @@ project/
 | Story development | 1 hour | `--dot-timeout 3600` |
 | Complex epic | 15 hours | `--dot-timeout 54000` (default) |
 
-## 11. Conclusion
+## 12. Conclusion
 
 DOT workflow orchestration in TEA provides a powerful, visual approach to managing complex AI agent pipelines. Key benefits include:
 
@@ -475,7 +497,7 @@ DOT workflow orchestration in TEA provides a powerful, visual approach to managi
 
 The combination of DOT's declarative syntax with TEA's execution engine enables teams to orchestrate complex workflows—from multi-story epics to batch validation pipelines—with minimal manual intervention.
 
-## 12. References
+## 13. References
 
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - Official DOT syntax reference
 - [Writing TEA with TEA](./writing-tea-with-tea.md) - Meta-development methodology using DOT orchestration
