@@ -1,0 +1,736 @@
+name: bmad-story-v6-develop
+description: |
+  BMad v6 Development Workflow - Development phase with Post-Dev Gate Enforcement.
+
+  PREREQUISITE: Story must have been validated first using bmad-story-v6-validation.yaml
+  - Story should be in 'ready-for-dev' status
+  - TEA artifacts should exist (test-design, nfr-assessment, traceability)
+
+  REQUIREMENT: Install TEA module (Test Architect Enterprise)
+  Command: npx bmad-method install → Select "Test Architect (TEA)"
+
+  This workflow handles:
+  1. PREPARATION PHASE:
+     - Resolve story path
+     - Verify TEA artifacts exist (from validation phase)
+
+  2. DEVELOPMENT PHASE:
+     - ATDD (AT) - generate acceptance tests (RED phase)
+     - Dev Story (DS) - implement (GREEN phase)
+     - Test Automation (TA) - expand coverage
+
+  3. POST-DEV VERIFICATION (Gate Enforcement):
+     - Requirements Tracing (TR) - re-run with actual coverage
+     - NFR Assessment (NR) - re-run with evidence
+     - Gate decision ENFORCED (FAIL blocks workflow)
+
+  4. QUALITY PHASE:
+     - Test Review (RV) - quality scoring
+     - Code Review (CR) - adversarial review
+     - Sprint Status (SS)
+
+  Gate Flow:
+  - Pre-Dev artifacts exist from validation workflow (baseline)
+  - Post-Dev: trace/nfr VERIFY with evidence (gate enforced, should PASS)
+
+  Usage: tea run examples/workflows/bmad-story-v6-develop.yaml --input '{"arg": "epic-1-story-1"}'
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  story_id: str
+  current_status: str
+  # TEA artifacts check (from validation phase)
+  tea_artifacts_exist: bool
+  tea_test_design_path: str
+  tea_nfr_path: str
+  tea_trace_path: str
+  risk_level: str
+  # Development phase
+  atdd_output: str
+  dev_output: str
+  test_automation_output: str
+  # Post-dev verification (re-run trace/nfr with evidence)
+  post_dev_trace_output: str
+  post_dev_gate_decision: str
+  post_dev_nfr_output: str
+  post_dev_gate_status: str
+  # Quality and review
+  test_review_output: str
+  quality_score: str
+  review_output: str
+  review_status: str
+  review_fix_attempt: int
+  sprint_status_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # PREPARATION PHASE
+  # ============================================================================
+  - name: resolve_story_path
+    description: Convert story key to full story path, verify TEA artifacts exist
+    run: |
+      import os
+      import glob
+      import yaml
+      import re
+
+      arg = state.get("arg", "")
+      story_path = None
+      story_key = None
+
+      if os.path.isfile(arg):
+          story_path = arg
+          story_key = os.path.basename(arg).replace(".md", "")
+      else:
+          config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+          impl_artifacts = "_bmad-output/implementation-artifacts"
+
+          for config_path in config_paths:
+              if os.path.exists(config_path):
+                  try:
+                      with open(config_path, 'r') as f:
+                          config = yaml.safe_load(f)
+                      impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                      break
+                  except:
+                      pass
+
+          patterns = [
+              os.path.join(impl_artifacts, f"{arg}.md"),
+              os.path.join(impl_artifacts, f"*{arg}*.md"),
+              f"**/{arg}.md"
+          ]
+
+          for pattern in patterns:
+              matches = glob.glob(pattern, recursive=True)
+              if matches:
+                  story_path = matches[0]
+                  story_key = os.path.basename(story_path).replace(".md", "")
+                  break
+
+          if not story_path:
+              story_key = arg
+              story_path = os.path.join(impl_artifacts, f"{arg}.md")
+
+      # Extract story_id from story_key (e.g., "1-3-neo4j-connection" -> "1-3")
+      story_id = story_key
+      id_match = re.match(r'^(\d+-\d+)', story_key)
+      if id_match:
+          story_id = id_match.group(1)
+
+      # Check current status
+      current_status = "unknown"
+      if story_path and os.path.isfile(story_path):
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read(500)
+              status_match = re.search(r'^Status:\s*(\S+)', content, re.MULTILINE)
+              if status_match:
+                  current_status = status_match.group(1).lower()
+          except:
+              pass
+
+      # Check if TEA artifacts exist (should exist from validation phase)
+      tea_test_design_path = f"_bmad-output/test-artifacts/test-design/test-design-story-{story_id}.md"
+      tea_nfr_path = f"_bmad-output/test-artifacts/nfr-assessments/nfr-assessment-story-{story_id}.md"
+      tea_trace_path = f"_bmad-output/test-artifacts/traceability/trace-story-{story_id}.md"
+
+      tea_test_design_exists = os.path.isfile(tea_test_design_path)
+      tea_nfr_exists = os.path.isfile(tea_nfr_path)
+      tea_trace_exists = os.path.isfile(tea_trace_path)
+      tea_artifacts_exist = tea_test_design_exists and tea_nfr_exists and tea_trace_exists
+
+      # Extract risk level from test design if it exists
+      risk_level = "UNKNOWN"
+      if tea_test_design_exists:
+          try:
+              with open(tea_test_design_path, 'r') as f:
+                  td_content = f.read()
+              risk_match = re.search(r'Risk\s*Level[:\s]*(\w+)', td_content, re.IGNORECASE)
+              if risk_match:
+                  risk_level = risk_match.group(1).upper()
+          except:
+              pass
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              DEVELOPMENT WORKFLOW - PREPARATION            ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ║ Story ID: {story_id:<49} ║
+      ║ Status: {current_status:<51} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ TEA Artifacts (from validation):                          ║
+      ║ Test Design: {'✓ EXISTS' if tea_test_design_exists else '✗ MISSING':<46} ║
+      ║ NFR Assessment: {'✓ EXISTS' if tea_nfr_exists else '✗ MISSING':<43} ║
+      ║ Traceability: {'✓ EXISTS' if tea_trace_exists else '✗ MISSING':<45} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Risk Level: {risk_level:<47} ║
+      ║ Ready for Development: {'YES' if tea_artifacts_exist else 'NO - Run validation first!':<36} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if not tea_artifacts_exist:
+          print("\n⚠️  WARNING: TEA artifacts missing. Run bmad-story-v6-validation.yaml first!")
+
+      return {
+          "story_path": story_path,
+          "story_key": story_key,
+          "story_id": story_id,
+          "current_status": current_status,
+          "tea_artifacts_exist": tea_artifacts_exist,
+          "tea_test_design_path": tea_test_design_path,
+          "tea_nfr_path": tea_nfr_path,
+          "tea_trace_path": tea_trace_path,
+          "risk_level": risk_level
+      }
+
+  - name: missing_artifacts_error
+    description: Handle missing TEA artifacts
+    run: |
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           CANNOT START DEVELOPMENT                         ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║  ⚠️  TEA artifacts are missing!                             ║
+      ║                                                            ║
+      ║  Please run validation first:                              ║
+      ║  tea run examples/workflows/bmad-story-v6-validation.yaml  ║
+      ║      --input '{{"arg": "{state.get('story_key', 'story-key')}"}}' ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      raise Exception(f"TEA artifacts missing for {state.get('story_key', 'unknown')}. Run validation first.")
+
+  # ============================================================================
+  # DEVELOPMENT PHASE
+  # ============================================================================
+
+  # NODE: TEA ATDD (AT) - Generate acceptance tests (red phase)
+  - name: tea_atdd
+    description: Generate failing acceptance tests using TEA ATDD
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA ATDD (AT) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-atdd
+
+            Risk Level: {{ state.risk_level }}
+
+            The ATDD workflow will:
+            1. Generate acceptance tests based on story criteria
+            2. Create failing tests (TDD red phase)
+            3. Tests should fail until implementation is complete
+
+            INSTRUCTIONS:
+            1. Run the workflow completely
+            2. Verify tests are created and currently failing
+
+            Print: ATDD_COMPLETED
+    output: atdd_output
+
+  # NODE: Dev Story (DS)
+  - name: dev_story
+    description: Implement story (green phase)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Execute story development for: {{ state.story_path }}
+
+            Run command: bmad-bmm-dev-story {{ state.story_path }}
+
+            Risk Level: {{ state.risk_level }}
+
+            INSTRUCTIONS:
+            1. Implement all tasks sequentially
+            2. Make acceptance tests PASS (green phase)
+            3. Write unit tests for all functionality
+            4. Update File List and Dev Agent Record
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  # NODE: TEA Test Automation (TA)
+  - name: tea_test_automation
+    description: Expand test coverage using TEA
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA Test Automation (TA) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-automate
+
+            Risk Level: {{ state.risk_level }}
+
+            The Test Automation workflow will:
+            1. Expand automation coverage based on risk
+            2. Add edge case tests
+            3. Add integration tests
+            4. Ensure coverage meets gate requirements
+
+            Print: TEST_AUTOMATION_COMPLETED
+    output: test_automation_output
+
+  # ============================================================================
+  # POST-DEVELOPMENT VERIFICATION (Re-run trace/nfr with actual evidence)
+  # ============================================================================
+
+  # NODE: Post-Dev Trace - Verify actual coverage (NOW gate matters)
+  - name: post_dev_trace
+    description: Re-run requirements tracing with actual test coverage
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            POST-DEVELOPMENT: Re-run TEA Requirements Tracing for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-trace
+
+            CONTEXT: This is POST-IMPLEMENTATION verification.
+            - Tests now exist (from ATDD and test automation)
+            - Coverage should be measurable
+            - Gate decision NOW MATTERS
+
+            The Requirements Tracing workflow will:
+            1. Map all requirements to ACTUAL test coverage
+            2. Update traceability matrix with real coverage %
+            3. Verify coverage meets requirements
+            4. Make RELEASE GATE DECISION based on evidence
+
+            Update the story file {{ state.story_path }} section:
+            ## TEA - Requirements Trace (Post-Dev)
+            - Coverage: [actual percentage]
+            - Gaps: [any remaining gaps]
+            - Gate Decision: [PASS|CONDITIONAL|FAIL]
+
+            Print GATE_DECISION:[PASS|CONDITIONAL|FAIL] at the end
+            Print: POST_DEV_TRACE_COMPLETED
+    output: post_dev_trace_output
+
+  # NODE: Extract post-dev gate decision
+  - name: extract_post_dev_gate
+    description: Parse gate decision from post-dev trace
+    run: |
+      import re
+
+      output = state.get("post_dev_trace_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      gate_match = re.search(r'GATE_DECISION:\s*(PASS|CONDITIONAL|FAIL)', text, re.IGNORECASE)
+      if gate_match:
+          post_dev_gate_decision = gate_match.group(1).upper()
+      elif "fail" in text.lower() and "gate" in text.lower():
+          post_dev_gate_decision = "FAIL"
+      elif "conditional" in text.lower():
+          post_dev_gate_decision = "CONDITIONAL"
+      else:
+          post_dev_gate_decision = "PASS"
+
+      print(f"Post-Dev Gate Decision: {post_dev_gate_decision}")
+      return {"post_dev_gate_decision": post_dev_gate_decision}
+
+  # NODE: Post-Dev NFR - Verify NFRs with actual evidence
+  - name: post_dev_nfr
+    description: Re-run NFR assessment with actual implementation evidence
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            POST-DEVELOPMENT: Re-run TEA NFR Assessment for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-nfr
+
+            CONTEXT: This is POST-IMPLEMENTATION verification.
+            - Code now exists
+            - Performance can be measured
+            - Security can be verified
+            - Evidence is available
+
+            The NFR Assessment workflow will:
+            1. Evaluate NFRs with ACTUAL evidence from implementation
+            2. Check performance metrics
+            3. Verify security implementation
+            4. Assess scalability approach
+            5. Document evidence for each NFR
+
+            Update the story file {{ state.story_path }} section:
+            ## TEA - NFR Assessment (Post-Dev)
+            - Performance: [evidence-based status]
+            - Security: [evidence-based status]
+            - Scalability: [evidence-based status]
+            - Evidence: [what was verified]
+
+            Print: POST_DEV_NFR_COMPLETED
+    output: post_dev_nfr_output
+
+  # NODE: Check post-dev gate (NOW ENFORCED)
+  - name: check_post_dev_gate
+    description: Enforce gate decision after development
+    run: |
+      post_dev_gate_decision = state.get("post_dev_gate_decision", "UNKNOWN")
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        POST-DEVELOPMENT GATE VERIFICATION                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Trace Re-evaluation: ✓ Completed (with actual coverage)    ║
+      ║ NFR Re-evaluation:   ✓ Completed (with evidence)           ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ POST-DEV GATE DECISION: {post_dev_gate_decision:<35} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if post_dev_gate_decision == "FAIL":
+          post_dev_gate_status = "FAILED"
+          print("\n⚠️  POST-DEV GATE FAILED - Coverage requirements not met")
+      elif post_dev_gate_decision == "CONDITIONAL":
+          post_dev_gate_status = "CONDITIONAL"
+          print("\n⚠️  POST-DEV GATE CONDITIONAL - Proceeding with concerns noted")
+      else:
+          post_dev_gate_status = "PASSED"
+          print("\n✓ POST-DEV GATE PASSED - Proceeding to test review")
+
+      return {"post_dev_gate_status": post_dev_gate_status}
+
+  - name: post_dev_gate_failed
+    description: Handle post-dev gate failure
+    run: |
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           POST-DEV GATE FAILED                             ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Gate Decision: {state.get('post_dev_gate_decision', 'FAIL'):<44} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║  ⚠️  Coverage requirements not met after development.       ║
+      ║                                                            ║
+      ║  Actions needed:                                           ║
+      ║  1. Review trace output for coverage gaps                  ║
+      ║  2. Add missing tests                                      ║
+      ║  3. Re-run this workflow                                   ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      raise Exception(f"Post-Dev Gate FAILED for {state.get('story_key', 'unknown')}")
+
+  # ============================================================================
+  # QUALITY PHASE
+  # ============================================================================
+
+  # NODE: TEA Test Review (RV) - Quality Scoring
+  - name: tea_test_review
+    description: Execute TEA Test Review with quality scoring
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA Test Review (RV) for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-test-review
+
+            The Test Review workflow will:
+            1. Evaluate test quality
+            2. Calculate QUALITY SCORE
+            3. Check coverage against requirements
+            4. Provide improvement recommendations
+
+            Append to story file:
+            ## TEA - Test Review
+            - Quality Score: [score]
+            - Coverage: [percentage]
+            - Recommendations: [list]
+
+            Print QUALITY_SCORE:[0-100] at the end
+            Print: TEST_REVIEW_COMPLETED
+    output: test_review_output
+
+  # NODE: Extract quality score
+  - name: extract_quality_score
+    description: Parse quality score from test review
+    run: |
+      import re
+
+      output = state.get("test_review_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      score_match = re.search(r'QUALITY_SCORE:\s*(\d+)', text)
+      if score_match:
+          quality_score = score_match.group(1)
+      else:
+          quality_score = "N/A"
+
+      print(f"Quality Score: {quality_score}")
+      return {"quality_score": quality_score}
+
+  # NODE: Code Review (CR)
+  - name: code_review
+    description: Adversarial code review
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute code review for: {{ state.story_path }}
+
+            Run command: bmad-bmm-code-review {{ state.story_path }}
+
+            Quality Score from TEA: {{ state.quality_score }}
+            Risk Level: {{ state.risk_level }}
+
+            Review outcomes:
+            - APPROVED: Print REVIEW_APPROVED
+            - CHANGES_REQUESTED: Print REVIEW_CHANGES_REQUESTED
+            - BLOCKED: Print REVIEW_BLOCKED
+    output: review_output
+
+  - name: check_review_status
+    description: Parse review outcome
+    run: |
+      output = state.get("review_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      review_fix_attempt = state.get("review_fix_attempt", 0)
+
+      if "REVIEW_APPROVED" in text or "Approve" in text:
+          review_status = "APPROVED"
+      elif "REVIEW_BLOCKED" in text:
+          review_status = "BLOCKED"
+      else:
+          review_status = "CHANGES_REQUESTED"
+
+      # Force exit after max attempts regardless of status
+      if review_fix_attempt >= 2 and review_status != "APPROVED":
+          print(f"Review Status: {review_status} (Max attempts {review_fix_attempt} reached - forcing exit)")
+          review_status = "MAX_ATTEMPTS_REACHED"
+      else:
+          print(f"Review Status: {review_status} (Attempt: {review_fix_attempt}/2)")
+
+      return {"review_status": review_status}
+
+  - name: dev_fix_review
+    description: Fix review issues
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Fix code review issues for: {{ state.story_path }}
+
+            Read Senior Developer Review section and address ALL issues.
+            Run tests to confirm fixes.
+
+            Print: DEV_FIXES_COMPLETED
+    output: dev_output
+
+  - name: increment_review_fix_attempt
+    description: Track review fix iteration
+    run: |
+      current = state.get("review_fix_attempt", 0)
+      new_attempt = current + 1
+      print(f"Review Fix Attempt: {new_attempt} of 2")
+      return {"review_fix_attempt": new_attempt, "review_output": ""}
+
+  - name: sprint_status
+    description: Update sprint status
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 600
+      messages:
+        - role: user
+          content: |
+            Update sprint status.
+            Run command: bmad-bmm-sprint-status
+
+            Story: {{ state.story_key }}
+            Quality Score: {{ state.quality_score }}
+            Review Status: {{ state.review_status }}
+
+            Print: SPRINT_STATUS_UPDATED
+    output: sprint_status_output
+
+  # NODE: Final Summary
+  - name: summary
+    description: Generate final summary with QA metrics
+    run: |
+      story_key = state.get("story_key", "unknown")
+      risk_level = state.get("risk_level", "UNKNOWN")
+      post_dev_gate = state.get("post_dev_gate_decision", "UNKNOWN")
+      post_dev_gate_status = state.get("post_dev_gate_status", "UNKNOWN")
+      quality_score = state.get("quality_score", "N/A")
+      review_status = state.get("review_status", "UNKNOWN")
+
+      all_done = (
+          post_dev_gate_status in ["PASSED", "CONDITIONAL"] and
+          review_status == "APPROVED"
+      )
+
+      # Partial success if max attempts reached or conditional gate
+      partial_success = (
+          post_dev_gate_status in ["PASSED", "CONDITIONAL"] and
+          review_status == "MAX_ATTEMPTS_REACHED"
+      )
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMad v6 Development Workflow Complete            ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    QA METRICS                              ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Risk Level: {risk_level:<47} ║
+      ║ Post-Dev Gate: {post_dev_gate:<44} ║
+      ║ Quality Score: {quality_score:<44} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║                    WORKFLOW STATUS                         ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ TEA ATDD (RED): ✓                                          ║
+      ║ Dev Story (GREEN): ✓                                       ║
+      ║ TEA Test Automation: ✓                                     ║
+      ║ Post-Dev Trace (verified): ✓                               ║
+      ║ Post-Dev NFR (verified): ✓                                 ║
+      ║ TEA Test Review: ✓                                         ║
+      ║ Code Review: {review_status:<46} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ POST-DEV GATE: {post_dev_gate_status:<44} ║
+      ║ FINAL RESULT: {'SUCCESS' if all_done else ('PARTIAL (max review attempts)' if partial_success else 'INCOMPLETE'):<45} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      final = "completed" if all_done else ("partial" if partial_success else "incomplete")
+      return {"final_status": final}
+
+edges:
+  # PREPARATION
+  - from: __start__
+    to: resolve_story_path
+
+  # Check if TEA artifacts exist (required for development)
+  - from: resolve_story_path
+    to: tea_atdd
+    when: "state.get('tea_artifacts_exist', False) == True"
+
+  - from: resolve_story_path
+    to: missing_artifacts_error
+    when: "state.get('tea_artifacts_exist', False) != True"
+
+  - from: missing_artifacts_error
+    to: __end__
+
+  # DEVELOPMENT PHASE
+  - from: tea_atdd
+    to: dev_story
+  - from: dev_story
+    to: tea_test_automation
+
+  # POST-DEVELOPMENT VERIFICATION (trace/nfr re-run with evidence)
+  - from: tea_test_automation
+    to: post_dev_trace
+  - from: post_dev_trace
+    to: extract_post_dev_gate
+  - from: extract_post_dev_gate
+    to: post_dev_nfr
+  - from: post_dev_nfr
+    to: check_post_dev_gate
+
+  # POST-DEV GATE ROUTING
+  # PASS or CONDITIONAL: continue to test review
+  - from: check_post_dev_gate
+    to: tea_test_review
+    when: "state.get('post_dev_gate_status') in ['PASSED', 'CONDITIONAL']"
+
+  # FAIL: go to gate failed handler
+  - from: check_post_dev_gate
+    to: post_dev_gate_failed
+    when: "state.get('post_dev_gate_status') == 'FAILED'"
+
+  - from: post_dev_gate_failed
+    to: __end__
+
+  # QUALITY PHASE
+  - from: tea_test_review
+    to: extract_quality_score
+  - from: extract_quality_score
+    to: code_review
+  - from: code_review
+    to: check_review_status
+
+  # REVIEW ROUTING
+  # Exit conditions (APPROVED or max attempts reached)
+  - from: check_review_status
+    to: sprint_status
+    when: "state.get('review_status') in ['APPROVED', 'MAX_ATTEMPTS_REACHED', 'BLOCKED']"
+
+  # Continue fixing only if CHANGES_REQUESTED
+  - from: check_review_status
+    to: dev_fix_review
+    when: "state.get('review_status') == 'CHANGES_REQUESTED'"
+
+  - from: dev_fix_review
+    to: increment_review_fix_attempt
+  - from: increment_review_fix_attempt
+    to: code_review
+
+  # FINAL
+  - from: sprint_status
+    to: summary
+  - from: summary
+    to: __end__
