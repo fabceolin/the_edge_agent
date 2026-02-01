@@ -939,15 +939,20 @@ nodes:
             Quality Score from TEA: {{ state.quality_score }}
             Risk Level: {{ state.risk_level }}
 
-            Review outcomes:
-            - APPROVED: Print REVIEW_APPROVED
-            - CHANGES_REQUESTED: Print REVIEW_CHANGES_REQUESTED
-            - BLOCKED: Print REVIEW_BLOCKED
+            IMPORTANT: After the review completes, clearly state the final outcome:
+            - If story is approved (Status: done), print: **Outcome:** APPROVED
+            - If changes are needed (Status: in-progress), print: **Outcome:** CHANGES_REQUESTED
+            - If blocked by critical issues, print: **Outcome:** BLOCKED
+
+            The BMAD review will set story status to "done" or "in-progress".
+            Make sure to echo the final status at the end of your response.
     output: review_output
 
   - name: check_review_status
     description: Parse review outcome
     run: |
+      import re
+
       output = state.get("review_output", {})
       if isinstance(output, dict):
           text = output.get("content", "")
@@ -956,12 +961,66 @@ nodes:
 
       review_fix_attempt = state.get("review_fix_attempt", 0)
 
-      if "REVIEW_APPROVED" in text or "Approve" in text:
-          review_status = "APPROVED"
-      elif "REVIEW_BLOCKED" in text:
-          review_status = "BLOCKED"
-      else:
+      # Normalize text for case-insensitive matching
+      text_lower = text.lower()
+
+      # Detection patterns for APPROVED status:
+      # - BMAD outputs "**Story Status:** done" or "Status: done"
+      # - BMAD outputs "**Outcome:** APPROVED" or "APPROVED WITH FIXES"
+      # - Explicit REVIEW_APPROVED marker (from prompt instructions)
+      # - "### Decision" followed by "APPROVED"
+      approved_patterns = [
+          r'status[:\s*\*]+done',           # Story Status: done
+          r'outcome[:\s*\*]+approved',       # Outcome: APPROVED
+          r'approved\s+with\s+fixes',        # APPROVED WITH FIXES
+          r'review_approved',                # Explicit marker
+          r'decision[:\s*\*]+approved',      # Decision: APPROVED
+          r'\*\*approved\*\*',               # **APPROVED**
+      ]
+
+      # Detection patterns for BLOCKED status:
+      blocked_patterns = [
+          r'review_blocked',
+          r'status[:\s*\*]+blocked',
+          r'outcome[:\s*\*]+blocked',
+      ]
+
+      # Detection patterns for CHANGES_REQUESTED:
+      # - BMAD outputs "**Story Status:** in-progress"
+      # - Explicit REVIEW_CHANGES_REQUESTED marker
+      changes_patterns = [
+          r'status[:\s*\*]+in-progress',
+          r'review_changes_requested',
+          r'changes\s+requested',
+      ]
+
+      # Check patterns in priority order
+      review_status = None
+
+      for pattern in approved_patterns:
+          if re.search(pattern, text_lower):
+              review_status = "APPROVED"
+              print(f"Detected APPROVED via pattern: {pattern}")
+              break
+
+      if not review_status:
+          for pattern in blocked_patterns:
+              if re.search(pattern, text_lower):
+                  review_status = "BLOCKED"
+                  print(f"Detected BLOCKED via pattern: {pattern}")
+                  break
+
+      if not review_status:
+          for pattern in changes_patterns:
+              if re.search(pattern, text_lower):
+                  review_status = "CHANGES_REQUESTED"
+                  print(f"Detected CHANGES_REQUESTED via pattern: {pattern}")
+                  break
+
+      # Default to CHANGES_REQUESTED if no pattern matched
+      if not review_status:
           review_status = "CHANGES_REQUESTED"
+          print("No explicit status pattern found, defaulting to CHANGES_REQUESTED")
 
       # Force exit after max attempts regardless of status
       if review_fix_attempt >= 2 and review_status != "APPROVED":
