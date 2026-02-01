@@ -1,0 +1,381 @@
+name: bmad-story-v6-validation-simple
+description: |
+  BMad v6 Simple Validation Workflow - PO validation only, NO TEA QA gates.
+
+  Use this workflow for rapid validation without formal QA gates.
+  For full TEA validation (test design, NFR, traceability), use bmad-story-v6-validation.yaml instead.
+
+  Validation flow:
+  1. PREPARATION PHASE:
+     - Resolve story path (story must already exist)
+     - Check if already in valid status (ready-for-dev, done, review, in-progress)
+
+  2. PO VALIDATION PHASE (Story Conformance):
+     - Validate story using create-story checklist
+     - Check template completeness, acceptance criteria, implementation readiness
+     - GO/NO-GO decision
+
+  3. CORRECTION LOOP (if validation failed, max 1 iteration):
+     - Correct Course (CC)
+     - Re-run validation
+     - If still fails → INTERRUPT
+
+  Output: Validated story ready for development phase.
+
+  Usage: tea run examples/workflows/bmad-story-v6-validation-simple.yaml --input '{"arg": "epic-1-story-1"}'
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  # Skip validation check
+  already_validated: bool
+  current_status: str
+  # PO Validation phase
+  po_validate_output: str
+  po_validation_status: str
+  po_readiness_score: int
+  # Correction loop tracking
+  correction_attempt: int
+  correct_course_output: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # NODE 0: Resolve story path and check if already validated
+  # ============================================================================
+  - name: resolve_story_path
+    description: Convert story key to full story path, check if already validated
+    run: |
+      import os
+      import glob
+      import yaml
+      import re
+
+      arg = state.get("arg", "")
+      story_path = None
+      story_key = None
+
+      if os.path.isfile(arg):
+          story_path = arg
+          story_key = os.path.basename(arg).replace(".md", "")
+      else:
+          config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+          impl_artifacts = "_bmad-output/implementation-artifacts"
+
+          for config_path in config_paths:
+              if os.path.exists(config_path):
+                  try:
+                      with open(config_path, 'r') as f:
+                          config = yaml.safe_load(f)
+                      impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                      break
+                  except:
+                      pass
+
+          patterns = [
+              os.path.join(impl_artifacts, f"{arg}.md"),
+              os.path.join(impl_artifacts, f"*{arg}*.md"),
+              f"**/{arg}.md"
+          ]
+
+          for pattern in patterns:
+              matches = glob.glob(pattern, recursive=True)
+              if matches:
+                  story_path = matches[0]
+                  story_key = os.path.basename(story_path).replace(".md", "")
+                  break
+
+          if not story_path:
+              story_key = arg
+              story_path = os.path.join(impl_artifacts, f"{arg}.md")
+
+      # Check if story is already in ready-for-dev or done status
+      already_validated = False
+      current_status = "unknown"
+      if story_path and os.path.isfile(story_path):
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read(500)  # Read first 500 chars for status
+              status_match = re.search(r'^Status:\s*(\S+)', content, re.MULTILINE)
+              if status_match:
+                  current_status = status_match.group(1).lower()
+                  if current_status in ['ready-for-dev', 'done', 'review', 'in-progress']:
+                      already_validated = True
+                      print(f"Story already in '{current_status}' status - skipping validation")
+          except:
+              pass
+
+      if already_validated:
+          print(f"""
+          ╔════════════════════════════════════════════════════════════╗
+          ║        STORY ALREADY VALIDATED - SKIPPING                  ║
+          ╠════════════════════════════════════════════════════════════╣
+          ║ Story: {story_key:<52} ║
+          ║ Status: {current_status:<51} ║
+          ╠════════════════════════════════════════════════════════════╣
+          ║ Story is already in a validated state.                     ║
+          ║ Skipping PO validation phase.                              ║
+          ╚════════════════════════════════════════════════════════════╝
+          """)
+
+      return {
+          "story_path": story_path,
+          "story_key": story_key,
+          "already_validated": already_validated,
+          "current_status": current_status
+      }
+
+  # ============================================================================
+  # PO VALIDATION PHASE (Story Conformance)
+  # ============================================================================
+
+  - name: po_validate_story_draft
+    description: Validate story using create-story checklist
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Validate this story using the create-story checklist:
+            {{ state.story_path }}
+
+            This will:
+            1. Load the story file
+            2. Load workflow.yaml for variable context
+            3. Load source documents (epics, architecture, etc.)
+            4. Run the systematic 5-step analysis from the checklist
+            5. Present findings with critical/enhancement/optimization categories
+
+            INSTRUCTIONS:
+            1. Run the validation completely
+            2. Review all findings
+            3. If there are CRITICAL issues that block development, note them
+            4. If no critical blockers, the story is ready
+
+            After validation, determine readiness:
+            - Count critical issues found
+            - Assess overall implementation readiness (1-10 scale)
+
+            At the end, print EXACTLY these lines:
+            - If ready: PO_VALIDATION_GO
+            - If not ready: PO_VALIDATION_NOGO
+            - Always print: READINESS_SCORE:[1-10] (e.g., READINESS_SCORE:8)
+            - Summary of critical issues if any
+    output: po_validate_output
+
+  - name: check_po_validation
+    description: Parse PO validation output and determine if story is ready
+    run: |
+      import re
+
+      output = state.get("po_validate_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      # Extract readiness score
+      score_match = re.search(r'READINESS_SCORE:\s*(\d+)', text)
+      if score_match:
+          readiness_score = int(score_match.group(1))
+      else:
+          readiness_score = 5  # Default to middle score
+
+      # Determine GO/NO-GO
+      if "PO_VALIDATION_GO" in text:
+          po_validation_status = "GO"
+      elif "PO_VALIDATION_NOGO" in text or "NO-GO" in text.upper():
+          po_validation_status = "NOGO"
+      elif readiness_score >= 7:
+          po_validation_status = "GO"
+      else:
+          po_validation_status = "NOGO"
+
+      correction_attempt = state.get("correction_attempt", 0)
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              PO VALIDATION PHASE COMPLETE                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Implementation Readiness Score: {readiness_score}/10                      ║
+      ║ PO Validation Status: {po_validation_status:<37} ║
+      ║ Correction Attempts: {correction_attempt:<38} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if po_validation_status == "GO":
+          print("\n✓ PO VALIDATION PASSED - Story is ready for development...")
+      else:
+          print("\n⚠️  PO VALIDATION FAILED - Story needs correction...")
+
+      return {
+          "po_validation_status": po_validation_status,
+          "po_readiness_score": readiness_score
+      }
+
+  # ============================================================================
+  # CORRECTION LOOP
+  # ============================================================================
+
+  - name: correct_course
+    description: Execute correct-course to fix validation failures
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            PO Validation FAILED. Execute course correction.
+
+            Run command: bmad-bmm-correct-course
+
+            Story: {{ state.story_path }}
+            Readiness Score: {{ state.po_readiness_score }}/10
+
+            ISSUES TO ADDRESS:
+            - Review story structure and completeness
+            - Fix acceptance criteria gaps
+            - Ensure implementation readiness
+
+            When done print: CORRECT_COURSE_COMPLETED
+    output: correct_course_output
+
+  - name: increment_correction_attempt
+    description: Track correction iteration
+    run: |
+      current = state.get("correction_attempt", 0)
+      new_attempt = current + 1
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        CORRECTION COMPLETED (Attempt {new_attempt})                    ║
+      ║ Re-running PO validation...                                ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {
+          "correction_attempt": new_attempt,
+          "po_validate_output": "",
+          "po_validation_status": "",
+          "po_readiness_score": 0
+      }
+
+  - name: validation_failed
+    description: Handle validation failure after correction
+    run: |
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           VALIDATION FAILED - INTERRUPTED                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Readiness Score: {state.get('po_readiness_score', 0)}/10                                ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║  ⚠️  Story did not pass validation after correction.        ║
+      ║  Manual intervention required.                             ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      raise Exception(f"Validation FAILED for {state.get('story_key', 'unknown')}")
+
+  # ============================================================================
+  # VALIDATION COMPLETE
+  # ============================================================================
+
+  - name: validation_complete
+    description: Validation phase complete - ready for development
+    run: |
+      already_validated = state.get('already_validated', False)
+      current_status = state.get('current_status', 'unknown')
+
+      if already_validated:
+          print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        VALIDATION SKIPPED - ALREADY READY FOR DEV          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Story Path: {state.get('story_path', 'unknown')[:47]:<47} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Current Status: {current_status:<43} ║
+      ║ Validation: SKIPPED (already in valid state)               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Next: Run development workflow with same story             ║
+      ╚════════════════════════════════════════════════════════════╝
+          """)
+      else:
+          print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        SIMPLE VALIDATION COMPLETE - READY FOR DEV          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Story Path: {state.get('story_path', 'unknown')[:47]:<47} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ PO Readiness Score: {state.get('po_readiness_score', 0)}/10                               ║
+      ║ PO Validation: {state.get('po_validation_status', 'UNKNOWN'):<44} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ NOTE: No TEA QA gates were applied.                        ║
+      ║ For full QA, use bmad-story-v6-validation.yaml             ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Next: Run development workflow with same story             ║
+      ╚════════════════════════════════════════════════════════════╝
+          """)
+      return {}
+
+edges:
+  # PREPARATION
+  - from: __start__
+    to: resolve_story_path
+
+  # Skip validation if story is already in ready-for-dev, done, review, or in-progress status
+  - from: resolve_story_path
+    to: validation_complete
+    when: "state.get('already_validated', False) == True"
+
+  # Normal flow: proceed to PO validation if not already validated
+  - from: resolve_story_path
+    to: po_validate_story_draft
+    when: "state.get('already_validated', False) != True"
+
+  # PO VALIDATION ROUTING
+  - from: po_validate_story_draft
+    to: check_po_validation
+
+  # If validation PASSED: proceed to complete
+  - from: check_po_validation
+    to: validation_complete
+    when: "state.get('po_validation_status') == 'GO'"
+
+  # If validation FAILED and NO correction attempt yet: try correction
+  - from: check_po_validation
+    to: correct_course
+    when: "state.get('po_validation_status') != 'GO' and state.get('correction_attempt', 0) == 0"
+
+  # If validation FAILED and already tried correction: give up
+  - from: check_po_validation
+    to: validation_failed
+    when: "state.get('po_validation_status') != 'GO' and state.get('correction_attempt', 0) >= 1"
+
+  # CORRECTION LOOP
+  - from: correct_course
+    to: increment_correction_attempt
+  - from: increment_correction_attempt
+    to: po_validate_story_draft
+  - from: validation_failed
+    to: __end__
+
+  # FINAL
+  - from: validation_complete
+    to: __end__
