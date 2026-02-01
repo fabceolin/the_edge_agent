@@ -660,10 +660,15 @@ edges:
   - from: __start__
     to: resolve_story_path
 
-  # Skip validation if story is already in ready-for-dev, done, review, or in-progress status
+  # Skip validation completely if story already validated AND TEA artifacts exist
   - from: resolve_story_path
     to: validation_complete
-    when: "state.get('already_validated', False) == True"
+    when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) == True"
+
+  # If already validated but no TEA artifacts, run TEA phases only to create them
+  - from: resolve_story_path
+    to: tea_test_design
+    when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) != True"
 
   # Normal flow: proceed to PO validation if not already validated
   - from: resolve_story_path
