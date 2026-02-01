@@ -2,13 +2,14 @@ name: bmad-v6-story-cycle
 description: |
   BMad v6 Standard Story Cycle - Development workflow WITHOUT formal TEA QA gates.
 
+  PREREQUISITE: Story must already exist (created via bmad-bmm-create-story)
+
   Use this workflow for rapid development cycles where TEA validation is not required.
   For formal QA gates (risk assessment, NFR, traceability), use bmad-story-v6-full-with-qa-cycle.yaml instead.
 
   Flow:
   1. PREPARATION PHASE:
-     - Resolve story path (story must already exist or will be created)
-     - Create Story (CS) if needed
+     - Resolve story path (story must already exist)
      - Validate Story (VS) - competitive quality checklist
 
   2. CORRECTION LOOP (if validation failed, max 1 iteration):
@@ -36,9 +37,8 @@ state_schema:
   # Skip validation check
   already_validated: bool
   current_status: str
-  story_needs_creation: bool
+  story_exists: bool
   # Validation phase
-  create_story_output: str
   validate_story_output: str
   validation_status: str
   # Correction loop tracking (max 1 iteration)
@@ -66,7 +66,7 @@ nodes:
   # NODE 0: Resolve story path from arg, check if already validated
   # ============================================================================
   - name: resolve_story_path
-    description: Convert story key to full story path, detect if story exists, check validation status
+    description: Convert story key to full story path, verify story exists, check validation status
     run: |
       import os
       import glob
@@ -76,12 +76,13 @@ nodes:
       arg = state.get("arg", "")
       story_path = None
       story_key = None
-      story_needs_creation = False
+      story_exists = False
 
       # If arg is already a full path that exists, use it
       if os.path.isfile(arg):
           story_path = arg
           story_key = os.path.basename(arg).replace(".md", "")
+          story_exists = True
       else:
           # Try to find config to get implementation_artifacts path
           config_paths = [
@@ -113,13 +114,14 @@ nodes:
               if matches:
                   story_path = matches[0]
                   story_key = os.path.basename(story_path).replace(".md", "")
+                  story_exists = True
                   break
 
           if not story_path:
-              # Story not found - will need to create it
+              # Story not found
               story_key = arg
               story_path = os.path.join(impl_artifacts, f"{arg}.md")
-              story_needs_creation = True
+              story_exists = False
 
       # Check if story is already in ready-for-dev, done, review, or in-progress status
       already_validated = False
@@ -136,58 +138,52 @@ nodes:
           except:
               pass
 
-      if already_validated:
-          print(f"""
+      print(f"""
       ╔════════════════════════════════════════════════════════════╗
-      ║        STORY ALREADY VALIDATED - SKIPPING VALIDATION       ║
+      ║              STANDARD CYCLE - PREPARATION                  ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Story: {story_key:<52} ║
       ║ Status: {current_status:<51} ║
+      ║ Story Exists: {'✓ YES' if story_exists else '✗ NO':<44} ║
       ╠════════════════════════════════════════════════════════════╣
-      ║ Story is already in a validated state.                     ║
-      ║ Proceeding directly to development phase.                  ║
+      ║ Already Validated: {'YES - skipping validation' if already_validated else 'NO - will validate':<40} ║
       ╚════════════════════════════════════════════════════════════╝
-          """)
+      """)
+
+      if not story_exists:
+          print("\n⚠️  WARNING: Story file not found. Create it first with bmad-bmm-create-story")
 
       return {
           "story_path": story_path,
           "story_key": story_key,
           "already_validated": already_validated,
           "current_status": current_status,
-          "story_needs_creation": story_needs_creation
+          "story_exists": story_exists
       }
 
   # ============================================================================
   # PREPARATION PHASE
   # ============================================================================
 
-  # NODE 1: Create Story (if needed) or skip if exists
-  - name: create_story
-    description: Create story file using bmad-bmm-create-story if it doesn't exist
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: claude
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Check if story file exists at: {{ state.story_path }}
+  # NODE: Handle missing story
+  - name: story_not_found_error
+    description: Handle missing story file
+    run: |
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           CANNOT START WORKFLOW - STORY NOT FOUND          ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║  ⚠️  Story file does not exist!                             ║
+      ║                                                            ║
+      ║  Please create the story first:                            ║
+      ║  bmad-bmm-create-story {state.get('story_key', 'story-key'):<33} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      raise Exception(f"Story not found: {state.get('story_key', 'unknown')}. Create it first with bmad-bmm-create-story")
 
-            If the file EXISTS and has content:
-              - Print: STORY_EXISTS_SKIPPING_CREATION
-              - Do NOT run create-story workflow
-
-            If the file does NOT exist or is empty:
-              - Run the create-story workflow: bmad-bmm-create-story
-              - When prompted for story, use: {{ state.story_key }}
-              - Follow the workflow completely
-              - Print: STORY_CREATED when done
-
-            CRITICAL: Only create if file doesn't exist. Do not overwrite existing stories.
-    output: create_story_output
-
-  # NODE 2: Validate Story (VS) - Using create-story checklist
+  # NODE: Validate Story (VS) - Using create-story checklist
   - name: validate_story
     description: Validate story using create-story checklist
     uses: llm.call
@@ -628,18 +624,24 @@ edges:
   - from: __start__
     to: resolve_story_path
 
+  # Story not found: error
+  - from: resolve_story_path
+    to: story_not_found_error
+    when: "state.get('story_exists', False) != True"
+
+  - from: story_not_found_error
+    to: __end__
+
   # Skip to development if story already validated (ready-for-dev, done, review, in-progress)
   - from: resolve_story_path
     to: dev_story
-    when: "state.get('already_validated', False) == True"
+    when: "state.get('story_exists', False) == True and state.get('already_validated', False) == True"
 
-  # Normal flow: proceed to create_story if not already validated
+  # Normal flow: proceed to validate_story if not already validated
   - from: resolve_story_path
-    to: create_story
-    when: "state.get('already_validated', False) != True"
-
-  - from: create_story
     to: validate_story
+    when: "state.get('story_exists', False) == True and state.get('already_validated', False) != True"
+
   - from: validate_story
     to: check_validation_status
 
