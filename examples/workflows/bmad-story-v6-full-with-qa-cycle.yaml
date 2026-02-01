@@ -14,10 +14,11 @@ description: |
      - Anti-hallucination verification, template completeness
      - GO/NO-GO decision before TEA QA
 
-  3. QA VALIDATION PHASE (TEA Module):
+  3. QA VALIDATION PHASE - PRE-DEV (Planning Artifacts):
      - Test Design (TD) - risk assessment + test strategy
-     - NFR Assessment (NR) - non-functional requirements
-     - Requirements Tracing (TR) - traceability + gate decision
+     - NFR Assessment (NR) - baseline (0% evidence, planning only)
+     - Requirements Tracing (TR) - baseline (0% coverage, FAIL expected)
+     - Gate decision IGNORED at this stage (planning artifacts only)
      - Final Validate Story (VS) - checklist
 
   4. CORRECTION LOOP (if validation failed, max 1 iteration):
@@ -29,9 +30,20 @@ description: |
      - ATDD (AT) - generate acceptance tests (red phase)
      - Dev Story (DS) - implement (green phase)
      - Test Automation (TA) - expand coverage
+
+  6. POST-DEV VERIFICATION (Gate Enforcement):
+     - Requirements Tracing (TR) - re-run with actual coverage
+     - NFR Assessment (NR) - re-run with evidence
+     - Gate decision ENFORCED (FAIL blocks workflow)
+
+  7. QUALITY PHASE:
      - Test Review (RV) - quality scoring
      - Code Review (CR) - adversarial review
      - Sprint Status (SS)
+
+  Gate Flow:
+  - Pre-Dev: trace/nfr create PLANNING artifacts (gate ignored, FAIL expected)
+  - Post-Dev: trace/nfr VERIFY with evidence (gate enforced, should PASS)
 
   Usage: tea run examples/workflows/bmad-story-v6-full-qa-cycle.yaml --input '{"arg": "epic-1-story-1"}'
 
@@ -67,6 +79,12 @@ state_schema:
   atdd_output: str
   dev_output: str
   test_automation_output: str
+  # Post-dev verification (re-run trace/nfr with evidence)
+  post_dev_trace_output: str
+  post_dev_gate_decision: str
+  post_dev_nfr_output: str
+  post_dev_gate_status: str
+  # Quality and review
   test_review_output: str
   quality_score: str
   review_output: str
@@ -509,15 +527,32 @@ nodes:
           text = str(output) if output else ""
 
       gate_decision = state.get("gate_decision", "UNKNOWN")
+      current_status = state.get("current_status", "unknown")
 
-      if gate_decision == "FAIL":
-          validation_status = "FAILED_GATE"
-      elif "VALIDATION_PASSED" in text:
+      # Gate decision logic depends on story status:
+      # - ready-for-dev: GATE FAIL is EXPECTED (0% coverage, no tests yet)
+      #   TEA artifacts are being created, tests will be written in in-progress
+      # - review: Gate decision matters (tests exist, coverage measured)
+      # - done: Gate should be PASS (confirmed)
+
+      if current_status == "ready-for-dev":
+          # At ready-for-dev, gate FAIL is expected - ignore it completely
+          # NFR and trace are planning artifacts only, not enforcement gates
+          # The goal is just to CREATE the TEA artifacts, not to pass gates
+          # Gates will be re-evaluated post-implementation with actual evidence
           validation_status = "PASSED"
-      elif "VALIDATION_FAILED" in text:
-          validation_status = "FAILED"
+          gate_note = "(ignored at ready-for-dev - planning artifacts only)"
       else:
-          validation_status = "PASSED" if gate_decision in ["PASS", "CONDITIONAL"] else "FAILED"
+          # For review/done status, gate decision matters
+          if gate_decision == "FAIL":
+              validation_status = "FAILED_GATE"
+          elif "VALIDATION_PASSED" in text:
+              validation_status = "PASSED"
+          elif "VALIDATION_FAILED" in text:
+              validation_status = "FAILED"
+          else:
+              validation_status = "PASSED" if gate_decision in ["PASS", "CONDITIONAL"] else "FAILED"
+          gate_note = ""
 
       correction_attempt = state.get("correction_attempt", 0)
 
@@ -526,14 +561,19 @@ nodes:
       ║              QA VALIDATION PHASE COMPLETE                  ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ║ Story Status: {current_status:<45} ║
       ╠════════════════════════════════════════════════════════════╣
       ║ TEA Test Design:      ✓ Completed                          ║
       ║ TEA NFR Assessment:   ✓ Completed                          ║
       ║ TEA Requirements Trace: ✓ Completed                        ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
-      ║ Gate Decision: {gate_decision:<44} ║
-      ║ VALIDATION STATUS: {validation_status:<40} ║
+      ║ Gate Decision: {gate_decision:<44} ║""")
+
+      if current_status == "ready-for-dev":
+          print(f"""      ║ ℹ️  Gate FAIL expected at ready-for-dev (no tests yet)      ║""")
+
+      print(f"""      ║ VALIDATION STATUS: {validation_status:<40} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
 
@@ -695,6 +735,140 @@ nodes:
             Print: TEST_AUTOMATION_COMPLETED
     output: test_automation_output
 
+  # ============================================================================
+  # POST-DEVELOPMENT VERIFICATION (Re-run trace/nfr with actual evidence)
+  # ============================================================================
+
+  # NODE: Post-Dev Trace - Verify actual coverage (NOW gate matters)
+  - name: post_dev_trace
+    description: Re-run requirements tracing with actual test coverage
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            POST-DEVELOPMENT: Re-run TEA Requirements Tracing for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-trace
+
+            CONTEXT: This is POST-IMPLEMENTATION verification.
+            - Tests now exist (from ATDD and test automation)
+            - Coverage should be measurable
+            - Gate decision NOW MATTERS
+
+            The Requirements Tracing workflow will:
+            1. Map all requirements to ACTUAL test coverage
+            2. Update traceability matrix with real coverage %
+            3. Verify coverage meets requirements
+            4. Make RELEASE GATE DECISION based on evidence
+
+            Update the story file {{ state.story_path }} section:
+            ## TEA - Requirements Trace (Post-Dev)
+            - Coverage: [actual percentage]
+            - Gaps: [any remaining gaps]
+            - Gate Decision: [PASS|CONDITIONAL|FAIL]
+
+            Print GATE_DECISION:[PASS|CONDITIONAL|FAIL] at the end
+            Print: POST_DEV_TRACE_COMPLETED
+    output: post_dev_trace_output
+
+  # NODE: Extract post-dev gate decision
+  - name: extract_post_dev_gate
+    description: Parse gate decision from post-dev trace
+    run: |
+      import re
+
+      output = state.get("post_dev_trace_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      gate_match = re.search(r'GATE_DECISION:\s*(PASS|CONDITIONAL|FAIL)', text, re.IGNORECASE)
+      if gate_match:
+          post_dev_gate_decision = gate_match.group(1).upper()
+      elif "fail" in text.lower() and "gate" in text.lower():
+          post_dev_gate_decision = "FAIL"
+      elif "conditional" in text.lower():
+          post_dev_gate_decision = "CONDITIONAL"
+      else:
+          post_dev_gate_decision = "PASS"
+
+      print(f"Post-Dev Gate Decision: {post_dev_gate_decision}")
+      return {"post_dev_gate_decision": post_dev_gate_decision}
+
+  # NODE: Post-Dev NFR - Verify NFRs with actual evidence
+  - name: post_dev_nfr
+    description: Re-run NFR assessment with actual implementation evidence
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            POST-DEVELOPMENT: Re-run TEA NFR Assessment for story: {{ state.story_path }}
+
+            Run command: bmad-tea-testarch-nfr
+
+            CONTEXT: This is POST-IMPLEMENTATION verification.
+            - Code now exists
+            - Performance can be measured
+            - Security can be verified
+            - Evidence is available
+
+            The NFR Assessment workflow will:
+            1. Evaluate NFRs with ACTUAL evidence from implementation
+            2. Check performance metrics
+            3. Verify security implementation
+            4. Assess scalability approach
+            5. Document evidence for each NFR
+
+            Update the story file {{ state.story_path }} section:
+            ## TEA - NFR Assessment (Post-Dev)
+            - Performance: [evidence-based status]
+            - Security: [evidence-based status]
+            - Scalability: [evidence-based status]
+            - Evidence: [what was verified]
+
+            Print: POST_DEV_NFR_COMPLETED
+    output: post_dev_nfr_output
+
+  # NODE: Check post-dev gate (NOW ENFORCED)
+  - name: check_post_dev_gate
+    description: Enforce gate decision after development
+    run: |
+      post_dev_gate_decision = state.get("post_dev_gate_decision", "UNKNOWN")
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        POST-DEVELOPMENT GATE VERIFICATION                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Trace Re-evaluation: ✓ Completed (with actual coverage)    ║
+      ║ NFR Re-evaluation:   ✓ Completed (with evidence)           ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ POST-DEV GATE DECISION: {post_dev_gate_decision:<35} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if post_dev_gate_decision == "FAIL":
+          post_dev_gate_status = "FAILED"
+          print("\n⚠️  POST-DEV GATE FAILED - Coverage requirements not met")
+      elif post_dev_gate_decision == "CONDITIONAL":
+          post_dev_gate_status = "CONDITIONAL"
+          print("\n⚠️  POST-DEV GATE CONDITIONAL - Proceeding with concerns noted")
+      else:
+          post_dev_gate_status = "PASSED"
+          print("\n✓ POST-DEV GATE PASSED - Proceeding to test review")
+
+      return {"post_dev_gate_status": post_dev_gate_status}
+
   # NODE: TEA Test Review (RV) - Quality Scoring
   - name: tea_test_review
     description: Execute TEA Test Review with quality scoring
@@ -853,18 +1027,24 @@ nodes:
       po_readiness_score = state.get("po_readiness_score", 0)
       po_validation_status = state.get("po_validation_status", "UNKNOWN")
       risk_level = state.get("risk_level", "UNKNOWN")
-      gate_decision = state.get("gate_decision", "UNKNOWN")
+      # Pre-dev gate (baseline - expected FAIL)
+      pre_dev_gate = state.get("gate_decision", "UNKNOWN")
+      # Post-dev gate (verified - should PASS)
+      post_dev_gate = state.get("post_dev_gate_decision", "UNKNOWN")
+      post_dev_gate_status = state.get("post_dev_gate_status", "UNKNOWN")
       quality_score = state.get("quality_score", "N/A")
       review_status = state.get("review_status", "UNKNOWN")
 
       all_done = (
           state.get("validation_status") == "PASSED" and
+          post_dev_gate_status in ["PASSED", "CONDITIONAL"] and
           review_status == "APPROVED"
       )
 
-      # Partial success if max attempts reached
+      # Partial success if max attempts reached or conditional gate
       partial_success = (
           state.get("validation_status") == "PASSED" and
+          post_dev_gate_status in ["PASSED", "CONDITIONAL"] and
           review_status == "MAX_ATTEMPTS_REACHED"
       )
 
@@ -882,21 +1062,25 @@ nodes:
       ║                    QA METRICS                              ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {risk_level:<47} ║
-      ║ Gate Decision: {gate_decision:<44} ║
+      ║ Pre-Dev Gate (baseline): {pre_dev_gate:<34} ║
+      ║ Post-Dev Gate (verified): {post_dev_gate:<33} ║
       ║ Quality Score: {quality_score:<44} ║
       ╠════════════════════════════════════════════════════════════╣
       ║                    WORKFLOW STATUS                         ║
       ╠════════════════════════════════════════════════════════════╣
       ║ PO Validate Story Draft: ✓                                 ║
       ║ TEA Test Design: ✓                                         ║
-      ║ TEA NFR Assessment: ✓                                      ║
-      ║ TEA Requirements Trace: ✓                                  ║
+      ║ TEA NFR Assessment (baseline): ✓                           ║
+      ║ TEA Requirements Trace (baseline): ✓                       ║
       ║ TEA ATDD: ✓                                                ║
       ║ Dev Story: ✓                                               ║
       ║ TEA Test Automation: ✓                                     ║
+      ║ Post-Dev Trace (verified): ✓                               ║
+      ║ Post-Dev NFR (verified): ✓                                 ║
       ║ TEA Test Review: ✓                                         ║
       ║ Code Review: {review_status:<46} ║
       ╠════════════════════════════════════════════════════════════╣
+      ║ POST-DEV GATE: {post_dev_gate_status:<44} ║
       ║ FINAL RESULT: {'SUCCESS' if all_done else ('PARTIAL (max review attempts)' if partial_success else 'INCOMPLETE'):<45} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
@@ -986,8 +1170,29 @@ edges:
     to: dev_story
   - from: dev_story
     to: tea_test_automation
+
+  # POST-DEVELOPMENT VERIFICATION (trace/nfr re-run with evidence)
   - from: tea_test_automation
+    to: post_dev_trace
+  - from: post_dev_trace
+    to: extract_post_dev_gate
+  - from: extract_post_dev_gate
+    to: post_dev_nfr
+  - from: post_dev_nfr
+    to: check_post_dev_gate
+
+  # POST-DEV GATE ROUTING
+  # PASS or CONDITIONAL: continue to test review
+  - from: check_post_dev_gate
     to: tea_test_review
+    when: "state.get('post_dev_gate_status') in ['PASSED', 'CONDITIONAL']"
+
+  # FAIL: go to validation_failed (gate enforced post-dev)
+  - from: check_post_dev_gate
+    to: validation_failed
+    when: "state.get('post_dev_gate_status') == 'FAILED'"
+
+  # Continue to code review
   - from: tea_test_review
     to: extract_quality_score
   - from: extract_quality_score
