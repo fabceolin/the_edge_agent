@@ -44,68 +44,68 @@ tea run workflow.yaml --checkpoint gs://checkpoints/run-123.pkl
 
 ### AC1: CLI URL Support
 
-- [ ] All file input flags accept URLs with any fsspec-supported protocol
-- [ ] Affected flags: positional `file`, `--checkpoint`, `--checkpoint-dir`, `--from-dot`, `--dot-workflow`, `--input @path`
-- [ ] Uses existing `_get_filesystem()` from `core_actions.py`
-- [ ] Relative paths in remote YAMLs resolve relative to remote base URL
-- [ ] Local paths work unchanged (passthrough)
+- [x] All file input flags accept URLs with any fsspec-supported protocol
+- [x] Affected flags: positional `file`, `--checkpoint`, `--checkpoint-dir`, `--from-dot`, `--dot-workflow`, `--input @path`
+- [x] Uses existing `_get_filesystem()` from `core_actions.py`
+- [x] Relative paths in remote YAMLs resolve relative to remote base URL
+- [x] Local paths work unchanged (passthrough)
 
 ### AC2: Git Protocol Support
 
-- [ ] Format: `github://user/repo@branch/path/to/file.yaml`
-- [ ] Support branch names: `@main`, `@feature/xyz`
-- [ ] Support commit SHA: `@a1b2c3d`
-- [ ] Support tags: `@v1.0.0`
-- [ ] Private repository support via `GITHUB_TOKEN` / `GIT_TOKEN` env vars
-- [ ] GitLab support: `gitlab://user/repo@branch/path`
+- [x] Format: `github://user/repo@branch/path/to/file.yaml`
+- [x] Support branch names: `@main`, `@feature/xyz`
+- [x] Support commit SHA: `@a1b2c3d`
+- [x] Support tags: `@v1.0.0`
+- [x] Private repository support via `GITHUB_TOKEN` / `GIT_TOKEN` env vars
+- [x] GitLab support: `gitlab://user/repo@branch/path`
 
 ### AC3: Caching System
 
-- [ ] Remote files cached locally in `~/.cache/tea/remote/` (XDG compliant)
-- [ ] Cache key: SHA256 hash of (URL + ref for git)
-- [ ] Cache TTL configurable via `TEA_CACHE_TTL` env var (default: 1 hour)
-- [ ] `--no-cache` flag to force fresh fetch
-- [ ] `--cache-only` flag for offline mode (fail if not cached)
-- [ ] `--cache-dir <path>` flag to override default cache location
-- [ ] Git refs: branches re-fetch on TTL expiry, SHA/tags cached indefinitely
-- [ ] Cache size limit via `TEA_CACHE_MAX_SIZE` (default: 1GB, TTL-based eviction)
-- [ ] Debug logging for cache hits/misses when `--verbose` enabled
+- [x] Remote files cached locally in `~/.cache/tea/remote/` (XDG compliant)
+- [x] Cache key: SHA256 hash of (URL + ref for git)
+- [x] Cache TTL configurable via `TEA_CACHE_TTL` env var (default: 1 hour)
+- [x] `--no-cache` flag to force fresh fetch
+- [x] `--cache-only` flag for offline mode (fail if not cached)
+- [x] `--cache-dir <path>` flag to override default cache location
+- [x] Git refs: branches re-fetch on TTL expiry, SHA/tags cached indefinitely
+- [x] Cache size limit via `TEA_CACHE_MAX_SIZE` (default: 1GB, TTL-based eviction)
+- [x] Debug logging for cache hits/misses when `--verbose` enabled
 
 ### AC4: Cache Management CLI
 
-- [ ] `tea cache list` - Show cached files with URL, size, age
-- [ ] `tea cache clear` - Clear all cached files
-- [ ] `tea cache clear --older-than <duration>` - Clear files older than duration (e.g., `7d`, `24h`)
-- [ ] `tea cache info` - Show cache location, total size, entry count
+- [x] `tea cache list` - Show cached files with URL, size, age
+- [x] `tea cache clear` - Clear all cached files
+- [x] `tea cache clear --older-than <duration>` - Clear files older than duration (e.g., `7d`, `24h`)
+- [x] `tea cache info` - Show cache location, total size, entry count
 
 ### AC5: Authentication via Environment Variables
 
-- [ ] AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
-- [ ] GCS: `GOOGLE_APPLICATION_CREDENTIALS`
-- [ ] Azure: `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`
-- [ ] Git: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `GIT_TOKEN` (generic fallback)
-- [ ] Clear error messages when credentials missing
+- [x] AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
+- [x] GCS: `GOOGLE_APPLICATION_CREDENTIALS`
+- [x] Azure: `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`
+- [x] Git: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `GIT_TOKEN` (generic fallback)
+- [x] Clear error messages when credentials missing
 
 ### AC6: Error Handling
 
-- [ ] Missing backend package: suggest install command (`pip install s3fs`)
-- [ ] Authentication failure: identify which credential is missing
-- [ ] Network failure: suggest `--cache-only` if cached version exists
-- [ ] Invalid URL format: show expected format with examples
+- [x] Missing backend package: suggest install command (`pip install s3fs`)
+- [x] Authentication failure: identify which credential is missing
+- [x] Network failure: suggest `--cache-only` if cached version exists
+- [x] Invalid URL format: show expected format with examples
 
 ### AC7: Test Infrastructure
 
-- [ ] Use `moto` for S3 mocking, `responses` for HTTP mocking
-- [ ] Use local git repos (via `tempfile`) for git:// tests
-- [ ] All tests run offline (no real network calls)
-- [ ] Minimum 90% code coverage on new modules
+- [x] Use `moto` for S3 mocking, `responses` for HTTP mocking
+- [x] Use local git repos (via `tempfile`) for git:// tests
+- [x] All tests run offline (no real network calls)
+- [x] Minimum 90% code coverage on new modules
 
 ### AC8: Documentation
 
-- [ ] Update CLI `--help` text with URL examples
-- [ ] Add `docs/shared/remote-files.md` with full protocol reference
-- [ ] Inline code comments for cache key generation algorithm
-- [ ] Inline code comments for URL parsing logic
+- [x] Update CLI `--help` text with URL examples
+- [x] Add `docs/shared/remote-files.md` with full protocol reference
+- [x] Inline code comments for cache key generation algorithm
+- [x] Inline code comments for URL parsing logic
 
 ---
 
@@ -287,16 +287,16 @@ def _get_filesystem(path: str) -> Tuple[Any, str, Optional[Dict[str, Any]]]:
 
 ## Files to Modify
 
-| File | Changes |
-|------|---------|
-| `python/src/the_edge_agent/cli.py` | Add URL resolution, cache flags, `tea cache` subcommands |
-| `python/src/the_edge_agent/cache.py` | **NEW** - Remote file cache manager |
-| `python/src/the_edge_agent/actions/core_actions.py` | Add git:// protocol to `_get_filesystem()` |
-| `python/src/the_edge_agent/yaml_engine.py` | Use cache for remote subgraphs |
-| `python/tests/test_cache.py` | **NEW** - Cache unit tests |
-| `python/tests/test_cli_urls.py` | **NEW** - CLI URL integration tests |
-| `python/tests/test_git_protocol.py` | **NEW** - Git protocol tests |
-| `docs/shared/remote-files.md` | **NEW** - Full protocol reference |
+| File | Changes | Status |
+|------|---------|--------|
+| `python/src/the_edge_agent/cli.py` | Add URL resolution, cache flags, `tea cache` subcommands | ✅ Modified |
+| `python/src/the_edge_agent/cache.py` | **NEW** - Remote file cache manager with security controls | ✅ Created |
+| `python/src/the_edge_agent/actions/core_actions.py` | Add git:// protocol to `_get_filesystem()` | ✅ Modified |
+| `python/src/the_edge_agent/yaml_engine.py` | Use cache for remote subgraphs | ✅ Modified |
+| `python/tests/test_cache.py` | **NEW** - Cache unit tests (58 tests) | ✅ Created |
+| `python/tests/test_cli_urls.py` | **NEW** - CLI URL integration tests (13 tests) | ✅ Created |
+| `python/tests/test_git_protocol.py` | **NEW** - Git protocol tests (28 tests) | ✅ Created |
+| `docs/shared/remote-files.md` | **NEW** - Full protocol reference | ✅ Created |
 
 ---
 
@@ -350,12 +350,12 @@ def _get_filesystem(path: str) -> Tuple[Any, str, Optional[Dict[str, Any]]]:
 
 ## Definition of Done
 
-- [ ] All acceptance criteria met
-- [ ] Unit tests pass with mocked backends
-- [ ] Integration tests pass with local git repos
-- [ ] `docs/shared/remote-files.md` created
-- [ ] CLI `--help` shows URL examples
-- [ ] `tea cache` subcommands functional
+- [x] All acceptance criteria met
+- [x] Unit tests pass with mocked backends
+- [x] Integration tests pass with local git repos
+- [x] `docs/shared/remote-files.md` created
+- [x] CLI `--help` shows URL examples
+- [x] `tea cache` subcommands functional
 - [ ] Code reviewed and merged
 
 ---
@@ -733,6 +733,127 @@ Story is **Ready for Development** with the following conditions:
 
 ## Status
 
-**Ready for Development**
+**Done**
 
-Story has passed SM validation checklist. Implementation should prioritize security mitigations identified in QA Notes Risk Profile section (SEC-001, SEC-002, PERF-001). All acceptance criteria are testable and technical approach is well-documented.
+All acceptance criteria implemented and tested. 99 tests pass across cache, CLI URLs, and git protocol modules. Security mitigations (SEC-001, SEC-002, SEC-003) and performance improvements (PERF-001) fully implemented. QA gate passed with quality score 100/100.
+
+---
+
+## QA Results
+
+### Review Date: 2026-02-01
+
+### Reviewed By: Quinn (Test Architect)
+
+### Code Quality Assessment
+
+**Overall: EXCELLENT**
+
+The implementation demonstrates strong adherence to security-first design principles. The `cache.py` module is well-documented with inline comments explaining the cache key algorithm, security mitigations, and environment variables. The code structure follows a clear separation of concerns with:
+
+- Security functions (`mask_credentials`, `_validate_url_safe`, `_validate_path_containment`, `_sanitize_filename`)
+- Git URL handling (`parse_git_url`, `is_git_permanent_ref`)
+- Cache operations (`RemoteFileCache` class with proper manifest handling)
+
+Key strengths:
+1. **Comprehensive security controls**: All three high-risk items from the Risk Profile (SEC-001, SEC-002, SEC-003) are properly implemented with dedicated functions
+2. **XDG compliance**: Cache directory follows XDG Base Directory Specification
+3. **Atomic manifest writes**: Uses temp file + rename pattern for atomic updates
+4. **Progress callback**: Large file downloads support progress reporting (PERF-001)
+
+### Refactoring Performed
+
+No refactoring required. The implementation is clean and well-structured.
+
+### Compliance Check
+
+- Coding Standards: ✓ Code follows Python best practices, proper type hints, docstrings
+- Project Structure: ✓ New module `cache.py` properly placed in `the_edge_agent/` package
+- Testing Strategy: ✓ 99 tests across 3 test files covering unit and integration scenarios
+- All ACs Met: ✓ All 8 acceptance criteria fully implemented with corresponding tests
+
+### Improvements Checklist
+
+All items were addressed by the developer:
+
+- [x] SEC-001: Credential masking via `mask_credentials()` function (cache.py:83-123)
+- [x] SEC-002: Path traversal prevention via `_validate_path_containment()` and `_sanitize_filename()` (cache.py:202-246)
+- [x] SEC-003: SSRF protection via `_validate_url_safe()` and `_is_private_ip()` (cache.py:126-199)
+- [x] PERF-001: Progress callback support in `fetch_and_cache()` (cache.py:619-620, cli.py:141-148)
+- [x] TEA_FETCH_TIMEOUT environment variable (cache.py:432-434)
+- [x] Git protocol support for github:// and gitlab:// URLs (core_actions.py:255-338)
+- [x] Cache CLI commands: `tea cache list`, `tea cache clear`, `tea cache info` (cli.py:2438-2565)
+- [x] Documentation created: `docs/shared/remote-files.md`
+
+### Security Review
+
+**Status: PASS**
+
+All security mitigations from the Risk Profile have been implemented:
+
+| Risk ID | Mitigation | Implementation Location | Verified |
+|---------|------------|------------------------|----------|
+| SEC-001 | Credential masking | `cache.py:mask_credentials()` | ✓ Tests verify GitHub PATs, Bearer tokens, GitLab tokens masked |
+| SEC-002 | Path traversal prevention | `cache.py:_validate_path_containment()`, `_sanitize_filename()` | ✓ Tests verify `../` escapes blocked |
+| SEC-003 | SSRF protection | `cache.py:_validate_url_safe()`, `_is_private_ip()` | ✓ Tests verify localhost, private IPs, metadata endpoints blocked |
+
+### Performance Considerations
+
+**Status: PASS**
+
+- Progress callback implemented for files >1MB (cli.py:143-145)
+- `TEA_FETCH_TIMEOUT` environment variable configurable (default 30s)
+- TTL-based cache eviction with permanent caching for git SHA/tags
+- Atomic manifest writes prevent corruption during concurrent access
+
+### Files Modified During Review
+
+None. No modifications required.
+
+### Gate Status
+
+**Gate: PASS** → `docs/qa/gates/TEA-CLI-001-url-file-input-python.yml`
+
+Risk profile: `docs/qa/assessments/TEA-CLI-001-risk-20260201.md` (in-story)
+NFR assessment: `docs/qa/assessments/TEA-CLI-001-nfr-20260201.md`
+Test design: `docs/qa/assessments/TEA-CLI-001-test-design-20260201.md`
+Requirements trace: `docs/qa/assessments/TEA-CLI-001-trace-20260201.md`
+
+### Test Summary
+
+| Test File | Tests | Status |
+|-----------|-------|--------|
+| test_cache.py | 58 | ✓ PASS |
+| test_cli_urls.py | 13 | ✓ PASS |
+| test_git_protocol.py | 28 | ✓ PASS |
+| **Total** | **99** | **✓ PASS** |
+
+### Recommended Status
+
+**✓ Ready for Done** - All acceptance criteria met, security mitigations implemented, tests pass.
+
+---
+
+## Change Log
+
+| Date | Author | Changes |
+|------|--------|---------|
+| 2026-02-01 | James (Developer) | Initial implementation complete: cache.py module, git:// protocol support, CLI URL resolution, cache commands, test suite (99 tests), documentation |
+
+### Implementation Summary
+
+**Security Mitigations Implemented:**
+- **SEC-001 (Credential Masking):** `mask_credentials()` function masks GitHub PATs, GitLab tokens, Bearer tokens, and AWS credentials in all log output
+- **SEC-002 (Path Traversal Prevention):** `_validate_path_containment()` and `_sanitize_filename()` prevent directory escape attacks
+- **SEC-003 (SSRF Protection):** `_is_private_ip()` and `_validate_url_safe()` block localhost, private IPs, and cloud metadata endpoints
+
+**Performance Features:**
+- Progress callback support for large downloads
+- Configurable timeout via `TEA_FETCH_TIMEOUT` env var (default: 30s)
+- TTL-based cache with permanent caching for git SHA/tags
+
+**Test Coverage:**
+- `test_cache.py`: 58 tests covering security, TTL, operations
+- `test_cli_urls.py`: 13 tests covering CLI integration, cache commands
+- `test_git_protocol.py`: 28 tests covering URL parsing, auth, filesystem
+- All tests run offline with mocked HTTP responses
