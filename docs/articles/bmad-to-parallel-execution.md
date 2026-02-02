@@ -56,6 +56,36 @@ This article presents a solution: combining BMAD's structured AI agent workflows
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+```mermaid
+flowchart TB
+    subgraph Phase1["PHASE 1: ANALYSIS"]
+        Analyst["Analyst<br/>(Mary)<br/>• Brainstorm<br/>• Research<br/>• Brief"]
+    end
+
+    subgraph Phase2["PHASE 2: PLANNING"]
+        PM["PM<br/>(John)<br/>• Create PRD<br/>• Validate"]
+    end
+
+    subgraph Phase3["PHASE 3: SOLUTIONING"]
+        Architect["Architect<br/>(Winston)<br/>• Design<br/>• Decisions<br/>• Epics"]
+    end
+
+    subgraph Phase4["PHASE 4: IMPLEMENTATION"]
+        subgraph DOT["DOT Parallel Execution"]
+            Start([Start])
+            Story1["Story 1"]
+            Story2["Story 2"]
+            Story3["Story 3"]
+            End([End])
+
+            Start --> Story1 & Story2 & Story3
+            Story1 & Story2 & Story3 --> End
+        end
+    end
+
+    Analyst --> PM --> Architect --> DOT
+```
+
 ## 2. Prerequisites
 
 Before starting, ensure you have:
@@ -448,6 +478,39 @@ digraph epic_1_development {
     E1_S4 -> End;
 }
 ```
+
+**Mermaid Equivalent:**
+
+```mermaid
+flowchart TB
+    Start([Start])
+    End([End])
+
+    subgraph Foundation["1. Foundation"]
+        E1_S1["E1-S1-user-authentication"]
+    end
+
+    subgraph Features["2. Features (Parallel)"]
+        E1_S2["E1-S2-user-profile"]
+        E1_S3["E1-S3-team-creation"]
+    end
+
+    subgraph Integration["3. Integration"]
+        E1_S4["E1-S4-permissions"]
+    end
+
+    Start --> E1_S1
+    E1_S1 --> E1_S2
+    E1_S1 --> E1_S3
+    E1_S2 --> E1_S4
+    E1_S3 --> E1_S4
+    E1_S4 --> End
+```
+
+The DOT graph shows a diamond dependency pattern where:
+- **E1-S1** (authentication) must complete first
+- **E1-S2** and **E1-S3** can run in parallel after E1-S1
+- **E1-S4** (permissions) waits for both E1-S2 and E1-S3 to complete
 
 ### 7.3 Critical: Label Matching
 
