@@ -55,11 +55,23 @@ from .memory import (  # noqa: E402
 from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter  # noqa: E402
 from .observability import ObservabilityContext  # noqa: E402
 from .actions import build_actions_registry, register_cache_jinja_filters  # noqa: E402
-from .yaml_templates import TemplateProcessor  # noqa: E402
+from .yaml_templates import TemplateProcessor, DotDict  # noqa: E402
 from .yaml_nodes import NodeFactory, NodeStreamsConfig, StreamSettings  # noqa: E402
 from .yaml_edges import EdgeFactory  # noqa: E402
 from .yaml_imports import ImportLoader  # noqa: E402
 from .yaml_config import EngineConfig  # noqa: E402
+
+# Public API - symbols that should remain importable from this module
+# This helps prevent breaking changes during refactoring
+__all__ = [
+    "YAMLEngine",
+    "DotDict",
+    # Re-exported for backward compatibility
+    "TemplateProcessor",
+    "NodeFactory",
+    "EdgeFactory",
+    "EngineConfig",
+]
 
 
 class YAMLEngine:
