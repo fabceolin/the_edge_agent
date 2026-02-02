@@ -81,7 +81,31 @@ pip install "git+https://github.com/fabceolin/the_edge_agent.git#subdirectory=py
 tea --version
 ```
 
-### 2.3 Command Naming Convention
+### 2.3 Remote Workflow Support (TEA-CLI-001)
+
+TEA supports loading workflows directly from remote URLs:
+
+| Protocol | Example | Use Case |
+|----------|---------|----------|
+| `github://` | `github://user/repo@main/path/file.yaml` | GitHub repositories |
+| `gitlab://` | `gitlab://user/repo@main/path/file.yaml` | GitLab repositories |
+| `s3://` | `s3://bucket/path/file.yaml` | AWS S3 storage |
+| `gs://` | `gs://bucket/path/file.yaml` | Google Cloud Storage |
+
+**Caching:** Remote files are cached locally in `~/.cache/tea/remote/` with automatic TTL management.
+
+```bash
+# View cached files
+tea cache list
+
+# Force fresh fetch (bypass cache)
+tea run --from-dot workflow.dot --dot-workflow github://... --no-cache
+
+# Offline mode (cache only)
+tea run --from-dot workflow.dot --dot-workflow github://... --cache-only
+```
+
+### 2.4 Command Naming Convention
 
 BMAD commands vary based on installation. Common patterns:
 
@@ -97,7 +121,7 @@ BMAD commands vary based on installation. Common patterns:
 Run `/bmad-help` to see all available commands in your installation.
 :::
 
-### 2.4 Directory Structure
+### 2.5 Directory Structure
 
 ```
 your-project/
@@ -448,16 +472,27 @@ Use these exact basenames as labels in your DOT file.
 
 | Workflow | Purpose | When to Use |
 |----------|---------|-------------|
-| `bmad-story-validation.yaml` | Validate story quality | Before development |
-| `bmad-story-development.yaml` | Implement stories | During development |
+| `bmad-story-v6-validation.yaml` | Validate story quality (QA checks) | Before development |
+| `bmad-story-v6-development.yaml` | Implement stories (Dev cycle) | During development |
+| `bmad-story-v6-standard-cycle.yaml` | Dev → QA → SM cycle | Standard development |
+| `bmad-story-v6-full-with-qa-cycle.yaml` | Complete validation + development | End-to-end |
+
+**TEA-CLI-001:** Workflows can be loaded directly from GitHub using `github://` URLs:
 
 ### 8.2 Validation Run (Recommended First)
 
 Before development, validate all stories:
 
 ```bash
+# Using GitHub URL (recommended - always gets latest workflow)
 tea run --from-dot examples/dot/epic-1-development.dot \
-    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-max-parallel 3 \
+    --dot-session epic1-validation
+
+# Or using local workflow file
+tea run --from-dot examples/dot/epic-1-development.dot \
+    --dot-workflow examples/workflows/bmad-story-v6-validation.yaml \
     --dot-max-parallel 3 \
     --dot-session epic1-validation
 ```
@@ -467,9 +502,15 @@ tea run --from-dot examples/dot/epic-1-development.dot \
 Execute story development in parallel:
 
 ```bash
-# With verbose output for debugging
+# Using GitHub URL with verbose output for debugging
 TEA_SHELL_VERBOSE=1 tea run --from-dot examples/dot/epic-1-development.dot \
-    --dot-workflow examples/workflows/bmad-story-development.yaml \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-max-parallel 2 \
+    --dot-session epic1-dev
+
+# Or use the standard cycle (Dev → QA → SM)
+TEA_SHELL_VERBOSE=1 tea run --from-dot examples/dot/epic-1-development.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml \
     --dot-max-parallel 2 \
     --dot-session epic1-dev
 ```
@@ -588,14 +629,19 @@ Here's a complete example from idea to parallel execution:
 # Create DOT file (see Section 7)
 vim examples/dot/epic-1-development.dot
 
-# Validate stories first
+# Validate stories first (using GitHub URL)
 tea run --from-dot examples/dot/epic-1-development.dot \
-    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
     --dot-max-parallel 3
 
-# Execute development
+# Execute development (using GitHub URL)
 tea run --from-dot examples/dot/epic-1-development.dot \
-    --dot-workflow examples/workflows/bmad-story-development.yaml \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-max-parallel 2
+
+# Or run the full cycle (validation + development)
+tea run --from-dot examples/dot/epic-1-development.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-full-with-qa-cycle.yaml \
     --dot-max-parallel 2
 ```
 
@@ -733,17 +779,32 @@ By following this workflow, teams can transform vague ideas into production code
 ### TEA Commands
 
 ```bash
-# Validate stories
-tea run --from-dot workflow.dot --dot-workflow examples/workflows/bmad-story-validation.yaml
+# Validate stories (GitHub URL - recommended)
+tea run --from-dot workflow.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml
 
-# Develop stories
-tea run --from-dot workflow.dot --dot-workflow examples/workflows/bmad-story-development.yaml
+# Develop stories (GitHub URL)
+tea run --from-dot workflow.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml
+
+# Standard cycle: Dev → QA → SM (GitHub URL)
+tea run --from-dot workflow.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml
+
+# Full cycle with QA validation (GitHub URL)
+tea run --from-dot workflow.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-full-with-qa-cycle.yaml
 
 # Dry run (preview plan)
 tea run --from-dot workflow.dot --dot-dry-run
 
 # Monitor
 tmux attach -t tea-dot
+
+# Cache management (for remote workflows)
+tea cache list    # Show cached files
+tea cache clear   # Clear cache
+tea cache info    # Cache statistics
 ```
 
 ## 14. References
