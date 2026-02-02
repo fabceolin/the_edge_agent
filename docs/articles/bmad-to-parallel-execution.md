@@ -29,33 +29,6 @@ This article presents a solution: combining BMAD's structured AI agent workflows
 
 ### 1.1 The Complete Journey
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         IDEA TO EXECUTION PIPELINE                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   PHASE 1: ANALYSIS        PHASE 2: PLANNING      PHASE 3: SOLUTIONING │
-│   ┌──────────────┐         ┌──────────────┐       ┌──────────────┐     │
-│   │   Analyst    │────────▶│     PM       │──────▶│  Architect   │     │
-│   │  (Mary)      │         │   (John)     │       │  (Winston)   │     │
-│   │              │         │              │       │              │     │
-│   │ • Brainstorm │         │ • Create PRD │       │ • Design     │     │
-│   │ • Research   │         │ • Validate   │       │ • Decisions  │     │
-│   │ • Brief      │         │              │       │ • Epics      │     │
-│   └──────────────┘         └──────────────┘       └──────────────┘     │
-│                                                            │            │
-│   PHASE 4: IMPLEMENTATION                                  ▼            │
-│   ┌─────────────────────────────────────────────────────────────────┐  │
-│   │                    DOT Parallel Execution                        │  │
-│   │  ┌─────┐   ┌─────────┬─────────┬─────────┐   ┌─────┐            │  │
-│   │  │Start│──▶│ Story 1 │ Story 2 │ Story 3 │──▶│ End │            │  │
-│   │  └─────┘   └─────────┴─────────┴─────────┘   └─────┘            │  │
-│   │            (parallel via tmux)                                   │  │
-│   └─────────────────────────────────────────────────────────────────┘  │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
 ```mermaid
 flowchart TB
     subgraph Phase1["PHASE 1: ANALYSIS"]
@@ -111,31 +84,7 @@ pip install "git+https://github.com/fabceolin/the_edge_agent.git#subdirectory=py
 tea --version
 ```
 
-### 2.3 Remote Workflow Support (TEA-CLI-001)
-
-TEA supports loading workflows directly from remote URLs:
-
-| Protocol | Example | Use Case |
-|----------|---------|----------|
-| `github://` | `github://user/repo@main/path/file.yaml` | GitHub repositories |
-| `gitlab://` | `gitlab://user/repo@main/path/file.yaml` | GitLab repositories |
-| `s3://` | `s3://bucket/path/file.yaml` | AWS S3 storage |
-| `gs://` | `gs://bucket/path/file.yaml` | Google Cloud Storage |
-
-**Caching:** Remote files are cached locally in `~/.cache/tea/remote/` with automatic TTL management.
-
-```bash
-# View cached files
-tea cache list
-
-# Force fresh fetch (bypass cache)
-tea run --from-dot workflow.dot --dot-workflow github://... --no-cache
-
-# Offline mode (cache only)
-tea run --from-dot workflow.dot --dot-workflow github://... --cache-only
-```
-
-### 2.4 Command Naming Convention
+### 2.3 Command Naming Convention
 
 BMAD commands vary based on installation. Common patterns:
 
@@ -151,7 +100,7 @@ BMAD commands vary based on installation. Common patterns:
 Run `/bmad-help` to see all available commands in your installation.
 :::
 
-### 2.5 Directory Structure
+### 2.4 Directory Structure
 
 ```
 your-project/
@@ -536,8 +485,8 @@ Use these exact basenames as labels in your DOT file.
 | Workflow | Purpose | When to Use |
 |----------|---------|-------------|
 | `bmad-story-v6-validation.yaml` | Validate story quality (QA checks) | Before development |
-| `bmad-story-v6-development.yaml` | Implement stories (Dev cycle) | During development |
-| `bmad-story-v6-standard-cycle.yaml` | Dev → QA → SM cycle | Standard development |
+| `bmad-story-v6-development.yaml` | Dev → QA → SM cycle | Standard development |
+| `bmad-story-v6-standard-cycle.yaml` | Implement stories (Dev cycle) | During development |
 | `bmad-story-v6-full-with-qa-cycle.yaml` | Complete validation + development | End-to-end |
 
 **TEA-CLI-001:** Workflows can be loaded directly from GitHub using `github://` URLs:
@@ -571,7 +520,7 @@ TEA_SHELL_VERBOSE=1 tea run --from-dot examples/dot/epic-1-development.dot \
     --dot-max-parallel 2 \
     --dot-session epic1-dev
 
-# Or use the standard cycle (Dev → QA → SM)
+# Or use the standard cycle (implementation only, no TEA QA phases)
 TEA_SHELL_VERBOSE=1 tea run --from-dot examples/dot/epic-1-development.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml \
     --dot-max-parallel 2 \
