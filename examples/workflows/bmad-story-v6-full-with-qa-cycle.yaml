@@ -939,13 +939,21 @@ nodes:
             Quality Score from TEA: {{ state.quality_score }}
             Risk Level: {{ state.risk_level }}
 
-            IMPORTANT: After the review completes, clearly state the final outcome:
-            - If story is approved (Status: done), print: **Outcome:** APPROVED
-            - If changes are needed (Status: in-progress), print: **Outcome:** CHANGES_REQUESTED
-            - If blocked by critical issues, print: **Outcome:** BLOCKED
+            After the BMAD code review completes:
+            1. Read the story file to find the "## Senior Developer Review" section
+            2. Extract the **Outcome:** line (APPROVED, CHANGES REQUESTED, or BLOCKED)
+            3. Extract the **Recommendation:** line if present
 
-            The BMAD review will set story status to "done" or "in-progress".
-            Make sure to echo the final status at the end of your response.
+            CRITICAL: At the END of your response, you MUST print one of these EXACT lines:
+            - If approved: FINAL_STATUS: APPROVED
+            - If changes needed: FINAL_STATUS: CHANGES_REQUESTED
+            - If blocked: FINAL_STATUS: BLOCKED
+
+            Example ending:
+            ---
+            Review complete. Story updated.
+            FINAL_STATUS: APPROVED
+            ---
     output: review_output
 
   - name: check_review_status
@@ -961,37 +969,62 @@ nodes:
 
       review_fix_attempt = state.get("review_fix_attempt", 0)
 
+      # Debug: Show last 500 chars of output for pattern debugging
+      if text:
+          print(f"=== Review Output (last 500 chars) ===")
+          print(text[-500:] if len(text) > 500 else text)
+          print("=" * 40)
+
       # Normalize text for case-insensitive matching
       text_lower = text.lower()
 
       # Detection patterns for APPROVED status:
-      # - BMAD outputs "**Story Status:** done" or "Status: done"
-      # - BMAD outputs "**Outcome:** APPROVED" or "APPROVED WITH FIXES"
-      # - Explicit REVIEW_APPROVED marker (from prompt instructions)
-      # - "### Decision" followed by "APPROVED"
+      # Patterns are ordered from most specific to least specific
       approved_patterns = [
-          r'status[:\s*\*]+done',           # Story Status: done
-          r'outcome[:\s*\*]+approved',       # Outcome: APPROVED
-          r'approved\s+with\s+fixes',        # APPROVED WITH FIXES
-          r'review_approved',                # Explicit marker
-          r'decision[:\s*\*]+approved',      # Decision: APPROVED
-          r'\*\*approved\*\*',               # **APPROVED**
+          r'final_status:\s*approved',         # FINAL_STATUS: APPROVED (explicit marker from prompt)
+          r'\*\*outcome:?\*\*\s*approved',     # **Outcome:** APPROVED or **Outcome** APPROVED
+          r'outcome:\s*approved',              # Outcome: APPROVED
+          r'\*\*status:?\*\*\s*done',          # **Status:** done
+          r'status:\s*done',                   # Status: done
+          r'story\s*status:\s*done',           # Story Status: done
+          r'approved\s+with\s+fixes',          # APPROVED WITH FIXES
+          r'review_approved',                  # Explicit marker
+          r'\*\*decision:?\*\*\s*approved',    # **Decision:** APPROVED
+          r'decision:\s*approved',             # Decision: APPROVED
+          r'\*\*approved\*\*',                 # **APPROVED**
+          r'\blgtm\b',                         # LGTM (looks good to me)
+          r'code\s+review\s+passed',           # Code review passed
+          r'all\s+checks?\s+pass',             # All checks pass/passed
+          r'no\s+(?:blocking\s+)?issues?\s+found',  # No issues found / No blocking issues found
+          r'recommendation[:\s\*]+approve',    # **Recommendation**: Approve with Comments
+          r'approve\s+with\s+comments',        # Approve with Comments
+          r'\bapprove\b(?!\s+requested)',      # "approve" but not "approve requested" (word boundary)
       ]
 
       # Detection patterns for BLOCKED status:
       blocked_patterns = [
+          r'final_status:\s*blocked',          # FINAL_STATUS: BLOCKED (explicit marker from prompt)
           r'review_blocked',
-          r'status[:\s*\*]+blocked',
-          r'outcome[:\s*\*]+blocked',
+          r'\*\*status:?\*\*\s*blocked',
+          r'status:\s*blocked',
+          r'\*\*outcome:?\*\*\s*blocked',
+          r'outcome:\s*blocked',
+          r'critical\s+blocker',
       ]
 
       # Detection patterns for CHANGES_REQUESTED:
-      # - BMAD outputs "**Story Status:** in-progress"
-      # - Explicit REVIEW_CHANGES_REQUESTED marker
       changes_patterns = [
-          r'status[:\s*\*]+in-progress',
+          r'final_status:\s*changes_requested', # FINAL_STATUS: CHANGES_REQUESTED (explicit marker)
+          r'\*\*outcome:?\*\*\s*changes\s*requested',  # **Outcome:** CHANGES REQUESTED
+          r'outcome:\s*changes\s*requested',   # Outcome: CHANGES REQUESTED
+          r'\*\*status:?\*\*\s*in-progress',
+          r'status:\s*in-progress',
+          r'story\s*status:\s*in-progress',
           r'review_changes_requested',
-          r'changes\s+requested',
+          r'changes?\s+requested',
+          r'needs?\s+(?:more\s+)?changes',
+          r'issues?\s+(?:need|require)',
+          r'must\s+(?:be\s+)?fix',
       ]
 
       # Check patterns in priority order

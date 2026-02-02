@@ -38,26 +38,122 @@ load_dotenv()  # Load from current working directory
 load_dotenv(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"), override=False
 )  # Load from package root
-import json
-import yaml
-import importlib
-import importlib.util
-import traceback
-import pickle
-import time
-import logging
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
-from enum import Enum
-from datetime import datetime, timezone
+import json  # noqa: E402
+import yaml  # noqa: E402
+import importlib  # noqa: E402
+import importlib.util  # noqa: E402
+import pickle  # noqa: E402
+import time  # noqa: E402
+import logging  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable, Dict, List, Optional, Tuple  # noqa: E402
+from enum import Enum  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
 
-import typer
+import typer  # noqa: E402
 
-from the_edge_agent import YAMLEngine, __version__
-from the_edge_agent.serialization import TeaJSONEncoder
+from the_edge_agent import YAMLEngine, __version__  # noqa: E402
+from the_edge_agent.serialization import TeaJSONEncoder  # noqa: E402
+from the_edge_agent.cache import (  # noqa: E402
+    RemoteFileCache,
+    CacheError,
+    SecurityError,
+    is_url,
+    mask_credentials,
+)
 
 # Implementation identifier
 IMPLEMENTATION = "python"
+
+
+# =============================================================================
+# TEA-CLI-001: Remote file URL resolution with caching
+# =============================================================================
+
+
+def resolve_file_url(
+    path: str,
+    cache: bool = True,
+    cache_only: bool = False,
+    cache_dir: Optional[Path] = None,
+    verbose: bool = False,
+) -> Path:
+    """
+    Resolve local path or remote URL to local file path.
+
+    For local paths, returns the path unchanged.
+    For remote URLs, fetches the file (with caching) and returns the local path.
+
+    Args:
+        path: Local path or remote URL
+        cache: Whether to use caching (default: True)
+        cache_only: Only use cache, fail if not cached (offline mode)
+        cache_dir: Override cache directory
+        verbose: Enable verbose logging
+
+    Returns:
+        Path to the local file
+
+    Raises:
+        typer.BadParameter: On fetch errors
+    """
+    # Local paths pass through unchanged
+    if not is_url(path):
+        return Path(path)
+
+    from the_edge_agent.actions.core_actions import _get_filesystem
+
+    cache_manager = RemoteFileCache(cache_dir=cache_dir, verbose=verbose)
+
+    # Check cache first
+    if cache and cache_manager.has_valid(path):
+        if verbose:
+            typer.echo(f"Cache HIT: {mask_credentials(path)}", err=True)
+        return cache_manager.get_path(path)
+
+    # Cache-only mode: fail if not in cache
+    if cache_only:
+        if cache_manager.has_expired(path):
+            raise typer.BadParameter(
+                f"File not in cache: {mask_credentials(path)}. "
+                f"An expired version exists - use --no-cache to refresh."
+            )
+        raise typer.BadParameter(
+            f"File not in cache: {mask_credentials(path)}. "
+            f"Run without --cache-only to fetch."
+        )
+
+    if verbose:
+        typer.echo(f"Cache MISS: {mask_credentials(path)}", err=True)
+
+    # Fetch from remote
+    fs, fs_path, err = _get_filesystem(path)
+    if err:
+        # Check if cached version exists (for hint)
+        if cache_manager.has_expired(path):
+            raise typer.BadParameter(
+                f"{err['error']}\n"
+                f"Tip: A cached version exists. Use --cache-only to use it."
+            )
+        raise typer.BadParameter(err["error"])
+
+    try:
+        # Progress callback for large files (PERF-001)
+        def progress_callback(done: int, total: int) -> None:
+            if total > 1024 * 1024 and verbose:  # Only for files > 1MB
+                pct = int(done / total * 100) if total > 0 else 0
+                typer.echo(f"  Progress: {pct}%", err=True)
+
+        return cache_manager.fetch_and_cache(
+            fs, fs_path, path, progress_callback=progress_callback
+        )
+    except SecurityError as e:
+        raise typer.BadParameter(f"Security error: {e}")
+    except CacheError as e:
+        raise typer.BadParameter(f"Cache error: {e}")
+    except Exception as e:
+        raise typer.BadParameter(f"Failed to fetch {mask_credentials(path)}: {e}")
+
 
 # Create the main app
 app = typer.Typer(
@@ -369,7 +465,7 @@ def handle_interrupt_interactive(
             try:
                 updates = json.loads(json_input)
                 if not isinstance(updates, dict):
-                    typer.echo(f"Error: State updates must be a JSON object", err=True)
+                    typer.echo("Error: State updates must be a JSON object", err=True)
                     return None
                 state = deep_merge(state.copy(), updates)
                 typer.echo("State updated. Resuming execution...")
@@ -455,8 +551,10 @@ def check_fail_on_state(
 
 @app.command()
 def run(
-    file: Optional[Path] = typer.Argument(
-        None, help="Path to workflow YAML file (required unless --from-dot)"
+    file: Optional[str] = typer.Argument(
+        None,
+        help="Path or URL to workflow YAML file. Supports: local paths, s3://, gs://, "
+        "github://user/repo@ref/path, gitlab://user/repo@ref/path",
     ),
     input: Optional[str] = typer.Option(
         None, "--input", "-i", help="Initial state as JSON or @file.json"
@@ -503,6 +601,22 @@ def run(
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress non-error output"
+    ),
+    # TEA-CLI-001: Remote file caching flags
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="Disable caching for remote files - always fetch fresh",
+    ),
+    cache_only: bool = typer.Option(
+        False,
+        "--cache-only",
+        help="Only use cached files - fail if not in cache (offline mode)",
+    ),
+    cli_cache_dir: Optional[Path] = typer.Option(
+        None,
+        "--cache-dir",
+        help="Override cache directory (default: ~/.cache/tea/remote/)",
     ),
     # Interactive mode flags (TEA-CLI-005c)
     interactive: bool = typer.Option(
@@ -806,7 +920,9 @@ def run(
                 # Resolve label to wave/step position
                 if dot_start_from not in label_map:
                     available_labels = list(label_map.keys())[:10]
-                    available_str = ", ".join(f"'{l}'" for l in available_labels)
+                    available_str = ", ".join(
+                        f"'{label}'" for label in available_labels
+                    )
                     suffix = "..." if len(label_map) > 10 else ""
                     typer.echo(
                         f"Error: Label '{dot_start_from}' not found. "
@@ -1115,7 +1231,7 @@ def run(
             elapsed = time.time() - start_time
             success_count = sum(1 for r in results if r.get("success", False))
             executed_count = len(results)
-            typer.echo(f"\n=== Summary ===", err=True)
+            typer.echo("\n=== Summary ===", err=True)
             typer.echo(f"Total time: {elapsed:.1f}s", err=True)
             if skipped_count > 0:
                 typer.echo(
@@ -1129,7 +1245,7 @@ def run(
 
             # TEA-CLI-008: Show failed nodes (AC-11)
             if errors:
-                typer.echo(f"\nFailed nodes:", err=True)
+                typer.echo("\nFailed nodes:", err=True)
                 for err in errors:
                     typer.echo(
                         f"  - {err['node']}: {err.get('error', 'Unknown error')}",
@@ -1141,7 +1257,7 @@ def run(
                 phases_str = ", ".join(str(p) for p in skipped_phases)
                 typer.echo(f"\nSkipped phases: {phases_str}", err=True)
                 typer.echo(
-                    f"  (Use --no-dot-stop-on-failure to continue all phases)", err=True
+                    "  (Use --no-dot-stop-on-failure to continue all phases)", err=True
                 )
 
             # AC-13: Exit code 1 when any node failed
@@ -1238,9 +1354,22 @@ def run(
         )
         input = input or f"@{state_file}"
 
-    # Validate file exists
-    if not file.exists():
-        typer.echo(f"Error: Workflow file not found: {file}", err=True)
+    # TEA-CLI-001: Resolve file URL to local path (with caching for remote URLs)
+    try:
+        resolved_file = resolve_file_url(
+            file,
+            cache=not no_cache,
+            cache_only=cache_only,
+            cache_dir=cli_cache_dir,
+            verbose=verbose > 0,
+        )
+    except typer.BadParameter as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    # Validate resolved file exists (for local paths)
+    if not resolved_file.exists():
+        typer.echo(f"Error: Workflow file not found: {resolved_file}", err=True)
         raise typer.Exit(1)
 
     # YE.8: YAML Overlay Merge Support
@@ -1251,7 +1380,7 @@ def run(
 
         # Load base YAML
         try:
-            with open(file) as f:
+            with open(resolved_file) as f:
                 base_config = yaml.safe_load(f)
             if not isinstance(base_config, dict):
                 typer.echo(
@@ -1260,7 +1389,9 @@ def run(
                 )
                 raise typer.Exit(1)
         except yaml.YAMLError as e:
-            typer.echo(f"Error: Invalid YAML in base file {file}: {e}", err=True)
+            typer.echo(
+                f"Error: Invalid YAML in base file {resolved_file}: {e}", err=True
+            )
             raise typer.Exit(1)
 
         # Load and validate overlay files
@@ -1355,7 +1486,7 @@ def run(
         if merged_config is not None:
             graph = engine.load_from_dict(merged_config)
         else:
-            graph = engine.load_from_file(str(file))
+            graph = engine.load_from_file(str(resolved_file))
     except Exception as e:
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)
@@ -2062,9 +2193,6 @@ def resume(
 
     compiled = graph.compile()
 
-    # Execute from merged state (similar to run command)
-    cp_dir = str(checkpoint.parent)
-
     if stream:
         emit_ndjson_event("resume", workflow=str(workflow), checkpoint=str(checkpoint))
 
@@ -2296,6 +2424,176 @@ def inspect(
 
 
 # ============================================================
+# Cache Subcommands (TEA-CLI-001)
+# ============================================================
+
+cache_app = typer.Typer(
+    name="cache",
+    help="Manage remote file cache",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("list")
+def cache_list(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    expired: bool = typer.Option(False, "--expired", help="Show only expired entries"),
+    valid: bool = typer.Option(
+        False, "--valid", help="Show only valid (non-expired) entries"
+    ),
+):
+    """
+    Show cached remote files with URL, size, and age.
+
+    Examples:
+        tea cache list
+        tea cache list --json
+        tea cache list --expired
+    """
+    cache_manager = RemoteFileCache()
+    entries = cache_manager.list_entries()
+
+    # Apply filters
+    if expired:
+        entries = [e for e in entries if e["expired"]]
+    elif valid:
+        entries = [e for e in entries if not e["expired"]]
+
+    if json_output:
+        print(json.dumps(entries, indent=2))
+        return
+
+    if not entries:
+        typer.echo("Cache is empty")
+        return
+
+    typer.echo(f"{'URL':<60} {'Size':<10} {'Age':<15} {'Status'}")
+    typer.echo("-" * 100)
+
+    for entry in entries:
+        url = mask_credentials(entry["url"])
+        if len(url) > 57:
+            url = url[:57] + "..."
+
+        size = RemoteFileCache._format_size(entry["size_bytes"])
+        age_secs = entry["age_seconds"]
+        if age_secs < 60:
+            age = f"{age_secs}s"
+        elif age_secs < 3600:
+            age = f"{age_secs // 60}m"
+        elif age_secs < 86400:
+            age = f"{age_secs // 3600}h"
+        else:
+            age = f"{age_secs // 86400}d"
+
+        status = "expired" if entry["expired"] else "valid"
+        if entry["is_permanent"]:
+            status = "permanent"
+        if not entry["exists"]:
+            status = "MISSING"
+
+        typer.echo(f"{url:<60} {size:<10} {age:<15} {status}")
+
+    typer.echo(f"\nTotal: {len(entries)} entries")
+
+
+@cache_app.command("clear")
+def cache_clear(
+    older_than: Optional[str] = typer.Option(
+        None,
+        "--older-than",
+        help="Clear only entries older than duration (e.g., '7d', '24h', '30m')",
+    ),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+):
+    """
+    Clear cached remote files.
+
+    Examples:
+        tea cache clear
+        tea cache clear --older-than 7d
+        tea cache clear --force
+    """
+    from the_edge_agent.cache import parse_duration
+
+    cache_manager = RemoteFileCache()
+    entries = cache_manager.list_entries()
+
+    if not entries:
+        typer.echo("Cache is already empty")
+        return
+
+    # Calculate entries to clear
+    duration = None
+    if older_than:
+        try:
+            duration = parse_duration(older_than)
+        except ValueError:
+            typer.echo(
+                f"Error: Invalid duration format '{older_than}'. "
+                f"Use format like '7d', '24h', '30m', or '3600s'",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+    # Preview what will be cleared
+    if duration:
+        cutoff = int(duration.total_seconds())
+        to_clear = [e for e in entries if e["age_seconds"] > cutoff]
+        typer.echo(
+            f"Will clear {len(to_clear)} of {len(entries)} entries older than {older_than}"
+        )
+    else:
+        to_clear = entries
+        typer.echo(f"Will clear all {len(entries)} cache entries")
+
+    if not to_clear:
+        typer.echo("No entries match the criteria")
+        return
+
+    if not force:
+        confirm = typer.confirm("Proceed?")
+        if not confirm:
+            typer.echo("Cancelled")
+            return
+
+    removed = cache_manager.clear(older_than=duration)
+    typer.echo(f"Cleared {removed} cache entries")
+
+
+@cache_app.command("info")
+def cache_info(
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+):
+    """
+    Show cache location and statistics.
+
+    Examples:
+        tea cache info
+        tea cache info --json
+    """
+    cache_manager = RemoteFileCache()
+    info = cache_manager.info()
+
+    if json_output:
+        print(json.dumps(info, indent=2))
+        return
+
+    typer.echo("Remote File Cache")
+    typer.echo("=" * 40)
+    typer.echo(f"Location:       {info['location']}")
+    typer.echo(
+        f"Entries:        {info['total_entries']} ({info['valid_entries']} valid, {info['expired_entries']} expired)"
+    )
+    typer.echo(
+        f"Size:           {info['total_size_human']} / {info['max_size_human']} ({info['usage_percent']}%)"
+    )
+    typer.echo(f"TTL:            {info['ttl_seconds']}s")
+    typer.echo(f"Fetch Timeout:  {info['fetch_timeout_seconds']}s")
+
+
+# ============================================================
 # Schema Subcommands (TEA-BUILTIN-008.3)
 # ============================================================
 
@@ -2466,7 +2764,7 @@ def report_bug(
     # Parse labels
     label_list = ["bug", "auto-reported"]
     if labels:
-        label_list = [l.strip() for l in labels.split(",")]
+        label_list = [label.strip() for label in labels.split(",")]
 
     # Determine repository
     target_repo = repo or get_git_remote_repo()
@@ -2674,6 +2972,7 @@ def main_callback(
             "validate",
             "inspect",
             "schema",
+            "cache",
             "from",
             "report-bug",
         ]:

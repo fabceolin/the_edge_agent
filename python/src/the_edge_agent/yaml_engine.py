@@ -19,41 +19,28 @@ Example:
 import yaml
 import json
 import os
-import re
-import threading
-import time
-import importlib
-import importlib.util
 import logging
-from functools import lru_cache
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Union
 
-from jinja2 import Environment, BaseLoader, StrictUndefined, TemplateError
+from jinja2 import Environment, BaseLoader, StrictUndefined
 
-from .stategraph import StateGraph, START, END
+from .stategraph import StateGraph
 
 logger = logging.getLogger(__name__)
 
-from .memory import (
-    MemoryBackend,
+from .memory import (  # noqa: E402
     InMemoryBackend,
-    LongTermMemoryBackend,
     SQLiteBackend,
-    GraphBackend,
     COZO_AVAILABLE,
     KUZU_AVAILABLE,
     DUCKPGQ_AVAILABLE,
     # TEA-BUILTIN-006: Firebase Agent Memory Infrastructure
-    MetadataStore,
     create_metadata_store,
     FIRESTORE_AVAILABLE,
-    BlobStorage,
     create_blob_storage,
     GCS_AVAILABLE,
-    QueryEngine,
     create_query_engine,
     DUCKDB_AVAILABLE,
-    VectorIndex,
     create_vector_index,
     DUCKDB_VSS_AVAILABLE,
     # TEA-BUILTIN-001.6.4: LTM Backend Configuration
@@ -65,15 +52,14 @@ from .memory import (
     _parse_hierarchical_ltm_config,
     _is_hierarchical_nested_config,
 )
-from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter
-from .observability import ObservabilityContext, EventStream
-from .observability import ConsoleHandler, FileHandler, CallbackHandler
-from .actions import build_actions_registry, register_cache_jinja_filters
-from .yaml_templates import TemplateProcessor, DotDict
-from .yaml_nodes import NodeFactory, NodeStreamsConfig, StreamSettings
-from .yaml_edges import EdgeFactory
-from .yaml_imports import ImportLoader
-from .yaml_config import EngineConfig
+from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter  # noqa: E402
+from .observability import ObservabilityContext  # noqa: E402
+from .actions import build_actions_registry, register_cache_jinja_filters  # noqa: E402
+from .yaml_templates import TemplateProcessor  # noqa: E402
+from .yaml_nodes import NodeFactory, NodeStreamsConfig, StreamSettings  # noqa: E402
+from .yaml_edges import EdgeFactory  # noqa: E402
+from .yaml_imports import ImportLoader  # noqa: E402
+from .yaml_config import EngineConfig  # noqa: E402
 
 
 class YAMLEngine:
@@ -491,9 +477,9 @@ class YAMLEngine:
         self.secrets: Dict[str, Any] = {}
         self.data: Dict[str, Any] = {}
         self.llm_settings: Dict[str, Any] = {}  # Default LLM settings from settings.llm
-        self.shell_providers: Dict[str, Any] = (
-            {}
-        )  # Shell CLI providers from settings.llm.shell_providers
+        self.shell_providers: Dict[
+            str, Any
+        ] = {}  # Shell CLI providers from settings.llm.shell_providers
 
         # Checkpoint tracking
         self._last_checkpoint_path: Optional[str] = None
@@ -1238,7 +1224,7 @@ class YAMLEngine:
             if rules and self._prolog_enabled:
                 # Validate Prolog syntax by attempting to parse
                 try:
-                    from .prolog_runtime import PrologRuntime, JANUS_AVAILABLE
+                    from .prolog_runtime import JANUS_AVAILABLE
 
                     if JANUS_AVAILABLE:
                         # Just check syntax, don't execute
@@ -1937,9 +1923,10 @@ class YAMLEngine:
 
     def _load_subgraph(self, path: str) -> "StateGraph":
         """
-        Load a subgraph from a local or remote path using fsspec.
+        Load a subgraph from a local or remote path using fsspec with caching.
 
         TEA-YAML-006: Subgraph loading for dynamic_parallel nodes.
+        TEA-CLI-001: Remote file caching for subgraphs.
 
         Args:
             path: Path to the subgraph YAML file. Supports:
@@ -1948,6 +1935,8 @@ class YAMLEngine:
                   - GCS: 'gs://bucket/path/subgraph.yaml' (requires gcsfs)
                   - Azure: 'az://container/path/subgraph.yaml' (requires adlfs)
                   - HTTP: 'https://example.com/subgraph.yaml' (requires aiohttp)
+                  - GitHub: 'github://user/repo@ref/path.yaml' (TEA-CLI-001)
+                  - GitLab: 'gitlab://user/repo@ref/path.yaml' (TEA-CLI-001)
 
         Returns:
             Compiled StateGraph instance from the subgraph YAML.
@@ -1961,24 +1950,54 @@ class YAMLEngine:
             >>> subgraph = engine._load_subgraph('./agents/researcher.yaml')
             >>> # Or from S3:
             >>> subgraph = engine._load_subgraph('s3://my-bucket/agents/researcher.yaml')
+            >>> # Or from GitHub:
+            >>> subgraph = engine._load_subgraph('github://user/repo@main/agents/researcher.yaml')
         """
         from .actions.core_actions import _get_filesystem
+        from .cache import RemoteFileCache, is_url, CacheError, SecurityError
 
-        # Get filesystem and path
-        fs, fs_path, err = _get_filesystem(path)
-        if err:
-            raise FileNotFoundError(
-                f"Subgraph not found: {path} - {err.get('error', 'Unknown error')}"
-            )
+        # TEA-CLI-001: Check cache first for remote URLs
+        local_path = None
+        if is_url(path):
+            cache = RemoteFileCache()
+            if cache.has_valid(path):
+                local_path = cache.get_path(path)
 
-        try:
-            # Read YAML content
-            with fs.open(fs_path, "r") as f:
-                content = f.read()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Subgraph not found: {path}")
-        except Exception as e:
-            raise ValueError(f"Failed to load subgraph '{path}': {e}") from e
+        # If not cached or not a URL, use filesystem directly
+        if local_path is None:
+            fs, fs_path, err = _get_filesystem(path)
+            if err:
+                raise FileNotFoundError(
+                    f"Subgraph not found: {path} - {err.get('error', 'Unknown error')}"
+                )
+
+            try:
+                # For remote URLs, cache the file
+                if is_url(path):
+                    try:
+                        cache = RemoteFileCache()
+                        local_path = cache.fetch_and_cache(fs, fs_path, path)
+                    except (CacheError, SecurityError):
+                        # Fall back to direct read if caching fails
+                        with fs.open(fs_path, "r") as f:
+                            content = f.read()
+                        local_path = None
+                else:
+                    # Local file - read directly
+                    with fs.open(fs_path, "r") as f:
+                        content = f.read()
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Subgraph not found: {path}")
+            except Exception as e:
+                raise ValueError(f"Failed to load subgraph '{path}': {e}") from e
+
+        # Read content from local path if we have one
+        if local_path is not None:
+            try:
+                with open(local_path, "r") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Cached subgraph not found: {path}")
 
         # Parse YAML
         config = yaml.safe_load(content)
@@ -1986,7 +2005,10 @@ class YAMLEngine:
             raise ValueError(f"Empty subgraph configuration: {path}")
 
         # Get directory for relative imports within subgraph
-        if path.startswith(("s3://", "gs://", "az://", "http://", "https://")):
+        # TEA-CLI-001: Include git protocols in remote path detection
+        if path.startswith(
+            ("s3://", "gs://", "az://", "http://", "https://", "github://", "gitlab://")
+        ):
             # For remote paths, use parent directory
             subgraph_dir = "/".join(path.rsplit("/", 1)[:-1]) if "/" in path else ""
         else:

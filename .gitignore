@@ -242,7 +242,7 @@ MARKETING_PLAN_2026.md
 MARKETING_README.md
 MARKETING_SUMMARY.txt
 README_PT.md
-!.github/workflows/                                                                                                                                                                                                                                                                                                                                                        
+!.github/workflows/
 !examples/workflows/
 .worktrees/
 docs/stories/LEXLINK-EPIC-000-tea-mapping.md
@@ -265,3 +265,9 @@ docs/shared/YAML_REFERENCE.md.orig
 python/src/the_edge_agent/__init__.py.orig
 rust/Cargo.lock.orig
 rust/Cargo.toml.orig
+AZURE_OPENAI_COMPARISON.md
+BUG_REPORT_tea_agent_dispatch_system_prompt.md
+BUG_REPORT_tea_allow_cycles.md
+CLAUDE.md.orig
+examples/workflows/bmad-story-v6-validation.yaml.orig
+rust/src/actions/llm.rs.orig
