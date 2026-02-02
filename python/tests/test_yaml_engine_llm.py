@@ -13,16 +13,14 @@ Test Priority Levels:
 """
 
 import pytest
-import time
-import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, PropertyMock
+from unittest.mock import Mock, patch
 
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from the_edge_agent import YAMLEngine, StateGraph, START, END
+from the_edge_agent import YAMLEngine
 
 
 # =============================================================================
@@ -220,7 +218,7 @@ class TestLLMEnhancedActionsP0:
     @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_handles_timeout_error(self, engine):
         """(P0) llm.retry must retry on timeout errors."""
-        with patch("the_edge_agent.yaml_engine.time.sleep"):
+        with patch("the_edge_agent.actions.llm_actions.time.sleep"):
             llm_retry = engine.actions_registry["llm.retry"]
 
             with MockOpenAIClients() as mock_openai_class:
@@ -260,7 +258,7 @@ class TestLLMEnhancedActionsP0:
     @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_handles_5xx_errors(self, engine):
         """(P0) llm.retry must retry on 5xx server errors."""
-        with patch("the_edge_agent.yaml_engine.time.sleep"):
+        with patch("the_edge_agent.actions.llm_actions.time.sleep"):
             llm_retry = engine.actions_registry["llm.retry"]
 
             with MockOpenAIClients() as mock_openai_class:
@@ -370,7 +368,7 @@ class TestLLMEnhancedActionsP1:
     @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_succeeds_after_failures(self, engine):
         """(P1) llm.retry should succeed after transient failures."""
-        with patch("the_edge_agent.yaml_engine.time.sleep"):
+        with patch("the_edge_agent.actions.llm_actions.time.sleep"):
             llm_retry = engine.actions_registry["llm.retry"]
 
             with MockOpenAIClients() as mock_openai_class:
@@ -547,7 +545,7 @@ class TestLLMEnhancedActionsP2:
     @pytest.mark.filterwarnings("ignore:llm.retry is deprecated:DeprecationWarning")
     def test_llm_retry_uses_retry_after_header(self, engine):
         """(P2) llm.retry should respect Retry-After header."""
-        with patch("the_edge_agent.yaml_engine.time.sleep") as mock_sleep:
+        with patch("the_edge_agent.actions.llm_actions.time.sleep") as mock_sleep:
             llm_retry = engine.actions_registry["llm.retry"]
 
             with MockOpenAIClients() as mock_openai_class:
