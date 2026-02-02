@@ -718,11 +718,13 @@ def run(
         help="Show ASCII graph visualization with progress during execution",
     ),
     # TEA-GAME-001: Direct DOT execution
-    from_dot: Optional[Path] = typer.Option(
+    # TEA-CLI-001: Updated to support remote URLs
+    from_dot: Optional[str] = typer.Option(
         None,
         "--from-dot",
         help="Execute DOT file directly with tmux (bypasses YAML). "
-        "Each node runs in a separate tmux window, respecting dependency order.",
+        "Each node runs in a separate tmux window, respecting dependency order. "
+        "Supports: local paths, s3://, gs://, github://user/repo@ref/path, gitlab://",
     ),
     dot_session: str = typer.Option(
         "tea-dot",
@@ -739,11 +741,13 @@ def run(
         "--dot-dry-run",
         help="Show DOT execution plan without running (requires --from-dot)",
     ),
-    dot_workflow: Optional[Path] = typer.Option(
+    # TEA-CLI-001: Updated to support remote URLs
+    dot_workflow: Optional[str] = typer.Option(
         None,
         "--dot-workflow",
         help="Workflow YAML to run for each DOT node (requires --from-dot). "
-        "Node labels become the 'arg' input. Overrides node command attributes.",
+        "Node labels become the 'arg' input. Overrides node command attributes. "
+        "Supports: local paths, s3://, gs://, github://user/repo@ref/path, gitlab://",
     ),
     dot_input: Optional[str] = typer.Option(
         None,
@@ -801,9 +805,19 @@ def run(
     fail_conditions = parse_fail_on_state(fail_on_state)
 
     # TEA-GAME-001: Handle --from-dot mode (DOT file execution with tmux)
+    # TEA-CLI-001: Support remote URLs for --from-dot and --dot-workflow
     if from_dot is not None:
-        if not from_dot.exists():
-            typer.echo(f"Error: DOT file not found: {from_dot}", err=True)
+        # Resolve URL to local path (with caching for remote URLs)
+        try:
+            resolved_from_dot = resolve_file_url(
+                from_dot,
+                cache=not no_cache,
+                cache_only=cache_only,
+                cache_dir=cli_cache_dir,
+                verbose=verbose > 0,
+            )
+        except typer.BadParameter as e:
+            typer.echo(f"Error resolving DOT file: {e}", err=True)
             raise typer.Exit(1)
 
         # Validate dot-specific options
@@ -813,10 +827,33 @@ def run(
                 err=True,
             )
 
-        # Validate --dot-workflow
-        if dot_workflow and not dot_workflow.exists():
-            typer.echo(f"Error: Workflow file not found: {dot_workflow}", err=True)
-            raise typer.Exit(1)
+        # Resolve --dot-workflow URL (but keep original for subprocess command)
+        resolved_dot_workflow: Optional[str] = None
+        if dot_workflow:
+            # For workflow mode, we pass the URL directly to the subprocess
+            # since `tea run` supports URLs. But validate it's accessible first.
+            if is_url(dot_workflow):
+                # Validate URL is accessible by resolving it (caches for later)
+                try:
+                    resolve_file_url(
+                        dot_workflow,
+                        cache=not no_cache,
+                        cache_only=cache_only,
+                        cache_dir=cli_cache_dir,
+                        verbose=verbose > 0,
+                    )
+                    resolved_dot_workflow = dot_workflow  # Keep URL for subprocess
+                except typer.BadParameter as e:
+                    typer.echo(f"Error resolving workflow file: {e}", err=True)
+                    raise typer.Exit(1)
+            else:
+                # Local path - validate it exists
+                if not Path(dot_workflow).exists():
+                    typer.echo(
+                        f"Error: Workflow file not found: {dot_workflow}", err=True
+                    )
+                    raise typer.Exit(1)
+                resolved_dot_workflow = dot_workflow
 
         # Parse --dot-input
         extra_input = {}
@@ -840,7 +877,7 @@ def run(
 
         try:
             typer.echo(f"Loading DOT graph from {from_dot}...", err=True)
-            parsed = parse_dot(str(from_dot))
+            parsed = parse_dot(str(resolved_from_dot))
             analyzed = analyze_graph(parsed)
 
             # Build execution order using topological sort
@@ -1052,13 +1089,12 @@ def run(
                             continue
 
                         # Determine command: workflow mode or command mode
-                        if dot_workflow:
+                        if resolved_dot_workflow:
                             # Workflow mode: run workflow with node label as input
+                            # TEA-CLI-001: Pass URL directly to subprocess (tea run supports URLs)
                             input_data = {"arg": label, **extra_input}
                             input_json = json.dumps(input_data)
-                            cmd = (
-                                f"{dot_exec} run {dot_workflow} --input '{input_json}'"
-                            )
+                            cmd = f"{dot_exec} run {resolved_dot_workflow} --input '{input_json}'"
                         else:
                             # Command mode: use node's command attribute
                             cmd = node.command if node else None
