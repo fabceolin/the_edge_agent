@@ -107,6 +107,7 @@ pub mod experiments;
 pub mod games;
 #[cfg(feature = "scryer")]
 pub mod prolog;
+pub mod remote;
 pub mod report;
 
 // Re-exports

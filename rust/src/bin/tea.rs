@@ -5,9 +5,13 @@
 //!   tea run workflow.yaml --secrets '{"api_key": "sk-123"}' --input '{"prompt": "hello"}'
 //!   tea run workflow.yaml --secrets @secrets.json --input '{"prompt": "hello"}'
 //!   tea run workflow.yaml --secrets-env TEA_SECRET_ --input '{"prompt": "hello"}'
+//!   tea run github://user/repo@main/workflow.yaml --input '{}'
 //!   tea resume checkpoint.bin --input '{"update": "value"}'
 //!   tea validate workflow.yaml
 //!   tea inspect workflow.yaml
+//!   tea cache list
+//!   tea cache clear --older-than 7d
+//!   tea cache info
 //!   tea --impl
 //!   tea --version --impl
 
@@ -57,8 +61,9 @@ struct Cli {
 enum Commands {
     /// Execute a workflow
     Run {
-        /// Path to workflow YAML file
-        file: PathBuf,
+        /// Path or URL to workflow YAML file
+        /// Supports: local paths, s3://, gs://, github://, gitlab://, https://
+        file: String,
 
         /// Initial state as JSON string or @file.json
         #[arg(short, long)]
@@ -181,6 +186,18 @@ enum Commands {
         /// TEA-REPORT-001d: Skip extended context prompt (minimal report only)
         #[arg(long)]
         report_minimal: bool,
+
+        /// TEA-CLI-002: Bypass cache, always fetch remote files fresh
+        #[arg(long)]
+        no_cache: bool,
+
+        /// TEA-CLI-002: Only use cached files, fail if not in cache
+        #[arg(long)]
+        cache_only: bool,
+
+        /// TEA-CLI-002: Override cache directory (default: ~/.cache/tea/remote/)
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
     },
 
     /// Resume execution from a checkpoint
@@ -243,6 +260,45 @@ enum Commands {
     From {
         #[command(subcommand)]
         source: FromSource,
+    },
+
+    /// Manage remote file cache (TEA-CLI-002)
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+}
+
+/// Cache management subcommands (TEA-CLI-002)
+#[derive(Subcommand, Debug)]
+enum CacheAction {
+    /// List cached files
+    List {
+        /// Output format: text, json (default: text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+
+        /// Show only expired entries
+        #[arg(long)]
+        expired: bool,
+    },
+
+    /// Clear cached files
+    Clear {
+        /// Only clear entries older than this duration (e.g., 7d, 24h, 30m)
+        #[arg(long)]
+        older_than: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
+    /// Show cache statistics
+    Info {
+        /// Output format: text, json (default: text)
+        #[arg(short, long, default_value = "text")]
+        format: String,
     },
 }
 
@@ -350,6 +406,9 @@ fn main() -> Result<()> {
             no_report_bugs,
             report_extended,
             report_minimal,
+            no_cache,
+            cache_only,
+            cache_dir,
         } => {
             // Check for not-implemented flags (TEA-CLI-004 AC-29, AC-30)
             if actions_module.is_some() {
@@ -414,6 +473,12 @@ fn main() -> Result<()> {
                 cli_backend
             };
 
+            // TEA-CLI-002: Validate mutually exclusive cache flags
+            if no_cache && cache_only {
+                eprintln!("Error: --no-cache and --cache-only are mutually exclusive");
+                std::process::exit(1);
+            }
+
             run_workflow(
                 file,
                 input,
@@ -439,6 +504,9 @@ fn main() -> Result<()> {
                 dump_merged,
                 cli_model_path,
                 effective_backend,
+                no_cache,
+                cache_only,
+                cache_dir,
             )
         }
 
@@ -485,13 +553,15 @@ fn main() -> Result<()> {
                 validate,
             ),
         },
+
+        Commands::Cache { action } => handle_cache(action),
     }
 }
 
 /// Run a workflow
 #[allow(clippy::too_many_arguments)]
 fn run_workflow(
-    file: PathBuf,
+    file: String, // Changed to String to support URLs
     input: Option<String>,
     secrets: Option<String>,
     secrets_env: Option<String>,
@@ -516,8 +586,37 @@ fn run_workflow(
     // TEA-CLI-001/TEA-CLI-007: CLI overrides for LLM model
     cli_model_path: Option<PathBuf>,
     cli_backend: Option<String>,
+    // TEA-CLI-002: Cache options
+    no_cache: bool,
+    cache_only: bool,
+    remote_cache_dir: Option<PathBuf>,
 ) -> Result<()> {
     use the_edge_agent::engine::deep_merge::merge_all;
+    use the_edge_agent::remote::{DefaultRemoteFileSystem, RemoteFile, RemoteFileSystem};
+
+    // TEA-CLI-002: Resolve file path (may be URL or local path)
+    let file: PathBuf = {
+        let parsed = RemoteFile::parse(&file)
+            .map_err(|e| anyhow::anyhow!("Failed to parse file path: {}", e))?;
+
+        if parsed.is_local() {
+            // Local path - use directly
+            if let RemoteFile::Local(path) = parsed {
+                path
+            } else {
+                PathBuf::from(&file)
+            }
+        } else {
+            // Remote URL - fetch via remote file system
+            let fs = DefaultRemoteFileSystem::new(remote_cache_dir.clone(), no_cache, cache_only)
+                .map_err(|e| {
+                anyhow::anyhow!("Failed to initialize remote file system: {}", e)
+            })?;
+
+            fs.fetch(&file)
+                .map_err(|e| anyhow::anyhow!("Failed to fetch remote file: {}", e))?
+        }
+    };
 
     // YE.8: Handle overlay merging and --dump-merged
     // Compute the YAML content to use (merged or original file)
@@ -1686,4 +1785,153 @@ fn find_latest_checkpoint(dir: &PathBuf) -> Result<Option<PathBuf>> {
     }
 
     Ok(latest.map(|(path, _)| path))
+}
+
+// ============================================================================
+// Cache Management (TEA-CLI-002)
+// ============================================================================
+
+/// Handle cache subcommands
+fn handle_cache(action: CacheAction) -> Result<()> {
+    use the_edge_agent::remote::RemoteFileCache;
+
+    let cache = RemoteFileCache::new(None)
+        .map_err(|e| anyhow::anyhow!("Failed to initialize cache: {}", e))?;
+
+    match action {
+        CacheAction::List { format, expired } => {
+            let entries = cache.list_entries();
+            let entries: Vec<_> = if expired {
+                entries.into_iter().filter(|e| e.expired).collect()
+            } else {
+                entries
+            };
+
+            if entries.is_empty() {
+                eprintln!("No cached files.");
+                return Ok(());
+            }
+
+            match format.as_str() {
+                "json" => {
+                    println!("{}", serde_json::to_string_pretty(&entries)?);
+                }
+                _ => {
+                    println!("Cached files ({}):", entries.len());
+                    println!();
+                    for entry in entries {
+                        let status = if entry.expired {
+                            "EXPIRED"
+                        } else if entry.is_permanent {
+                            "PERMANENT"
+                        } else {
+                            "VALID"
+                        };
+                        let exists = if entry.exists { "" } else { " [MISSING]" };
+                        println!("  {} [{}]{}", entry.url, status, exists);
+                        println!(
+                            "    Size: {} | Age: {}s | Key: {}",
+                            format_size(entry.size_bytes),
+                            entry.age_seconds,
+                            entry.cache_key
+                        );
+                    }
+                }
+            }
+        }
+
+        CacheAction::Clear { older_than, yes } => {
+            // Parse older_than duration if provided
+            let older_than_secs = if let Some(ref duration_str) = older_than {
+                Some(
+                    the_edge_agent::remote::cache::parse_duration(duration_str).map_err(|e| {
+                        anyhow::anyhow!("Invalid duration '{}': {}", duration_str, e)
+                    })?,
+                )
+            } else {
+                None
+            };
+
+            // Get count before clearing
+            let info = cache.info();
+            let count_to_clear = if older_than.is_some() {
+                // Estimate - would need to filter by age
+                info.total_entries
+            } else {
+                info.total_entries
+            };
+
+            if count_to_clear == 0 {
+                eprintln!("Cache is already empty.");
+                return Ok(());
+            }
+
+            // Confirm unless --yes flag
+            if !yes {
+                let msg = if let Some(ref dur) = older_than {
+                    format!(
+                        "Clear cache entries older than {}? (up to {} entries) [y/N]: ",
+                        dur, count_to_clear
+                    )
+                } else {
+                    format!("Clear all {} cached entries? [y/N]: ", count_to_clear)
+                };
+                eprint!("{}", msg);
+                io::stderr().flush()?;
+
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Cancelled.");
+                    return Ok(());
+                }
+            }
+
+            // Clear cache
+            let cleared = cache
+                .clear(older_than_secs)
+                .map_err(|e| anyhow::anyhow!("Failed to clear cache: {}", e))?;
+
+            println!("Cleared {} cache entries.", cleared);
+        }
+
+        CacheAction::Info { format } => {
+            let info = cache.info();
+
+            match format.as_str() {
+                "json" => {
+                    println!("{}", serde_json::to_string_pretty(&info)?);
+                }
+                _ => {
+                    println!("Cache Information:");
+                    println!();
+                    println!("  Location:       {}", info.location);
+                    println!("  Total entries:  {}", info.total_entries);
+                    println!("  Valid entries:  {}", info.valid_entries);
+                    println!("  Expired entries: {}", info.expired_entries);
+                    println!();
+                    println!(
+                        "  Size:           {} / {} ({}%)",
+                        info.total_size_human, info.max_size_human, info.usage_percent
+                    );
+                    println!("  TTL:            {}s", info.ttl_seconds);
+                    println!("  Fetch timeout:  {}s", info.fetch_timeout_seconds);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Format size in human-readable form
+fn format_size(size_bytes: u64) -> String {
+    let mut size = size_bytes as f64;
+    for unit in ["B", "KB", "MB", "GB", "TB"] {
+        if size < 1024.0 {
+            return format!("{:.1} {}", size, unit);
+        }
+        size /= 1024.0;
+    }
+    format!("{:.1} PB", size)
 }

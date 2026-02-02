@@ -69,6 +69,11 @@ dirs = "5.0"  # TEA-REPORT-001a: Home directory detection for path sanitization
 flate2 = "1.0"  # TEA-REPORT-001b: Deflate compression for URL encoding
 base64 = "0.22"  # TEA-REPORT-001b: Base64url encoding for URL encoding
 
+# TEA-CLI-002: Remote file URL support
+sha2 = "0.10"  # Cache key hashing
+hex = "0.4"  # Hash encoding
+url = "2.5"  # URL parsing for validation
+
 # A2A Inter-Agent Communication (optional)
 dashmap = { version = "6.1", optional = true }
 bincode = { version = "1.3", optional = true }
@@ -91,6 +96,7 @@ pretty_assertions = "1.4"
 criterion = "0.5"
 assert_cmd = "2.0"
 predicates = "3.1"
+wiremock = "0.6"  # TEA-CLI-002: HTTP mocking for integration tests
 
 [features]
 default = ["memory", "trace", "data", "llm", "agent", "reflection", "reasoning", "planning", "markdown"]

@@ -507,7 +507,7 @@ with:
 | LLM actions | Full (call, stream, tools, chat, embed) | Full (call, stream, tools, chat, embed) |
 | Local LLM (llama.cpp) | Yes (llama-cpp-python) | Yes (llama-cpp-2) |
 | HTTP actions | Full | Full |
-| File actions | Local + remote (S3, GCS, Azure) | Local only |
+| File actions | Local + remote (S3, GCS, Azure) | Local + remote (S3, GCS, Azure, GitHub, GitLab) |
 | Data actions | Full (JSON, CSV, validate) | Full |
 | Memory actions | Session + LTM + Cloud | Session only |
 | Rate limiting | Yes | Yes |
@@ -516,6 +516,154 @@ with:
 | Graph DB | Yes | Not yet |
 | Observability | Yes (Opik) | Not yet |
 | Tool action dispatch | Yes (auto-execute) | Mapping only (placeholder results) |
+
+## Remote File URL Support (TEA-CLI-002)
+
+The Rust CLI supports loading workflows from remote URLs with intelligent caching. This provides feature parity with the Python implementation (TEA-CLI-001).
+
+### Supported URL Schemes
+
+| Scheme | Format | Example |
+|--------|--------|---------|
+| S3 | `s3://bucket/path/file.yaml` | `s3://my-bucket/workflows/agent.yaml` |
+| GCS | `gs://bucket/path/file.yaml` or `gcs://...` | `gs://my-bucket/workflows/agent.yaml` |
+| Azure | `az://container/path/file.yaml` or `azure://...` | `az://my-container/workflows/agent.yaml` |
+| HTTP(S) | `https://example.com/file.yaml` | `https://example.com/workflows/agent.yaml` |
+| GitHub | `github://owner/repo@ref/path` | `github://user/repo@main/workflows/agent.yaml` |
+| GitLab | `gitlab://owner/repo@ref/path` | `gitlab://group/project@v1.0.0/config.yaml` |
+
+### CLI Usage
+
+```bash
+# Run workflow from S3
+tea run s3://my-bucket/workflows/agent.yaml
+
+# Run workflow from GitHub (uses raw.githubusercontent.com)
+tea run github://user/repo@main/workflows/agent.yaml
+
+# Run without caching (always fetch fresh)
+tea run --no-cache github://user/repo@main/workflow.yaml
+
+# Use only cached version (fail if not cached)
+tea run --cache-only github://user/repo@main/workflow.yaml
+
+# Custom cache directory
+tea run --cache-dir /tmp/my-cache github://user/repo@main/workflow.yaml
+```
+
+### Cache Management
+
+```bash
+# List all cached files
+tea cache list
+
+# Show cache statistics
+tea cache info
+
+# Clear all cache entries
+tea cache clear
+
+# Clear entries older than 1 hour
+tea cache clear --older-than 1h
+
+# Clear entries older than 7 days
+tea cache clear --older-than 7d
+```
+
+### Cache Behavior
+
+- **TTL-based**: Branch refs (`@main`, `@develop`) expire after 1 hour
+- **Permanent**: Tags (`@v1.0.0`) and SHA refs are cached indefinitely
+- **Python-compatible**: Manifest format is compatible with Python implementation
+- **Cache key**: SHA256 hash of URL (first 16 hex characters)
+
+### Cache Location
+
+Default cache directory:
+- `~/.cache/tea/remote_files/` (Linux/macOS)
+- Can be overridden with `--cache-dir`
+
+### Manifest Format
+
+The cache uses a JSON manifest (`manifest.json`) compatible with Python:
+
+```json
+{
+  "version": 1,
+  "entries": {
+    "abc123def456...": {
+      "url": "github://user/repo@main/file.yaml",
+      "local_path": "files/abc123def456.../file.yaml",
+      "created_at": 1706745600,
+      "ttl_seconds": 3600,
+      "is_permanent": false,
+      "size_bytes": 1024
+    }
+  }
+}
+```
+
+### Security Mitigations
+
+The remote file module implements several security measures:
+
+| ID | Mitigation | Description |
+|----|------------|-------------|
+| SEC-001 | Credential masking | API keys, tokens, and Bearer tokens are masked in logs |
+| SEC-002 | Path containment | Validates paths stay within cache directory |
+| SEC-003 | SSRF protection | Blocks internal IPs (localhost, 127.0.0.1, 169.254.x.x) |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key for S3 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | GCP service account JSON for GCS |
+| `AZURE_STORAGE_ACCOUNT` | Azure storage account name |
+| `AZURE_STORAGE_KEY` | Azure storage account key |
+| `GITHUB_TOKEN` | GitHub personal access token (for private repos) |
+| `GITLAB_TOKEN` | GitLab personal access token (for private repos) |
+
+### Programmatic API
+
+```rust
+use the_edge_agent::remote::{
+    RemoteFile, RemoteFileCache, RemoteFileSystem,
+    DefaultRemoteFileSystem, MockRemoteFileSystem,
+};
+
+// Parse a URL
+let remote_file = RemoteFile::parse("github://user/repo@main/file.yaml")?;
+
+// Create cache
+let cache = RemoteFileCache::new(None)?; // Uses default location
+
+// Create filesystem with cache
+let fs = DefaultRemoteFileSystem::new(Some(cache));
+
+// Fetch file (uses cache if valid)
+let local_path = fs.fetch("github://user/repo@main/file.yaml")?;
+
+// Check if cached
+if cache.has_valid("github://user/repo@main/file.yaml") {
+    println!("Using cached version");
+}
+```
+
+### Mock Filesystem for Testing
+
+```rust
+use the_edge_agent::remote::MockRemoteFileSystem;
+
+let mut mock = MockRemoteFileSystem::new();
+mock.add_response("s3://bucket/file.yaml", PathBuf::from("/tmp/cached.yaml"));
+mock.add_error("s3://bucket/private.yaml", "Access denied");
+
+// Use in tests
+let result = mock.fetch("s3://bucket/file.yaml")?;
+assert_eq!(result, PathBuf::from("/tmp/cached.yaml"));
+```
 
 ## Adding Custom Actions
 
@@ -534,4 +682,11 @@ rust/src/actions/
 ├── data.rs          # Data actions (~1000 lines)
 ├── memory.rs        # Memory actions (~700 lines)
 └── ratelimit.rs     # Rate limiting actions (~500 lines)
+
+rust/src/remote/      # Remote file support (TEA-CLI-002)
+├── mod.rs           # Main module, RemoteFile enum, DefaultRemoteFileSystem
+├── traits.rs        # RemoteFileSystem trait, MockRemoteFileSystem
+├── cache.rs         # Python-compatible cache manager
+├── git.rs           # GitHub/GitLab protocol handler
+└── cloud.rs         # S3/GCS/Azure/HTTP fetcher
 ```
