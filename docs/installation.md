@@ -4,11 +4,23 @@ This guide covers all installation methods for The Edge Agent (tea).
 
 ## Quick Install
 
+**Python (Recommended)** - Full features, 20+ built-in actions:
 ```bash
-# Linux/macOS - Download and install Rust binary
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea
-chmod +x tea
-sudo mv tea /usr/local/bin/
+# Option 1: pip install (requires Python 3.10+)
+pip install the-edge-agent
+tea --version
+
+# Option 2: AppImage (self-contained, includes Prolog)
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-python-${VERSION}-x86_64.AppImage" -o tea
+chmod +x tea && sudo mv tea /usr/local/bin/
+```
+
+**Rust** - Minimal footprint, embedded/offline:
+```bash
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-${VERSION}-x86_64.AppImage" -o tea
+chmod +x tea && sudo mv tea /usr/local/bin/
 
 # Verify installation
 tea --version
@@ -91,12 +103,15 @@ For **offline LLM inference** without network connectivity, LLM-bundled distribu
 #### Download and Run LLM AppImage
 
 ```bash
-# Download Gemma variant (recommended for quality)
-curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-gemma-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+# Get latest version
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+
+# Download Python LLM variant (recommended - full features)
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-python-llm-gemma3-1b-${VERSION}-x86_64.AppImage" -o tea-llm.AppImage
 chmod +x tea-llm.AppImage
 
-# Or download Phi-4-mini variant (smaller size)
-curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-phi4-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+# Or download Rust LLM variant (smaller size)
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-rust-llm-phi4-${VERSION}-x86_64.AppImage" -o tea-llm.AppImage
 chmod +x tea-llm.AppImage
 
 # Run offline chat workflow
@@ -197,8 +212,9 @@ AppImages are **self-contained** executables that bundle the tea binary, SWI-Pro
 The Python AppImage includes ALL optional dependencies (openai, numpy, chromadb, pandas, etc.) plus janus-swi and the complete SWI-Prolog runtime. This is the **batteries-included** choice for neurosymbolic AI.
 
 ```bash
-# Download the Python AppImage
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-python-0.8.1-x86_64.AppImage -o tea-python.AppImage
+# Get latest version and download the Python AppImage
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-python-${VERSION}-x86_64.AppImage" -o tea-python.AppImage
 
 # Make executable and run
 chmod +x tea-python.AppImage
@@ -212,13 +228,14 @@ chmod +x tea-python.AppImage
 ./tea-python.AppImage run examples/prolog/simple-prolog-agent.yaml --input '{"value": 21}'
 ```
 
-### Rust AppImage (Recommended for Performance)
+### Rust AppImage (Lighter Weight)
 
-The Rust AppImage includes the Rust binary with SWI-Prolog support, optimized for performance and smaller size.
+The Rust AppImage includes the Rust binary with SWI-Prolog support, optimized for smaller size and embedded environments.
 
 ```bash
-# Download the Rust AppImage
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-0.8.1-x86_64.AppImage -o tea.AppImage
+# Get latest version and download the Rust AppImage
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-${VERSION}-x86_64.AppImage" -o tea.AppImage
 
 # Make executable and run
 chmod +x tea.AppImage
@@ -261,11 +278,11 @@ For running TEA YAML workflows with LLM inference **directly in the browser**, u
 ### Installation
 
 ```bash
-# Download from GitHub Releases
-VERSION="0.9.5"
-wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-wasm-llm-${VERSION}.tar.gz
-wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf
-wget https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/manifest.json
+# Get latest version and download from GitHub Releases
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+wget "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-wasm-llm-${VERSION}.tar.gz"
+wget "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/microsoft_Phi-4-mini-instruct-Q3_K_S.gguf"
+wget "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/manifest.json"
 
 # Extract and organize
 tar -xzf tea-wasm-llm-${VERSION}.tar.gz
@@ -359,10 +376,10 @@ This is a **polyglot monorepo** with two implementations:
 
 | Implementation | Status | Best For |
 |----------------|--------|----------|
-| **[Python](python/getting-started.md)** | Production-ready | Online edge computing, full feature set, 20+ built-in actions |
-| **[Rust](rust/getting-started.md)** | Active development | Embedded offline systems, resource-constrained environments |
+| **[Python](python/getting-started.md)** | **Production-ready (Recommended)** | Full feature set, 20+ built-in actions, neurosymbolic AI |
+| **[Rust](rust/getting-started.md)** | Active development | Embedded, offline, resource-constrained environments |
 
-The **Python implementation** is optimized for online edge computing scenarios where network connectivity enables access to external APIs, LLM services, and cloud resources. The **Rust implementation** is designed for embedded offline systems where minimal footprint, deterministic execution, and operation without network dependencies are critical.
+**Python is the reference implementation** with the complete feature set including 20+ built-in actions (LLM, RAG, memory, web, observability). The **Rust implementation** provides a lighter-weight alternative for embedded scenarios with a subset of actions.
 
 Both implementations share the same YAML agent syntax and can run the same agent configurations from the `examples/` directory.
 

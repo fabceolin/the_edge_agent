@@ -1,8 +1,19 @@
 # Docker Build Instructions
 
-TEA provides Docker images for both Python and Rust implementations.
+TEA provides Docker images for both Python and Rust implementations. **Python is the recommended implementation** with the full feature set (20+ built-in actions, Prolog, Lua, observability).
 
-## Python Image Variants
+## Quick Reference: Docker Tags
+
+| Tag | Implementation | Description |
+|-----|----------------|-------------|
+| `tea:latest` | Python | **Recommended** - Full features (default) |
+| `tea:full` | Python | All features: Prolog, Lua, Opik |
+| `tea:base` | Python | Minimal Python runtime |
+| `tea:gemma3-1b` | Python | Full + bundled Gemma 3 1B model |
+| `tea:rust-latest` | Rust | Rust full variant |
+| `tea:rust-base` | Rust | Minimal Rust runtime |
+
+## Python Image Variants (Recommended)
 
 | Variant | Dockerfile | Size | Description |
 |---------|------------|------|-------------|
