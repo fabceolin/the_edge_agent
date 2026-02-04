@@ -36,7 +36,7 @@ Articles follow a preprint/academic format:
 
 *Affiliation or Role*
 
-email@example.com
+https://www.linkedin.com/in/your-profile/
 
 ---
 
@@ -69,6 +69,8 @@ Summary and key takeaways...
 - [Reference 2](url) - Description
 ```
 
+**Important:** Use your LinkedIn profile URL instead of email address. This follows the project convention for author attribution and provides a professional contact method.
+
 ### Template
 
 ```markdown
@@ -78,7 +80,7 @@ Summary and key takeaways...
 
 *Your Role/Affiliation*
 
-your.email@example.com
+https://www.linkedin.com/in/your-profile/
 
 ---
 
@@ -365,7 +367,7 @@ cat > docs/articles/my-new-feature.md << 'EOF'
 
 *Role*
 
-email@example.com
+https://www.linkedin.com/in/your-profile/
 
 ---
 
