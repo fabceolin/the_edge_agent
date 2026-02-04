@@ -154,6 +154,8 @@ parts:
         title: "43 User Stories Developed in One-Shot"
       - file: articles/bmad-to-parallel-execution
         title: "From Business Idea to Parallel Story Execution"
+      - file: articles/declarative-agent-frameworks-comparison
+        title: "Declarative Agent Frameworks: Docker cagent vs TEA"
 
   - caption: Contributing
     chapters:
