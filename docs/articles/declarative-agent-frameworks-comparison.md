@@ -71,17 +71,13 @@ nodes:
           content: "{{ state.input }}"
     output: output
 
-edges:
-  - from: __start__
-    to: process
-  - from: process
-    to: __end__
+# No edges needed - implicit flow: process -> __end__
 ```
 
 TEA's configuration is more verbose but provides explicit control over:
 
 - State shape and typing via `state_schema`
-- Execution flow via `nodes` and `edges`
+- Execution flow via `nodes` with implicit chaining and `goto`
 - Template interpolation via Jinja2 (`{{ state.key }}`)
 - Inline code execution in `run:` blocks
 
@@ -112,7 +108,7 @@ instructions: |
   Use transfer_task to assign work to sub-agents.
 ```
 
-TEA models orchestration as **directed state graphs**, inspired by LangGraph:
+TEA models orchestration as **directed state graphs**, inspired by LangGraph. With TEA's implicit chaining, nodes execute in list order by default, and the `goto` property enables conditional branching:
 
 ```yaml
 nodes:
@@ -130,27 +126,19 @@ nodes:
       messages:
         - role: user
           content: "Review this draft: {{ state.draft }}"
+    goto:
+      - if: "state.approved"
+        to: __end__
+      - to: write  # Loop back if not approved
 
-edges:
-  - from: __start__
-    to: research
-  - from: research
-    to: write
-  - from: write
-    to: review
-  - from: review
-    to: __end__
-    condition: "{{ state.approved }}"
-  - from: review
-    to: write
-    condition: "{{ not state.approved }}"
+# Implicit flow: research -> write -> review -> (goto) -> __end__ or write
 ```
 
 ### 3.2 Parallel Execution
 
 Docker cagent handles parallelism implicitly through sub-agent delegation.
 
-TEA provides explicit fan-out/fan-in patterns with configurable strategies:
+TEA provides explicit fan-out/fan-in patterns with configurable strategies. Note that parallel edges remain in the `edges` section (not deprecated):
 
 ```yaml
 settings:
@@ -158,11 +146,38 @@ settings:
     strategy: thread  # thread | process | remote
     max_workers: 4
 
+nodes:
+  - name: start
+    run: |
+      return {"data": prepare_data()}
+  - name: worker_a
+    run: |
+      return {"result_a": process_a(state["data"])}
+  - name: worker_b
+    run: |
+      return {"result_b": process_b(state["data"])}
+  - name: worker_c
+    run: |
+      return {"result_c": process_c(state["data"])}
+  - name: aggregator
+    fan_in: true
+    run: |
+      return {"combined": merge(parallel_results)}
+
+# Parallel edges (not deprecated - required for fan-out/fan-in)
 edges:
   - from: start
-    to: [worker_a, worker_b, worker_c]  # Fan-out
-  - from: [worker_a, worker_b, worker_c]
-    to: aggregator  # Fan-in
+    to: worker_a
+    type: parallel
+    fan_in: aggregator
+  - from: start
+    to: worker_b
+    type: parallel
+    fan_in: aggregator
+  - from: start
+    to: worker_c
+    type: parallel
+    fan_in: aggregator
 ```
 
 Fan-in nodes receive a `parallel_results` parameter containing states from all parallel branches.
