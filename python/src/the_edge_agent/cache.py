@@ -6,7 +6,7 @@ to reduce network calls and enable offline mode.
 
 Cache key algorithm:
 - For non-git URLs: SHA256(canonical_url)[:16]
-- For git URLs: SHA256(f"{repo}@{ref}")[:16]
+- For git URLs: SHA256(f"{provider}://{owner}/{repo}@{ref}/{path}")[:16]
 - Branch refs include TTL check, SHA/tags are permanent
 
 Security Mitigations (from QA Risk Profile):
@@ -468,7 +468,7 @@ class RemoteFileCache:
         """
         Generate cache key from URL.
 
-        For git URLs, uses repo@ref to enable proper TTL handling.
+        For git URLs, uses repo@ref/path for per-file caching.
         For other URLs, uses the full canonical URL.
 
         Args:
@@ -479,8 +479,8 @@ class RemoteFileCache:
         """
         git_parts = parse_git_url(url)
         if git_parts:
-            # Use repo@ref for git URLs
-            key_source = f"{git_parts['provider']}://{git_parts['owner']}/{git_parts['repo']}@{git_parts['ref']}"
+            # Use repo@ref/path for git URLs (per-file caching)
+            key_source = f"{git_parts['provider']}://{git_parts['owner']}/{git_parts['repo']}@{git_parts['ref']}/{git_parts['path']}"
         else:
             # Use full URL for other protocols
             key_source = url

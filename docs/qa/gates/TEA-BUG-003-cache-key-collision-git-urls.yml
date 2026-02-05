@@ -1,0 +1,80 @@
+# Quality Gate: TEA-BUG-003
+# Cache Key Collision for Git URLs with Different Paths
+
+schema: 1
+story: "TEA-BUG-003"
+story_title: "Cache Key Collision for Git URLs with Different Paths"
+gate: PASS
+status_reason: "Bug fix correctly adds file path to cache key generation, resolving collision. All 62 cache tests pass including 5 new tests for this fix."
+reviewer: "Quinn (Test Architect)"
+updated: "2026-02-05T12:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 0, low: 0 }
+  recommendations:
+    must_fix: []
+    monitor: []
+
+quality_score: 100
+expires: "2026-02-19T00:00:00Z"
+
+evidence:
+  tests_reviewed: 62
+  risks_identified: 0
+  trace:
+    ac_covered: [1, 2, 3, 4]
+    ac_gaps: []
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "No security impact - only cache key algorithm change"
+  performance:
+    status: PASS
+    notes: "Minimal impact - slightly longer string for SHA256 hash"
+  reliability:
+    status: PASS
+    notes: "Fix improves reliability by preventing cache collisions"
+  maintainability:
+    status: PASS
+    notes: "Clean minimal fix with updated docstrings"
+
+recommendations:
+  immediate: []
+  future: []
+
+# Review Details
+review_summary:
+  risk_level: LOW
+  implementation_quality: EXCELLENT
+  test_coverage: COMPLETE
+  documentation: UPDATED
+
+files_reviewed:
+  - path: "python/src/the_edge_agent/cache.py"
+    change: "Added path to cache key generation (line 483)"
+    status: VERIFIED
+  - path: "python/tests/test_cache.py"
+    change: "Added 5 new tests for bug fix"
+    status: VERIFIED
+  - path: "docs/stories/TEA-CLI-001.url-file-input-python.md"
+    change: "Updated AC3 and Technical Design"
+    status: VERIFIED
+
+tests_added:
+  - name: "test_cache_key_git_url_different_paths"
+    type: unit
+    validates: "AC1 - Different files produce different keys"
+  - name: "test_cache_key_git_url_same_path"
+    type: unit
+    validates: "AC1 - Same URL produces consistent key"
+  - name: "test_consecutive_workflow_execution"
+    type: integration
+    validates: "Bug reproduction scenario"
+  - name: "test_same_filename_different_paths"
+    type: integration
+    validates: "Same filename in different directories"

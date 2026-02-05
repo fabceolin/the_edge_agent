@@ -377,11 +377,24 @@ class TestRemoteFileCache(unittest.TestCase):
         self.assertNotEqual(key1, key2)
 
     def test_cache_key_git_url(self):
-        """Git URLs should use repo@ref for key generation."""
+        """Git URLs should use repo@ref/path for key generation."""
         key = self.cache._cache_key("github://user/repo@main/file.yaml")
-        # Same repo@ref should produce same key regardless of path
-        # (since cache is per-ref, not per-file for git)
+        # Key should be 16-character hex string derived from full path
         self.assertEqual(len(key), 16)
+        self.assertTrue(all(c in "0123456789abcdef" for c in key))
+
+    def test_cache_key_git_url_different_paths(self):
+        """Different files in same repo should have different cache keys (TEA-BUG-003)."""
+        key1 = self.cache._cache_key("github://user/repo@main/path/file1.yaml")
+        key2 = self.cache._cache_key("github://user/repo@main/path/file2.yaml")
+        self.assertNotEqual(key1, key2, "Different files should have different cache keys")
+
+    def test_cache_key_git_url_same_path(self):
+        """Same file URL should produce consistent cache key."""
+        url = "github://user/repo@main/path/file.yaml"
+        key1 = self.cache._cache_key(url)
+        key2 = self.cache._cache_key(url)
+        self.assertEqual(key1, key2, "Same URL should produce same cache key")
 
     def test_has_valid_empty_cache(self):
         """Empty cache should return False for has_valid."""
@@ -522,6 +535,111 @@ class TestPathTraversalPrevention(unittest.TestCase):
         # The cache should detect path traversal and raise SecurityError
         with self.assertRaises(SecurityError):
             self.cache.get_path(url)
+
+
+class TestCacheKeyCollisionFix(unittest.TestCase):
+    """Integration tests for TEA-BUG-003: Cache key collision fix."""
+
+    def setUp(self):
+        """Create a temporary cache directory and mock filesystem."""
+        self.tmpdir = tempfile.mkdtemp()
+        self.cache = RemoteFileCache(
+            cache_dir=Path(self.tmpdir),
+            ttl_seconds=3600,
+        )
+
+    def tearDown(self):
+        """Clean up temporary directory."""
+        import shutil
+
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_consecutive_workflow_execution(self):
+        """
+        Test that consecutive workflows from same repo don't collide.
+
+        Reproduction scenario from TEA-BUG-003:
+        1. Fetch workflow1.yaml from github://user/repo@main/workflows/workflow1.yaml
+        2. Fetch workflow2.yaml from github://user/repo@main/workflows/workflow2.yaml
+        3. Both files should be cached independently
+        """
+        # Create mock filesystem
+        mock_fs = MagicMock()
+        mock_fs.info.return_value = {"size": 100}
+
+        # Fetch first workflow
+        workflow1_content = b"name: workflow1\nsteps: [step1]"
+        mock_fs.open.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(
+                read=MagicMock(side_effect=[workflow1_content, b""])
+            )
+        )
+        mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+        url1 = "github://user/repo@main/workflows/workflow1.yaml"
+        path1 = self.cache.fetch_and_cache(mock_fs, "workflows/workflow1.yaml", url1)
+
+        # Verify first workflow cached
+        self.assertTrue(path1.exists())
+        self.assertTrue(self.cache.has_valid(url1))
+        content1 = path1.read_bytes()
+        self.assertEqual(content1, workflow1_content)
+
+        # Fetch second workflow (different file, same repo)
+        workflow2_content = b"name: workflow2\nsteps: [step2]"
+        mock_fs.open.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(
+                read=MagicMock(side_effect=[workflow2_content, b""])
+            )
+        )
+
+        url2 = "github://user/repo@main/workflows/workflow2.yaml"
+        path2 = self.cache.fetch_and_cache(mock_fs, "workflows/workflow2.yaml", url2)
+
+        # Verify second workflow cached independently
+        self.assertTrue(path2.exists())
+        self.assertTrue(self.cache.has_valid(url2))
+        content2 = path2.read_bytes()
+        self.assertEqual(content2, workflow2_content)
+
+        # Verify both files are different and both valid
+        self.assertNotEqual(path1, path2)
+        self.assertNotEqual(content1, content2)
+
+        # Verify original workflow1 still valid and unchanged
+        self.assertTrue(self.cache.has_valid(url1))
+        path1_again = self.cache.get_path(url1)
+        self.assertEqual(path1_again.read_bytes(), workflow1_content)
+
+    def test_same_filename_different_paths(self):
+        """Test caching files with same name but different paths."""
+        mock_fs = MagicMock()
+        mock_fs.info.return_value = {"size": 50}
+
+        # File 1: config.yaml in /path/a/
+        content_a = b"env: production"
+        mock_fs.open.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(read=MagicMock(side_effect=[content_a, b""]))
+        )
+        mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+        url_a = "github://user/repo@main/path/a/config.yaml"
+        path_a = self.cache.fetch_and_cache(mock_fs, "path/a/config.yaml", url_a)
+
+        # File 2: config.yaml in /path/b/
+        content_b = b"env: staging"
+        mock_fs.open.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(read=MagicMock(side_effect=[content_b, b""]))
+        )
+
+        url_b = "github://user/repo@main/path/b/config.yaml"
+        path_b = self.cache.fetch_and_cache(mock_fs, "path/b/config.yaml", url_b)
+
+        # Both should be cached independently
+        self.assertTrue(self.cache.has_valid(url_a))
+        self.assertTrue(self.cache.has_valid(url_b))
+        self.assertEqual(self.cache.get_path(url_a).read_bytes(), content_a)
+        self.assertEqual(self.cache.get_path(url_b).read_bytes(), content_b)
 
 
 if __name__ == "__main__":
