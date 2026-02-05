@@ -16,7 +16,6 @@
 #   - rust/Cargo.toml
 #   - docs/shared/YAML_REFERENCE.md
 #   - python/src/the_edge_agent/__init__.py
-#   - firebase/functions-agents/requirements.txt
 
 set -e
 
@@ -138,21 +137,6 @@ if [ -f "$CONF_PY" ]; then
     fi
 else
     echo "Warning: $CONF_PY not found"
-fi
-
-# Update firebase/functions-agents/requirements.txt (external consumer)
-FUNCTIONS_AGENTS_REQ="$(dirname "$PROJECT_ROOT")/firebase/functions-agents/requirements.txt"
-if [ -f "$FUNCTIONS_AGENTS_REQ" ]; then
-    CURRENT_WHL_VERSION=$(grep -oP 'the_edge_agent-\K[0-9]+\.[0-9]+\.[0-9]+' "$FUNCTIONS_AGENTS_REQ")
-    if [ -n "$CURRENT_WHL_VERSION" ]; then
-        echo "functions-agents/requirements.txt: $CURRENT_WHL_VERSION -> $VERSION"
-        sed -i "s|the_edge_agent-$CURRENT_WHL_VERSION|the_edge_agent-$VERSION|g" "$FUNCTIONS_AGENTS_REQ"
-        sed -i "s|/v$CURRENT_WHL_VERSION/|/v$VERSION/|g" "$FUNCTIONS_AGENTS_REQ"
-    else
-        echo "Warning: Could not find the_edge_agent wheel version in $FUNCTIONS_AGENTS_REQ"
-    fi
-else
-    echo "Info: $FUNCTIONS_AGENTS_REQ not found (optional)"
 fi
 
 echo ""

@@ -62,7 +62,7 @@ tea run workflow.yaml --checkpoint gs://checkpoints/run-123.pkl
 ### AC3: Caching System
 
 - [x] Remote files cached locally in `~/.cache/tea/remote/` (XDG compliant)
-- [x] Cache key: SHA256 hash of (URL + ref for git)
+- [x] Cache key: SHA256 hash of (URL for non-git, provider://owner/repo@ref/path for git)
 - [x] Cache TTL configurable via `TEA_CACHE_TTL` env var (default: 1 hour)
 - [x] `--no-cache` flag to force fresh fetch
 - [x] `--cache-only` flag for offline mode (fail if not cached)
@@ -119,7 +119,7 @@ tea run workflow.yaml --checkpoint gs://checkpoints/run-123.pkl
 
 Cache key algorithm:
 - For non-git URLs: SHA256(canonical_url)[:16]
-- For git URLs: SHA256(f"{repo}@{ref}")[:16]
+- For git URLs: SHA256(f"{provider}://{owner}/{repo}@{ref}/{path}")[:16]
 - Branch refs include TTL check, SHA/tags are permanent
 """
 
