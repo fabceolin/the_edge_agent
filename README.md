@@ -67,21 +67,33 @@ tea run examples/prolog/neurosymbolic/hero-family-reasoning.yaml \
 
 ## Quick Install
 
+**Python (Recommended)** - Full features, 20+ built-in actions:
 ```bash
-curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea-rust-linux-x86_64 -o tea && chmod +x tea
+# Option 1: pip install (requires Python 3.10+)
+pip install the-edge-agent
+tea --version
+
+# Option 2: AppImage (self-contained, includes Prolog)
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-python-${VERSION}-x86_64.AppImage" -o tea && chmod +x tea
 ```
 
-For Prolog support, use the [AppImage](docs/installation.md#appimage-installation) (self-contained) or install SWI-Prolog.
+**Rust** - Minimal footprint, embedded/offline:
+```bash
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-${VERSION}-x86_64.AppImage" -o tea && chmod +x tea
+```
 
-See [Installation Guide](docs/installation.md) for all platforms and options.
+See [Installation Guide](docs/installation.md) for all platforms, Docker images, and AppImage variants.
 
 ## Offline LLM Support
 
 Run LLM workflows without internet using bundled GGUF models:
 
 ```bash
-# Download LLM-bundled AppImage (~5GB with Gemma, ~2GB with Phi-4)
-curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-rust-llm-gemma-0.9.5-x86_64.AppImage -o tea-llm.AppImage
+# Download Python LLM-bundled AppImage (~2GB with Gemma 3 1B)
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-python-llm-gemma3-1b-${VERSION}-x86_64.AppImage" -o tea-llm.AppImage
 chmod +x tea-llm.AppImage
 
 # Run offline chat
@@ -130,11 +142,11 @@ TEA includes 20+ built-in actions. Full documentation in [docs/capabilities/](do
 
 | Implementation | Status | Best For |
 |----------------|--------|----------|
-| **[Python](docs/python/getting-started.md)** | Production-ready | Online edge, full features, 20+ actions |
-| **[Rust](docs/rust/getting-started.md)** | Active development | Embedded, offline, resource-constrained |
+| **[Python](docs/python/getting-started.md)** | **Production-ready (Recommended)** | Full features, 20+ built-in actions, neurosymbolic AI |
+| **[Rust](docs/rust/getting-started.md)** | Active development | Embedded, offline, resource-constrained environments |
 | **[WASM](docs/wasm/llm-deployment.md)** | Prototype | Browser-based, client-side LLM, zero-server |
 
-All implementations share the same YAML syntax. Write once, run anywhere.
+**Python** is the reference implementation with the complete feature set. **Rust** provides a lighter-weight alternative for embedded scenarios with a subset of actions. All implementations share the same YAML syntax.
 
 ### Browser LLM (WASM)
 
@@ -145,7 +157,8 @@ Run TEA workflows with local LLM inference entirely in the browser:
 npm install tea-wasm-llm
 
 # Or download from releases
-curl -L https://github.com/fabceolin/the_edge_agent/releases/download/v0.9.5/tea-wasm-llm-0.9.5.tar.gz -o tea-wasm-llm.tar.gz
+VERSION=$(curl -s https://api.github.com/repos/fabceolin/the_edge_agent/releases/latest | grep -Po '"tag_name": "v\K[^"]+')
+curl -L "https://github.com/fabceolin/the_edge_agent/releases/download/v${VERSION}/tea-wasm-llm-${VERSION}.tar.gz" -o tea-wasm-llm.tar.gz
 ```
 
 ```javascript
@@ -173,7 +186,7 @@ See [examples/](examples/) for ready-to-run agents:
 
 - `examples/prolog/neurosymbolic/` - LLM + Prolog reasoning
 - `examples/llm/` - Pure LLM workflows
-- `examples/rag/` - Document retrieval
+- `examples/llamaindex/` - RAG and document retrieval
 - `examples/web/` - Web scraping agents
 - `examples/academic/` - Academic writing workflows
 
