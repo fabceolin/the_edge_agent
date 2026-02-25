@@ -369,8 +369,9 @@ nodes:
       sm_marker = "SM_CHECKLIST_COMPLETED" in sm_output
       sm_section = check_story_section(story_path, "## SM Validation") if story_path != "unknown" else False
       sm_status = check_story_status(story_path, ["ready_dev", "needs_revision"]) if story_path != "unknown" else False
+      sm_artifact = sm_section or sm_status
       # Relaxed: sm_done is True if marker OR section exists OR status is ready/needs_revision
-      sm_done = sm_marker or sm_section or sm_status
+      sm_done = sm_marker or sm_artifact
       sm_method = "(via marker)" if sm_marker else "(via artifact)" if sm_artifact else ""
 
       # ========================================================================

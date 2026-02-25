@@ -11,6 +11,7 @@ state_schema:
   dev_output: str             # Output from dev agent
   qa_output: str              # Output from qa agent
   qa_gate_status: str         # QA gate status: PASS | CONCERNS | FAIL | WAIVED
+  qa_retry_count: int         # Number of QA review cycles completed (max 3 before accepting CONCERNS)
   sm_output: str              # Output from sm agent
   final_status: str           # Final story status
 
@@ -211,7 +212,15 @@ nodes:
                   pass
 
       print(f"QA Gate Status: {qa_gate_status}")
-      return {"qa_gate_status": qa_gate_status}
+
+      # Track retry count to prevent infinite CONCERNS loop
+      qa_retry_count = state.get("qa_retry_count", 0) + 1
+      print(f"QA retry count: {qa_retry_count}/3")
+
+      if qa_gate_status == "CONCERNS" and qa_retry_count >= 3:
+          print(f"Max QA retries ({qa_retry_count}) reached. Accepting CONCERNS and proceeding to SM.")
+
+      return {"qa_gate_status": qa_gate_status, "qa_retry_count": qa_retry_count}
 
   # ============================================================================
   # NODE 4: Dev agent review-qa to address concerns
@@ -468,15 +477,15 @@ edges:
     to: check_qa_gate
 
   # Conditional routing based on QA gate status
-  # If CONCERNS: route back to dev to fix issues, then re-run QA
+  # If CONCERNS and under retry limit: route back to dev to fix issues, then re-run QA
   - from: check_qa_gate
     to: run_dev_review_qa
-    when: "state.get('qa_gate_status') == 'CONCERNS'"
+    when: "state.get('qa_gate_status') == 'CONCERNS' and state.get('qa_retry_count', 0) < 3"
 
-  # If NOT CONCERNS (PASS, FAIL, WAIVED, or UNKNOWN): proceed to SM
+  # If NOT CONCERNS, or CONCERNS but max retries reached: proceed to SM
   - from: check_qa_gate
     to: run_sm_status_update
-    when: "state.get('qa_gate_status') != 'CONCERNS'"
+    when: "state.get('qa_gate_status') != 'CONCERNS' or state.get('qa_retry_count', 0) >= 3"
 
   # After dev fixes concerns, re-run QA review
   - from: run_dev_review_qa
