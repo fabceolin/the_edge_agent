@@ -923,6 +923,7 @@ class YAMLEngine:
             # TEA-RELEASE-004.5: Include local LLM settings (backend, n_gpu_layers, etc.)
             for key in [
                 "provider",
+                "shell_provider",  # TEA-LLM-004: Shell provider name (claude, gemini, etc.)
                 "temperature",
                 "api_base",
                 "timeout",
