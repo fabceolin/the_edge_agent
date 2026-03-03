@@ -138,7 +138,9 @@ nodes:
       story_path = state.get("story_path", "")
       qa_gate_status = "UNKNOWN"
 
-      # Helper to extract gate status from text
+      # Helper to extract gate status from text.
+      # Uses the LAST match to avoid false positives from historical context
+      # (e.g. "Previous Gate Status: CONCERNS ... Gate Status: PASS" → returns PASS).
       def extract_gate_status(text):
           if not text:
               return None
@@ -149,56 +151,18 @@ nodes:
               r'gate:\s*(PASS|CONCERNS|FAIL|WAIVED)',
           ]
           for pattern in patterns:
-              match = re.search(pattern, text, re.IGNORECASE)
-              if match:
-                  return match.group(1).upper()
+              matches = re.findall(pattern, text, re.IGNORECASE)
+              if matches:
+                  return matches[-1].upper()  # last match = most recent/final status
           return None
 
-      # Priority 1: Parse from qa_output content (most reliable - direct from QA agent)
-      qa_output = state.get("qa_output", {})
-      if isinstance(qa_output, dict):
-          qa_text = qa_output.get("content", "")
-      else:
-          qa_text = str(qa_output) if qa_output else ""
-
-      status = extract_gate_status(qa_text)
-      if status:
-          qa_gate_status = status
-          print(f"QA Gate Status from qa_output: {qa_gate_status}")
-          return {"qa_gate_status": qa_gate_status}
-
-      # Priority 2: Parse from story file
-      if story_path and os.path.exists(story_path):
-          try:
-              result = subprocess.run(
-                  ["grep", "-E", r"Gate.*:(.*)(PASS|CONCERNS|FAIL|WAIVED)", story_path],
-                  capture_output=True,
-                  text=True
-              )
-              if result.returncode == 0:
-                  lines = result.stdout.strip().split('\n')
-                  for line in lines:
-                      # Skip historical entries like "Previous QA Gate:"
-                      if "Previous" in line:
-                          continue
-                      status = extract_gate_status(line)
-                      if status:
-                          qa_gate_status = status
-                          break
-          except Exception as e:
-              print(f"grep error: {e}")
-
-      if qa_gate_status != "UNKNOWN":
-          print(f"QA Gate Status from story file: {qa_gate_status}")
-          return {"qa_gate_status": qa_gate_status}
-
-      # Priority 3: Check gate YAML file
+      # Priority 1: Check gate YAML file (definitive artifact — written/overwritten by QA agent)
       story_id = os.path.basename(story_path).replace(".md", "")
-      gate_patterns = [
+      gate_file_patterns = [
           f"docs/qa/gates/{story_id}.yml",
           f"docs/qa/gates/{story_id}.yaml",
       ]
-      for pattern in gate_patterns:
+      for pattern in gate_file_patterns:
           if os.path.exists(pattern):
               try:
                   with open(pattern, 'r') as f:
@@ -211,9 +175,43 @@ nodes:
               except Exception:
                   pass
 
+      # Priority 2: Parse from qa_output content (last match avoids historical noise)
+      if qa_gate_status == "UNKNOWN":
+          qa_output = state.get("qa_output", {})
+          if isinstance(qa_output, dict):
+              qa_text = qa_output.get("content", "")
+          else:
+              qa_text = str(qa_output) if qa_output else ""
+
+          status = extract_gate_status(qa_text)
+          if status:
+              qa_gate_status = status
+              print(f"QA Gate Status from qa_output: {qa_gate_status}")
+
+      # Priority 3: Parse from story file (skip lines with "Previous" to avoid historical entries)
+      if qa_gate_status == "UNKNOWN" and story_path and os.path.exists(story_path):
+          try:
+              result = subprocess.run(
+                  ["grep", "-E", r"Gate.*:(.*)(PASS|CONCERNS|FAIL|WAIVED)", story_path],
+                  capture_output=True,
+                  text=True
+              )
+              if result.returncode == 0:
+                  lines = result.stdout.strip().split('\n')
+                  for line in lines:
+                      if "Previous" in line:
+                          continue
+                      status = extract_gate_status(line)
+                      if status:
+                          qa_gate_status = status
+                          print(f"QA Gate Status from story file: {qa_gate_status}")
+                          break
+          except Exception as e:
+              print(f"grep error: {e}")
+
       print(f"QA Gate Status: {qa_gate_status}")
 
-      # Track retry count to prevent infinite CONCERNS loop
+      # Track retry count to prevent infinite CONCERNS loop (always updated regardless of source)
       qa_retry_count = state.get("qa_retry_count", 0) + 1
       print(f"QA retry count: {qa_retry_count}/3")
 
