@@ -76,15 +76,29 @@ Before creating a DOT file, determine which workflow to use:
 
 | Workflow | Purpose | When to Use |
 |----------|---------|-------------|
-| `bmad-story-validation.yaml` | Validate story quality (risk-profile, NFR, test-design, review) | **Before development** - ensure stories are well-written |
-| `bmad-story-development.yaml` | Implement code based on story requirements (Dev → QA → SM cycle) | **During development** - implement features |
+| `bmad-story-v6-validation.yaml` | Validate story quality (risk-profile, NFR, test-design, review) | **Before development** - ensure stories are well-written |
+| `bmad-story-v6-development.yaml` | Implement code based on story requirements (Dev → QA → SM cycle) | **During development** - implement features |
+| `bmad-story-v6-standard-cycle.yaml` | Balanced Dev/QA iteration cycle | **Iterative development** - balanced approach |
+
+**Quick Reference - GitHub URLs:**
+```bash
+# Validation
+github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml
+
+# Development
+github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml
+
+# Standard Cycle
+github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml
+```
 
 ### 2.2 Decision Matrix
 
 | User Request | Workflow |
 |--------------|----------|
-| "validate stories", "check stories", "review stories" | `bmad-story-validation.yaml` |
-| "develop stories", "implement stories", "build features" | `bmad-story-development.yaml` |
+| "validate stories", "check stories", "review stories" | `bmad-story-v6-validation.yaml` |
+| "develop stories", "implement stories", "build features" | `bmad-story-v6-development.yaml` |
+| "balanced iteration", "standard cycle" | `bmad-story-v6-standard-cycle.yaml` |
 | "run stories" (ambiguous) | Ask for clarification |
 | Documentation/spec stories | Ask - may need validation or custom workflow |
 
@@ -138,6 +152,11 @@ digraph stories {
 Execute with:
 
 ```bash
+# Using GitHub URL (recommended)
+tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml
+
+# Or using local file
 tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml
 ```
 
@@ -153,7 +172,7 @@ tea run --from-dot workflow.dot [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--dot-workflow` | None | Workflow YAML to run for each node |
+| `--dot-workflow` | None | Workflow YAML to run for each node (local path or GitHub URL) |
 | `--dot-max-parallel` | 3 | Maximum parallel tmux windows |
 | `--dot-session` | `tea-dot` | Tmux session name |
 | `--dot-input` | None | Additional JSON input to merge |
@@ -161,17 +180,52 @@ tea run --from-dot workflow.dot [OPTIONS]
 | `--dot-timeout` | 54000 | Command timeout in seconds (15h) |
 | `--dot-dry-run` | false | Show plan without executing |
 
-### 4.1 Examples
+### 4.1 Remote Workflow URLs (Recommended)
+
+The `--dot-workflow` option supports loading workflows directly from GitHub using the `github://` protocol:
+
+```
+github://[owner]/[repo]@[branch]/[path/to/workflow.yaml]
+```
+
+**Benefits of remote workflows:**
+- Always gets the latest workflow version
+- No need to maintain local copies
+- Consistent execution across teams and environments
+- Works with any public GitHub repository
+
+**Available BMad Workflows (TEA Repository):**
+
+| Workflow | GitHub URL |
+|----------|------------|
+| Story Validation | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml` |
+| Story Development | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml` |
+| Standard Cycle | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml` |
+
+### 4.2 Examples
 
 ```bash
 # Command Mode: Execute embedded commands
 tea run --from-dot workflow.dot --dot-session my-workflow --dot-max-parallel 4
 
-# Workflow Mode: Run a workflow for each node
+# Workflow Mode with local file
 tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
 
+# Workflow Mode with GitHub URL (recommended)
+tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-max-parallel 3
+
+# Development workflow from GitHub with verbose output
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-max-parallel 2 \
+    --dot-session epic-dev
+
 # With additional input merged into each execution
-tea run --from-dot stories.dot --dot-workflow dev.yaml --dot-input '{"mode": "sequential"}'
+tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-input '{"mode": "sequential"}'
 
 # Preview execution plan
 tea run --from-dot workflow.dot --dot-dry-run
@@ -273,12 +327,15 @@ digraph mixed {
 When workflows call `llm.call` with shell providers (e.g., Claude Code), output is captured but not displayed by default. Use `TEA_SHELL_VERBOSE=1` to see LLM output in real-time:
 
 ```bash
-# See Claude Code output while running
-TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot --dot-workflow dev.yaml
+# See Claude Code output while running (with GitHub URL)
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml
 
 # Export for all commands in session
 export TEA_SHELL_VERBOSE=1
-tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
+tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-max-parallel 3
 ```
 
 This is particularly useful when:
@@ -401,14 +458,21 @@ digraph tea_game_validation {
 After generating a DOT file, always provide execution commands:
 
 ```bash
-# Workflow Mode (recommended for story orchestration)
+# Validation workflow from GitHub (recommended)
 tea run --from-dot examples/dot/tea-game-validation.dot \
-    --dot-workflow examples/workflows/bmad-story-validation.yaml \
-    --dot-max-parallel 4
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-max-parallel 3
 
-# With verbose LLM output
+# Development workflow from GitHub with verbose output
 TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
-    --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-max-parallel 2 \
+    --dot-session epic-dev
+
+# Alternative: Local workflow file
+tea run --from-dot stories.dot \
+    --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-max-parallel 3
 
 # Monitor progress
 tmux attach -t tea-dot
@@ -461,20 +525,27 @@ Phase 2 (parallel): 11 nodes
 
 ## 10. Integration with BMad Workflows
 
-TEA provides pre-built BMad workflows for story development:
+TEA provides pre-built BMad workflows for story development, available directly from GitHub:
 
-| Workflow | Purpose | Use Case |
-|----------|---------|----------|
-| `bmad-story-validation.yaml` | QA validation: risk-profile, NFR, test-design | Before development |
-| `bmad-story-development.yaml` | Full cycle: Dev → QA → SM | Implementation phase |
+| Workflow | Purpose | GitHub URL |
+|----------|---------|------------|
+| Validation | QA validation: risk-profile, NFR, test-design | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml` |
+| Development | Full cycle: Dev → QA → SM | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml` |
+| Standard Cycle | Balanced Dev/QA iteration | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml` |
 
 Example with short labels and path resolution:
 
 ```bash
-# The workflow resolves short labels to full story paths
+# Validation workflow - run before development
 tea run --from-dot stories.dot \
-    --dot-workflow bmad-story-validation.yaml \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
     --dot-max-parallel 3
+
+# Development workflow - implement features
+TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-max-parallel 2 \
+    --dot-session sprint-dev
 ```
 
 The workflow's `resolve_story_path` node handles label → path conversion.
@@ -536,6 +607,7 @@ The combination of DOT's declarative syntax with TEA's execution engine enables 
 ## 13. References
 
 - [Graphviz DOT Language](https://graphviz.org/doc/info/lang.html) - Official DOT syntax reference
+- [BMad to Parallel Execution](./bmad-to-parallel-execution.md) - Complete guide to parallel story execution with GitHub workflows
 - [Writing TEA with TEA](./writing-tea-with-tea.md) - Meta-development methodology using DOT orchestration
 - [YAML Reference](../shared/YAML_REFERENCE.md) - TEA YAML workflow syntax
 - [TEA Documentation](https://fabceolin.github.io/the_edge_agent/) - Official documentation

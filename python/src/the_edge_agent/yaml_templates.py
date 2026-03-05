@@ -21,10 +21,9 @@ Example usage:
     https://api.example.com
 """
 
-import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional
 
 from jinja2 import Environment, TemplateError
 
@@ -198,6 +197,15 @@ class TemplateProcessor:
             return getattr(self._engine, "data", {})
         return {}
 
+    @property
+    def _settings(self) -> Dict[str, Any]:
+        """Get settings section from engine YAML config."""
+        if self._engine is not None:
+            config = getattr(self._engine, "_config", {})
+            if isinstance(config, dict):
+                return config.get("settings", {})
+        return {}
+
     def process_template(
         self,
         text: str,
@@ -252,6 +260,7 @@ class TemplateProcessor:
             "state": DotDict(state),
             "variables": DotDict(self._variables),
             "secrets": DotDict(self._secrets),
+            "settings": DotDict(self._settings),
             "data": DotDict(self._data),
             "env": DotDict(
                 os.environ

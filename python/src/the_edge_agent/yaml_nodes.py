@@ -32,14 +32,15 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from itertools import product
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .stategraph import StateGraph
     from .yaml_engine import YAMLEngine
 
-from .parallel import ParallelFlowResult, ParallelConfig, CancellationToken
+from .parallel import ParallelFlowResult, CancellationToken
 
 
 class NodeFactory:
@@ -327,7 +328,7 @@ class NodeFactory:
                 # Execute the original function
                 start_time = time.time()
                 result = func(state, **kwargs)
-                duration_ms = (time.time() - start_time) * 1000
+                _duration_ms = (time.time() - start_time) * 1000  # noqa: F841
 
                 # End node span successfully
                 obs_context.end_node_span(node_name, status="ok")
@@ -380,10 +381,7 @@ class NodeFactory:
         from .error_handling import (
             ErrorHandler,
             ErrorMode,
-            NodeErrorSettings,
             parse_node_error_settings,
-            RetryPolicy,
-            create_error_info,
         )
 
         on_error = node_config.get("on_error", {})
@@ -1165,7 +1163,8 @@ class NodeFactory:
             )
 
         # Validate max_concurrency if specified (AC: 10)
-        if max_concurrency is not None:
+        # Skip validation for Jinja templates — resolved at runtime
+        if max_concurrency is not None and not isinstance(max_concurrency, str):
             if not isinstance(max_concurrency, int) or max_concurrency < 1:
                 raise ValueError(
                     f"dynamic_parallel node '{node_name}': max_concurrency must be "
@@ -1269,11 +1268,20 @@ class NodeFactory:
             cancellation_token = CancellationToken()
 
             # Create semaphore for max_concurrency (AC: 7)
+            # Resolve Jinja template strings at runtime
             semaphore = None
-            if max_concurrency is not None:
+            resolved_max_concurrency = max_concurrency
+            if isinstance(max_concurrency, str):
+                try:
+                    resolved_max_concurrency = int(
+                        engine._process_template(max_concurrency, state)
+                    )
+                except (ValueError, TypeError):
+                    resolved_max_concurrency = None
+            if resolved_max_concurrency is not None:
                 import threading
 
-                semaphore = threading.Semaphore(max_concurrency)
+                semaphore = threading.Semaphore(resolved_max_concurrency)
 
             def execute_branch(index: int, item: Any) -> ParallelFlowResult:
                 """Execute a single branch with item context."""
@@ -1350,10 +1358,16 @@ class NodeFactory:
                             }
                         )
 
+                    # Include the injected item in result state so fan-in
+                    # nodes can access it (e.g., collect_answers needs prompt.versionId)
+                    result = result_state if isinstance(result_state, dict) else {}
+                    result[item_var] = item
+                    result[index_var] = index
+
                     return ParallelFlowResult(
                         branch=branch_name,
                         success=True,
-                        state=result_state if isinstance(result_state, dict) else {},
+                        state=result,
                         error=None,
                         timing_ms=timing_ms,
                     )
@@ -1391,7 +1405,7 @@ class NodeFactory:
                     return ParallelFlowResult(
                         branch=branch_name,
                         success=False,
-                        state={},
+                        state={item_var: item, index_var: index},
                         error=str(e),
                         timing_ms=timing_ms,
                     )
@@ -1401,7 +1415,11 @@ class NodeFactory:
                         semaphore.release()
 
             # Execute branches in parallel using ThreadPoolExecutor (AC: 11)
-            max_workers = max_concurrency if max_concurrency else min(32, item_count)
+            max_workers = (
+                resolved_max_concurrency
+                if resolved_max_concurrency
+                else min(32, item_count)
+            )
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
                     executor.submit(execute_branch, idx, item): idx
@@ -2004,8 +2022,6 @@ class NodeFactory:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEA-STREAM-001.4: Stream Configuration Dataclasses
 # ═══════════════════════════════════════════════════════════════════════════════
-
-from dataclasses import dataclass
 
 
 @dataclass
