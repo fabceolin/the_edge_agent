@@ -271,3 +271,4 @@ BUG_REPORT_tea_allow_cycles.md
 CLAUDE.md.orig
 examples/workflows/bmad-story-v6-validation.yaml.orig
 rust/src/actions/llm.rs.orig
+docs/articles/declarative-agent-frameworks-comparison.md.orig
