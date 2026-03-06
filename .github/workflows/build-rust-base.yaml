@@ -25,17 +25,17 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Git ref to build'
+        description: "Git ref to build"
         type: string
         required: false
-        default: ''
+        default: ""
   workflow_dispatch:
     inputs:
       ref:
-        description: 'Git ref to build (leave empty for current branch)'
+        description: "Git ref to build (leave empty for current branch)"
         type: string
         required: false
-        default: ''
+        default: ""
 
 jobs:
   # ============================================================
@@ -49,27 +49,27 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact: tea-rust-linux-x86_64
-            ext: ''
+            ext: ""
             use_cross: false
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             artifact: tea-rust-linux-arm64
-            ext: ''
+            ext: ""
             use_cross: false
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: tea-rust-windows-x86_64
-            ext: '.exe'
+            ext: ".exe"
             use_cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: tea-rust-darwin-arm64
-            ext: ''
+            ext: ""
             use_cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: tea-rust-darwin-x86_64
-            ext: ''
+            ext: ""
             use_cross: false
 
     runs-on: ${{ matrix.os }}
@@ -226,7 +226,7 @@ jobs:
           fi
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.84.1
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -367,7 +367,7 @@ jobs:
           fi
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.84.1
 
       - name: Cache cargo registry
         uses: actions/cache@v4
