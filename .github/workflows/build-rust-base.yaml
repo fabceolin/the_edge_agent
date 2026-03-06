@@ -208,8 +208,7 @@ jobs:
 
       - name: Install SWI-Prolog
         run: |
-          # Use official SWI-Prolog PPA for consistent versioning across build and AppImage jobs
-          sudo apt-add-repository -y ppa:swi-prolog/stable
+          # Use Ubuntu default repo (9.x) - swipl crate v0.3.16 is incompatible with SWI-Prolog 10.x
           sudo apt-get update
           sudo apt-get install -y swi-prolog-nox pkg-config
 
@@ -226,7 +225,7 @@ jobs:
           fi
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.84.1
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -349,8 +348,7 @@ jobs:
 
       - name: Install SWI-Prolog
         run: |
-          # Use official SWI-Prolog PPA for consistent versioning across build and AppImage jobs
-          sudo apt-add-repository -y ppa:swi-prolog/stable
+          # Use Ubuntu default repo (9.x) - swipl crate v0.3.16 is incompatible with SWI-Prolog 10.x
           sudo apt-get update
           sudo apt-get install -y swi-prolog-nox pkg-config
 
@@ -367,7 +365,7 @@ jobs:
           fi
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.84.1
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
         uses: actions/cache@v4
