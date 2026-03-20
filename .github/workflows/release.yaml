@@ -24,10 +24,10 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: "3.11"
 
 jobs:
   # ============================================================
@@ -122,12 +122,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for release notes
+          fetch-depth: 0 # Full history for release notes
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.run_id }}
 
       - name: Flatten artifacts
         run: |
