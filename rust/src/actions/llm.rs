@@ -204,6 +204,19 @@ struct StreamingRequest {
     max_tokens: Option<u32>,
 }
 
+/// Embedding API request (Ollama format)
+#[derive(Debug, Clone, Serialize)]
+struct EmbeddingApiRequest {
+    model: String,
+    prompt: String,
+}
+
+/// Embedding API response (Ollama format)
+#[derive(Debug, Clone, Deserialize)]
+struct EmbeddingApiResponse {
+    embedding: Vec<f32>,
+}
+
 /// Provider configuration for LLM API calls
 struct ProviderConfig {
     /// Full URL to call (includes /chat/completions endpoint)
@@ -280,6 +293,43 @@ fn build_provider_config(provider: &str, params: &HashMap<String, JsonValue>) ->
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok());
             ProviderConfig {
                 url: format!("{}/chat/completions", base.trim_end_matches('/')),
+                api_key: key,
+                use_api_key_header: false,
+            }
+        }
+    }
+}
+
+/// Build provider configuration for embedding API calls
+fn build_embedding_provider_config(
+    provider: &str,
+    params: &HashMap<String, JsonValue>,
+) -> ProviderConfig {
+    match provider {
+        "ollama" => {
+            let base = params
+                .get("api_base")
+                .and_then(|v| v.as_str())
+                .unwrap_or("http://localhost:11434");
+            ProviderConfig {
+                url: format!("{}/api/embeddings", base.trim_end_matches('/')),
+                api_key: None,
+                use_api_key_header: false,
+            }
+        }
+        _ => {
+            // Default: OpenAI or compatible API
+            let base = params
+                .get("api_base")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://api.openai.com/v1");
+            let key = params
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok());
+            ProviderConfig {
+                url: format!("{}/embeddings", base.trim_end_matches('/')),
                 api_key: key,
                 use_api_key_header: false,
             }
@@ -1278,13 +1328,89 @@ fn execute_api_chat(
     Ok(result)
 }
 
+/// Execute embedding via API (Ollama or OpenAI-compatible)
+fn execute_api_embed(
+    state: &JsonValue,
+    params: &HashMap<String, JsonValue>,
+    text: &str,
+) -> TeaResult<JsonValue> {
+    let provider = params
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ollama");
+    let model = params
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("nomic-embed-text");
+    let config = build_embedding_provider_config(provider, params);
+
+    let request = EmbeddingApiRequest {
+        model: model.to_string(),
+        prompt: text.to_string(),
+    };
+
+    // Default timeout: 300 seconds (5 minutes) to accommodate slow models
+    let timeout_secs = params
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| TeaError::Http(format!("Failed to build HTTP client: {}", e)))?;
+
+    let mut http_req = client.post(&config.url).json(&request);
+
+    if let Some(ref key) = config.api_key {
+        if config.use_api_key_header {
+            http_req = http_req.header("api-key", key);
+        } else {
+            http_req = http_req.header("Authorization", format!("Bearer {}", key));
+        }
+    }
+
+    let response = http_req.send().map_err(|e| TeaError::Http(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(TeaError::Http(format!(
+            "Embedding API error ({}): {}",
+            status, body
+        )));
+    }
+
+    let embed_response: EmbeddingApiResponse = response
+        .json()
+        .map_err(|e| TeaError::Http(format!("Failed to parse embedding response: {}", e)))?;
+
+    let dimensions = embed_response.embedding.len();
+    let mut output = state.clone();
+    if let Some(obj) = output.as_object_mut() {
+        obj.insert("embedding".to_string(), json!(embed_response.embedding));
+        obj.insert("model".to_string(), json!(model));
+        obj.insert("dimensions".to_string(), json!(dimensions));
+    }
+
+    Ok(output)
+}
+
 /// Generate vector embeddings for text (TEA-RUST-045)
 ///
-/// This action generates vector embeddings using the local LLM backend.
-/// Requires the `llm-local` feature to be enabled.
+/// Supports both local GGUF models and API-based providers (Ollama, OpenAI).
+/// Backend selection follows the same pattern as `llm.chat`:
+/// - `backend: "local"` → use local GGUF model (requires `llm-local` feature)
+/// - `backend: "api"` → use API provider (Ollama, OpenAI)
+/// - `backend: "auto"` (default) → try local first, fall back to API
 ///
 /// # Parameters
 /// - `text` (required): The text to generate embeddings for
+/// - `backend` (optional): "local", "api", or "auto" (default: "auto")
+/// - `provider` (optional): "ollama" or "openai" (default: "ollama", used when backend is "api")
+/// - `model` (optional): Model name (default: "nomic-embed-text")
+/// - `api_base` (optional): Custom API base URL
+/// - `timeout` (optional): Request timeout in seconds (default: 300)
 /// - `model_path` (optional): Path to GGUF model file (overrides TEA_MODEL_PATH)
 /// - `n_ctx` (optional): Context window size override
 /// - `n_threads` (optional): Number of CPU threads
@@ -1308,8 +1434,6 @@ fn execute_api_chat(
 pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaResult<JsonValue> {
     // TEA-CLI-007: Extract CLI overrides from state
     let cli_overrides = get_cli_overrides(state);
-    #[allow(unused_variables)]
-    let cli_model_path = cli_overrides.model_path.as_deref();
 
     // Extract required text parameter
     let text =
@@ -1321,71 +1445,110 @@ pub fn llm_embed(state: &JsonValue, params: &HashMap<String, JsonValue>) -> TeaR
                 message: "Missing required parameter: text".to_string(),
             })?;
 
-    // Feature-gated implementation
-    #[cfg(feature = "llm-local")]
-    {
-        use super::llm_backend::{
-            is_local_llm_available_with_cli, is_local_llm_compiled, LlmBackend,
-        };
-        use super::llm_local::LocalLlmBackend;
+    // Parse backend preference (CLI override takes precedence)
+    let backend_str = cli_overrides.backend.as_deref().unwrap_or_else(|| {
+        params
+            .get("backend")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+    });
 
-        if !is_local_llm_compiled() {
-            return Err(TeaError::InvalidInput {
-                action: "llm.embed".to_string(),
-                message: "Local LLM backend not available. Rebuild with --features llm-local"
-                    .to_string(),
-            });
-        }
+    // TEA-CLI-007: Get CLI model path for availability check and execution
+    #[allow(unused_variables)]
+    let cli_model_path = cli_overrides.model_path.as_deref();
 
-        let settings = build_llm_settings(params);
-
-        // TEA-CLI-007: Use CLI model path in availability check
-        if !is_local_llm_available_with_cli(cli_model_path, &settings) {
-            return Err(TeaError::InvalidInput {
-                action: "llm.embed".to_string(),
-                message: "Local LLM: No model found. Set --gguf, TEA_MODEL_PATH, or settings.llm.model_path"
-                    .to_string(),
-            });
-        }
-
-        // TEA-CLI-007: Use CLI model path when creating backend
-        let backend =
-            LocalLlmBackend::from_settings_with_cli(cli_model_path, &settings).map_err(|e| {
-                TeaError::Execution {
-                    node: "llm.embed".to_string(),
-                    message: format!("Failed to load local model: {}", e),
+    // Determine which backend to use (same pattern as llm_chat)
+    let use_local = match backend_str {
+        "local" => {
+            #[cfg(feature = "llm-local")]
+            {
+                use super::llm_backend::{is_local_llm_available_with_cli, is_local_llm_compiled};
+                let settings = build_llm_settings(params);
+                if !is_local_llm_compiled() {
+                    return Err(TeaError::InvalidInput {
+                        action: "llm.embed".to_string(),
+                        message:
+                            "Local LLM backend not available. Rebuild with --features llm-local"
+                                .to_string(),
+                    });
                 }
-            })?;
-
-        let result = backend.embed(text).map_err(|e| TeaError::Execution {
-            node: "llm.embed".to_string(),
-            message: format!("Embedding generation failed: {}", e),
-        })?;
-
-        let mut output = state.clone();
-        if let Some(obj) = output.as_object_mut() {
-            obj.insert("embedding".to_string(), json!(result.embedding));
-            obj.insert("model".to_string(), json!(result.model));
-            obj.insert("dimensions".to_string(), json!(result.embedding.len()));
-            if let Some(tokens) = result.tokens_used {
-                obj.insert("tokens_used".to_string(), json!(tokens));
+                if !is_local_llm_available_with_cli(cli_model_path, &settings) {
+                    return Err(TeaError::InvalidInput {
+                        action: "llm.embed".to_string(),
+                        message: "Local LLM: No model found. Set --gguf, TEA_MODEL_PATH, or settings.llm.model_path".to_string(),
+                    });
+                }
+                true
+            }
+            #[cfg(not(feature = "llm-local"))]
+            {
+                return Err(TeaError::InvalidInput {
+                    action: "llm.embed".to_string(),
+                    message: "Local LLM backend not available. Rebuild with --features llm-local"
+                        .to_string(),
+                });
             }
         }
+        "api" => false,
+        _ => {
+            // "auto" or any other value: try local first if available, otherwise fall back to API
+            #[cfg(feature = "llm-local")]
+            {
+                use super::llm_backend::{is_local_llm_available_with_cli, is_local_llm_compiled};
+                let settings = build_llm_settings(params);
+                is_local_llm_compiled()
+                    && is_local_llm_available_with_cli(cli_model_path, &settings)
+            }
+            #[cfg(not(feature = "llm-local"))]
+            {
+                false
+            }
+        }
+    };
 
-        return Ok(output);
+    if use_local {
+        #[cfg(feature = "llm-local")]
+        {
+            use super::llm_backend::LlmBackend;
+            use super::llm_local::LocalLlmBackend;
+
+            let settings = build_llm_settings(params);
+            let backend = LocalLlmBackend::from_settings_with_cli(cli_model_path, &settings)
+                .map_err(|e| TeaError::Execution {
+                    node: "llm.embed".to_string(),
+                    message: format!("Failed to load local model: {}", e),
+                })?;
+
+            let result = backend.embed(text).map_err(|e| TeaError::Execution {
+                node: "llm.embed".to_string(),
+                message: format!("Embedding generation failed: {}", e),
+            })?;
+
+            let mut output = state.clone();
+            if let Some(obj) = output.as_object_mut() {
+                obj.insert("embedding".to_string(), json!(result.embedding));
+                obj.insert("model".to_string(), json!(result.model));
+                obj.insert("dimensions".to_string(), json!(result.embedding.len()));
+                if let Some(tokens) = result.tokens_used {
+                    obj.insert("tokens_used".to_string(), json!(tokens));
+                }
+            }
+
+            return Ok(output);
+        }
+
+        #[cfg(not(feature = "llm-local"))]
+        {
+            return Err(TeaError::InvalidInput {
+                action: "llm.embed".to_string(),
+                message: "Local LLM feature not compiled. Rebuild with --features llm-local"
+                    .to_string(),
+            });
+        }
     }
 
-    // Stub for builds without llm-local feature
-    #[cfg(not(feature = "llm-local"))]
-    {
-        // Suppress unused variable warning
-        let _ = text;
-        let _ = state;
-        Err(TeaError::InvalidInput {
-            action: "llm.embed".to_string(),
-            message: "Local LLM not available. Compile with --features llm-local".to_string(),
-        })
-    }
+    // Fall back to API backend (Ollama, OpenAI, etc.)
+    execute_api_embed(state, params, text)
 }
 
 #[cfg(test)]
@@ -1577,18 +1740,99 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "llm-local"))]
-    fn test_llm_embed_without_feature_returns_error() {
+    fn test_llm_embed_local_backend_without_feature_returns_error() {
         let state = json!({});
-        let params: HashMap<String, JsonValue> = [("text".to_string(), json!("test text"))]
-            .into_iter()
-            .collect();
+        let params: HashMap<String, JsonValue> = [
+            ("text".to_string(), json!("test text")),
+            ("backend".to_string(), json!("local")),
+        ]
+        .into_iter()
+        .collect();
 
         let result = llm_embed(&state, &params);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("llm-local") || err.contains("Local LLM not available"),
+            err.contains("llm-local") || err.contains("Local LLM"),
             "Error should mention llm-local feature requirement"
+        );
+    }
+
+    #[test]
+    fn test_llm_embed_api_backend_attempts_connection() {
+        // With backend: "api", llm.embed should attempt an API call (which fails without a server)
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("text".to_string(), json!("Hello world")),
+            ("backend".to_string(), json!("api")),
+            ("provider".to_string(), json!("ollama")),
+            ("api_base".to_string(), json!("http://localhost:99999")),
+            ("timeout".to_string(), json!(2)),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_embed(&state, &params);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        // Should be a connection/HTTP error, not a "missing text" or "llm-local" error
+        assert!(
+            !err.contains("Missing required parameter"),
+            "Should not complain about missing params"
+        );
+    }
+
+    #[test]
+    fn test_embedding_provider_config_ollama() {
+        let params: HashMap<String, JsonValue> = HashMap::new();
+        let config = build_embedding_provider_config("ollama", &params);
+        assert_eq!(config.url, "http://localhost:11434/api/embeddings");
+        assert!(config.api_key.is_none());
+    }
+
+    #[test]
+    fn test_embedding_provider_config_ollama_custom_base() {
+        let params: HashMap<String, JsonValue> =
+            [("api_base".to_string(), json!("http://myhost:8080"))]
+                .into_iter()
+                .collect();
+        let config = build_embedding_provider_config("ollama", &params);
+        assert_eq!(config.url, "http://myhost:8080/api/embeddings");
+    }
+
+    #[test]
+    fn test_embedding_provider_config_openai() {
+        let params: HashMap<String, JsonValue> = HashMap::new();
+        let config = build_embedding_provider_config("openai", &params);
+        assert_eq!(config.url, "https://api.openai.com/v1/embeddings");
+    }
+
+    #[test]
+    #[ignore] // Requires: ollama pull nomic-embed-text && ollama serve
+    fn test_llm_embed_ollama_live() {
+        let state = json!({});
+        let params: HashMap<String, JsonValue> = [
+            ("text".to_string(), json!("Hello world")),
+            ("backend".to_string(), json!("api")),
+            ("provider".to_string(), json!("ollama")),
+            ("model".to_string(), json!("nomic-embed-text")),
+        ]
+        .into_iter()
+        .collect();
+
+        let result = llm_embed(&state, &params);
+        assert!(result.is_ok(), "Embedding should succeed: {:?}", result);
+
+        let output = result.unwrap();
+        assert!(output.get("embedding").is_some(), "Should have embedding");
+        assert!(
+            output["embedding"].as_array().unwrap().len() > 0,
+            "Embedding should have dimensions"
+        );
+        assert_eq!(output["model"].as_str().unwrap(), "nomic-embed-text");
+        assert!(
+            output["dimensions"].as_u64().unwrap() > 0,
+            "Should report dimensions"
         );
     }
 
