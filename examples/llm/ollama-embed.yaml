@@ -1,0 +1,44 @@
+# Ollama Embedding Example
+#
+# This example demonstrates generating text embeddings using Ollama's API.
+# Unlike local-embed.yaml which requires a GGUF model file, this uses
+# Ollama's HTTP API — just pull a model and go.
+#
+# Usage:
+#   # First, pull an embedding model
+#   ollama pull nomic-embed-text
+#
+#   # Generate embedding for text
+#   tea run ollama-embed.yaml --input '{"text": "Machine learning is transforming industries."}'
+#
+#   # With custom Ollama endpoint
+#   tea run ollama-embed.yaml --input '{"text": "Hello world", "api_base": "http://myhost:11434"}'
+#
+# Requirements:
+#   - Ollama installed and running (ollama serve)
+#   - An embedding model pulled (ollama pull nomic-embed-text)
+
+name: ollama-embed-example
+description: Generate text embeddings using Ollama API
+
+nodes:
+  - name: generate_embedding
+    uses: llm.embed
+    with:
+      backend: api
+      provider: ollama
+      model: nomic-embed-text
+      text: "{{ state.text | default('The Edge Agent enables offline AI workflows.') }}"
+    output: result
+
+  - name: show_result
+    uses: code.execute
+    with:
+      language: python
+      code: |
+        embedding = state["result"]["embedding"]
+        print(f"Model: {state['result']['model']}")
+        print(f"Dimensions: {state['result']['dimensions']}")
+        print(f"First 5 values: {embedding[:5]}")
+        result = state["result"]
+    output: summary
