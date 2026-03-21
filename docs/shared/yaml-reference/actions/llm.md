@@ -47,6 +47,65 @@ Call OpenAI-compatible LLM API:
 {"content": "LLM response text", "usage": {"prompt_tokens": N, "completion_tokens": N}}
 ```
 
+### Structured Output (response_format)
+
+Force the LLM to return valid JSON by passing `response_format` as an extra parameter.
+This works via `**kwargs` passthrough to the OpenAI SDK.
+
+**JSON Object mode** — guarantees valid JSON but no schema validation:
+
+```yaml
+- name: extract_json
+  uses: llm.call
+  with:
+    model: gpt-4
+    messages:
+      - role: system
+        content: "Extract entities as JSON with keys: name, type"
+      - role: user
+        content: "{{ state.text }}"
+    response_format:
+      type: json_object
+  output: extraction
+```
+
+**JSON Schema mode** — guarantees valid JSON matching a specific schema (OpenAI `2024-08-01-preview`+ API version required for Azure):
+
+```yaml
+- name: extract_structured
+  uses: llm.call
+  with:
+    model: gpt-4
+    messages:
+      - role: system
+        content: "Extract company information from the text."
+      - role: user
+        content: "{{ state.text }}"
+    response_format:
+      type: json_schema
+      json_schema:
+        name: company_info
+        strict: true
+        schema:
+          type: object
+          properties:
+            name:
+              type: string
+            founded_year:
+              type: integer
+            industry:
+              type: string
+          required: [name, founded_year, industry]
+          additionalProperties: false
+  output: extraction
+```
+
+**Notes:**
+- The response `content` is a JSON string — parse it with `json.loads()` in a subsequent `run:` block
+- `response_format` is passed through to the OpenAI SDK via `**kwargs`; it is not filtered out by TEA
+- For Azure OpenAI, `json_schema` mode requires `OPENAI_API_VERSION=2024-08-01-preview` or later
+- When using `ratelimit.wrap`, include `response_format` inside the `args` dict (not as a top-level parameter)
+
 ---
 
 ## LLM Provider Configuration
