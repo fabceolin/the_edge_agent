@@ -59,7 +59,7 @@ setup(
             "parameterized==0.9.0",
             # Test dependencies for optional features
             "openai>=1.13.3",  # For LLM/RAG tests (mocked but module must be importable)
-            "litellm>=1.0.0",  # For LiteLLM provider tests (TEA-LLM-003)
+            "litellm==1.82.6",  # For LiteLLM provider tests (TEA-LLM-003)
             "requests>=2.32.5",  # For web actions tests
             "RestrictedPython>=8.0",  # For code execution tests
             "duckdb>=0.10.0,<=1.2.2",  # Pinned: DuckPGQ extension only available up to v1.2.2
@@ -80,7 +80,7 @@ setup(
             "numpy>=2.1.0",
         ],
         "llm": ["openai>=1.13.3"],
-        "litellm": ["litellm>=1.0.0"],  # TEA-LLM-003: LiteLLM multi-provider support
+        "litellm": ["litellm==1.82.6"],  # TEA-LLM-003: LiteLLM multi-provider support
         "web": ["requests>=2.32.5"],
         "web-ai-scrape": [
             "scrapegraph-py>=1.0.0",
