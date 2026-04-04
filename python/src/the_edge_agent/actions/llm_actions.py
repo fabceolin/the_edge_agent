@@ -10,6 +10,7 @@ Actions:
     - llm.stream: Streaming LLM response with chunk aggregation
     - llm.retry: DEPRECATED - Use llm.call with max_retries parameter
     - llm.tools: Function/tool calling with automatic action dispatch
+    - llm.similarity: Cosine similarity between two texts (via embeddings) or two vectors
 
 Example:
     >>> # Basic call
@@ -584,7 +585,6 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             # Read output line by line
             full_content = []
             chunk_count = 0
-            import select
             import sys
 
             # TEA-LLM-004.1: Verbose mode - print output in real-time
@@ -2270,3 +2270,238 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
     registry["llm.tools"] = llm_tools
     registry["actions.llm_tools"] = llm_tools
+
+    def llm_similarity(
+        state,
+        text_a=None,
+        text_b=None,
+        vector_a=None,
+        vector_b=None,
+        model="text-embedding-3-small",
+        provider="auto",
+        api_base=None,
+        **kwargs,
+    ):
+        """
+        Compute cosine similarity between two texts or two pre-computed vectors.
+
+        Operates in two modes:
+
+        **Text mode** (``text_a`` + ``text_b``):
+            Embeds both texts via the OpenAI embeddings API (or an
+            OpenAI-compatible endpoint such as Ollama) and then computes
+            cosine similarity on the resulting vectors.  Provider detection
+            follows the same priority order as ``llm.call``:
+
+            1. Explicit ``provider`` parameter.
+            2. Environment variables: ``OLLAMA_API_BASE`` → Ollama,
+               ``AZURE_OPENAI_API_KEY`` + ``AZURE_OPENAI_ENDPOINT`` → Azure.
+            3. Default → OpenAI.
+
+        **Vector mode** (``vector_a`` + ``vector_b``):
+            Accepts pre-computed float vectors and computes cosine similarity
+            directly — no API call is made.
+
+        Args:
+            state: Current state dictionary (used for Jinja-resolved values).
+            text_a: First input text (text mode).
+            text_b: Second input text (text mode).
+            vector_a: First pre-computed embedding vector (vector mode).
+            vector_b: Second pre-computed embedding vector (vector mode).
+            model: Embedding model name (default: ``text-embedding-3-small``).
+                   Only used in text mode.
+            provider: LLM provider — ``"auto"`` (detect), ``"openai"``,
+                      ``"azure"``, or ``"ollama"``.  Only used in text mode.
+            api_base: Custom API base URL (overrides defaults).
+                      Only used in text mode.
+            **kwargs: Reserved for future use.
+
+        Returns:
+            dict with keys:
+
+            * ``cosine_similarity`` (float): Score in the range [-1, 1].
+            * ``interpretation`` (str): Human-readable label derived from
+              thresholds: ``> 0.8`` → "Very similar", ``> 0.5`` →
+              "Somewhat similar", ``> 0.2`` → "Not very similar",
+              ``<= 0.2`` → "Unrelated".
+            * ``text_a`` (str): Echoed back only in text mode.
+            * ``text_b`` (str): Echoed back only in text mode.
+
+            On error: ``{"error": str, "success": False}``.
+
+        Examples:
+            # Text mode — embed and compare
+            result = llm_similarity(
+                state,
+                text_a="The cat sat on the mat",
+                text_b="A feline rested on a rug",
+                model="text-embedding-3-small",
+            )
+            # {"cosine_similarity": 0.91, "interpretation": "Very similar", ...}
+
+            # Vector mode — no API call
+            result = llm_similarity(
+                state,
+                vector_a=[0.1, 0.2, 0.3],
+                vector_b=[0.1, 0.2, 0.4],
+            )
+            # {"cosine_similarity": 0.998..., "interpretation": "Very similar"}
+        """
+        # ------------------------------------------------------------------
+        # Import the pure-Python cosine_similarity helper from rag_actions so
+        # we don't duplicate the math.  The import is deferred to keep startup
+        # fast and to avoid a circular dependency at module load time.
+        # ------------------------------------------------------------------
+        try:
+            from .rag_actions import cosine_similarity as _cosine_similarity
+        except ImportError:
+            # Inline fallback — keeps llm_similarity self-contained if rag_actions
+            # is ever unavailable.
+            import math as _math
+
+            def _cosine_similarity(a, b):
+                dot = sum(x * y for x, y in zip(a, b))
+                norm_a = _math.sqrt(sum(x * x for x in a))
+                norm_b = _math.sqrt(sum(x * x for x in b))
+                if norm_a == 0 or norm_b == 0:
+                    return 0.0
+                return dot / (norm_a * norm_b)
+
+        def _interpret(score: float) -> str:
+            if score > 0.8:
+                return "Very similar"
+            if score > 0.5:
+                return "Somewhat similar"
+            if score > 0.2:
+                return "Not very similar"
+            return "Unrelated"
+
+        # ------------------------------------------------------------------
+        # Vector mode — short-circuit before any API work
+        # ------------------------------------------------------------------
+        if vector_a is not None and vector_b is not None:
+            if not isinstance(vector_a, (list, tuple)) or not isinstance(
+                vector_b, (list, tuple)
+            ):
+                return {
+                    "error": "vector_a and vector_b must be lists of floats",
+                    "success": False,
+                }
+            if len(vector_a) != len(vector_b):
+                return {
+                    "error": (
+                        f"vector_a length ({len(vector_a)}) does not match "
+                        f"vector_b length ({len(vector_b)})"
+                    ),
+                    "success": False,
+                }
+            try:
+                score = _cosine_similarity(
+                    [float(x) for x in vector_a],
+                    [float(x) for x in vector_b],
+                )
+            except (TypeError, ValueError) as exc:
+                return {
+                    "error": f"Could not convert vectors to floats: {exc}",
+                    "success": False,
+                }
+            return {
+                "cosine_similarity": score,
+                "interpretation": _interpret(score),
+            }
+
+        # ------------------------------------------------------------------
+        # Text mode — require both text inputs
+        # ------------------------------------------------------------------
+        if text_a is None or text_b is None:
+            return {
+                "error": (
+                    "llm.similarity requires either (text_a + text_b) for text mode "
+                    "or (vector_a + vector_b) for vector mode"
+                ),
+                "success": False,
+            }
+
+        # ------------------------------------------------------------------
+        # Resolve provider (mirrors llm_call logic)
+        # ------------------------------------------------------------------
+        resolved_provider = (provider or "auto").lower()
+        if resolved_provider in ("azure_openai", "azureopenai"):
+            resolved_provider = "azure"
+
+        if resolved_provider == "auto":
+            if os.getenv("OLLAMA_API_BASE"):
+                resolved_provider = "ollama"
+            elif os.getenv("AZURE_OPENAI_API_KEY") and os.getenv(
+                "AZURE_OPENAI_ENDPOINT"
+            ):
+                resolved_provider = "azure"
+            else:
+                resolved_provider = "openai"
+
+        # ------------------------------------------------------------------
+        # Build OpenAI-compatible client (same pattern as llm_call)
+        # ------------------------------------------------------------------
+        try:
+            from openai import OpenAI, AzureOpenAI
+        except ImportError:
+            raise ImportError(
+                "OpenAI library not installed. Install with: pip install openai"
+            )
+
+        if resolved_provider == "ollama":
+            ollama_base = api_base or os.getenv(
+                "OLLAMA_API_BASE", "http://localhost:11434/v1"
+            )
+            client = OpenAI(base_url=ollama_base, api_key="ollama")
+        elif resolved_provider == "azure":
+            azure_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+            azure_endpoint = api_base or os.getenv("AZURE_OPENAI_ENDPOINT")
+            client = AzureOpenAI(
+                api_key=azure_api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=os.getenv("OPENAI_API_VERSION", "2024-02-15-preview"),
+            )
+        else:
+            # Standard OpenAI
+            if api_base:
+                client = OpenAI(base_url=api_base)
+            else:
+                client = OpenAI()
+
+        # ------------------------------------------------------------------
+        # Embed both texts in a single API call (batch) to minimise latency
+        # ------------------------------------------------------------------
+        try:
+            response = client.embeddings.create(
+                model=model,
+                input=[text_a, text_b],
+            )
+        except Exception as exc:
+            return {
+                "error": f"Embedding API error: {exc}",
+                "success": False,
+            }
+
+        # Embeddings are returned in the same order as the input list
+        embeddings = sorted(response.data, key=lambda item: item.index)
+        if len(embeddings) < 2:
+            return {
+                "error": "Embedding API returned fewer vectors than expected",
+                "success": False,
+            }
+
+        vec_a = embeddings[0].embedding
+        vec_b = embeddings[1].embedding
+
+        score = _cosine_similarity(vec_a, vec_b)
+
+        return {
+            "cosine_similarity": score,
+            "interpretation": _interpret(score),
+            "text_a": text_a,
+            "text_b": text_b,
+        }
+
+    registry["llm.similarity"] = llm_similarity
+    registry["actions.llm_similarity"] = llm_similarity
