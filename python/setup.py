@@ -33,7 +33,7 @@ setup(
         "jinja2==3.1.6",  # TEA-YAML-001: Template engine for declarative workflows
         "jmespath==1.0.1",
         "jsonschema==4.25.1",
-        "fsspec==2025.12.0",
+        "fsspec==2026.2.0",
         "typer==0.20.0",  # TEA-CLI-004: CLI subcommand support
         "phart==1.1.4",  # TEA-CLI-006: ASCII graph rendering for --show-graph
         "python-dotenv==1.2.1",  # TEA-KIROKU-005: Load .env files for API keys
