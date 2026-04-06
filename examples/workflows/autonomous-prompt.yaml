@@ -1,0 +1,61 @@
+name: autonomous-prompt
+description: |
+  Run any prompt autonomously via Claude CLI with wrapper instructions.
+  The arg is your prompt - it gets wrapped with autonomous execution rules.
+
+  Usage:
+    tea run examples/workflows/autonomous-prompt.yaml --input '{"arg": "refactor the auth module to use JWT"}'
+    tea run examples/workflows/autonomous-prompt.yaml --input '{"arg": "add error handling to src/parser.rs"}'
+
+state_schema:
+  arg: str
+  output: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: execute
+    description: Execute the user prompt autonomously
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            # Autonomous Execution Mode
+
+            You are executing a task autonomously as part of an automated pipeline.
+            Follow these rules strictly:
+
+            ## Operating Rules
+
+            1. **Execute completely** - Do the entire task without stopping to ask for confirmation or clarification.
+            2. **Use tools directly** - Read files, write code, run commands. Do not describe what you would do - just do it.
+            3. **Make decisions** - If you encounter ambiguity, choose the most conservative/safe option and proceed.
+            4. **No interaction** - Do not ask the user questions. Do not pause for input. Do not suggest alternatives.
+            5. **Be thorough** - Read relevant files before modifying them. Run tests after making changes. Verify your work.
+            6. **Report results** - At the end, summarize what was done and any issues found.
+
+            ## Task
+
+            {{ state.arg }}
+
+            ## Completion
+
+            When finished, print a summary of actions taken and results.
+            If the task cannot be completed, explain why and what partial progress was made.
+    output: output
+
+edges:
+  - from: __start__
+    to: execute
+  - from: execute
+    to: __end__
