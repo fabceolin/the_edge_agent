@@ -133,7 +133,7 @@ jobs:
                          openai==2.9.0 'numpy<2' chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 \
                          'pycozo[embedded]==0.7.6' pandas==3.0.1 \
                          s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 \
-                         firebase-admin duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44 && \
+                         firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44 && \
              CC=gcc-14 CXX=g++-14 CMAKE_ARGS='-DGGML_VULKAN=ON -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS -DGGML_NATIVE=OFF' FORCE_CMAKE=1 pip install llama-cpp-python --no-cache-dir --force-reinstall && \
              pip install -e . --no-deps && \
              LIBGOMP_PATH=\$(find /usr -name 'libgomp.so.1' 2>/dev/null | head -1) && \
@@ -312,7 +312,7 @@ jobs:
                       openai==2.9.0 'numpy<2' chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 \
                       'pycozo[embedded]==0.7.6' pandas==3.0.1 \
                       s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 \
-                      firebase-admin duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
+                      firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
 
           # Install llama-cpp-python from PyPI with Vulkan support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
@@ -483,7 +483,7 @@ jobs:
                       openai==2.9.0 "numpy<2" chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 `
                       "pycozo[embedded]==0.7.6" pandas==3.0.1 `
                       s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 `
-                      firebase-admin duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
+                      firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
           pip install -e . --no-deps
           pip install pyinstaller
 
@@ -647,7 +647,7 @@ jobs:
                       openai==2.9.0 'numpy<2' chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 \
                       'pycozo[embedded]==0.7.6' pandas==3.0.1 \
                       s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 \
-                      firebase-admin duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
+                      firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
           pip install -e . --no-deps
           pip install pyinstaller
 
