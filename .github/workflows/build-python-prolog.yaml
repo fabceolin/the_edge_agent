@@ -397,11 +397,11 @@ jobs:
           FORCE_CMAKE: "1"
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
-                      openai 'numpy<2' chromadb requests RestrictedPython \
-                      'pycozo[embedded]' pandas \
-                      s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin 'duckdb<=1.2.2'
+          pip install networkx==3.3 pyyaml==6.0.3 jinja2==3.1.6 jmespath==1.0.1 jsonschema==4.25.1 fsspec==2026.2.0 typer==0.20.0 python-dotenv==1.2.1 pydantic==2.12.4 pydot==4.0.1 phart==1.1.4 \
+                      openai==2.9.0 'numpy<2' chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 \
+                      'pycozo[embedded]==0.7.6' pandas==3.0.1 \
+                      s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 \
+                      firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
 
           # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
@@ -442,6 +442,7 @@ jobs:
             --hidden-import=duckdb \
             --hidden-import=janus_swi \
             --hidden-import=llama_cpp \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all llama_cpp \
             --collect-all numpy \
@@ -596,11 +597,11 @@ jobs:
           FORCE_CMAKE: "1"
         run: |
           cd python
-          pip install networkx==3.3 pyyaml jinja2 jmespath jsonschema fsspec typer python-dotenv pydantic pydot \
-                      openai 'numpy<2' chromadb requests RestrictedPython \
-                      'pycozo[embedded]' pandas \
-                      s3fs gcsfs adlfs lupa kuzu \
-                      firebase-admin 'duckdb<=1.2.2'
+          pip install networkx==3.3 pyyaml==6.0.3 jinja2==3.1.6 jmespath==1.0.1 jsonschema==4.25.1 fsspec==2026.2.0 typer==0.20.0 python-dotenv==1.2.1 pydantic==2.12.4 pydot==4.0.1 phart==1.1.4 \
+                      openai==2.9.0 'numpy<2' chromadb==1.1.1 requests==2.32.5 RestrictedPython==8.1 \
+                      'pycozo[embedded]==0.7.6' pandas==3.0.1 \
+                      s3fs==2026.2.0 gcsfs==2026.2.0 adlfs==2026.2.0 lupa==2.6 kuzu==0.11.3 \
+                      firebase-admin==7.3.0 duckdb==1.2.2 psycopg2-binary==2.9.11 sqlalchemy==2.0.44
 
           # Install llama-cpp-python from PyPI with Vulkan and OpenBLAS support
           pip install llama-cpp-python --no-cache-dir --force-reinstall
@@ -641,6 +642,7 @@ jobs:
             --hidden-import=duckdb \
             --hidden-import=janus_swi \
             --hidden-import=llama_cpp \
+            --hidden-import=phart \
             --collect-all the_edge_agent \
             --collect-all llama_cpp \
             --collect-all numpy \

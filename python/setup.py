@@ -11,7 +11,7 @@ else:
 
 setup(
     name="the_edge_agent",
-    version="0.9.103",
+    version="0.9.104",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph, to run on edge computing",
@@ -25,7 +25,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.7",
+    python_requires=">=3.11",
     install_requires=[
         "networkx==3.3",
         # "pygraphviz==1.13",  # REMOVED: Requires gcc, not available in Firebase emulator
