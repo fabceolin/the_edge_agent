@@ -658,6 +658,42 @@ At 2.3B effective parameters with 128K context, Gemma 4 E2B-it is the sweet spot
 
 If margin on every single turn is the priority and the extra VRAM is available, swap to `google_gemma-4-E2B-it-Q8_0.gguf` — same code, no config changes beyond `model_path`.
 
+### 11.3 When Prolog actually pays off (and when it doesn't)
+
+An honest audit of this prototype's own Prolog usage: most of it could have been Python.
+
+| Helper | What Prolog gives us | Pure-Python equivalent | Who wins? |
+|--------|----------------------|------------------------|-----------|
+| `effective_offer` | if/then with `member/2` | `if "free_shipping" in demands` | tie |
+| `present_value` | list lookup + arithmetic | `rate = dict_map.get(days, 0)` | Python (fewer lines) |
+| `floor_cents` | `max(MarginFloor, Batna)` | `max(margin_floor, batna)` | tie |
+| `ceiling_cents` | integer arithmetic | integer arithmetic | tie |
+| `counter_target` | CLP(FD) `labeling` | `min(range(lb, ceil+1, 100), key=lambda v: abs(v-mid))` | tie (the search space is 1-D) |
+| `classify` | three branches | three branches | tie |
+| `trace_step` + `findall` | `assertz` / `findall` | `trace.append({...})` | Python (more legible) |
+
+For this one scenario, with these six rules and a one-dimensional counter search, **Python would be ~40% shorter and more accessible to the average reader**.  CLP(FD) is overkill when the feasible region is a linear range over a single integer.  This is not a flaw in the code; it is a flaw in *claiming* the choice of Prolog was technically necessary for the N=1 case.  It wasn't.
+
+#### Where Prolog does pay off
+
+There is, however, a measurable break-even point above which Prolog stops being theatre:
+
+1. **Rule proliferation.** Once the configuration panel grows to roughly 20+ interacting rules — discount tier × region × season × product line × customer history — pattern-matched Prolog clauses stay legible where nested `if/elif` in Python becomes a maintenance liability.  The cost of *reading* scales linearly with rule count in Python and sub-linearly in Prolog.
+2. **Genuine backtracking.** Story 6 (anti-ratcheting concession discipline) needs to explore alternative tactics in order — *"try vendor financing; if that fails, try leasing; if that fails, try bundling"* — with rollback of asserted state between attempts.  Choice points and cut are free in Prolog; in Python this becomes an explicit search function with saved-state objects.
+3. **Reverse queries.** *"For which buyer offer would this decision have flipped to `accept`?"* is a well-posed Prolog query (instantiate the action, solve for the offer) and a hard Python problem (either brute-force search or encode the rules twice, forward and backward).
+4. **Meta-reasoning via the same engine.** The rules *are* data; you can query which rules fired and why by asking the same Prolog database, without building parallel observability plumbing.
+5. **Compliance social proof.** In regulated industries (lending, insurance, medical decisioning), symbolic systems carry decades of audit-trail legitimacy that procedural Python does not.  This is sociological, not technical, but real — and directly relevant to § 10's "Regulatory audit" row.
+
+#### The honest architectural argument
+
+The reason to keep Prolog here is not that it beats Python at six rules today.  It is that:
+
+- **Story 6** (concession discipline) and any future policy evolution will tip the rule count above the break-even, and a rewrite from Python to Prolog at that point is more expensive than starting in Prolog and paying the ~40% overhead upfront.
+- The **derivation chain** (§ 6.3) is 90% architectural discipline and 10% Prolog — Python could produce an identical chain with the same `add_step` pattern — but shipping the rules in Prolog means the trace facts *are* the solver's state, not a handwritten mirror of it.
+- The audience for this article is engineers evaluating neuro-symbolic for production.  Showing the technique at a scale where it is *almost* over-engineered is more instructive than hiding the break-even behind a toy example.
+
+If you are copying this code into a system that will never grow past the current six rules, port `decide.pl` to Python and save yourself the ecosystem friction.  If you are building anything that will grow, the overhead is already in the right place.
+
 ---
 
 ## 12. Conclusion
