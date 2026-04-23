@@ -418,7 +418,7 @@ nodes:
   # =========================================================================
   # PHASE 3 — STORY 5: Neural generation.
   # The LLM receives the solver's decision as STRICT INPUT and writes the
-  # Portuguese response.  It is explicitly forbidden from changing numbers.
+  # English response.  It is explicitly forbidden from changing numbers.
   # =========================================================================
 
   # Defense in depth: XML-structured constraint-heavy prompt keeps the LLM

@@ -334,7 +334,7 @@ The architectural fix is not a better prompt.  It is to **remove the LLM from th
 
 | Component | Writes | Owns |
 |-----------|--------|------|
-| LLM (`generate_response`) | One context sentence in Portuguese, ≤ 20 words, **zero digits allowed** | Tone, framing, register |
+| LLM (`generate_response`) | One context sentence in English, ≤ 20 words, **zero digits allowed** | Tone, framing, register |
 | Python (`parse_generation`) | The action clause with the exact solver integers | Final numeric truth |
 
 The LLM is constrained by an XML-structured prompt that forbids digits explicitly — the "Prevention Policy 80/20" principle: the vast majority of tokens in the prompt describe what the model must *not* do.
