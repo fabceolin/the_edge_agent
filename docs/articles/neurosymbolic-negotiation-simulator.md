@@ -521,7 +521,7 @@ The seller's final line is structurally two sentences: one the LLM wrote for ton
 
 It would be tempting to say *"use a bigger model and prompt harder"*.  Two reasons that is the wrong instinct:
 
-1. **Forward-compatibility.** When Gemma 5 ships and stops rounding, the prompt still works — and the Python composition is still a correctness backstop.  You never lose the guarantee.
+1. **Forward-compatibility.** The day you swap in a model that preserves digits reliably — a higher-precision quantization (Q8_0), a larger variant, or a future instruction-tuned release — the prompt still works unchanged, and the Python composition is still a correctness backstop.  You never lose the guarantee, no matter what the model upgrade timeline looks like.
 2. **Auditability.** The `neural_out` record can be compared regex-wise against `decision_target_cents`.  Mismatches are now a *Python bug*, never a *model bug*, because the model is structurally incapable of writing the number in the first place.
 
 The generalisation: **any digit the user will act upon should be written by deterministic code, not by a language model.**  The LLM does what it is uniquely good at — parsing intent and generating English tone — and nothing else.
