@@ -1,0 +1,90 @@
+# scenarios.yaml
+#
+# Pool of negotiation scenarios for the neuro-symbolic negotiation simulator.
+# Each scenario encodes the financial constraints (Story 1 — "Configuration Panel"):
+# the exact facts the Prolog solver (System 2) will use to keep the LLM (System 1)
+# mathematically honest.
+#
+# Monetary values are in USD ($).  Percentages are whole numbers (15 = 15%).
+#
+# Success rule (encoded in Prolog): a deal is "won" by the agent iff
+#   accepted_unit_price >= max(batna_unit, unit_cost * (1 + min_margin_pct/100))
+# after adding shipping and term interest.
+#
+# The `persona` block is consumed only by the neural layer (the seller voice).
+# Numbers in `persona` are purely flavor; the solver never reads them.
+
+scenarios:
+
+  - id: b2b_laptops
+    name: "B2B — 500 Enterprise Laptops"
+    product: "Enterprise Laptop Dell Vostro 15"
+    currency: USD
+    quantity: 500
+
+    # Business constraints (Story 1) — the Prolog solver owns these
+    unit_cost: 800.00           # cost per unit
+    list_price: 1200.00         # sticker price per unit
+    min_margin_pct: 15          # never accept below this margin over cost
+    max_discount_pct: 25        # never offer more discount than this off list
+    shipping_cost_pct: 3        # percent of deal value added if client demands free shipping
+    interest_by_term:           # late-payment discount-equivalent
+      30: 0.00
+      60: 0.02
+      90: 0.04
+    batna_unit: 1050.00         # alternative client willing to pay this per unit
+
+    persona:
+      buyer_role: "IT Director at a multinational pharmaceutical company"
+      tone: "demanding, pragmatic, cites volume and purchase history"
+      initial_stance: "opens with an aggressive request (30% discount) plus free shipping"
+      walk_away_threshold_pct: 18   # buyer gives up if agent offers less than 18% discount
+
+  - id: saas_annual
+    name: "SaaS — 50-seat Pro plan (annual)"
+    product: "Pro Plan (50 seats, 12 months)"
+    currency: USD
+    quantity: 50
+
+    # "Cost" here is the marginal cost of serving one seat-year (infra + support)
+    unit_cost: 40.00
+    list_price: 200.00          # sticker annual seat price
+    min_margin_pct: 60          # SaaS has higher target margins
+    max_discount_pct: 35
+    shipping_cost_pct: 0        # no shipping in SaaS
+    interest_by_term:
+      30: 0.00                  # monthly billing
+      365: -0.05                # 5% discount for paying year upfront (negative interest)
+    batna_unit: 115.00          # competitor's advertised offer
+
+    persona:
+      buyer_role: "Head of Operations at a scale-up"
+      tone: "analytical, asks for ROI, pushes for an extended POC"
+      initial_stance: "opens asking for 40% discount and 3 free months"
+      walk_away_threshold_pct: 25
+
+  - id: wholesale_shoes
+    name: "Wholesale — 1,000 Pairs of Running Shoes"
+    product: "Running shoe model TX-2 (1,000 pairs, mixed sizes)"
+    currency: USD
+    quantity: 1000
+
+    unit_cost: 25.00
+    list_price: 60.00
+    min_margin_pct: 20
+    max_discount_pct: 30
+    shipping_cost_pct: 4
+    interest_by_term:
+      30: 0.00
+      60: 0.025
+      90: 0.05
+    batna_unit: 45.00
+
+    persona:
+      buyer_role: "Buyer from a regional sporting-goods chain"
+      tone: "classic haggler, uses volume as leverage"
+      initial_stance: "offers $38 cash and threatens to walk to a competitor"
+      walk_away_threshold_pct: 22
+
+# Default scenario when none is passed via --input
+default_scenario: b2b_laptops

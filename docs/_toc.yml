@@ -156,6 +156,8 @@ parts:
         title: "From Business Idea to Parallel Story Execution"
       - file: articles/declarative-agent-frameworks-comparison
         title: "Declarative Agent Frameworks: Docker cagent vs TEA"
+      - file: articles/neurosymbolic-negotiation-simulator
+        title: "Neuro-Symbolic B2B Negotiation: Gemma 4 + Prolog CLP(FD)"
 
   - caption: Contributing
     chapters:

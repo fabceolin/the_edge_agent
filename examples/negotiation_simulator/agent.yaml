@@ -1,0 +1,739 @@
+# agent.yaml — Neuro-Symbolic Negotiation Simulator
+#
+# The five stories of the Epic, wired together as a TEA state graph:
+#
+#   Story 1 → load_scenario        (financial constraints from scenarios.yaml)
+#   Story 2 → interactive loop     (chat via tea-python run --interactive)
+#   Story 3 → extract_offer        (LLM: natural language → structured JSON)
+#   Story 4 → decide               (Prolog CLP(FD): deterministic arithmetic)
+#   Story 5 → generate_response    (LLM: structured decision → persuasive text)
+#
+# Guardrail: every turn is appended to ./audit/<session_id>.jsonl as three
+# separate records (neural_in, symbolic, neural_out) so the reasoning chain
+# is auditable offline.
+#
+# USAGE:
+#   # One-shot (for smoke tests):
+#   tea-python run examples/negotiation_simulator/agent.yaml \
+#     --input '{"scenario_id": "b2b_laptops", "user_message": "I offer $950 per unit, cash, with free shipping."}'
+#
+#   # Interactive chat:
+#   tea-python run --interactive examples/negotiation_simulator/agent.yaml \
+#     --input '{"scenario_id": "b2b_laptops", "session_id": "demo01"}'
+
+name: neurosymbolic-negotiation
+description: |
+  Neuro-symbolic B2B negotiation simulator.  System 1 (Gemma 4 E2B) handles
+  language; System 2 (Prolog CLP(FD)) owns the math.  The LLM never invents
+  a number — it only narrates the decision the solver made.
+
+# ---------------------------------------------------------------------------
+# LLM BACKEND — local llama.cpp with Gemma 4 E2B-it GGUF
+# ---------------------------------------------------------------------------
+settings:
+  llm:
+    backend: local
+    # Download the GGUF once:
+    #   mkdir -p ~/.cache/tea/models
+    #   huggingface-cli download bartowski/google_gemma-4-E2B-it-GGUF \
+    #     google_gemma-4-E2B-it-Q4_K_M.gguf --local-dir ~/.cache/tea/models
+    model_path: "~/.cache/tea/models/google_gemma-4-E2B-it-Q4_K_M.gguf"
+    n_ctx: 8192
+    n_gpu_layers: -1     # -1 = offload all layers to GPU; 0 for CPU-only
+
+# ---------------------------------------------------------------------------
+# STATE — flat fields keep the Prolog node easy to read.
+# Monetary quantities are stored in cents (integers) so CLP(FD) can reason
+# over them without fractional arithmetic.
+# ---------------------------------------------------------------------------
+state_schema:
+  # --- Session identity ---
+  scenario_id: str
+  scenarios_file: str
+  session_id: str
+  audit_dir: str
+
+  # --- Loaded scenario (display side) ---
+  scenario_name: str
+  product_name: str
+  quantity: int
+  persona_role: str
+  persona_tone: str
+  persona_stance: str
+
+  # --- Loaded scenario (constraints — Prolog reads these) ---
+  unit_cost_cents: int
+  list_price_cents: int
+  min_margin_pct: int
+  max_discount_pct: int
+  shipping_cost_pct: int
+  interest_by_term: list   # list of [days, rate] pairs, e.g. [[30,0.0],[60,0.02]]
+  batna_cents: int
+
+  # --- Conversation ---
+  turn_num: int
+  chat_history: list
+  user_message: str
+
+  # --- Story 3: neural extraction output ---
+  extraction_raw: dict
+  offer_unit_cents: int
+  offer_term_days: int
+  offer_demands: list
+  offer_intent: str        # "proposal" | "counter" | "walk_away_threat" | "bluff" | "accept"
+
+  # --- Story 4: symbolic decision output ---
+  decision_action: str     # "accept" | "reject" | "counter"
+  decision_target_cents: int
+  decision_floor_cents: int
+  decision_ceiling_cents: int
+  decision_buyer_effective_cents: int
+  decision_reason: str
+
+  # --- Story 5: neural generation output ---
+  agent_response: str
+
+  # --- Control & outcome ---
+  negotiation_complete: bool
+  final_outcome: str       # "won" | "lost_to_floor" | "walked_away" | "impasse"
+  final_deal_cents: int
+  turn_status: str         # "awaiting_user" | "complete"
+
+# ---------------------------------------------------------------------------
+# NODES
+# ---------------------------------------------------------------------------
+nodes:
+
+  # =========================================================================
+  # PHASE 0 — Session bootstrap.  On first invocation (no user_message) we
+  # load the scenario, emit the seller's opening line, and hand control back
+  # to the user.  On every subsequent invocation we jump straight to
+  # extraction.
+  # =========================================================================
+
+  - name: entry_router
+    run: |
+      # First turn iff there's no user_message AND no constraints loaded yet.
+      bootstrap = not bool(state.get("user_message")) and not state.get("unit_cost_cents")
+      return {
+        "route_to_bootstrap": bootstrap,
+        "route_to_turn": not bootstrap,
+      }
+
+  - name: load_scenario
+    run: |
+      import os, yaml, uuid
+      from datetime import datetime, timezone
+
+      # Find scenarios.yaml.  Search order:
+      #   1. state.scenarios_file (explicit override)
+      #   2. ./scenarios.yaml (CWD)
+      #   3. examples/negotiation_simulator/scenarios.yaml (repo default)
+      #   4. env var TEA_NEGOTIATION_SCENARIOS
+      candidates = [
+        state.get("scenarios_file"),
+        "./scenarios.yaml",
+        "examples/negotiation_simulator/scenarios.yaml",
+        os.environ.get("TEA_NEGOTIATION_SCENARIOS"),
+      ]
+      scenarios_path = next((p for p in candidates if p and os.path.exists(p)), None)
+      if scenarios_path is None:
+        raise FileNotFoundError(
+          "scenarios.yaml not found. Tried: " + ", ".join(p for p in candidates if p)
+        )
+
+      with open(scenarios_path, "r", encoding="utf-8") as f:
+        pool = yaml.safe_load(f)
+
+      wanted_id = state.get("scenario_id") or pool.get("default_scenario")
+      chosen = next((s for s in pool["scenarios"] if s["id"] == wanted_id), None)
+      if chosen is None:
+        raise ValueError(f"Scenario '{wanted_id}' not found in {scenarios_path}")
+
+      # Convert money to cents, interest map to list of pairs
+      interest_pairs = [[int(k), float(v)] for k, v in (chosen.get("interest_by_term") or {}).items()]
+
+      session_id = state.get("session_id") or f"sess_{uuid.uuid4().hex[:8]}"
+      audit_dir = state.get("audit_dir") or os.path.join(os.path.dirname(scenarios_path), "audit")
+      os.makedirs(audit_dir, exist_ok=True)
+
+      persona = chosen.get("persona") or {}
+
+      return {
+        "scenario_id": chosen["id"],
+        "scenarios_file": scenarios_path,
+        "session_id": session_id,
+        "audit_dir": audit_dir,
+
+        "scenario_name": chosen["name"],
+        "product_name": chosen["product"],
+        "quantity": int(chosen["quantity"]),
+        "persona_role": persona.get("buyer_role", ""),
+        "persona_tone": persona.get("tone", ""),
+        "persona_stance": persona.get("initial_stance", ""),
+
+        "unit_cost_cents":   int(round(float(chosen["unit_cost"])   * 100)),
+        "list_price_cents":  int(round(float(chosen["list_price"])  * 100)),
+        "min_margin_pct":    int(chosen["min_margin_pct"]),
+        "max_discount_pct":  int(chosen["max_discount_pct"]),
+        "shipping_cost_pct": int(chosen.get("shipping_cost_pct", 0)),
+        "interest_by_term":  interest_pairs,
+        "batna_cents":       int(round(float(chosen["batna_unit"])  * 100)),
+
+        "turn_num": 0,
+        "chat_history": [],
+        "negotiation_complete": False,
+        "final_outcome": "",
+        "final_deal_cents": 0,
+      }
+
+  - name: emit_opener
+    run: |
+      # Deterministic opening line (no LLM needed) — keeps turn 0 cheap
+      # and makes the "script" of the first contact reproducible.
+      opener = (
+        f"Hi! TechCorp sales here. This is the quote for "
+        f"{state['quantity']} units of {state['product_name']}. "
+        f"List price is ${state['list_price_cents']/100:,.2f} per unit. "
+        f"How would you like to structure the deal?"
+      )
+      history = list(state.get("chat_history", []))
+      history.append({"role": "agent", "content": opener})
+      return {
+        "agent_response": opener,
+        "chat_history": history,
+        "turn_status": "awaiting_user",
+        "negotiation_complete": False,
+      }
+
+  # =========================================================================
+  # PHASE 1 — STORY 3: Neural extraction.
+  # The LLM is constrained (via prompt + JSON schema) to cough up only the
+  # four fields the solver needs: unit_cents, term_days, demands, intent.
+  # =========================================================================
+
+  - name: extract_offer
+    uses: llm.chat
+    with:
+      max_tokens: 160
+      temperature: 0.05
+      messages:
+        - role: user
+          content: |
+            <persona>You are a B2B offer EXTRACTOR. Your only job is to convert buyer messages into structured JSON. You never argue, never reply, never chat.</persona>
+
+            <main_objective>Receive ONE buyer message and produce ONE JSON object with exactly 4 fields: unit_price_usd, term_days, demands, intent. Nothing else.</main_objective>
+
+            <schema_strict>
+            {
+              "unit_price_usd": <integer>,
+              "term_days": <30 | 60 | 90 | 365>,
+              "demands": [<strings>],
+              "intent": "proposal" | "counter" | "walk_away_threat" | "bluff" | "accept"
+            }
+            </schema_strict>
+
+            <constraints>
+            - FORBIDDEN to create fields beyond the 4 listed in schema_strict.
+            - FORBIDDEN to write text outside the JSON. No "Here it is", no markdown, no comments.
+            - FORBIDDEN to invent numbers that are not literally in the message.
+            - FORBIDDEN to use strings as the value of unit_price_usd — it is ALWAYS an integer.
+            - If the price was not stated: unit_price_usd = 0.
+            - If the term was not stated: term_days = 30.
+            - If no demand was stated: demands = [].
+            - demands only accepts strings from the closed set: ["free_shipping", "warranty", "priority_delivery"].
+            </constraints>
+
+            <conditional_logic>
+            - IF the buyer says "free shipping"/"no shipping fee"/"shipping included" → include "free_shipping" in demands.
+            - IF the buyer says "cash"/"upfront"/"net 30" → term_days = 30.
+            - IF the buyer threatens to leave / go to a competitor → intent = "walk_away_threat".
+            - IF the buyer said "deal"/"accepted"/"done" WITHOUT a new condition → intent = "accept".
+            - IF the buyer counters a previous value of ours → intent = "counter".
+            - Otherwise → intent = "proposal".
+            </conditional_logic>
+
+            <positive_example>
+            Message: "I'll pay 2000 per unit, net 60, with free shipping"
+            Response: {"unit_price_usd": 2000, "term_days": 60, "demands": ["free_shipping"], "intent": "proposal"}
+            </positive_example>
+
+            <positive_example>
+            Message: "1800 or I go to your competitor"
+            Response: {"unit_price_usd": 1800, "term_days": 30, "demands": [], "intent": "walk_away_threat"}
+            </positive_example>
+
+            <positive_example>
+            Message: "Deal at 2500"
+            Response: {"unit_price_usd": 2500, "term_days": 30, "demands": [], "intent": "accept"}
+            </positive_example>
+
+            <negative_example>
+            Message: "I offer $3500"
+            Wrong response: {"scenario": "...", "price_table": "...", "history": [...]}
+            Reason: invented fields, schema violated.
+            </negative_example>
+
+            <negative_example>
+            Message: "I pay 3000"
+            Wrong response: {"unit_price_usd": "three thousand", ...}
+            Reason: unit_price_usd is an integer, never a string.
+            </negative_example>
+
+            <final_reinforcement>
+            Remember: you are ONLY an EXTRACTOR. Emit ONLY the JSON with the 4 listed fields. Nothing before, nothing after.
+            </final_reinforcement>
+
+            <target_message>{{ state.user_message }}</target_message>
+
+            Response (JSON only):
+    output: extraction_raw
+
+  - name: parse_extraction
+    run: |
+      import json, re
+
+      raw = state.get("extraction_raw") or {}
+      content = raw.get("content", "{}") if isinstance(raw, dict) else str(raw)
+
+      # Strip markdown fences and Gemma's <end_of_turn> markers, then extract the
+      # first balanced JSON object.  Robust against trailing model tokens.
+      if isinstance(content, str):
+        content = re.sub(r"<(?:/?\s*(?:end_of_turn|start_of_turn|bos|eos))\s*>", "", content).strip()
+        content = re.sub(r"```(?:json)?\s*", "", content)
+        content = content.replace("```", "").strip()
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        content = m.group(0) if m else content
+
+      try:
+        data = json.loads(content) if isinstance(content, str) else content
+      except Exception:
+        # Degrade gracefully — solver will see offer_unit_cents=0 and reject
+        data = {}
+
+      unit_usd = float(data.get("unit_price_usd") or 0)
+      return {
+        "offer_unit_cents": int(round(unit_usd * 100)),
+        "offer_term_days":  int(data.get("term_days") or 30),
+        "offer_demands":    list(data.get("demands") or []),
+        "offer_intent":     str(data.get("intent") or "proposal"),
+      }
+
+  # =========================================================================
+  # PHASE 2 — STORY 4: Symbolic decision.
+  # Pure Prolog CLP(FD). Reads the flat state fields, never calls the LLM,
+  # and writes the decision back as flat fields. If this node does not
+  # succeed, the whole turn fails loudly — that is the point.
+  # =========================================================================
+
+  - name: decide
+    language: prolog
+    run: |
+      :- use_module(library(clpfd)).
+      :- use_module(library(lists)).
+
+      % --- Helpers -----------------------------------------------------
+
+      % Effective offer after subtracting the cost of buyer demands.
+      effective_offer(OfferC, _SPct, [], OfferC) :- !.
+      effective_offer(OfferC, SPct, Demands, Eff) :-
+          ( member(free_shipping, Demands) ->
+              ShipCost is (OfferC * SPct) // 100,
+              Eff is OfferC - ShipCost
+          ; Eff = OfferC
+          ).
+
+      % Present-value: discount the offer by the term-interest rate.
+      % InterestMap arrives from Python as [[Days, Rate], [Days, Rate], ...]
+      lookup_rate(_, [], 0.0).
+      lookup_rate(Days, [[D, R] | _], R) :- Days =:= D, !.
+      lookup_rate(Days, [_ | T], R) :- lookup_rate(Days, T, R).
+
+      present_value(EffC, Days, Map, PV) :-
+          lookup_rate(Days, Map, Rate),
+          Penalty is round(EffC * Rate),
+          PV is EffC - Penalty.
+
+      % Bounds.
+      floor_cents(CostC, MinPct, BatnaC, Floor) :-
+          M is CostC * (100 + MinPct) // 100,
+          Floor is max(M, BatnaC).
+
+      ceiling_cents(ListC, MaxPct, Ceil) :-
+          Ceil is ListC * (100 - MaxPct) // 100.
+
+      % Counter-target using CLP(FD): whole-dollar number in [Floor, Ceiling]
+      % minimising distance to the midpoint of (Effective, Ceiling).
+      counter_target(Eff, Floor, Ceil, Target) :-
+          Eff < Ceil,
+          LB is max(Floor, Eff + 1),
+          LB =< Ceil,
+          Mid is (Eff + Ceil) // 2,
+          V in LB..Ceil,
+          V mod 100 #= 0,
+          Delta #= abs(V - Mid),
+          labeling([min(Delta)], [V]),
+          !,
+          Target = V.
+      counter_target(_, Floor, _, Floor).
+
+      % --- Main goal ---------------------------------------------------
+
+      state(offer_unit_cents,   OfferC),
+      state(offer_term_days,    Days),
+      state(offer_demands,      Demands),
+      state(unit_cost_cents,    CostC),
+      state(list_price_cents,   ListC),
+      state(min_margin_pct,     MinPct),
+      state(max_discount_pct,   MaxPct),
+      state(shipping_cost_pct,  SPct),
+      state(interest_by_term,   Map),
+      state(batna_cents,        BatnaC),
+
+      effective_offer(OfferC, SPct, Demands, AfterShip),
+      present_value(AfterShip, Days, Map, Eff),
+      floor_cents(CostC, MinPct, BatnaC, Floor),
+      ceiling_cents(ListC, MaxPct, Ceil),
+
+      ( Eff >= Floor ->
+          Action = accept,
+          Target = Eff,
+          Reason = 'offer at or above floor'
+      ; Eff < CostC ->
+          Action = reject,
+          Target = 0,
+          Reason = 'below break-even'
+      ;   counter_target(Eff, Floor, Ceil, Target),
+          Action = counter,
+          Reason = 'between break-even and floor: counter proposed'
+      ),
+
+      return(decision_action,                Action),
+      return(decision_target_cents,          Target),
+      return(decision_floor_cents,           Floor),
+      return(decision_ceiling_cents,         Ceil),
+      return(decision_buyer_effective_cents, Eff),
+      return(decision_reason,                Reason).
+
+  # =========================================================================
+  # PHASE 3 — STORY 5: Neural generation.
+  # The LLM receives the solver's decision as STRICT INPUT and writes the
+  # Portuguese response.  It is explicitly forbidden from changing numbers.
+  # =========================================================================
+
+  # Defense in depth: XML-structured constraint-heavy prompt keeps the LLM
+  # away from digits, and compose_response below injects the solver's exact
+  # numbers deterministically.  Quantized 2B models cannot be trusted to
+  # preserve exact digit strings ("3900" → "quatro mil"), so we architect
+  # the pipeline so they never write numbers in the first place.
+  - name: generate_response
+    uses: llm.chat
+    with:
+      max_tokens: 80
+      temperature: 0.6
+      messages:
+        - role: user
+          content: |
+            <persona>You are a senior B2B sales representative writing ONE short English sentence. Cordial, firm, concise.</persona>
+
+            <constraints>
+            - FORBIDDEN to write any digit (0-9).
+            - FORBIDDEN to write "$", "USD", "dollars", "dollar".
+            - FORBIDDEN to propose, cite, or suggest any numeric value.
+            - FORBIDDEN to write more than one sentence.
+            - FORBIDDEN to use labels, markdown, JSON, or meta-commentary about this task.
+            - The sentence must be between 8 and 20 words.
+            </constraints>
+
+            {% if state.decision_action == "accept" %}
+            <task>Write ONE warm sentence thanking the buyer for closing the deal. No numbers, no values.</task>
+
+            <positive_example>Wonderful, I am very pleased with the close and truly appreciate your trust in our team.</positive_example>
+            <positive_example>Excellent, looking forward to onboarding your team and making this rollout a success.</positive_example>
+
+            <negative_example>Closed at $1080 per unit.
+            Reason: contains a digit and a currency — forbidden.</negative_example>
+            {% elif state.decision_action == "reject" %}
+            <task>Write ONE polite sentence inviting the buyer to reconsider. No numbers, no values, no mention of cost, no meta-commentary about decisions.</task>
+
+            <positive_example>Unfortunately the current terms make the deal unworkable, but I would be glad to revisit with a fresh proposal.</positive_example>
+            <positive_example>I appreciate the offer, though we are not able to move forward under these conditions; happy to take another look if you can adjust.</positive_example>
+
+            <negative_example>Given the decision action is reject, I must use the polite sentence inviting reconsideration.
+            Reason: meta-commentary about the task — forbidden.</negative_example>
+            {% else %}
+            <task>Write ONE contextual sentence justifying a price adjustment by pointing to volume, delivery window, or logistics. No numbers, no values.</task>
+
+            <positive_example>Given the substantial volume and the delivery window, we need to recalibrate the proposed terms.</positive_example>
+            <positive_example>With the order size and freight commitments, we will need to tighten the pricing to keep the timeline safe.</positive_example>
+
+            <negative_example>My counter is $1050 per unit.
+            Reason: contains a digit and currency — forbidden.</negative_example>
+            {% endif %}
+
+            Buyer said: "{{ state.user_message }}"
+
+            Your sentence:
+    output: generation_raw
+
+  # Deterministic composition: the LLM output is a "flavor sentence" with
+  # no numbers; Python injects the solver's exact integers around it.
+  # This enforces the article's core claim: the LLM never writes a number.
+  # A guardrail regex strips any digits the LLM leaked past the prompt.
+  - name: parse_generation
+    run: |
+      import re
+
+      raw = state.get("generation_raw") or {}
+      if isinstance(raw, dict):
+        flavor = raw.get("content", "") or ""
+      else:
+        flavor = str(raw)
+      # Strip Gemma chat-template markers, fences, trailing whitespace
+      flavor = re.sub(r"<(?:/?\s*(?:end_of_turn|start_of_turn|bos|eos))\s*>", "", flavor)
+      flavor = re.sub(r"```[^\n]*\n?", "", flavor)
+      flavor = flavor.replace("```", "").strip()
+      # GUARDRAIL: the LLM was instructed to never emit digits or currency.
+      # If it leaked any, drop the sentence that contains them.
+      clean_sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", flavor)
+        if s.strip() and not re.search(r"\d|\$|USD|dollars?", s, re.IGNORECASE)
+      ]
+      flavor_clean = " ".join(clean_sentences[:1]) if clean_sentences else ""
+
+      # Compose deterministic response around the solver's numbers (USD)
+      action = state.get("decision_action")
+      if action == "accept":
+        price = (state.get("decision_buyer_effective_cents") or 0) / 100
+        core = f"Closed at ${price:,.2f} per unit. {flavor_clean}".strip()
+      elif action == "reject":
+        # Never reveal a number on rejection
+        core = flavor_clean or "The current terms do not make the deal workable; happy to take another look at a revised proposal."
+      else:  # counter
+        target = (state.get("decision_target_cents") or 0) / 100
+        term = state.get("offer_term_days") or 30
+        core = f"{flavor_clean} My counter is ${target:,.2f} per unit, net {term}.".strip()
+
+      history = list(state.get("chat_history", []))
+      history.append({"role": "buyer", "content": state.get("user_message", "")})
+      history.append({"role": "agent", "content": core})
+
+      return {
+        "agent_response": core,
+        "chat_history": history,
+        "turn_num": int(state.get("turn_num") or 0) + 1,
+      }
+
+  # =========================================================================
+  # PHASE 4 — Audit (Guardrail from the Epic).
+  # Append a three-record block per turn to ./audit/<session>.jsonl:
+  #   1. neural_in    — what the buyer said + what the LLM extracted
+  #   2. symbolic     — what the solver decided and why
+  #   3. neural_out   — what the seller replied
+  # =========================================================================
+
+  - name: log_audit
+    run: |
+      import json, os
+      from datetime import datetime, timezone
+
+      session_id = state.get("session_id", "unknown")
+      path = os.path.join(state.get("audit_dir", "./audit"), f"{session_id}.jsonl")
+      ts = datetime.now(timezone.utc).isoformat()
+      turn = int(state.get("turn_num") or 0)
+
+      records = [
+        {
+          "ts": ts, "session": session_id, "turn": turn, "step": "neural_in",
+          "user_message": state.get("user_message", ""),
+          "extracted": {
+            "offer_unit_cents": state.get("offer_unit_cents"),
+            "offer_term_days":  state.get("offer_term_days"),
+            "offer_demands":    state.get("offer_demands"),
+            "offer_intent":     state.get("offer_intent"),
+          },
+        },
+        {
+          "ts": ts, "session": session_id, "turn": turn, "step": "symbolic",
+          "decision": {
+            "action":                    state.get("decision_action"),
+            "target_cents":              state.get("decision_target_cents"),
+            "floor_cents":               state.get("decision_floor_cents"),
+            "ceiling_cents":             state.get("decision_ceiling_cents"),
+            "buyer_effective_cents":     state.get("decision_buyer_effective_cents"),
+            "reason":                    state.get("decision_reason"),
+          },
+        },
+        {
+          "ts": ts, "session": session_id, "turn": turn, "step": "neural_out",
+          "agent_response": state.get("agent_response", ""),
+        },
+      ]
+
+      with open(path, "a", encoding="utf-8") as f:
+        for r in records:
+          f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+      return {"audit_path": path}
+
+  # =========================================================================
+  # PHASE 5 — Termination & outcome.
+  # =========================================================================
+
+  - name: check_complete
+    run: |
+      action = state.get("decision_action")
+      intent = state.get("offer_intent")
+      turn = int(state.get("turn_num") or 0)
+
+      complete = False
+      outcome = ""
+      final_cents = 0
+
+      if action == "accept":
+        complete = True
+        outcome = "won"   # solver accepted at or above floor → by construction a win
+        final_cents = int(state.get("decision_buyer_effective_cents") or 0)
+      elif intent == "walk_away_threat" and action == "reject":
+        complete = True
+        outcome = "walked_away"
+      elif turn >= 10:
+        complete = True
+        outcome = "impasse"
+
+      return {
+        "negotiation_complete": complete,
+        "final_outcome": outcome,
+        "final_deal_cents": final_cents,
+      }
+
+  - name: finalize
+    run: |
+      import json, os
+      from datetime import datetime, timezone
+
+      session_id = state.get("session_id", "unknown")
+      path = os.path.join(state.get("audit_dir", "./audit"), f"{session_id}.jsonl")
+
+      floor = int(state.get("decision_floor_cents") or 0)
+      final = int(state.get("final_deal_cents") or 0)
+      outcome = state.get("final_outcome") or "impasse"
+
+      # A successful negotiation for the seller means: a deal was closed AND
+      # the closing price respected the floor.  The floor was computed by the
+      # solver from margin + BATNA, so the agent CANNOT have lost on the math.
+      success = (outcome == "won") and (final >= floor)
+
+      summary = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "session": session_id,
+        "step": "finalize",
+        "scenario_id": state.get("scenario_id"),
+        "turns": int(state.get("turn_num") or 0),
+        "outcome": outcome,
+        "success_for_seller": success,
+        "final_deal_cents": final,
+        "floor_cents": floor,
+        "margin_over_floor_cents": max(0, final - floor),
+      }
+      with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(summary, ensure_ascii=False) + "\n")
+
+      print(f"[INFO] Negotiation {session_id} → {outcome} "
+            f"(success={success}, final=${final/100:,.2f}, floor=${floor/100:,.2f})")
+
+      return {"audit_summary": summary}
+
+  # =========================================================================
+  # FILTERS — shape the response the CLI shows at each pause.
+  # =========================================================================
+
+  - name: filter_turn_response
+    run: |
+      return {
+        "turn_status": "awaiting_user",
+        "agent_response": state.get("agent_response", ""),
+        "turn_num": state.get("turn_num"),
+        "decision_action": state.get("decision_action"),
+        "decision_target_cents": state.get("decision_target_cents"),
+        # Reset user_message so the next turn requires a new input
+        "user_message": "",
+      }
+
+  - name: filter_final_response
+    run: |
+      return {
+        "turn_status": "complete",
+        "final_outcome": state.get("final_outcome"),
+        "final_deal_cents": state.get("final_deal_cents"),
+        "turns": state.get("turn_num"),
+        "agent_response": state.get("agent_response", ""),
+      }
+
+# ---------------------------------------------------------------------------
+# EDGES
+# ---------------------------------------------------------------------------
+edges:
+  - from: __start__
+    to: entry_router
+
+  # Bootstrap path: load scenario, greet, wait for user
+  - from: entry_router
+    to: load_scenario
+    when: "state.get('route_to_bootstrap')"
+
+  - from: load_scenario
+    to: emit_opener
+
+  - from: emit_opener
+    to: filter_turn_response
+
+  # Turn path: extract → decide → generate → log → check → branch
+  - from: entry_router
+    to: extract_offer
+    when: "state.get('route_to_turn')"
+
+  - from: extract_offer
+    to: parse_extraction
+
+  - from: parse_extraction
+    to: decide
+
+  - from: decide
+    to: generate_response
+
+  - from: generate_response
+    to: parse_generation
+
+  - from: parse_generation
+    to: log_audit
+
+  - from: log_audit
+    to: check_complete
+
+  - from: check_complete
+    to: finalize
+    when: "state.get('negotiation_complete', False) == True"
+
+  - from: check_complete
+    to: filter_turn_response
+    when: "state.get('negotiation_complete', False) == False"
+
+  - from: finalize
+    to: filter_final_response
+
+  # Both filters terminate the run; the interactive CLI re-invokes at __start__
+  - from: filter_turn_response
+    to: __end__
+
+  - from: filter_final_response
+    to: __end__
+
+# ---------------------------------------------------------------------------
+# CONFIG — pause between turns so a human can reply.
+# ---------------------------------------------------------------------------
+config:
+  raise_exceptions: true
+  max_execution_time: 120000
+  interrupt_after:
+    - filter_turn_response
