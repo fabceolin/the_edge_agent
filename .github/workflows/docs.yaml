@@ -5,9 +5,9 @@ on:
     branches:
       - main
     paths:
-      - 'docs/**'
-      - 'rust/tea-wasm-llm/**'
-      - '.github/workflows/docs.yaml'
+      - "docs/**"
+      - "rust/tea-wasm-llm/**"
+      - ".github/workflows/docs.yaml"
   workflow_dispatch:
 
 permissions:
@@ -28,12 +28,12 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,3 +74,11 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # GH Pages has been parking deployments in "deployment_in_progress"
+          # for longer than the action's default 10-minute poll window, which
+          # makes the step cancel a deploy that would otherwise complete.
+          # Raise the poll window (seconds) so slow deploys are waited out.
+          timeout: 1200000
+          error_count: 10
+          reporting_interval: 10000
