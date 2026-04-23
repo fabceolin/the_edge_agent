@@ -89,6 +89,7 @@ state_schema:
   decision_ceiling_cents: int
   decision_buyer_effective_cents: int
   decision_reason: str
+  decision_chain: list     # ordered derivation trace from Prolog (§ 6.3)
 
   # --- Story 5: neural generation output ---
   agent_response: str
@@ -332,16 +333,35 @@ nodes:
       :- use_module(library(clpfd)).
       :- use_module(library(lists)).
 
+      % Derivation trace — every helper asserts one step; the main goal
+      % collects them into the returned `decision_chain`.
+      :- dynamic trace_step/4.
+
+      add_step(Rule, Inputs, Output, Justification) :-
+          assertz(trace_step(Rule, Inputs, Output, Justification)).
+
       % --- Helpers -----------------------------------------------------
 
       % Effective offer after subtracting the cost of buyer demands.
-      effective_offer(OfferC, _SPct, [], OfferC) :- !.
+      effective_offer(OfferC, _SPct, [], OfferC) :-
+          !,
+          add_step(effective_offer,
+                   _{offer_cents: OfferC, demands: []},
+                   _{after_shipping_cents: OfferC},
+                   'no shipping demand, face value unchanged').
       effective_offer(OfferC, SPct, Demands, Eff) :-
           ( member(free_shipping, Demands) ->
               ShipCost is (OfferC * SPct) // 100,
-              Eff is OfferC - ShipCost
-          ; Eff = OfferC
-          ).
+              Eff is OfferC - ShipCost,
+              format(atom(J), "free_shipping demand: subtract ~w% (~w cents) from ~w",
+                     [SPct, ShipCost, OfferC])
+          ;   Eff = OfferC,
+              J = 'no free_shipping demand, face value unchanged'
+          ),
+          add_step(effective_offer,
+                   _{offer_cents: OfferC, shipping_pct: SPct, demands: Demands},
+                   _{after_shipping_cents: Eff},
+                   J).
 
       % Present-value: discount the offer by the term-interest rate.
       % InterestMap arrives from Python as [[Days, Rate], [Days, Rate], ...]
@@ -352,15 +372,41 @@ nodes:
       present_value(EffC, Days, Map, PV) :-
           lookup_rate(Days, Map, Rate),
           Penalty is round(EffC * Rate),
-          PV is EffC - Penalty.
+          PV is EffC - Penalty,
+          format(atom(J), "term=~wd rate=~w: discount present-value by ~w cents",
+                 [Days, Rate, Penalty]),
+          add_step(present_value,
+                   _{after_shipping_cents: EffC, term_days: Days, rate: Rate},
+                   _{present_value_cents: PV, penalty_cents: Penalty},
+                   J).
 
-      % Bounds.
+      % Floor: tighter of min-margin and BATNA.
       floor_cents(CostC, MinPct, BatnaC, Floor) :-
-          M is CostC * (100 + MinPct) // 100,
-          Floor is max(M, BatnaC).
+          MarginFloor is CostC * (100 + MinPct) // 100,
+          Floor is max(MarginFloor, BatnaC),
+          ( MarginFloor >= BatnaC ->
+              format(atom(J),
+                "margin_floor binds: unit_cost*(100+~w)/100 = ~w  >=  BATNA ~w",
+                [MinPct, MarginFloor, BatnaC])
+          ;   format(atom(J),
+                "BATNA binds: ~w  >  margin_floor (unit_cost*(100+~w)/100 = ~w)",
+                [BatnaC, MinPct, MarginFloor])
+          ),
+          add_step(floor_cents,
+                   _{unit_cost_cents: CostC, min_margin_pct: MinPct,
+                     batna_cents: BatnaC, margin_floor_cents: MarginFloor},
+                   _{floor_cents: Floor},
+                   J).
 
+      % Ceiling: list price after max-discount policy.
       ceiling_cents(ListC, MaxPct, Ceil) :-
-          Ceil is ListC * (100 - MaxPct) // 100.
+          Ceil is ListC * (100 - MaxPct) // 100,
+          format(atom(J), "max-discount policy: (100 - ~w)% of ~w = ~w",
+                 [MaxPct, ListC, Ceil]),
+          add_step(ceiling_cents,
+                   _{list_price_cents: ListC, max_discount_pct: MaxPct},
+                   _{ceiling_cents: Ceil},
+                   J).
 
       % Counter-target using CLP(FD): whole-dollar number in [Floor, Ceiling]
       % minimising distance to the midpoint of (Effective, Ceiling).
@@ -368,16 +414,34 @@ nodes:
           Eff < Ceil,
           LB is max(Floor, Eff + 1),
           LB =< Ceil,
+          !,
           Mid is (Eff + Ceil) // 2,
           V in LB..Ceil,
           V mod 100 #= 0,
           Delta #= abs(V - Mid),
           labeling([min(Delta)], [V]),
           !,
-          Target = V.
-      counter_target(_, Floor, _, Floor).
+          Target = V,
+          format(atom(J),
+            "CLP(FD) labeling: V in [~w, ~w], V mod 100 = 0, min |V - mid(~w)| → V=~w",
+            [LB, Ceil, Mid, V]),
+          add_step(counter_target,
+                   _{effective_cents: Eff, floor_cents: Floor, ceiling_cents: Ceil,
+                     midpoint_cents: Mid, search_lower: LB},
+                   _{target_cents: V, search_result: feasible},
+                   J).
+      counter_target(_, Floor, Ceil, Floor) :-
+          format(atom(J),
+            "feasible region empty (floor ~w > ceiling ~w) → fallback: hold at floor",
+            [Floor, Ceil]),
+          add_step(counter_target,
+                   _{floor_cents: Floor, ceiling_cents: Ceil},
+                   _{target_cents: Floor, search_result: fallback_floor},
+                   J).
 
       % --- Main goal ---------------------------------------------------
+
+      retractall(trace_step(_, _, _, _)),
 
       state(offer_unit_cents,   OfferC),
       state(offer_term_days,    Days),
@@ -396,16 +460,31 @@ nodes:
       ceiling_cents(ListC, MaxPct, Ceil),
 
       ( Eff >= Floor ->
-          Action = accept,
-          Target = Eff,
-          Reason = 'offer at or above floor'
+          Action = accept, Target = Eff,
+          Reason = 'offer at or above floor',
+          format(atom(CJ), "effective ~w  >=  floor ~w → ACCEPT", [Eff, Floor])
       ; Eff < CostC ->
-          Action = reject,
-          Target = 0,
-          Reason = 'below break-even'
+          Action = reject, Target = 0,
+          Reason = 'below break-even',
+          format(atom(CJ), "effective ~w  <  unit_cost ~w → REJECT", [Eff, CostC])
       ;   counter_target(Eff, Floor, Ceil, Target),
           Action = counter,
-          Reason = 'between break-even and floor: counter proposed'
+          Reason = 'between break-even and floor: counter proposed',
+          format(atom(CJ),
+            "unit_cost ~w  <=  effective ~w  <  floor ~w → COUNTER at ~w",
+            [CostC, Eff, Floor, Target])
+      ),
+      add_step(classify,
+               _{effective_cents: Eff, floor_cents: Floor,
+                 ceiling_cents: Ceil, unit_cost_cents: CostC},
+               _{action: Action, target_cents: Target},
+               CJ),
+
+      % Collect the ordered trace as a plain list of dicts.
+      findall(
+        _{rule: R, inputs: I, output: O, justification: J},
+        trace_step(R, I, O, J),
+        Chain
       ),
 
       return(decision_action,                Action),
@@ -413,7 +492,8 @@ nodes:
       return(decision_floor_cents,           Floor),
       return(decision_ceiling_cents,         Ceil),
       return(decision_buyer_effective_cents, Eff),
-      return(decision_reason,                Reason).
+      return(decision_reason,                Reason),
+      return(decision_chain,                 Chain).
 
   # =========================================================================
   # PHASE 3 — STORY 5: Neural generation.
@@ -563,6 +643,7 @@ nodes:
             "buyer_effective_cents":     state.get("decision_buyer_effective_cents"),
             "reason":                    state.get("decision_reason"),
           },
+          "chain": state.get("decision_chain") or [],
         },
         {
           "ts": ts, "session": session_id, "turn": turn, "step": "neural_out",

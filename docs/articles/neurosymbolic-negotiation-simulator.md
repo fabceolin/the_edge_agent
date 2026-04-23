@@ -322,6 +322,102 @@ The Prolog node was smoke-tested against five canonical situations:
 
 Case 3 is the interesting one.  The B2B laptops scenario has `BATNA = $1,050` but `list × (1 − max_discount) = $900`.  That means the floor is *above* the authorised-discount ceiling — a perfectly realistic business configuration where the discount policy alone cannot reach the BATNA.  The solver does not crash; it falls back to `Floor` as a take-it-or-leave-it counter.  The LLM then frames this as *"my floor is \$1,050, terms to be agreed"* — the number is the solver's, the framing is the LLM's.
 
+### 6.3 The explanation chain
+
+The numbers in the decision record (`floor_cents: 105000`, `target_cents: 105000`, …) answer *what* the solver decided.  Prolog was chosen precisely so that we can also answer *why*, step by step — and ship that answer with every turn.
+
+Each helper predicate (`effective_offer`, `present_value`, `floor_cents`, `ceiling_cents`, `counter_target`, plus the final `classify` branch) `assertz`'s a `trace_step/4` fact as it runs.  A `findall/3` at the end of the goal collects the facts into an ordered list of Prolog dicts; janus converts them to Python dicts; `log_audit` writes the list into the `chain` field of the `symbolic` JSONL record.  Zero extra nodes, zero Python parsing: it is the solver explaining itself.
+
+Here is the full `symbolic` audit record for **Turn A** of § 9.1 — unedited, pretty-printed:
+
+```jsonc
+{
+  "step": "symbolic",
+  "turn": 1,
+  "decision": {
+    "action": "counter",
+    "target_cents":          105000,
+    "floor_cents":           105000,
+    "ceiling_cents":          90000,
+    "buyer_effective_cents":  92150,
+    "reason": "between break-even and floor: counter proposed"
+  },
+  "chain": [
+    { "rule": "effective_offer",
+      "inputs":  { "offer_cents": 95000, "shipping_pct": 3,
+                   "demands": ["free_shipping"] },
+      "output":  { "after_shipping_cents": 92150 },
+      "justification": "free_shipping demand: subtract 3% (2850 cents) from 95000" },
+
+    { "rule": "present_value",
+      "inputs":  { "after_shipping_cents": 92150, "term_days": 30, "rate": 0 },
+      "output":  { "present_value_cents": 92150, "penalty_cents": 0 },
+      "justification": "term=30d rate=0.0: discount present-value by 0 cents" },
+
+    { "rule": "floor_cents",
+      "inputs":  { "unit_cost_cents": 80000, "min_margin_pct": 15,
+                   "batna_cents": 105000, "margin_floor_cents": 92000 },
+      "output":  { "floor_cents": 105000 },
+      "justification": "BATNA binds: 105000 > margin_floor (unit_cost*(100+15)/100 = 92000)" },
+
+    { "rule": "ceiling_cents",
+      "inputs":  { "list_price_cents": 120000, "max_discount_pct": 25 },
+      "output":  { "ceiling_cents": 90000 },
+      "justification": "max-discount policy: (100 - 25)% of 120000 = 90000" },
+
+    { "rule": "counter_target",
+      "inputs":  { "floor_cents": 105000, "ceiling_cents": 90000 },
+      "output":  { "target_cents": 105000, "search_result": "fallback_floor" },
+      "justification": "feasible region empty (floor 105000 > ceiling 90000) → fallback: hold at floor" },
+
+    { "rule": "classify",
+      "inputs":  { "effective_cents": 92150, "floor_cents": 105000,
+                   "ceiling_cents": 90000, "unit_cost_cents": 80000 },
+      "output":  { "action": "counter", "target_cents": 105000 },
+      "justification": "unit_cost 80000 <= effective 92150 < floor 105000 → COUNTER at 105000" }
+  ]
+}
+```
+
+Read top-to-bottom it is a proof of the counter-offer.  An auditor can re-derive every number without running Prolog:
+
+- Step 1 shows why the buyer's face value of \$950 became an **effective** \$921.50: the free-shipping demand costs 3% of offer.
+- Step 3 tells an auditor *why* the floor is \$1,050 and not the apparently-tighter margin constraint \$920 — **BATNA binds**.  Change a single number in step 3's inputs and you can predict whether this turn would have accepted.
+- Step 5 is the most interesting.  The CLP(FD) search *failed* (floor > ceiling: no feasible integer V satisfies all constraints), which triggered the take-it-or-leave-it fallback.  The `search_result` field discriminates a labeled solution from a fallback, which matters when assessing solver health across many turns.
+- Step 6 closes the loop: the classification branch that fired, with the exact inequality.
+
+### 6.4 Using the chain
+
+One line of `jq` reconstructs the narrative of any session without loading the model:
+
+```bash
+jq -r '
+  select(.step=="symbolic")
+  | "--- turn \(.turn) → \(.decision.action) at \(.decision.target_cents/100) ---",
+    (.chain[] | "  • \(.rule): \(.justification)")
+' audit/e2e_chain.jsonl
+```
+
+Output:
+
+```
+--- turn 1 → counter at 1050 ---
+  • effective_offer: free_shipping demand: subtract 3% (2850 cents) from 95000
+  • present_value:   term=30d rate=0.0: discount present-value by 0 cents
+  • floor_cents:     BATNA binds: 105000 > margin_floor (... = 92000)
+  • ceiling_cents:   max-discount policy: (100 - 25)% of 120000 = 90000
+  • counter_target:  feasible region empty (floor 105000 > ceiling 90000) → fallback: hold at floor
+  • classify:        unit_cost 80000 <= effective 92150 < floor 105000 → COUNTER at 105000
+```
+
+Three practical uses follow:
+
+1. **Regulator-friendly replay.** Given the `chain`, a compliance reviewer can evaluate whether each rule matches the firm's policy, without access to the code.
+2. **Bug triage at the right layer.** If an accepted deal ends up below margin, the suspect record is either the `floor_cents` step (wrong inputs) or the `classify` step (wrong branch) — the other four cannot possibly cause it.  The chain tells you which engineer to page.
+3. **Regression corpus for policy changes.** When the business tightens `min_margin_pct`, replaying the chains with the new value shows exactly which historical decisions would have flipped — essentially unit-tests over real history.
+
+The chain is not Prolog-flavoured decoration; it is the solver's output the same way the `target_cents` is.  Treat it with the same weight.
+
 ---
 
 ## 7. Story 5 — Neural Generation (the hard one)
@@ -444,7 +540,9 @@ Every turn appends three JSON lines to `./audit/<session>.jsonl`:
 {"step":"symbolic",   "turn":1,
  "decision":{"action":"counter","target_cents":105000,"floor_cents":105000,
              "ceiling_cents":90000,"buyer_effective_cents":92150,
-             "reason":"between break-even and floor: counter proposed"}}
+             "reason":"between break-even and floor: counter proposed"},
+ "chain":[{"rule":"effective_offer","inputs":{...},"output":{...},"justification":"..."},
+          {"rule":"present_value",...}, /* 4 more steps — see § 6.3 */ ]}
 
 {"step":"neural_out", "turn":1,
  "agent_response":"With the expected volume and delivery window, we must adjust the proposed unit cost accordingly. My counter is $1,050.00 per unit, net 30."}
@@ -452,9 +550,9 @@ Every turn appends three JSON lines to `./audit/<session>.jsonl`:
 
 Three properties follow for free:
 
-1. **Replayability.** The symbolic record contains everything the solver needed; regulators can re-derive the decision without the LLM.
-2. **Blame localisation.** If an accepted deal ended up below margin, the offending record is either the `symbolic` (solver bug) or the `neural_out` (LLM lied about the number).  The two are impossible to confuse.
-3. **Grep-ability.** `jq 'select(.step=="symbolic")' audit/*.jsonl` gives a dataset for offline analytics on decision quality — without any observability stack.
+1. **Replayability.** The `chain` (§ 6.3) is a complete proof tree for the decision; regulators can re-derive every number without running the code.
+2. **Blame localisation.** If an accepted deal ended up below margin, the offending record is either the `symbolic.chain` step `floor_cents` or `classify` (solver bug) or the `neural_out` (LLM lied about the number).  The chain makes it *impossible to misattribute* because each step carries its own inputs and outputs.
+3. **Grep-ability.** `jq 'select(.step=="symbolic")' audit/*.jsonl` gives a dataset for offline analytics on decision quality — without any observability stack.  Drilling into `.chain[] | select(.rule=="floor_cents")` surfaces exactly when BATNA binds vs. when margin binds.
 
 At end-of-game, a fourth record is appended:
 
@@ -530,7 +628,7 @@ Notice the cross-cut consistency: in every case, the monetary number in `[Agent]
 | Property | Monolithic LLM | Neuro-Symbolic |
 |----------|----------------|----------------|
 | Math hallucination | Possible | **Impossible by construction** |
-| Explainability | Post-hoc chain-of-thought | Deterministic solver trace |
+| Explainability | Post-hoc chain-of-thought (unfalsifiable) | Derivation chain per turn (§ 6.3, replayable) |
 | Regulatory audit | "Trust the model" | `jq` a JSONL |
 | Swap the model | Retrain / re-prompt | Change `model_path`, rules unchanged |
 | Swap the rules | Rewrite the prompt | Edit 40 lines of Prolog |
