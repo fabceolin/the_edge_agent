@@ -638,14 +638,14 @@ The trade-off is not free.  Writing the Prolog is work.  Splitting the cognition
 
 ---
 
-## 11. Limitations & Next Sprint
+## 11. Limitations and Future Extensions
 
 ### 11.1 What this prototype is not
 
-- **Not a UI.** It runs in a terminal.  Sprint 2 ports the interactive loop to a browser using [TEA WASM LLM](./wasm-llm-browser-inference.md) plus tau-prolog for in-browser Prolog.  Same rules, same solver semantics, zero-server deployment.
+- **Not a UI.** It runs in a terminal.  A natural next version ports the interactive loop to a browser using [TEA WASM LLM](./wasm-llm-browser-inference.md) plus tau-prolog for in-browser Prolog.  Same rules, same solver semantics, zero-server deployment.
 - **Not multi-turn memory.** Each session is flat; there is no long-term CRM.  Hooking into TEA's LTM backends is straightforward but out of scope here.
 - **Not optimising global outcomes.** The solver picks a locally optimal counter — midpoint of feasible space — not the game-theoretically optimal one.  Swapping `counter_target/4` for a MiniZinc model or adding an opponent model is a clean extension.
-- **Not defended against ratcheting.** A human who knows the counter-party is a bot can drag the session out with micro-offers (\$950 → \$952 → \$954…) and learn the concession curve.  The only current defense is the 10-turn impasse timer.  Story 6 in the backlog (see the example's `README.md`) adds concession discipline: Karrass-style diminishing concessions, a hard budget of 3 moves, a stall detector, and Cialdini scarcity/final-round signaling on the neural side.  This is where sales psychology meets constraint programming, and it is the next natural extension after the browser port.
+- **Not defended against ratcheting.** A human who knows the counter-party is a bot can drag the session out with micro-offers (\$950 → \$952 → \$954…) and learn the concession curve.  The only current defense is the 10-turn impasse timer.  A natural extension — call it *concession discipline* — adds four rules: track `concession_count` and `last_target_cents` as state; *Karrass rule* — each new counter concedes at most 50% of the previous concession; *budget* — after three concessions the bot locks to the floor; *stall detector* — if the buyer repeats the same offer twice, force `action = reject`.  On the neural side, inject *Cialdini scarcity* (*"quote holds through end of week"*) and a final-round signal as extra branches in the generation prompt.  The underlying playbook draws from Karrass (*The Negotiating Game*), Cialdini (*Influence*), Voss (*Never Split the Difference*), and Fisher & Ury (*Getting to Yes*).  This is where sales psychology meets constraint programming, and it is the most impactful extension after the browser port.
 
 ### 11.2 What Gemma 4 E2B Q4_K_M actually gets you (measured)
 
@@ -679,7 +679,7 @@ For this one scenario, with these six rules and a one-dimensional counter search
 There is, however, a measurable break-even point above which Prolog stops being theatre:
 
 1. **Rule proliferation.** Once the configuration panel grows to roughly 20+ interacting rules — discount tier × region × season × product line × customer history — pattern-matched Prolog clauses stay legible where nested `if/elif` in Python becomes a maintenance liability.  The cost of *reading* scales linearly with rule count in Python and sub-linearly in Prolog.
-2. **Genuine backtracking.** Story 6 (anti-ratcheting concession discipline) needs to explore alternative tactics in order — *"try vendor financing; if that fails, try leasing; if that fails, try bundling"* — with rollback of asserted state between attempts.  Choice points and cut are free in Prolog; in Python this becomes an explicit search function with saved-state objects.
+2. **Genuine backtracking.** The concession-discipline extension sketched in § 11.1 needs to explore alternative tactics in order — *"try vendor financing; if that fails, try leasing; if that fails, try bundling"* — with rollback of asserted state between attempts.  Choice points and cut are free in Prolog; in Python this becomes an explicit search function with saved-state objects.
 3. **Reverse queries.** *"For which buyer offer would this decision have flipped to `accept`?"* is a well-posed Prolog query (instantiate the action, solve for the offer) and a hard Python problem (either brute-force search or encode the rules twice, forward and backward).
 4. **Meta-reasoning via the same engine.** The rules *are* data; you can query which rules fired and why by asking the same Prolog database, without building parallel observability plumbing.
 5. **Compliance social proof.** In regulated industries (lending, insurance, medical decisioning), symbolic systems carry decades of audit-trail legitimacy that procedural Python does not.  This is sociological, not technical, but real — and directly relevant to § 10's "Regulatory audit" row.
@@ -688,7 +688,7 @@ There is, however, a measurable break-even point above which Prolog stops being 
 
 The reason to keep Prolog here is not that it beats Python at six rules today.  It is that:
 
-- **Story 6** (concession discipline) and any future policy evolution will tip the rule count above the break-even, and a rewrite from Python to Prolog at that point is more expensive than starting in Prolog and paying the ~40% overhead upfront.
+- The **concession-discipline extension** (§ 11.1) and any future policy evolution will tip the rule count above the break-even, and a rewrite from Python to Prolog at that point is more expensive than starting in Prolog and paying the ~40% overhead upfront.
 - The **derivation chain** (§ 6.3) is 90% architectural discipline and 10% Prolog — Python could produce an identical chain with the same `add_step` pattern — but shipping the rules in Prolog means the trace facts *are* the solver's state, not a handwritten mirror of it.
 - The audience for this article is engineers evaluating neuro-symbolic for production.  Showing the technique at a scale where it is *almost* over-engineered is more instructive than hiding the break-even behind a toy example.
 
@@ -717,6 +717,6 @@ The resulting system is boring, which is the highest praise an engineer can pay 
 - [bartowski/google_gemma-4-E2B-it-GGUF](https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF) — community GGUF quantisations used by llama.cpp.
 - [SWI-Prolog CLP(FD) manual](https://www.swi-prolog.org/pldoc/man?section=clpfd) — constraint solving over integers.
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) — the inference runtime embedded in TEA's local LLM backend.
-- [TEA WASM LLM](./wasm-llm-browser-inference.md) — companion article for the Sprint 2 browser port.
+- [TEA WASM LLM](./wasm-llm-browser-inference.md) — companion article on browser-based LLM inference, the foundation for porting this agent to a UI.
 - Daniel Kahneman, *Thinking, Fast and Slow* (2011) — the System 1 / System 2 framing.
 - [TEA CLP(FD) example](https://github.com/fabceolin/the_edge_agent/blob/main/examples/prolog/clpfd-constraints.yaml) — minimal CLP(FD) reference agent.
