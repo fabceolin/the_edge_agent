@@ -111,7 +111,7 @@ System 2 returns an equally rigid structure:
 }
 ```
 
-System 1 is then forbidden from writing any digit at all: § 7 explains why the
+System 1 is then forbidden from writing any digit at all: Section 7 explains why the
 LLM is *architecturally* kept off the numeric path rather than prompted against it.
 
 ---
@@ -162,7 +162,7 @@ Two separations matter:
 1. **Solver facts vs. persona flavour.** Everything above `persona:` is consumed by System 2; `persona` only feeds System 1.  Pricing decisions never depend on adjectives.
 2. **Cents, not dollars.** The agent normalises every monetary value to integer cents before Prolog sees them, so CLP(FD) stays in the integer domain and fractional reasoning errors become impossible.
 
-Three scenarios ship by default: B2B enterprise laptops, SaaS annual subscription, and wholesale footwear.  Each exercises a different constraint shape (margin-bound, BATNA-bound, or discount-ceiling-bound).  The laptops scenario is interesting because the BATNA (\$1,050) sits *above* the authorised-discount ceiling (\$900), which stresses the CLP(FD) fallback logic (§ 6.2).
+Three scenarios ship by default: B2B enterprise laptops, SaaS annual subscription, and wholesale footwear.  Each exercises a different constraint shape (margin-bound, BATNA-bound, or discount-ceiling-bound).  The laptops scenario is interesting because the BATNA (\$1,050) sits *above* the authorised-discount ceiling (\$900), which stresses the CLP(FD) fallback logic (Section 6.2).
 
 ---
 
@@ -328,7 +328,7 @@ The numbers in the decision record (`floor_cents: 105000`, `target_cents: 105000
 
 Each helper predicate (`effective_offer`, `present_value`, `floor_cents`, `ceiling_cents`, `counter_target`, plus the final `classify` branch) `assertz`'s a `trace_step/4` fact as it runs.  A `findall/3` at the end of the goal collects the facts into an ordered list of Prolog dicts; janus converts them to Python dicts; `log_audit` writes the list into the `chain` field of the `symbolic` JSONL record.  Zero extra nodes, zero Python parsing: it is the solver explaining itself.
 
-Here is the full `symbolic` audit record for **Turn A** of § 9.1 — unedited, pretty-printed:
+Here is the full `symbolic` audit record for **Turn A** of Section 9.1 — unedited, pretty-printed:
 
 ```jsonc
 {
@@ -542,7 +542,7 @@ Every turn appends three JSON lines to `./audit/<session>.jsonl`:
              "ceiling_cents":90000,"buyer_effective_cents":92150,
              "reason":"between break-even and floor: counter proposed"},
  "chain":[{"rule":"effective_offer","inputs":{...},"output":{...},"justification":"..."},
-          {"rule":"present_value",...}, /* 4 more steps — see § 6.3 */ ]}
+          {"rule":"present_value",...}, /* 4 more steps — see Section 6.3 */ ]}
 
 {"step":"neural_out", "turn":1,
  "agent_response":"With the expected volume and delivery window, we must adjust the proposed unit cost accordingly. My counter is $1,050.00 per unit, net 30."}
@@ -550,7 +550,7 @@ Every turn appends three JSON lines to `./audit/<session>.jsonl`:
 
 Three properties follow for free:
 
-1. **Replayability.** The `chain` (§ 6.3) is a complete proof tree for the decision; regulators can re-derive every number without running the code.
+1. **Replayability.** The derivation chain shown in Section 6.3 above is a complete proof tree for the decision; regulators can re-derive every number without running the code.
 2. **Blame localisation.** If an accepted deal ended up below margin, the offending record is either the `symbolic.chain` step `floor_cents` or `classify` (solver bug) or the `neural_out` (LLM lied about the number).  The chain makes it *impossible to misattribute* because each step carries its own inputs and outputs.
 3. **Grep-ability.** `jq 'select(.step=="symbolic")' audit/*.jsonl` gives a dataset for offline analytics on decision quality — without any observability stack.  Drilling into `.chain[] | select(.rule=="floor_cents")` surfaces exactly when BATNA binds vs. when margin binds.
 
@@ -628,7 +628,7 @@ Notice the cross-cut consistency: in every case, the monetary number in `[Agent]
 | Property | Monolithic LLM | Neuro-Symbolic |
 |----------|----------------|----------------|
 | Math hallucination | Possible | **Impossible by construction** |
-| Explainability | Post-hoc chain-of-thought (unfalsifiable) | Derivation chain per turn (§ 6.3, replayable) |
+| Explainability | Post-hoc chain-of-thought (unfalsifiable) | Derivation chain per turn (Section 6.3, replayable) |
 | Regulatory audit | "Trust the model" | `jq` a JSONL |
 | Swap the model | Retrain / re-prompt | Change `model_path`, rules unchanged |
 | Swap the rules | Rewrite the prompt | Edit 40 lines of Prolog |
@@ -652,7 +652,7 @@ The trade-off is not free.  Writing the Prolog is work.  Splitting the cognition
 At 2.3B effective parameters with 128K context, Gemma 4 E2B-it is the sweet spot for this workload — with caveats:
 
 - **Extraction works** at `temperature=0.05` with an XML-structured prompt and three few-shot examples.  Real output on "I offer \$950 per unit, cash, with free shipping.": `{"unit_price_usd": 950, "term_days": 30, "demands": ["free_shipping"], "intent": "proposal"}`.  Clean JSON, no drift.
-- **Generation is fluent but numerically unreliable** under Q4_K_M.  Given "propose \$1,050", the model will write "a thousand" or "about eleven hundred" roughly half the time.  This is a quantization artefact, not a prompt problem — a Q8_0 build preserves digits much better, at ~5× the memory footprint.  We route around the limitation by keeping the LLM *out* of the numeric path (§ 7).
+- **Generation is fluent but numerically unreliable** under Q4_K_M.  Given "propose \$1,050", the model will write "a thousand" or "about eleven hundred" roughly half the time.  This is a quantization artefact, not a prompt problem — a Q8_0 build preserves digits much better, at ~5× the memory footprint.  We route around the limitation by keeping the LLM *out* of the numeric path (Section 7).
 - **Speed:** Q4_K_M runs at ~8–15 tok/s on a modern CPU; with `n_gpu_layers: -1` on a mid-range GPU (8GB VRAM is enough) it hits ~40–80 tok/s.  The whole stack is offline-capable.
 - **Chat-template oddities:** Gemma emits `<end_of_turn>` and occasionally `</start_of_turn>` markers inside content.  `parse_generation` strips them with a regex; this is a universal pattern for chat-format Gemma models.
 
@@ -679,17 +679,17 @@ For this one scenario, with these six rules and a one-dimensional counter search
 There is, however, a measurable break-even point above which Prolog stops being theatre:
 
 1. **Rule proliferation.** Once the configuration panel grows to roughly 20+ interacting rules — discount tier × region × season × product line × customer history — pattern-matched Prolog clauses stay legible where nested `if/elif` in Python becomes a maintenance liability.  The cost of *reading* scales linearly with rule count in Python and sub-linearly in Prolog.
-2. **Genuine backtracking.** The concession-discipline extension sketched in § 11.1 needs to explore alternative tactics in order — *"try vendor financing; if that fails, try leasing; if that fails, try bundling"* — with rollback of asserted state between attempts.  Choice points and cut are free in Prolog; in Python this becomes an explicit search function with saved-state objects.
+2. **Genuine backtracking.** The concession-discipline extension sketched in Section 11.1 needs to explore alternative tactics in order — *"try vendor financing; if that fails, try leasing; if that fails, try bundling"* — with rollback of asserted state between attempts.  Choice points and cut are free in Prolog; in Python this becomes an explicit search function with saved-state objects.
 3. **Reverse queries.** *"For which buyer offer would this decision have flipped to `accept`?"* is a well-posed Prolog query (instantiate the action, solve for the offer) and a hard Python problem (either brute-force search or encode the rules twice, forward and backward).
 4. **Meta-reasoning via the same engine.** The rules *are* data; you can query which rules fired and why by asking the same Prolog database, without building parallel observability plumbing.
-5. **Compliance social proof.** In regulated industries (lending, insurance, medical decisioning), symbolic systems carry decades of audit-trail legitimacy that procedural Python does not.  This is sociological, not technical, but real — and directly relevant to § 10's "Regulatory audit" row.
+5. **Compliance social proof.** In regulated industries (lending, insurance, medical decisioning), symbolic systems carry decades of audit-trail legitimacy that procedural Python does not.  This is sociological, not technical, but real — and directly relevant to Section 10's "Regulatory audit" row.
 
 #### The honest architectural argument
 
 The reason to keep Prolog here is not that it beats Python at six rules today.  It is that:
 
-- The **concession-discipline extension** (§ 11.1) and any future policy evolution will tip the rule count above the break-even, and a rewrite from Python to Prolog at that point is more expensive than starting in Prolog and paying the ~40% overhead upfront.
-- The **derivation chain** (§ 6.3) is 90% architectural discipline and 10% Prolog — Python could produce an identical chain with the same `add_step` pattern — but shipping the rules in Prolog means the trace facts *are* the solver's state, not a handwritten mirror of it.
+- The **concession-discipline extension** (Section 11.1) and any future policy evolution will tip the rule count above the break-even, and a rewrite from Python to Prolog at that point is more expensive than starting in Prolog and paying the ~40% overhead upfront.
+- The **derivation chain** (Section 6.3) is 90% architectural discipline and 10% Prolog — Python could produce an identical chain with the same `add_step` pattern — but shipping the rules in Prolog means the trace facts *are* the solver's state, not a handwritten mirror of it.
 - The audience for this article is engineers evaluating neuro-symbolic for production.  Showing the technique at a scale where it is *almost* over-engineered is more instructive than hiding the break-even behind a toy example.
 
 If you are copying this code into a system that will never grow past the current six rules, port `decide.pl` to Python and save yourself the ecosystem friction.  If you are building anything that will grow, the overhead is already in the right place.
