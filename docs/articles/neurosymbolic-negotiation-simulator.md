@@ -26,13 +26,13 @@ This article builds a negotiation agent in which the LLM never picks a price. Ev
 
 A concrete example. A buyer writes:
 
-> *"I offer $950 per unit, cash, with free shipping."*
+> *"I offer \$950 per unit, cash, with free shipping."*
 
 A monolithic LLM might reply, confidently:
 
-> *"Deal at $950!"*
+> *"Deal at \$950!"*
 
-That line just sold 500 laptops at a negative margin.  Unit cost is $800, minimum margin is 15%, but the buyer's demand for free shipping effectively subtracts another $28.50 per unit.  The effective price closed at **$921.50 per unit** — comfortably below the $1,050 BATNA.  The LLM "won" the negotiation and lost $64,250 of opportunity cost in a single sentence.
+That line just sold 500 laptops at a negative margin.  Unit cost is \$800, minimum margin is 15%, but the buyer's demand for free shipping effectively subtracts another \$28.50 per unit.  The effective price closed at **\$921.50 per unit** — comfortably below the \$1,050 BATNA.  The LLM "won" the negotiation and lost \$64,250 of opportunity cost in a single sentence.
 
 ### 1.2 What this article builds
 
@@ -162,7 +162,7 @@ Two separations matter:
 1. **Solver facts vs. persona flavour.** Everything above `persona:` is consumed by System 2; `persona` only feeds System 1.  Pricing decisions never depend on adjectives.
 2. **Cents, not dollars.** The agent normalises every monetary value to integer cents before Prolog sees them, so CLP(FD) stays in the integer domain and fractional reasoning errors become impossible.
 
-Three scenarios ship by default: B2B enterprise laptops, SaaS annual subscription, and wholesale footwear.  Each exercises a different constraint shape (margin-bound, BATNA-bound, or discount-ceiling-bound).  The laptops scenario is interesting because the BATNA ($1,050) sits *above* the authorised-discount ceiling ($900), which stresses the CLP(FD) fallback logic (§ 6.2).
+Three scenarios ship by default: B2B enterprise laptops, SaaS annual subscription, and wholesale footwear.  Each exercises a different constraint shape (margin-bound, BATNA-bound, or discount-ceiling-bound).  The laptops scenario is interesting because the BATNA (\$1,050) sits *above* the authorised-discount ceiling (\$900), which stresses the CLP(FD) fallback logic (§ 6.2).
 
 ---
 
@@ -215,7 +215,7 @@ Three things make this robust without a grammar-constrained decoder:
 
 ### 5.1 Intent classification
 
-The `intent` field is the only qualitative signal System 1 passes to System 2.  It exists because a buyer saying *"Final offer: $950 or I walk"* is tonally different from *"How about $950?"* — same number, different game.  The `check_complete` node uses `intent == "walk_away_threat"` combined with a solver rejection to end the simulation as `walked_away` instead of looping forever.
+The `intent` field is the only qualitative signal System 1 passes to System 2.  It exists because a buyer saying *"Final offer: \$950 or I walk"* is tonally different from *"How about \$950?"* — same number, different game.  The `check_complete` node uses `intent == "walk_away_threat"` combined with a solver rejection to end the simulation as `walked_away` instead of looping forever.
 
 ---
 
@@ -306,7 +306,7 @@ The `counter_target/4` predicate is the only place we truly *search*.  Everythin
 
 > Find an integer `V` ∈ [Floor, Ceiling] such that `V mod 100 = 0` and `|V − midpoint(Effective, Ceiling)|` is minimised.
 
-`V mod 100 = 0` is the "no weird cents" constraint — a negotiator who counters at $1,047 looks like a calculator; a human counters at $1,000 or $1,050.  CLP(FD) handles this kind of mixed-integer constraint naturally via `labeling([min(Delta)], [V])` and degrades gracefully (into the fallback) when the feasible set is empty.
+`V mod 100 = 0` is the "no weird cents" constraint — a negotiator who counters at \$1,047 looks like a calculator; a human counters at \$1,000 or \$1,050.  CLP(FD) handles this kind of mixed-integer constraint naturally via `labeling([min(Delta)], [V])` and degrades gracefully (into the fallback) when the feasible set is empty.
 
 ### 6.2 The five test cases
 
@@ -314,19 +314,19 @@ The Prolog node was smoke-tested against five canonical situations:
 
 | Case | Offer | Expected | Got |
 |------|------:|----------|-----|
-| Below cost | $500 | `reject` | ✓ `reject` |
-| Above floor | $1,080 | `accept` | ✓ `accept` at $1,080 |
-| Between cost & floor + free shipping + 60d term | $950 | `counter` | ✓ `counter` at Floor (edge: BATNA > ceiling) |
-| Exactly BATNA | $1,050 | `accept` | ✓ `accept` |
-| Low BATNA, big margin | $950 with BATNA=$800 | `accept` | ✓ `accept` |
+| Below cost | \$500 | `reject` | ✓ `reject` |
+| Above floor | \$1,080 | `accept` | ✓ `accept` at \$1,080 |
+| Between cost & floor + free shipping + 60d term | \$950 | `counter` | ✓ `counter` at Floor (edge: BATNA > ceiling) |
+| Exactly BATNA | \$1,050 | `accept` | ✓ `accept` |
+| Low BATNA, big margin | \$950 with BATNA=\$800 | `accept` | ✓ `accept` |
 
-Case 3 is the interesting one.  The B2B laptops scenario has `BATNA = $1,050` but `list × (1 − max_discount) = $900`.  That means the floor is *above* the authorised-discount ceiling — a perfectly realistic business configuration where the discount policy alone cannot reach the BATNA.  The solver does not crash; it falls back to `Floor` as a take-it-or-leave-it counter.  The LLM then frames this as *"my floor is $1,050, terms to be agreed"* — the number is the solver's, the framing is the LLM's.
+Case 3 is the interesting one.  The B2B laptops scenario has `BATNA = $1,050` but `list × (1 − max_discount) = $900`.  That means the floor is *above* the authorised-discount ceiling — a perfectly realistic business configuration where the discount policy alone cannot reach the BATNA.  The solver does not crash; it falls back to `Floor` as a take-it-or-leave-it counter.  The LLM then frames this as *"my floor is \$1,050, terms to be agreed"* — the number is the solver's, the framing is the LLM's.
 
 ---
 
 ## 7. Story 5 — Neural Generation (the hard one)
 
-The most surprising lesson from building this prototype is how much work it takes to keep a small quantized LLM from drifting on numbers.  Our first version prompted Gemma 4 E2B-it (Q4_K_M) with *"propose $1,050, use this exact value"* — and got back *"my value is a thousand"*.  The model "helpfully" rounded.  A 4-bit quantization compresses FP16 weights by ~4×, and digit strings are exactly the kind of high-entropy token sequences that lose resolution in the process.
+The most surprising lesson from building this prototype is how much work it takes to keep a small quantized LLM from drifting on numbers.  Our first version prompted Gemma 4 E2B-it (Q4_K_M) with *"propose \$1,050, use this exact value"* — and got back *"my value is a thousand"*.  The model "helpfully" rounded.  A 4-bit quantization compresses FP16 weights by ~4×, and digit strings are exactly the kind of high-entropy token sequences that lose resolution in the process.
 
 The architectural fix is not a better prompt.  It is to **remove the LLM from the numeric path entirely**.
 
@@ -547,14 +547,14 @@ The trade-off is not free.  Writing the Prolog is work.  Splitting the cognition
 - **Not a UI.** It runs in a terminal.  Sprint 2 ports the interactive loop to a browser using [TEA WASM LLM](./wasm-llm-browser-inference.md) plus tau-prolog for in-browser Prolog.  Same rules, same solver semantics, zero-server deployment.
 - **Not multi-turn memory.** Each session is flat; there is no long-term CRM.  Hooking into TEA's LTM backends is straightforward but out of scope here.
 - **Not optimising global outcomes.** The solver picks a locally optimal counter — midpoint of feasible space — not the game-theoretically optimal one.  Swapping `counter_target/4` for a MiniZinc model or adding an opponent model is a clean extension.
-- **Not defended against ratcheting.** A human who knows the counter-party is a bot can drag the session out with micro-offers ($950 → $952 → $954…) and learn the concession curve.  The only current defense is the 10-turn impasse timer.  Story 6 in the backlog (see the example's `README.md`) adds concession discipline: Karrass-style diminishing concessions, a hard budget of 3 moves, a stall detector, and Cialdini scarcity/final-round signaling on the neural side.  This is where sales psychology meets constraint programming, and it is the next natural extension after the browser port.
+- **Not defended against ratcheting.** A human who knows the counter-party is a bot can drag the session out with micro-offers (\$950 → \$952 → \$954…) and learn the concession curve.  The only current defense is the 10-turn impasse timer.  Story 6 in the backlog (see the example's `README.md`) adds concession discipline: Karrass-style diminishing concessions, a hard budget of 3 moves, a stall detector, and Cialdini scarcity/final-round signaling on the neural side.  This is where sales psychology meets constraint programming, and it is the next natural extension after the browser port.
 
 ### 11.2 What Gemma 4 E2B Q4_K_M actually gets you (measured)
 
 At 2.3B effective parameters with 128K context, Gemma 4 E2B-it is the sweet spot for this workload — with caveats:
 
-- **Extraction works** at `temperature=0.05` with an XML-structured prompt and three few-shot examples.  Real output on "I offer $950 per unit, cash, with free shipping.": `{"unit_price_usd": 950, "term_days": 30, "demands": ["free_shipping"], "intent": "proposal"}`.  Clean JSON, no drift.
-- **Generation is fluent but numerically unreliable** under Q4_K_M.  Given "propose $1,050", the model will write "a thousand" or "about eleven hundred" roughly half the time.  This is a quantization artefact, not a prompt problem — a Q8_0 build preserves digits much better, at ~5× the memory footprint.  We route around the limitation by keeping the LLM *out* of the numeric path (§ 7).
+- **Extraction works** at `temperature=0.05` with an XML-structured prompt and three few-shot examples.  Real output on "I offer \$950 per unit, cash, with free shipping.": `{"unit_price_usd": 950, "term_days": 30, "demands": ["free_shipping"], "intent": "proposal"}`.  Clean JSON, no drift.
+- **Generation is fluent but numerically unreliable** under Q4_K_M.  Given "propose \$1,050", the model will write "a thousand" or "about eleven hundred" roughly half the time.  This is a quantization artefact, not a prompt problem — a Q8_0 build preserves digits much better, at ~5× the memory footprint.  We route around the limitation by keeping the LLM *out* of the numeric path (§ 7).
 - **Speed:** Q4_K_M runs at ~8–15 tok/s on a modern CPU; with `n_gpu_layers: -1` on a mid-range GPU (8GB VRAM is enough) it hits ~40–80 tok/s.  The whole stack is offline-capable.
 - **Chat-template oddities:** Gemma emits `<end_of_turn>` and occasionally `</start_of_turn>` markers inside content.  `parse_generation` strips them with a regex; this is a universal pattern for chat-format Gemma models.
 
