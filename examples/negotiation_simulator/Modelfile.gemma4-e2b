@@ -1,0 +1,33 @@
+# Modelfile — serve the local Gemma 4 E2B GGUF through Ollama.
+#
+# The GGUF was downloaded once from bartowski/google_gemma-4-E2B-it-GGUF and
+# lives at ~/.cache/tea/models/.  This Modelfile registers it as an Ollama
+# model so the negotiation agent can use `provider: ollama` (which is the
+# only path that works with the AppImage build of tea-python).
+#
+# Usage (one-time):
+#   ollama create tea-gemma4-e2b -f Modelfile.gemma4-e2b
+#   ollama run    tea-gemma4-e2b "Hello"   # smoke test
+#
+# After that, agent.yaml can reference `model: tea-gemma4-e2b`.
+
+FROM /home/fabricio/.cache/tea/models/google_gemma-4-E2B-it-Q4_K_M.gguf
+
+# Gemma chat template — same one shipped with google/gemma-4-E2B-it on HF.
+TEMPLATE """{{- range $i, $_ := .Messages }}
+{{- if eq .Role "user" -}}<start_of_turn>user
+{{- if and $.System (eq (len (slice $.Messages $i)) (len $.Messages)) }}{{ $.System }}
+{{ end }}{{ .Content }}<end_of_turn>
+<start_of_turn>model
+{{ end }}{{- if eq .Role "assistant" -}}{{ .Content }}<end_of_turn>
+{{ end }}{{- end -}}"""
+
+PARAMETER stop "<start_of_turn>"
+PARAMETER stop "<end_of_turn>"
+PARAMETER stop "<eos>"
+PARAMETER stop "<bos>"
+
+# Negotiation defaults (overridable per llm.chat call in agent.yaml)
+PARAMETER temperature 0.6
+PARAMETER top_p 0.9
+PARAMETER num_ctx 8192
