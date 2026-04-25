@@ -110,54 +110,63 @@ parts:
 
   - caption: Articles
     chapters:
-      - file: articles/medium-neurosymbolic-ai
-        title: Neurosymbolic AI with TEA
-      - file: articles/strawberry-counting
-        title: How Many R's in Strawberry?
-      - file: articles/atari-pinball-neurosymbolic
-        title: Neurosymbolic AI for Atari Pinball
-      - file: articles/reasonableness-monitors
-        title: Reasonableness Monitors
-      - file: articles/traffic-rules-neurosymbolic
-        title: Traffic Rules with Neurosymbolic AI
-      - file: articles/explanation-synthesis-avs
-        title: Explanation Synthesis for AVs
-      - file: articles/neural-predicate-invention
-        title: Neural Predicate Invention
-      - file: articles/wozniak-coffee-test
-        title: The Wozniak Coffee Test
-      - file: articles/serverless-ai-agents
-        title: Serverless AI Agents
-      - file: articles/symbolic-abstraction-learning
-        title: Neural Predicate Invention for Zero-Shot Generalization
-      - file: articles/cloud-production-firebase
-        title: Cloud Production with Firebase
-      - file: articles/intelligent-interview-bot
-        title: Intelligent Interview Bot with Dynamic LLM Questions
-      - file: articles/wasm-llm-browser-inference
-        title: Browser-Based LLM Inference with TEA WASM
-      - file: articles/writing-tea-with-tea
-        title: Writing TEA Features with TEA
-      - file: articles/docker-model-selection
-        title: Docker Installation and Model Selection
-      - file: articles/devops-yaml-overlay-agents
-        title: DevOps-Friendly AI Agents with YAML Overlays
-      - file: articles/release-variants-guide
-        title: TEA Release Variants Guide
-      - file: articles/runtime-backend-selection
-        title: Runtime Backend Selection for Cloud Functions
-      - file: articles/truth-resolution-agent
-        title: "Truth Resolution Agent: Senna 1989 Case Study"
-      - file: articles/dot-workflow-orchestration
-        title: DOT Workflow Orchestration for AI Pipelines
-      - file: articles/43-stories-one-shot-development
-        title: "43 User Stories Developed in One-Shot"
-      - file: articles/bmad-to-parallel-execution
-        title: "From Business Idea to Parallel Story Execution"
-      - file: articles/declarative-agent-frameworks-comparison
-        title: "Declarative Agent Frameworks: Docker cagent vs TEA"
-      - file: articles/neurosymbolic-negotiation-simulator
-        title: "Neuro-Symbolic B2B Negotiation: Gemma 4 + Prolog CLP(FD)"
+      - file: articles/2026-01
+        title: January 2026
+        sections:
+          - file: articles/medium-neurosymbolic-ai
+            title: Neurosymbolic AI with TEA
+          - file: articles/strawberry-counting
+            title: How Many R's in Strawberry?
+          - file: articles/atari-pinball-neurosymbolic
+            title: Neurosymbolic AI for Atari Pinball
+          - file: articles/reasonableness-monitors
+            title: Reasonableness Monitors
+          - file: articles/traffic-rules-neurosymbolic
+            title: Traffic Rules with Neurosymbolic AI
+          - file: articles/explanation-synthesis-avs
+            title: Explanation Synthesis for AVs
+          - file: articles/neural-predicate-invention
+            title: Neural Predicate Invention
+          - file: articles/wozniak-coffee-test
+            title: The Wozniak Coffee Test
+          - file: articles/serverless-ai-agents
+            title: Serverless AI Agents
+          - file: articles/symbolic-abstraction-learning
+            title: Neural Predicate Invention for Zero-Shot Generalization
+          - file: articles/cloud-production-firebase
+            title: Cloud Production with Firebase
+          - file: articles/intelligent-interview-bot
+            title: Intelligent Interview Bot with Dynamic LLM Questions
+          - file: articles/wasm-llm-browser-inference
+            title: Browser-Based LLM Inference with TEA WASM
+          - file: articles/writing-tea-with-tea
+            title: Writing TEA Features with TEA
+          - file: articles/docker-model-selection
+            title: Docker Installation and Model Selection
+          - file: articles/devops-yaml-overlay-agents
+            title: DevOps-Friendly AI Agents with YAML Overlays
+          - file: articles/release-variants-guide
+            title: TEA Release Variants Guide
+          - file: articles/runtime-backend-selection
+            title: Runtime Backend Selection for Cloud Functions
+          - file: articles/truth-resolution-agent
+            title: "Truth Resolution Agent: Senna 1989 Case Study"
+          - file: articles/dot-workflow-orchestration
+            title: DOT Workflow Orchestration for AI Pipelines
+          - file: articles/43-stories-one-shot-development
+            title: "43 User Stories Developed in One-Shot"
+      - file: articles/2026-02
+        title: February 2026
+        sections:
+          - file: articles/bmad-to-parallel-execution
+            title: "From Business Idea to Parallel Story Execution"
+          - file: articles/declarative-agent-frameworks-comparison
+            title: "Declarative Agent Frameworks: Docker cagent vs TEA"
+      - file: articles/2026-04
+        title: April 2026
+        sections:
+          - file: articles/neurosymbolic-negotiation-simulator
+            title: "Neuro-Symbolic B2B Negotiation: Gemma 4 + Prolog CLP(FD)"
 
   - caption: Contributing
     chapters:
