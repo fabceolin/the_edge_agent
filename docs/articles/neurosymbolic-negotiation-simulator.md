@@ -2,7 +2,7 @@
 
 **Fabricio Ceolin**
 
-*Principal Engineer, Rankellix*
+*Independent Researcher*
 
 https://www.linkedin.com/in/fabceolin/
 
@@ -645,7 +645,7 @@ The trade-off is not free.  Writing the Prolog is work.  Splitting the cognition
 - **Not a UI.** It runs in a terminal.  A natural next version ports the interactive loop to a browser using [TEA WASM LLM](./wasm-llm-browser-inference.md) plus tau-prolog for in-browser Prolog.  Same rules, same solver semantics, zero-server deployment.
 - **Not multi-turn memory.** Each session is flat; there is no long-term CRM.  Hooking into TEA's LTM backends is straightforward but out of scope here.
 - **Not optimising global outcomes.** The solver picks a locally optimal counter — midpoint of feasible space — not the game-theoretically optimal one.  Swapping `counter_target/4` for a MiniZinc model or adding an opponent model is a clean extension.
-- **Not defended against ratcheting.** A human who knows the counter-party is a bot can drag the session out with micro-offers (\$950 → \$952 → \$954…) and learn the concession curve.  The only current defense is the 10-turn impasse timer.  A natural extension — call it *concession discipline* — adds four rules: track `concession_count` and `last_target_cents` as state; *Karrass rule* — each new counter concedes at most 50% of the previous concession; *budget* — after three concessions the bot locks to the floor; *stall detector* — if the buyer repeats the same offer twice, force `action = reject`.  On the neural side, inject *Cialdini scarcity* (*"quote holds through end of week"*) and a final-round signal as extra branches in the generation prompt.  The underlying playbook draws from Karrass (*The Negotiating Game*), Cialdini (*Influence*), Voss (*Never Split the Difference*), and Fisher & Ury (*Getting to Yes*).  This is where sales psychology meets constraint programming, and it is the most impactful extension after the browser port.
+- **Not optimised against forensic adversaries.** Section 12 catalogues the persuasion stack and bot-detection-resistance defenses now built into the agent — Karrass concession discipline, stall detection, quote expiry, Cialdini/Voss prompt rotation, latency humanisation. They neutralise the common probes (micro-offer ratcheting, identity-test repetition, latency fingerprinting) but a motivated linguist with a stopwatch and a detector model will still eventually conclude they are talking to a bot. The point is that they reach that conclusion *after* the deal closed at our floor, not *before*.
 
 ### 11.2 What Gemma 4 E2B Q4_K_M actually gets you (measured)
 
@@ -696,7 +696,217 @@ If you are copying this code into a system that will never grow past the current
 
 ---
 
-## 12. Conclusion
+## 12. Persuasion as Code (and the Bot-Detection Problem)
+
+Sections 1–7 establish a defensive guarantee about *the numbers*: the LLM cannot write a digit, and the solver owns every monetary decision. That guarantee is sufficient when the negotiation is short. It is insufficient when the buyer is patient.
+
+### 12.1 The economic version of the Turing test
+
+A buyer who suspects the counter-party is a bot — and has no deadline — can convert that suspicion into money. They do not need to break the system; they only need to *characterise* it:
+
+1. Send micro-offers (\$950 → \$952 → \$954) and watch the concession curve.
+2. Repeat the same offer to test for tireless re-counters.
+3. Send messages at 03:17 AM and observe whether the seller "is still up."
+4. Probe for linguistic determinism: same input twice, same output?
+
+Each probe is cheap; cumulatively they reverse-engineer the seller's floor. With infinite time the buyer always wins, because the solver — which is correctly indifferent to time of day, conversational rhythm, and rhetorical pressure — has no mechanism for running out of patience. *We* have to give it one.
+
+The defenses in this section are not stylistic. They are the *economic* solution to the previous paragraph: make probing *cost the buyer* — in real time, in burned commitment, in lost optionality — until probing stops being worth it.
+
+### 12.2 Persuasion frameworks, mapped to layers
+
+Four canonical bodies of work split cleanly along the System 1 / System 2 boundary that the rest of the article draws.
+
+| Framework | Owns | Layer | Where it lives in our agent |
+|-----------|------|-------|----------------------------|
+| **Karrass** (*The Negotiating Game*) | Concession curve discipline | System 2 | `disciplined_counter/10` in Prolog |
+| **Cialdini** (*Influence*) | Rhetorical levers (scarcity, authority, social proof, reciprocity, commitment, consistency) | System 1 | Prompt branches in `generate_response` |
+| **Voss** (*Never Split the Difference*) | Tactical empathy (label, mirror, calibrated questions, accusation audit) | System 1 | Prompt branches in `generate_response` |
+| **Fisher & Ury** (*Getting to Yes*) | BATNA, objective criteria | System 2 | Already encoded in `floor_cents/4` |
+
+The split is not arbitrary. Karrass and Fisher & Ury are about *which numbers move and by how much* — that is arithmetic, and arithmetic belongs in the solver. Cialdini and Voss are about *what frame the number arrives in* — that is language, and language belongs in the LLM. Mixing them produces the worst of both: a prompt that "tries" to enforce the 50% rule by saying so in English, then concedes at 30% in token #14 anyway. The solver enforces the 50% rule by *not letting* a non-compliant number be returned.
+
+### 12.3 What a bot looks like under examination
+
+Seven tells distinguish a bot from a human seller. Each is a *measurable invariant* the buyer can probe for:
+
+1. **Determinism.** Same prompt → same answer. Humans never pass this test.
+2. **Latency homogeneity.** Replies arrive in 200ms or 500ms. Humans are bursty: 8s typical, 40s if "thinking," 2 hours if at lunch.
+3. **Tirelessness.** Turn 47 is as engaged as turn 1. Humans get terse, frustrated, distracted.
+4. **Concession-curve regularity.** Conceded \$50, then \$25, then \$12.50 — the geometric shape is a fingerprint.
+5. **Linguistic perfection.** No typos, no run-ons, no "anyway."
+6. **No off-path content.** Never "btw, sorry, just got my coffee" or "let me check with my VP."
+7. **No real-time costs.** Quotes never expire; no "the shipping rate goes up Monday."
+
+Each tell is a defense in inverted form. Closing one does not make the agent human — it makes that *particular* attack stop returning information.
+
+### 12.4 Defenses, mapped to layers
+
+The agent in `examples/negotiation_simulator/` implements all seven of those, plus the two architectural ones (concession discipline and stall detection).
+
+| # | Defense | Tell it neutralizes | Layer | Location |
+|---|---------|---------------------|-------|----------|
+| 1 | Karrass 50% rule | Concession-curve regularity | Prolog | `disciplined_counter/10` |
+| 2 | Concession budget (anchor stickiness) | Tirelessness | Prolog | `disciplined_counter/10`, `mode: budget_exhausted` |
+| 3 | Stall detector | Tirelessness | Prolog | `stall_detected_h/3` |
+| 4 | Quote expiry | No real-time costs | State + Prolog | `quote_expired` flag, `policy_quote_validity_turns` |
+| 5 | Higher-authority gambit | Determinism | LLM persona + state | Cialdini *authority* branch in `generate_response` |
+| 6 | Stochastic latency (log-normal) | Latency homogeneity | Runtime | `humanize_response` node |
+| 7 | Voss tactic rotation | Linguistic perfection | LLM persona | `voss_mode` branches |
+| 8 | Cialdini lever rotation | Determinism | LLM persona | `cialdini_mode` branches |
+| 9 | Mood drift (warm → stern) | Tirelessness | LLM persona | `mood` from `policy_mood_progression` |
+| 10 | Side-talk injection | No off-path content | Runtime | `humanize_response` node |
+| 11 | Typo injection | Linguistic perfection | Runtime | `_inject_typo` in `parse_generation` |
+| 12 | First-person framing | Bot-style "we"-passive voice | LLM persona | constraint in `generate_response` prompt |
+
+The economic point: a buyer who runs probe #1 (offer \$952 over and over) hits defenses #2 and #3, the session terminates "stalled," and the buyer has learned nothing about the floor — they only burned their own probe budget.
+
+#### 12.4.1 Karrass and the budget — the Prolog teeth
+
+The full discipline lives in one helper, `disciplined_counter/10`. Three branches, each labelled with its mode:
+
+```prolog
+% Branch 1 — concession budget exhausted: lock to anchor.
+disciplined_counter(_Eff, Floor, _Ceil, LastTarget, _PrevDelta,
+                    Count, Budget, _KPct, Target, true) :-
+    Budget > 0, Count >= Budget, !,
+    Target is max(Floor, LastTarget).
+
+% Branch 2 — first counter: no Karrass constraint yet.
+disciplined_counter(Eff, Floor, Ceil, 0, _, _, _, _, Target, false) :- !,
+    counter_target(Eff, Floor, Ceil, Target).
+
+% Branch 3 — Karrass-constrained search.
+disciplined_counter(Eff, Floor, Ceil, LastTarget, PrevDelta,
+                    _Count, _Budget, KPct, Target, false) :-
+    AllowedStep is PrevDelta * KPct // 100,
+    KLB0 is LastTarget - AllowedStep,
+    KLB  is max(KLB0, Floor),
+    counter_target(Eff, KLB, Ceil, Target).
+```
+
+The Karrass lower bound `KLB` is the article's first defense per turn: if our previous concession was \$30, the next concession is at most \$15, no matter how attractively the buyer phrases their counter. The constraint is *not* a prompt instruction; it is a search-space restriction inside CLP(FD), which means the LLM is structurally incapable of violating it — the same way it is structurally incapable of writing the price.
+
+Worked trace from the test harness:
+
+```
+turn 1, no prior concession            → mode=first_counter,    target=$1150 (floor binds)
+turn 2, prev_delta=$30, KPct=50        → mode=karrass,          KLB=$1135, target=$1165
+turn 3, buyer repeats face value twice → mode=stalled,          REJECT
+turn 4, count=3 >= budget=3            → mode=budget_exhausted, target=max(floor,last)
+```
+
+Each row is a *different* CLP(FD) search, but the same compiled rule.
+
+#### 12.4.2 Stall detection — the trap for ratcheting
+
+If the buyer sends the same face value twice in a row, we exit:
+
+```prolog
+stall_detected_h(History, StallN, true) :-
+    length(History, L), L >= StallN,
+    take(StallN, History, Last), Last = [H|_],
+    forall(member(X, Last), X =:= H), !.
+```
+
+This is the cheapest defense in the file and the one with the highest leverage. The most common bot-probing pattern in the wild is "send X, see if they break; send X again, see if they break differently." Closing this loop reduces the probe budget the buyer can run before having to expose information themselves — and a new offer *is* information, while a repeated offer is not.
+
+#### 12.4.3 Latency, mood, and the runtime humanizer
+
+The `humanize_response` node sleeps before returning, by an amount sampled from a log-normal distribution:
+
+```python
+mu, sigma = 2.4, 0.55           # median ≈ 11s, p90 ≈ 22s, p99 ≈ 40s
+delay = max(lat_min, min(lat_max, rng.lognormvariate(mu, sigma)))
+if state.get("stall_detected"):  # buyer is annoying us → seller gets slow
+    delay = min(lat_max, delay * 1.4)
+time.sleep(delay)
+```
+
+Log-normal because human reply latency is approximately log-normal in real chat datasets. A uniform or exponential distribution is itself a fingerprint. The latency is *correlated with state* — when `stall_detected` is true we multiply by 1.4 ("the seller is annoyed and slow"), which is the kind of signal a probing buyer reads as human.
+
+The mood drift moves from `warm` → `cordial` → `firm` → `stern` as `concession_count` rises. Not a separate mechanism — it is the same `concession_count` that drives the Karrass budget — but it surfaces in the *tone* of the LLM's flavor sentence so the buyer feels the seller "wearing thin." A tireless bot does not wear thin.
+
+The latency sleep is gated by an env var (`TEA_HUMANIZE=0`) so unit tests and one-shot scripts do not pay for the simulation. The mood drift has no such escape — it is structurally part of the prompt.
+
+#### 12.4.4 Cialdini and Voss — the prompt ladder
+
+The `pick_persuasion_tactics` node chooses one Cialdini lever and one Voss tactic per turn, deterministically driven by state but rotated enough to look human:
+
+| Trigger | Cialdini lever |
+|---------|----------------|
+| `floor_locked` | *commitment* — reference the prior concessions made |
+| `concession_count >= policy_higher_authority_after_concessions` | *authority* — "I need to take this back to my deal desk" |
+| `policy_quote_validity_turns - turn ≤ 1` | *scarcity* — "this quote has a tight shelf-life" |
+| `concession_count == 1` | *social proof* — "two firms in your sector took this" |
+| `concession_count == 0` | *reciprocity* — "we already absorbed shipping" |
+| else | rotate `policy_cialdini_levers` modulo turn |
+
+Voss tactics rotate in parallel, with overrides for specific intents (a `walk_away_threat` triggers a *label*, not a *calibrated_q*). Each tactic has its own prompt branch in `generate_response`, with a positive example that shows the LLM the tone — but the digit ban from Section 7 is reasserted in *every* branch:
+
+```yaml
+{% elif state.voss_mode == "calibrated_q" %}
+<task>Write ONE Voss-style calibrated question ("How am I supposed to…",
+"What would you do if…") that puts the buyer in the position of solving
+the seller's constraint. No numbers, no values.</task>
+
+<positive_example>How am I supposed to make that work for the volume you
+are quoting without my margin going underwater?</positive_example>
+```
+
+The prompt rotation is deterministic *given state*, not random — meaning the audit trail can replay any session and reproduce why a particular tactic fired on turn 4. The randomness sits one level up, in how state itself is shaped by buyer behavior.
+
+#### 12.4.5 The higher-authority gambit
+
+The most asymmetric defense is the simplest. Once the buyer has won two concessions, the seller says: *"I will need to take this back to my deal desk before I can move further."* The buyer now faces a choice: accept the current price, or wait — for an unspecified amount of real time — for an answer that may or may not come. Bots cannot defer to internal authority; humans do it constantly.
+
+The state field `higher_authority_used: bool` ensures we play this card at most once per session (a human VP is not on speed-dial). The `policy_higher_authority_after_concessions` knob controls the threshold per scenario.
+
+Implementation-wise, this is a Cialdini *authority* prompt branch combined with a price-clause variant in `parse_generation`:
+
+```python
+elif cialdini == "authority":
+    price_clause = (
+        f"Pending sign-off from my deal desk, "
+        f"my best is ${target:,.2f} per unit, net {term}."
+    )
+```
+
+The price is still the solver's. The framing is the LLM's. The temporal cost on the buyer is real.
+
+#### 12.4.6 Typo injection — the only tactic in this file we are unsure about
+
+We include it (`inject_typo`, `_inject_typo` in `parse_generation`), but with a confession: typo injection is the gimmick item in the list. A sophisticated buyer notices that the typos *only ever appear in the flavor sentence and never in the price*, which is itself a fingerprint. The defense costs almost nothing to implement and probably buys nothing against a determined adversary. We ship it for completeness; we do not ship it on by default in production. It is set per-scenario via `humanize.typo_rate` (default low, can be set to `0.0` to disable).
+
+The architectural rule, restated: stochastic in language, deterministic in numbers. Typo injection respects the rule (it never touches the price clause) but illustrates the limit — randomness applied at the surface is shallow. The actual defenses are in the solver.
+
+### 12.5 What this buys you (and what it does not)
+
+Three honest claims:
+
+1. **Concession discipline + stall detector eliminates the most common attack** — the micro-offer ratchet. Once a buyer realises their probe ends the session at "stalled," they stop running it. This is the highest-ROI defense in the file.
+2. **Latency + mood + Cialdini/Voss rotation raises the cost of Turing-style probing** without claiming to defeat it. A motivated linguist with a stopwatch will eventually conclude they are talking to a bot. The point is that they reach this conclusion *after* the deal closed at our floor, not *before*.
+3. **Quote expiry is the only mechanism that resolves an unbounded session** that a stall detector did not catch. Without it, an adaptive buyer who varies their offers slightly still consumes seller turns indefinitely.
+
+Three things this does *not* do:
+
+- **Defeat a forensic adversary.** If the buyer is willing to instrument the session, dump messages to a detector model, and run statistical tests on response timing, the bot loses. The defenses here are calibrated for an *interactive* buyer, not an *analytic* one.
+- **Prevent escalation.** A buyer who suspects bot can always escalate to a human seller via a different channel. The defenses here only protect *this* session.
+- **Generalise.** Every persuasion technique listed is specific to *commercial negotiation*. A support chatbot, a hiring screener, or a therapy bot would each need its own catalog of Karrass-equivalents. The architectural pattern (deterministic mechanism + stochastic surface) generalises; the catalog does not.
+
+### 12.6 The architectural rule, restated
+
+The entire system, including this section, follows one rule:
+
+> **Stochastic in the language. Deterministic in the numbers.**
+
+Latency, mood, side-talk, typos, Cialdini rotation, Voss tactics — every source of "humanness" lives in the language layer, where being slightly different on every turn is desirable. Karrass, the budget, the stall detector, BATNA, the floor, the ceiling, the counter target — every monetary mechanism lives in the solver, where being *exactly the same* on every turn is the point.
+
+When a defense is forced to violate this rule (typo injection on the price clause; a "random" choice between multiple counter-targets; a prompt that says "be flexible about the floor") it degrades the system by amplifying language randomness into a number. The price clause must remain owned by Python composing solver outputs, even if it makes the response feel slightly more mechanical. That is the price of correctness, and it is the price the audit trail in Section 8 charges every turn — by being *able* to charge it.
+
+---
+
+## 13. Conclusion
 
 Neuro-symbolic is not an esoteric research posture.  For any workflow where a language model makes arithmetic decisions with commercial consequences, the split is mechanical:
 
@@ -706,11 +916,13 @@ Neuro-symbolic is not an esoteric research posture.  For any workflow where a la
 4. Wire the two through a schema.
 5. Log every crossing of the boundary.
 
+Section 12 adds one corollary: when the workflow runs against a patient adversary, the *time dimension* needs the same treatment as the number dimension — defenses (Karrass, budget, stall, expiry) live in the solver, and only the *surface* of the defenses (mood, scarcity, deferral) lives in the LLM.
+
 The resulting system is boring, which is the highest praise an engineer can pay a production component.  It does not generate enthusiasm; it generates margin.
 
 ---
 
-## 13. References
+## 14. References
 
 - [The Edge Agent](https://github.com/fabceolin/the_edge_agent) — the YAML-first state-graph framework used throughout.
 - [Gemma 4 E2B-it on Hugging Face](https://huggingface.co/google/gemma-4-E2B-it) — the instruction-tuned 2.3B model.

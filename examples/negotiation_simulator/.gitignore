@@ -1,0 +1,2 @@
+# Audit logs are written per-session at runtime and not tracked.
+audit/
