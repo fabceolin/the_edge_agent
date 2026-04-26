@@ -32,14 +32,50 @@ description: |
 # ---------------------------------------------------------------------------
 settings:
   llm:
-    backend: local
-    # Download the GGUF once:
+    # Backend: Ollama serving the local Gemma 4 E2B GGUF.
+    #
+    # Why Ollama instead of `backend: local` (llama.cpp directly)?
+    # - The shipped tea-python AppImage bundles its own llama-cpp-python,
+    #   and on Gemma 4 GGUFs (architecture: gemma4) it currently fails to
+    #   load.  TEA falls back to the API path silently — which led to the
+    #   wrong model being used.  Going through Ollama removes that ambiguity.
+    # - The GGUF on disk is reused as-is via a Modelfile (no duplication).
+    #
+    # One-time setup:
+    #
+    #   # 1. Download the GGUF (skip if you already did)
     #   mkdir -p ~/.cache/tea/models
     #   huggingface-cli download bartowski/google_gemma-4-E2B-it-GGUF \
     #     google_gemma-4-E2B-it-Q4_K_M.gguf --local-dir ~/.cache/tea/models
-    model_path: "~/.cache/tea/models/google_gemma-4-E2B-it-Q4_K_M.gguf"
-    n_ctx: 8192
-    n_gpu_layers: -1     # -1 = offload all layers to GPU; 0 for CPU-only
+    #
+    #   # 2. Register it as an Ollama model (uses Modelfile.gemma4-e2b in this dir)
+    #   ollama create tea-gemma4-e2b -f Modelfile.gemma4-e2b
+    #
+    # Requires Ollama >= 0.21 for `gemma4` architecture support.
+    provider: ollama
+    model: qwen3.5:latest
+    api_base: "http://dev.tail5c8ae.ts.net:11434/v1"  # OpenAI-compatible endpoint
+    temperature: 0.6
+    timeout: 120
+
+    # Local-only alternative (slower, but offline):
+    #   model: tea-gemma4-e2b
+    #   api_base: "http://localhost:11434/v1"
+    # See Modelfile.gemma4-e2b in this directory.
+
+  # Interactive-mode wiring (forward-compatible declaration).
+  # The shipped tea CLI does NOT yet read these — pass the keys explicitly
+  # on the command line until support lands:
+  #
+  #   tea-python run --interactive agent.yaml \
+  #     --question-key agent_response \
+  #     --response-key user_message \
+  #     --complete-key negotiation_complete \
+  #     --input '{"scenario_id": "b2b_laptops", "session_id": "demo01"}'
+  interview:
+    question_keys: [agent_response]
+    response_key: user_message
+    complete_keys: [negotiation_complete]
 
 # ---------------------------------------------------------------------------
 # STATE — flat fields keep the Prolog node easy to read.
@@ -56,7 +92,9 @@ state_schema:
   # --- Loaded scenario (display side) ---
   scenario_name: str
   product_name: str
-  quantity: int
+  quantity: int                # scenario target volume
+  min_quantity: int            # smallest volume the seller will deal at
+  agreed_quantity: int         # quantity currently on the table (echoed in counter/accept)
   persona_role: str
   persona_tone: str
   persona_stance: str
@@ -64,11 +102,14 @@ state_schema:
   # --- Loaded scenario (constraints — Prolog reads these) ---
   unit_cost_cents: int
   list_price_cents: int
-  min_margin_pct: int
+  min_margin_pct: int               # scenario default (target-volume tier)
+  effective_min_margin_pct: int     # tier-adjusted per turn from offer_quantity
   max_discount_pct: int
   shipping_cost_pct: int
   interest_by_term: list   # list of [days, rate] pairs, e.g. [[30,0.0],[60,0.02]]
   batna_cents: int
+  volume_tiers: list       # list of [min_qty, min_margin_pct] pairs
+  quantity_below_min: bool # true when buyer asked for fewer units than scenario.min_quantity
 
   # --- Conversation ---
   turn_num: int
@@ -79,13 +120,15 @@ state_schema:
   extraction_raw: dict
   offer_unit_cents: int
   offer_term_days: int
+  offer_quantity: int      # buyer's stated quantity (0 = not stated this turn)
   offer_demands: list
-  offer_intent: str        # "proposal" | "counter" | "walk_away_threat" | "bluff" | "accept"
+  offer_intent: str        # "proposal" | "counter" | "walk_away_threat" | "bluff" | "accept" | "question"
 
   # --- Story 4: symbolic decision output ---
-  decision_action: str     # "accept" | "reject" | "counter"
+  decision_action: str     # "accept" | "reject" | "counter" | "clarify"
   decision_target_cents: int
-  decision_floor_cents: int
+  decision_floor_cents: int        # PV-based floor (margin or BATNA)
+  decision_face_floor_cents: int   # face-value floor at buyer's term (PV floor / (1-rate))
   decision_ceiling_cents: int
   decision_buyer_effective_cents: int
   decision_reason: str
@@ -94,11 +137,56 @@ state_schema:
   # --- Story 5: neural generation output ---
   agent_response: str
 
+  # --- Negotiation policy (loaded from scenarios.yaml -> negotiation_policy) ---
+  # See § 12 of the article.  These fields govern the anti-ratcheting
+  # (Karrass) discipline, quote-expiry (Cialdini scarcity), persuasion
+  # rotation, and runtime humanization.
+  policy_concession_budget: int
+  policy_karrass_ratio_pct: int
+  policy_stall_repeat_threshold: int
+  policy_quote_validity_turns: int
+  policy_higher_authority_after_concessions: int
+  policy_voss_tactics: list
+  policy_cialdini_levers: list
+  policy_mood_progression: list
+  policy_humanize_enabled: bool
+  policy_humanize_typo_rate: float
+  policy_humanize_latency_lognormal_mu: float
+  policy_humanize_latency_lognormal_sigma: float
+  policy_humanize_latency_min: int
+  policy_humanize_latency_max: int
+  policy_humanize_side_talk_rate: float
+
+  # --- Concession-discipline state (Section 12.4 — Prolog reads/writes) ---
+  concession_count: int            # how many counters we have already moved
+  last_target_cents: int           # our previous counter (0 = none yet)
+  prev_concession_delta_cents: int # size of the previous concession (0 = first move)
+  buyer_offer_history: list        # list of buyer effective_cents over time
+  floor_locked: bool               # true once concession_budget exhausted
+  stall_detected: bool             # buyer repeated the same offer N times
+  quote_expired: bool              # turn_num exceeded policy_quote_validity_turns
+  higher_authority_used: bool      # we have already played the "let me check with VP" card
+  higher_authority_turn: int       # turn at which it was played
+
+  # --- Persuasion tactics picked for this turn (Section 12.4 — System 1) ---
+  cialdini_mode: str               # "" | "scarcity" | "authority" | "social_proof" | "reciprocity" | "commitment"
+  voss_mode: str                   # "" | "label" | "mirror" | "calibrated_q" | "accusation_audit"
+  mood: str                        # "warm" | "cordial" | "firm" | "stern"
+  inject_typo: bool                # whether to corrupt one word in the flavor sentence
+  inject_side_talk: bool           # whether to append a short business-context aside
+  humanize_delay_seconds: float    # latency sampled from log-normal; sleeps before reply
+
   # --- Control & outcome ---
   negotiation_complete: bool
-  final_outcome: str       # "won" | "lost_to_floor" | "walked_away" | "impasse"
+  final_outcome: str       # "won" | "lost_to_floor" | "walked_away" | "impasse" | "stalled" | "quote_expired"
   final_deal_cents: int
   turn_status: str         # "awaiting_user" | "complete"
+
+  # --- Mirrors of agent_response / negotiation_complete under names the
+  # default tea CLI (`--question-key`, `--complete-key`) looks for, so the
+  # example works with `tea-python run --interactive` and no extra flags.
+  next_question: str
+  complete: bool
 
 # ---------------------------------------------------------------------------
 # NODES
@@ -114,9 +202,27 @@ nodes:
 
   - name: entry_router
     run: |
-      # First turn iff there's no user_message AND no constraints loaded yet.
-      bootstrap = not bool(state.get("user_message")) and not state.get("unit_cost_cents")
+      # Normalize the buyer's message regardless of which state field the
+      # interactive runner used to inject it.  The shipped tea CLI defaults
+      # to `--response-key=response`, but this agent's prompts read from
+      # `state.user_message`, so without normalization the LLM would see an
+      # empty message and (in small quantized models) hallucinate a price.
+      incoming = (
+        state.get("user_message")
+        or state.get("response")
+        or state.get("message")
+        or state.get("ask")
+        or state.get("prompt")
+        or ""
+      )
+      incoming = str(incoming).strip()
+
+      # First turn iff there's no incoming message AND no constraints loaded yet.
+      bootstrap = (not incoming) and (not state.get("unit_cost_cents"))
+
       return {
+        "user_message": incoming,
+        "response": "",  # clear legacy field so it does not get re-read on next turn
         "route_to_bootstrap": bootstrap,
         "route_to_turn": not bootstrap,
       }
@@ -160,6 +266,10 @@ nodes:
 
       persona = chosen.get("persona") or {}
 
+      # § 12 — Negotiation policy (anti-ratcheting + persuasion + humanize)
+      policy = chosen.get("negotiation_policy") or {}
+      humanize = (policy.get("humanize") or {})
+
       return {
         "scenario_id": chosen["id"],
         "scenarios_file": scenarios_path,
@@ -169,6 +279,8 @@ nodes:
         "scenario_name": chosen["name"],
         "product_name": chosen["product"],
         "quantity": int(chosen["quantity"]),
+        "min_quantity": int(chosen.get("min_quantity") or max(1, int(chosen["quantity"]) // 2)),
+        "agreed_quantity": int(chosen["quantity"]),    # starts at scenario default; updates when buyer commits to a valid volume
         "persona_role": persona.get("buyer_role", ""),
         "persona_tone": persona.get("tone", ""),
         "persona_stance": persona.get("initial_stance", ""),
@@ -176,10 +288,54 @@ nodes:
         "unit_cost_cents":   int(round(float(chosen["unit_cost"])   * 100)),
         "list_price_cents":  int(round(float(chosen["list_price"])  * 100)),
         "min_margin_pct":    int(chosen["min_margin_pct"]),
+        "effective_min_margin_pct": int(chosen["min_margin_pct"]),
         "max_discount_pct":  int(chosen["max_discount_pct"]),
         "shipping_cost_pct": int(chosen.get("shipping_cost_pct", 0)),
         "interest_by_term":  interest_pairs,
         "batna_cents":       int(round(float(chosen["batna_unit"])  * 100)),
+        "volume_tiers":      [[int(t["min_qty"]), int(t["min_margin_pct"])]
+                              for t in (chosen.get("volume_tiers") or [])],
+        "quantity_below_min": False,
+
+        # --- Negotiation policy (§ 12) ---
+        "policy_concession_budget":      int(policy.get("concession_budget", 3)),
+        "policy_karrass_ratio_pct":      int(policy.get("karrass_ratio_pct", 50)),
+        "policy_stall_repeat_threshold": int(policy.get("stall_repeat_threshold", 2)),
+        "policy_quote_validity_turns":   int(policy.get("quote_validity_turns", 8)),
+        "policy_higher_authority_after_concessions":
+                                          int(policy.get("higher_authority_after_concessions", 2)),
+        "policy_voss_tactics":           list(policy.get("voss_tactics") or
+                                              ["label", "mirror", "calibrated_q", "accusation_audit"]),
+        "policy_cialdini_levers":        list(policy.get("cialdini_levers") or
+                                              ["scarcity", "authority", "social_proof", "commitment"]),
+        "policy_mood_progression":       list(policy.get("mood_progression") or
+                                              ["warm", "cordial", "firm", "stern"]),
+        "policy_humanize_enabled":       bool(humanize.get("enabled", True)),
+        "policy_humanize_typo_rate":     float(humanize.get("typo_rate", 0.0)),
+        "policy_humanize_latency_lognormal_mu":    float(humanize.get("latency_lognormal_mu", 2.3)),
+        "policy_humanize_latency_lognormal_sigma": float(humanize.get("latency_lognormal_sigma", 0.5)),
+        "policy_humanize_latency_min":   int(humanize.get("latency_min_seconds", 3)),
+        "policy_humanize_latency_max":   int(humanize.get("latency_max_seconds", 60)),
+        "policy_humanize_side_talk_rate":float(humanize.get("side_talk_rate", 0.0)),
+
+        # --- Concession-discipline state ---
+        "concession_count": 0,
+        "last_target_cents": 0,
+        "prev_concession_delta_cents": 0,
+        "buyer_offer_history": [],
+        "floor_locked": False,
+        "stall_detected": False,
+        "quote_expired": False,
+        "higher_authority_used": False,
+        "higher_authority_turn": 0,
+
+        # --- Persuasion tactics (set per-turn by pick_persuasion_tactics) ---
+        "cialdini_mode": "",
+        "voss_mode": "",
+        "mood": (policy.get("mood_progression") or ["warm"])[0],
+        "inject_typo": False,
+        "inject_side_talk": False,
+        "humanize_delay_seconds": 0.0,
 
         "turn_num": 0,
         "chat_history": [],
@@ -190,18 +346,35 @@ nodes:
 
   - name: emit_opener
     run: |
-      # Deterministic opening line (no LLM needed) — keeps turn 0 cheap
-      # and makes the "script" of the first contact reproducible.
+      # Deterministic opening line (no LLM needed) — keeps turn 0 cheap and
+      # makes the "script" of the first contact reproducible.  All numbers
+      # come from scenarios.yaml; the LLM is not on this path.
+      qty        = int(state.get("quantity") or 0)
+      min_qty    = int(state.get("min_quantity") or 0)
+      product    = state.get("product_name") or "the product"
+      unit_list  = (state.get("list_price_cents") or 0) / 100
+      total_list = unit_list * qty
+
       opener = (
-        f"Hi! TechCorp sales here. This is the quote for "
-        f"{state['quantity']} units of {state['product_name']}. "
-        f"List price is ${state['list_price_cents']/100:,.2f} per unit. "
-        f"How would you like to structure the deal?"
+        f"Hi! TechCorp sales here — thanks for reaching out.\n"
+        f"\n"
+        f"Quote summary:\n"
+        f"  Product:           {product}\n"
+        f"  Target quantity:   {qty:,} units\n"
+        f"  Minimum order:     {min_qty:,} units\n"
+        f"  Unit list price:   ${unit_list:,.2f} per unit\n"
+        f"  Total at list:     ${total_list:,.2f}\n"
+        f"  Standard terms:    net 30\n"
+        f"\n"
+        f"What did you have in mind on volume, terms, or unit price?"
       )
+
       history = list(state.get("chat_history", []))
       history.append({"role": "agent", "content": opener})
       return {
         "agent_response": opener,
+        "next_question": opener,    # mirror for default CLI question keys
+        "complete": False,
         "chat_history": history,
         "turn_status": "awaiting_user",
         "negotiation_complete": False,
@@ -214,33 +387,42 @@ nodes:
   # =========================================================================
 
   - name: extract_offer
-    uses: llm.chat
+    uses: llm.call
     with:
       max_tokens: 160
       temperature: 0.05
+      # Gemma 4 has chain-of-thought enabled by default; routes the answer
+      # into message.thinking and leaves message.content empty over the
+      # OpenAI-compat endpoint.  `think: false` keeps it in content.
+      # Disable reasoning/thinking output (Qwen 3.x, Gemma 4): the answer
+      # otherwise lands in `message.thinking` and `content` returns empty
+      # over Ollama's OpenAI-compat endpoint.
+      extra_body: { reasoning_effort: "none" }
       messages:
         - role: user
           content: |
             <persona>You are a B2B offer EXTRACTOR. Your only job is to convert buyer messages into structured JSON. You never argue, never reply, never chat.</persona>
 
-            <main_objective>Receive ONE buyer message and produce ONE JSON object with exactly 4 fields: unit_price_usd, term_days, demands, intent. Nothing else.</main_objective>
+            <main_objective>Receive ONE buyer message and produce ONE JSON object with exactly 5 fields: unit_price_usd, term_days, quantity, demands, intent. Nothing else.</main_objective>
 
             <schema_strict>
             {
               "unit_price_usd": <integer>,
               "term_days": <30 | 60 | 90 | 365>,
+              "quantity": <integer>,
               "demands": [<strings>],
               "intent": "proposal" | "counter" | "walk_away_threat" | "bluff" | "accept"
             }
             </schema_strict>
 
             <constraints>
-            - FORBIDDEN to create fields beyond the 4 listed in schema_strict.
+            - FORBIDDEN to create fields beyond the 5 listed in schema_strict.
             - FORBIDDEN to write text outside the JSON. No "Here it is", no markdown, no comments.
             - FORBIDDEN to invent numbers that are not literally in the message.
-            - FORBIDDEN to use strings as the value of unit_price_usd — it is ALWAYS an integer.
+            - FORBIDDEN to use strings as the value of unit_price_usd or quantity — they are ALWAYS integers.
             - If the price was not stated: unit_price_usd = 0.
             - If the term was not stated: term_days = 30.
+            - If the quantity was not stated: quantity = 0  (do NOT default to a scenario value).
             - If no demand was stated: demands = [].
             - demands only accepts strings from the closed set: ["free_shipping", "warranty", "priority_delivery"].
             </constraints>
@@ -251,22 +433,28 @@ nodes:
             - IF the buyer threatens to leave / go to a competitor → intent = "walk_away_threat".
             - IF the buyer said "deal"/"accepted"/"done" WITHOUT a new condition → intent = "accept".
             - IF the buyer counters a previous value of ours → intent = "counter".
+            - IF the buyer says "N units"/"N pairs"/"N seats"/"want to buy N" → quantity = N.
             - Otherwise → intent = "proposal".
             </conditional_logic>
 
             <positive_example>
-            Message: "I'll pay 2000 per unit, net 60, with free shipping"
-            Response: {"unit_price_usd": 2000, "term_days": 60, "demands": ["free_shipping"], "intent": "proposal"}
+            Message: "I'll pay 2000 per unit, net 60, with free shipping, 800 units"
+            Response: {"unit_price_usd": 2000, "term_days": 60, "quantity": 800, "demands": ["free_shipping"], "intent": "proposal"}
             </positive_example>
 
             <positive_example>
             Message: "1800 or I go to your competitor"
-            Response: {"unit_price_usd": 1800, "term_days": 30, "demands": [], "intent": "walk_away_threat"}
+            Response: {"unit_price_usd": 1800, "term_days": 30, "quantity": 0, "demands": [], "intent": "walk_away_threat"}
             </positive_example>
 
             <positive_example>
             Message: "Deal at 2500"
-            Response: {"unit_price_usd": 2500, "term_days": 30, "demands": [], "intent": "accept"}
+            Response: {"unit_price_usd": 2500, "term_days": 30, "quantity": 0, "demands": [], "intent": "accept"}
+            </positive_example>
+
+            <positive_example>
+            Message: "ok 1 unit at 1050"
+            Response: {"unit_price_usd": 1050, "term_days": 30, "quantity": 1, "demands": [], "intent": "accept"}
             </positive_example>
 
             <negative_example>
@@ -312,12 +500,160 @@ nodes:
         # Degrade gracefully — solver will see offer_unit_cents=0 and reject
         data = {}
 
-      unit_usd = float(data.get("unit_price_usd") or 0)
+      unit_usd     = float(data.get("unit_price_usd") or 0)
+      term_days    = int(data.get("term_days") or 30)
+      quantity     = int(data.get("quantity") or 0)
+      demands      = list(data.get("demands") or [])
+      intent       = str(data.get("intent") or "proposal")
+      user_msg     = str(state.get("user_message") or "").strip()
+
+      # § 12 — Bare acceptance detection.
+      # When the buyer replies with just "accepted" / "ok" / "deal" /
+      # "fechado" after the agent has issued a counter, the implicit
+      # contract is "I accept your last counter on its exact terms".
+      # Without this branch the LLM extractor returns unit_price_usd=0,
+      # the question-heuristic fires, and the turn becomes a clarify —
+      # losing the agent's own counter as the implied offer.
+      def _is_bare_accept(msg):
+        if not msg:
+          return False
+        s = msg.lower().strip().rstrip(".!,?:;")
+        # If the buyer typed any digit, they're committing to specific
+        # numbers — let the LLM extractor handle it.
+        if any(c.isdigit() for c in s):
+          return False
+        triggers = (
+          # English
+          "accept", "accepted", "agree", "agreed", "ok", "okay", "deal",
+          "yes", "yep", "yeah", "sure", "done", "great",
+          "sounds good", "let's do it", "let's close", "let's go",
+          "let us close", "we have a deal",
+          # Portuguese
+          "fechado", "fechou", "tudo bem", "perfeito", "sim", "aceito",
+          "topo", "feito", "fecha",
+        )
+        # Word-boundary match (avoid e.g. "accept this 950" — caught by digit guard above)
+        words = set(s.split()) | {s}
+        return any(t in words or s == t or s.startswith(t + " ") or s.endswith(" " + t) for t in triggers)
+
+      last_target = int(state.get("last_target_cents") or 0)
+      last_action = state.get("decision_action") or ""
+
+      if _is_bare_accept(user_msg) and last_target > 0 and last_action == "counter":
+        # Buyer is accepting the agent's last counter exactly.  Hand the
+        # solver an offer that mirrors the prior counter — face value,
+        # term that the counter used (echoed from prior buyer turn), and
+        # the quantity already agreed.  Prolog will accept by construction.
+        return {
+          "offer_unit_cents": last_target,
+          "offer_term_days":  int(state.get("offer_term_days") or 30),
+          "offer_quantity":   int(state.get("agreed_quantity") or state.get("quantity") or 0),
+          "offer_demands":    [],
+          "offer_intent":     "accept",
+        }
+
+      # § 12 — Defensive question detection.
+      # Small quantized LLMs hallucinate prices when given empty input or
+      # questions ("What is your price?" → unit_price_usd: 2500, intent: accept).
+      # Force intent=question and offer=0 whenever the buyer is plainly NOT
+      # making an offer, regardless of what the LLM extracted.
+      def _looks_like_question(msg):
+        if not msg:
+          return True
+        s = msg.lower()
+        if "?" in s:
+          return True
+        starts = (
+          "what", "qual", "quais", "quanto", "quantos",
+          "how", "como", "where", "onde", "when", "quando",
+          "why", "porque", "por que",
+          "could you", "can you", "would you", "should",
+          "tell me", "me diz", "me diga",
+          "explain", "explique",
+          "is it", "is the", "is your", "are the", "are you",
+          "qual é", "qual e", "qual seria",
+        )
+        return any(s.startswith(w) for w in starts)
+
+      if _looks_like_question(user_msg) or unit_usd <= 0:
+        # If the buyer is plainly asking, override the LLM regardless of its claim.
+        if _looks_like_question(user_msg):
+          intent = "question"
+        unit_usd = 0.0
+
       return {
         "offer_unit_cents": int(round(unit_usd * 100)),
-        "offer_term_days":  int(data.get("term_days") or 30),
-        "offer_demands":    list(data.get("demands") or []),
-        "offer_intent":     str(data.get("intent") or "proposal"),
+        "offer_term_days":  term_days,
+        "offer_quantity":   quantity,
+        "offer_demands":    demands,
+        "offer_intent":     intent,
+      }
+
+  # =========================================================================
+  # PHASE 2a — Buyer-history bookkeeping.
+  # The Prolog stall detector (§ 12.4) needs the list of recent buyer face
+  # values; we update it here so that the just-extracted offer is included
+  # in the history Prolog will read.  Newest entry first.
+  # =========================================================================
+
+  - name: record_buyer_offer
+    run: |
+      face        = int(state.get("offer_unit_cents") or 0)
+      hist        = list(state.get("buyer_offer_history") or [])
+      qty_low     = bool(state.get("quantity_below_min"))
+      # Skip pushes when:
+      #   - offer is 0 (clarify turns: questions, no price stated)
+      #   - quantity is below the scenario minimum (offer was invalid;
+      #     pushing it would let the stall detector falsely trip when the
+      #     buyer corrects the volume next turn at the same face value).
+      if face > 0 and not qty_low:
+        hist = ([face] + hist)[:10]
+      return {"buyer_offer_history": hist}
+
+  # =========================================================================
+  # PHASE 1c — Volume tier resolution.
+  # Bigger orders accept a lower per-unit margin (volume discount), so the
+  # solver's effective floor must be re-derived from the buyer's stated
+  # quantity each turn.  Also blocks "negotiate at 600 units, accept at 1
+  # unit" exploits by flipping `quantity_below_min` when the buyer's volume
+  # falls below the scenario's minimum order quantity.
+  # =========================================================================
+
+  - name: apply_volume_tier
+    run: |
+      qty            = int(state.get("offer_quantity") or 0)
+      tiers          = list(state.get("volume_tiers") or [])
+      base           = int(state.get("min_margin_pct") or 0)
+      min_qty        = int(state.get("min_quantity") or 0)
+      agreed_prior   = int(state.get("agreed_quantity")
+                            or state.get("quantity") or 0)
+
+      # Default: keep the scenario's target-volume margin and prior agreed
+      # quantity if buyer hasn't restated quantity this turn.
+      effective       = base
+      qty_below_min   = False
+      agreed_new      = agreed_prior
+
+      if qty > 0:
+        if min_qty > 0 and qty < min_qty:
+          # Below scenario minimum: do NOT update agreed_quantity (the
+          # offer is invalid); flag for the rejection branch in Prolog.
+          qty_below_min = True
+        else:
+          # Resolve tier (largest min_qty <= qty) and commit the new volume
+          # as the agreed quantity going forward.
+          best = None
+          for min_q, margin in sorted(tiers, key=lambda t: t[0]):
+            if qty >= int(min_q):
+              best = int(margin)
+          if best is not None:
+            effective = best
+          agreed_new = qty
+
+      return {
+        "effective_min_margin_pct": effective,
+        "quantity_below_min":       qty_below_min,
+        "agreed_quantity":          agreed_new,
       }
 
   # =========================================================================
@@ -325,6 +661,11 @@ nodes:
   # Pure Prolog CLP(FD). Reads the flat state fields, never calls the LLM,
   # and writes the decision back as flat fields. If this node does not
   # succeed, the whole turn fails loudly — that is the point.
+  #
+  # § 12.4 additions (anti-ratcheting / concession discipline):
+  #   * Karrass 50% rule — each new counter concedes ≤ ratio% of previous
+  #   * Concession budget — after N moves, lock to floor ("hardstop")
+  #   * Stall detector — buyer repeats the same face value StallN times → reject
   # =========================================================================
 
   - name: decide
@@ -408,6 +749,33 @@ nodes:
                    _{ceiling_cents: Ceil},
                    J).
 
+      % Face-value floor at the buyer's term: the minimum *face* value V
+      % such that PV(V, term) >= PV-floor.  Without this adjustment, the
+      % solver would counter at the PV-floor face value, but if the buyer
+      % accepts that face at a term with non-zero interest, the PV lands
+      % below the floor — and the agent loops countering its own offer.
+      %
+      %   PV = Face * (1 - rate)  =>  Face_required = ceil(Floor / (1 - rate))
+      face_floor(Floor, Days, Map, FaceFloor) :-
+          lookup_rate(Days, Map, Rate),
+          Denom is 1.0 - Rate,
+          ( Denom > 0.0001 ->
+              FaceFloorRaw is ceiling(Floor / Denom)
+          ;   FaceFloorRaw is 99999999      % effectively infeasible
+          ),
+          % Round UP to next whole dollar so the face value falls on a
+          % multiple of 100 cents — the LLM extractor schema is integer
+          % USD, so any non-round cents get truncated and the buyer's
+          % accept lands below floor.
+          FaceFloor is ((FaceFloorRaw + 99) // 100) * 100,
+          format(atom(J),
+            "face_floor at term=~wd rate=~w: ceil(~w / (1 - ~w)) = ~w → round_up_$1 = ~w",
+            [Days, Rate, Floor, Rate, FaceFloorRaw, FaceFloor]),
+          add_step(face_floor,
+                   _{pv_floor_cents: Floor, term_days: Days, rate: Rate},
+                   _{face_floor_cents_raw: FaceFloorRaw, face_floor_cents: FaceFloor},
+                   J).
+
       % Counter-target using CLP(FD): whole-dollar number in [Floor, Ceiling]
       % minimising distance to the midpoint of (Effective, Ceiling).
       counter_target(Eff, Floor, Ceil, Target) :-
@@ -439,45 +807,183 @@ nodes:
                    _{target_cents: Floor, search_result: fallback_floor},
                    J).
 
+      % --- § 12.4 helpers: concession discipline -----------------------
+
+      % take(N, List, Prefix) — first N items.
+      take(0, _, []) :- !.
+      take(_, [], []) :- !.
+      take(N, [H|T], [H|R]) :- N1 is N-1, take(N1, T, R).
+
+      % Stall detector: are the most recent StallN buyer face values all equal?
+      % History is newest-first.
+      stall_detected_h(_History, StallN, false) :- StallN =< 1, !.
+      stall_detected_h(History, StallN, Flag) :-
+          length(History, L),
+          ( L < StallN ->
+              Flag = false
+          ;   take(StallN, History, Last),
+              Last = [H|_],
+              ( forall(member(X, Last), X =:= H) -> Flag = true ; Flag = false )
+          ).
+
+      % disciplined_counter: applies Karrass + budget on top of counter_target.
+      % If concession_count >= budget → lock to max(Floor, LastTarget).
+      % Otherwise the search lower bound is raised to LastTarget - PrevDelta*KPct/100,
+      % which enforces the Karrass "each concession ≤ ratio% of previous".
+      disciplined_counter(_Eff, Floor, _Ceil,
+                          LastTarget, _PrevDelta, Count, Budget, _KPct,
+                          Target, true) :-
+          Budget > 0,
+          Count >= Budget,
+          !,
+          Anchor is max(Floor, LastTarget),
+          Target = Anchor,
+          format(atom(J),
+            "concession budget exhausted (count=~w >= budget=~w) → lock at max(floor=~w, last=~w) = ~w",
+            [Count, Budget, Floor, LastTarget, Anchor]),
+          add_step(disciplined_counter,
+                   _{count: Count, budget: Budget,
+                     floor: Floor, last_target: LastTarget},
+                   _{target_cents: Anchor, floor_locked: true,
+                     mode: budget_exhausted},
+                   J).
+      disciplined_counter(Eff, Floor, Ceil,
+                          0, _PrevDelta, _Count, _Budget, _KPct,
+                          Target, false) :-
+          !,
+          counter_target(Eff, Floor, Ceil, Target),
+          format(atom(J),
+            "first counter, no Karrass constraint → V=~w",
+            [Target]),
+          add_step(disciplined_counter,
+                   _{first_counter: true, floor: Floor, ceiling: Ceil},
+                   _{target_cents: Target, floor_locked: false,
+                     mode: first_counter},
+                   J).
+      disciplined_counter(Eff, Floor, Ceil,
+                          LastTarget, PrevDelta, _Count, _Budget, KPct,
+                          Target, false) :-
+          AllowedStep is PrevDelta * KPct // 100,
+          KLB0 is LastTarget - AllowedStep,
+          KLB  is max(KLB0, Floor),
+          counter_target(Eff, KLB, Ceil, Target),
+          format(atom(J),
+            "Karrass: prev_delta=~w, ratio=~w%, allowed_step=~w, karrass_LB=max(~w,floor=~w)=~w → V=~w",
+            [PrevDelta, KPct, AllowedStep, KLB0, Floor, KLB, Target]),
+          add_step(disciplined_counter,
+                   _{prev_concession_delta: PrevDelta, karrass_pct: KPct,
+                     allowed_step: AllowedStep, karrass_lower_bound: KLB,
+                     floor: Floor, ceiling: Ceil},
+                   _{target_cents: Target, floor_locked: false,
+                     mode: karrass_constrained},
+                   J).
+
       % --- Main goal ---------------------------------------------------
 
       retractall(trace_step(_, _, _, _)),
 
+      % Original financial state
       state(offer_unit_cents,   OfferC),
       state(offer_term_days,    Days),
       state(offer_demands,      Demands),
+      state(offer_intent,       Intent),
+      state(offer_quantity,     Qty),
       state(unit_cost_cents,    CostC),
       state(list_price_cents,   ListC),
-      state(min_margin_pct,     MinPct),
+      state(effective_min_margin_pct, MinPct),    % tier-adjusted by apply_volume_tier
       state(max_discount_pct,   MaxPct),
       state(shipping_cost_pct,  SPct),
       state(interest_by_term,   Map),
       state(batna_cents,        BatnaC),
+      state(quantity_below_min, QtyBelowMin),
+
+      % § 12.4 concession-discipline state
+      state(concession_count,                CCount),
+      state(last_target_cents,               LastTarget),
+      state(prev_concession_delta_cents,     PrevDelta),
+      state(buyer_offer_history,             BHist),
+      state(policy_concession_budget,        Budget),
+      state(policy_karrass_ratio_pct,        KarrassPct),
+      state(policy_stall_repeat_threshold,   StallN),
+      state(quote_expired,                   QExpired),
 
       effective_offer(OfferC, SPct, Demands, AfterShip),
       present_value(AfterShip, Days, Map, Eff),
       floor_cents(CostC, MinPct, BatnaC, Floor),
       ceiling_cents(ListC, MaxPct, Ceil),
+      % Adjust face-value floor for the buyer's term.  When the buyer asks
+      % for net 90 (positive rate), the seller must counter at a HIGHER face
+      % value so that PV after the term penalty still meets the floor.
+      face_floor(Floor, Days, Map, FFloor),
 
-      ( Eff >= Floor ->
-          Action = accept, Target = Eff,
+      % Stall detection runs over face values (what the buyer typed)
+      stall_detected_h(BHist, StallN, StallFlag),
+      add_step(stall_detector,
+               _{history_head: BHist, threshold: StallN},
+               _{stall_detected: StallFlag},
+               'compare last N buyer face values for repetition'),
+
+      % Decision tree:
+      %   0. Buyer is asking a question (Intent=question OR offer=0) → clarify
+      %      (no commitment; respond with list price as reference)
+      %   1. Stall (buyer repeating offer N times) → reject
+      %   2. Quote expired (Cialdini scarcity stick) → reject
+      %   3. Offer ≥ floor → accept
+      %   4. Offer < unit cost → reject
+      %   5. Otherwise → disciplined counter
+      ( ( Intent == question ; OfferC =:= 0 ) ->
+          Action = clarify, Target = ListC, FloorLocked = false,
+          Reason = 'buyer asking; respond with list price as reference',
+          format(atom(CJ),
+            "intent=~w, offer=~w → CLARIFY at list_price ~w",
+            [Intent, OfferC, ListC])
+      ; QtyBelowMin == true ->
+          Action = reject, Target = 0, FloorLocked = false,
+          Reason = 'buyer quantity below scenario minimum',
+          format(atom(CJ),
+            "quantity ~w < min_quantity → REJECT (volume-floor protection)",
+            [Qty])
+      ; StallFlag == true ->
+          Action = reject, Target = 0, FloorLocked = false,
+          Reason = 'buyer repeated offer; signaling impasse',
+          format(atom(CJ),
+            "stall_detected (last ~w buyer offers identical) → REJECT",
+            [StallN])
+      ; QExpired == true ->
+          Action = reject, Target = 0, FloorLocked = false,
+          Reason = 'quote validity expired',
+          format(atom(CJ),
+            "quote_expired=true → REJECT (Cialdini scarcity stick)", [])
+      ; Eff >= Floor ->
+          Action = accept, Target = Eff, FloorLocked = false,
           Reason = 'offer at or above floor',
           format(atom(CJ), "effective ~w  >=  floor ~w → ACCEPT", [Eff, Floor])
       ; Eff < CostC ->
-          Action = reject, Target = 0,
+          Action = reject, Target = 0, FloorLocked = false,
           Reason = 'below break-even',
           format(atom(CJ), "effective ~w  <  unit_cost ~w → REJECT", [Eff, CostC])
-      ;   counter_target(Eff, Floor, Ceil, Target),
+      ;   % Use FFloor (face floor at buyer's term) as the search lower bound,
+          % NOT the PV-based Floor.  This prevents the "agent counters its
+          % own offer" loop when the buyer's term has non-zero interest.
+          disciplined_counter(Eff, FFloor, Ceil,
+                              LastTarget, PrevDelta, CCount, Budget, KarrassPct,
+                              Target, FloorLocked),
           Action = counter,
-          Reason = 'between break-even and floor: counter proposed',
+          ( FloorLocked == true ->
+              Reason = 'concession budget exhausted: locked at face floor'
+          ;   Reason = 'between break-even and floor: counter proposed'
+          ),
           format(atom(CJ),
-            "unit_cost ~w  <=  effective ~w  <  floor ~w → COUNTER at ~w",
-            [CostC, Eff, Floor, Target])
+            "unit_cost ~w <= effective ~w < pv_floor ~w (face_floor ~w at ~wd) → COUNTER at ~w (locked=~w)",
+            [CostC, Eff, Floor, FFloor, Days, Target, FloorLocked])
       ),
       add_step(classify,
                _{effective_cents: Eff, floor_cents: Floor,
-                 ceiling_cents: Ceil, unit_cost_cents: CostC},
-               _{action: Action, target_cents: Target},
+                 ceiling_cents: Ceil, unit_cost_cents: CostC,
+                 stall_flag: StallFlag, quote_expired: QExpired,
+                 concession_count: CCount, budget: Budget},
+               _{action: Action, target_cents: Target,
+                 floor_locked: FloorLocked},
                CJ),
 
       % Collect the ordered trace as a plain list of dicts.
@@ -490,15 +996,163 @@ nodes:
       return(decision_action,                Action),
       return(decision_target_cents,          Target),
       return(decision_floor_cents,           Floor),
+      return(decision_face_floor_cents,      FFloor),
       return(decision_ceiling_cents,         Ceil),
       return(decision_buyer_effective_cents, Eff),
       return(decision_reason,                Reason),
-      return(decision_chain,                 Chain).
+      return(decision_chain,                 Chain),
+      return(stall_detected,                 StallFlag),
+      return(floor_locked,                   FloorLocked).
+
+  # =========================================================================
+  # PHASE 2b — Concession-discipline state update (§ 12.4).
+  # The Prolog has decided.  If the action is `counter`, this node updates
+  # the state trackers so the next turn's Karrass constraint is correct:
+  #   * concession_count       += 1 if we actually moved
+  #   * prev_concession_delta_cents = (last_target - new_target) when moving
+  #   * last_target_cents      = new_target
+  # If the action is accept / reject, trackers are left untouched.
+  # =========================================================================
+
+  - name: update_concession_state
+    run: |
+      action  = state.get("decision_action")
+      target  = int(state.get("decision_target_cents") or 0)
+      last    = int(state.get("last_target_cents") or 0)
+      count   = int(state.get("concession_count") or 0)
+
+      # Clarify (buyer asked a question) is NOT a concession — no state change.
+      out = {}
+      if action == "counter" and target > 0:
+        if last == 0:
+          # First concession: delta is measured from the ceiling (our walk-in stance)
+          ceiling = int(state.get("decision_ceiling_cents") or 0) or int(state.get("list_price_cents") or 0)
+          delta   = max(0, ceiling - target)
+        else:
+          delta   = max(0, last - target)
+
+        # Only count this as a concession if we actually moved further down
+        if last == 0 or target < last:
+          out["concession_count"] = count + 1
+          out["prev_concession_delta_cents"] = delta
+          out["last_target_cents"] = target
+
+      return out
+
+  # =========================================================================
+  # PHASE 2c — Persuasion-tactic picker (§ 12.4).
+  # Stochastically rotates Cialdini levers and Voss tactics, drifts the mood
+  # along the configured progression, decides whether to inject a typo or
+  # a side-talk this turn, samples the humanization latency, and flips
+  # quote_expired when policy_quote_validity_turns has elapsed.
+  #
+  # The picker is INFORMED by the concession state (so e.g. higher-authority
+  # only fires after enough movement) but NEVER touches monetary state.
+  # =========================================================================
+
+  - name: pick_persuasion_tactics
+    run: |
+      import math, os, random
+
+      # ---- Quote expiry (Cialdini scarcity, hard) ----
+      turn   = int(state.get("turn_num") or 0) + 1   # this is the upcoming turn
+      qmax   = int(state.get("policy_quote_validity_turns") or 0)
+      qexp   = bool(state.get("quote_expired") or False) or (qmax > 0 and turn >= qmax)
+
+      # ---- Mood progression: drifts with concession_count ----
+      progression = list(state.get("policy_mood_progression") or ["warm"])
+      ccount      = int(state.get("concession_count") or 0)
+      idx         = min(ccount, len(progression) - 1)
+      mood        = progression[idx] if progression else "cordial"
+
+      # ---- Higher-authority gambit (Cialdini authority + scarcity stick) ----
+      ha_after = int(state.get("policy_higher_authority_after_concessions") or 99)
+      ha_used  = bool(state.get("higher_authority_used") or False)
+      ha_now   = (ccount >= ha_after) and (not ha_used)
+      ha_turn  = int(state.get("higher_authority_turn") or 0)
+      if ha_now:
+        ha_used = True
+        ha_turn = turn
+
+      # ---- Cialdini lever rotation ----
+      # Priority: floor_locked > higher_authority > scarcity (last 2 turns) > rotate
+      levers       = list(state.get("policy_cialdini_levers") or
+                          ["scarcity", "authority", "social_proof", "commitment"])
+      floor_locked = bool(state.get("floor_locked") or False)
+      remaining    = max(0, qmax - turn) if qmax > 0 else 99
+
+      action       = state.get("decision_action") or "counter"
+      cialdini     = ""
+      if action == "counter":
+        if floor_locked:
+          cialdini = "commitment"            # "we've already moved twice for you"
+        elif ha_now:
+          cialdini = "authority"             # "let me check with my VP"
+        elif remaining <= 1:
+          cialdini = "scarcity"              # "this quote expires this week"
+        elif "social_proof" in levers and ccount == 1:
+          cialdini = "social_proof"          # "two firms in your sector took this"
+        elif "reciprocity" in levers and ccount == 0:
+          cialdini = "reciprocity"           # "we already absorbed shipping"
+        elif levers:
+          cialdini = levers[turn % len(levers)]
+      elif action == "accept":
+        cialdini = "commitment"              # "great move, this aligns the partnership"
+
+      # ---- Voss tactic rotation ----
+      voss_pool = list(state.get("policy_voss_tactics") or
+                       ["label", "mirror", "calibrated_q", "accusation_audit"])
+      voss = ""
+      intent = state.get("offer_intent") or ""
+      if action == "counter" and voss_pool:
+        if intent == "walk_away_threat" and "label" in voss_pool:
+          voss = "label"                     # "It sounds like timing is the real concern"
+        elif ccount >= 2 and "accusation_audit" in voss_pool:
+          voss = "accusation_audit"          # "You're probably thinking we're not moving enough"
+        elif turn % 3 == 0 and "calibrated_q" in voss_pool:
+          voss = "calibrated_q"              # "How are we supposed to make that work?"
+        else:
+          voss = voss_pool[turn % len(voss_pool)]
+
+      # ---- Humanize: typo + side_talk + latency ----
+      rng        = random.Random(int(os.environ.get("TEA_HUMANIZE_SEED", turn * 1009 + ccount * 17)) ^ id(state))
+      hum_on     = bool(state.get("policy_humanize_enabled") or False)
+      typo_rate  = float(state.get("policy_humanize_typo_rate") or 0.0)
+      side_rate  = float(state.get("policy_humanize_side_talk_rate") or 0.0)
+      latency    = 0.0
+
+      if hum_on:
+        mu        = float(state.get("policy_humanize_latency_lognormal_mu") or 2.3)
+        sigma     = float(state.get("policy_humanize_latency_lognormal_sigma") or 0.5)
+        lat_min   = int(state.get("policy_humanize_latency_min") or 3)
+        lat_max   = int(state.get("policy_humanize_latency_max") or 60)
+        latency   = max(lat_min, min(lat_max, rng.lognormvariate(mu, sigma)))
+        # Buyers spamming → make latency LARGER (show seller is busy)
+        if state.get("stall_detected"):
+          latency = min(lat_max, latency * 1.4)
+
+      inject_typo  = hum_on and (rng.random() < typo_rate)
+      inject_side  = hum_on and (rng.random() < side_rate) and action == "counter"
+
+      return {
+        "quote_expired": qexp,
+        "mood": mood,
+        "cialdini_mode": cialdini,
+        "voss_mode": voss,
+        "higher_authority_used": ha_used,
+        "higher_authority_turn": ha_turn,
+        "humanize_delay_seconds": float(latency),
+        "inject_typo": bool(inject_typo),
+        "inject_side_talk": bool(inject_side),
+      }
 
   # =========================================================================
   # PHASE 3 — STORY 5: Neural generation.
   # The LLM receives the solver's decision as STRICT INPUT and writes the
   # English response.  It is explicitly forbidden from changing numbers.
+  # § 12.4: the prompt now branches on Cialdini lever, Voss tactic, mood,
+  # and floor-lock state.  No matter which branch fires, the digit ban
+  # remains absolute.
   # =========================================================================
 
   # Defense in depth: XML-structured constraint-heavy prompt keeps the LLM
@@ -507,14 +1161,18 @@ nodes:
   # preserve exact digit strings ("3900" → "quatro mil"), so we architect
   # the pipeline so they never write numbers in the first place.
   - name: generate_response
-    uses: llm.chat
+    uses: llm.call
     with:
-      max_tokens: 80
-      temperature: 0.6
+      max_tokens: 90
+      temperature: 0.7
+      # Disable reasoning/thinking output (Qwen 3.x, Gemma 4): the answer
+      # otherwise lands in `message.thinking` and `content` returns empty
+      # over Ollama's OpenAI-compat endpoint.
+      extra_body: { reasoning_effort: "none" }   # see extract_offer for rationale
       messages:
         - role: user
           content: |
-            <persona>You are a senior B2B sales representative writing ONE short English sentence. Cordial, firm, concise.</persona>
+            <persona>You are a senior B2B sales representative writing ONE short English sentence. Tone: {{ state.mood | default('cordial') }}. Concise, human, no corporate stiffness.</persona>
 
             <constraints>
             - FORBIDDEN to write any digit (0-9).
@@ -522,25 +1180,102 @@ nodes:
             - FORBIDDEN to propose, cite, or suggest any numeric value.
             - FORBIDDEN to write more than one sentence.
             - FORBIDDEN to use labels, markdown, JSON, or meta-commentary about this task.
-            - The sentence must be between 8 and 20 words.
+            - The sentence must be between 8 and 22 words.
+            - Use first-person singular ("I", "my team") — humans hedge with personal pronouns; bots over-use "we" and passive voice.
             </constraints>
 
-            {% if state.decision_action == "accept" %}
-            <task>Write ONE warm sentence thanking the buyer for closing the deal. No numbers, no values.</task>
+            {% if state.decision_action == "clarify" %}
+            <task>The buyer asked a question or did not state a price. Write ONE warm sentence that invites them to share what they have in mind, without committing to anything. No numbers, no values — Python will append the list price deterministically.</task>
 
-            <positive_example>Wonderful, I am very pleased with the close and truly appreciate your trust in our team.</positive_example>
-            <positive_example>Excellent, looking forward to onboarding your team and making this rollout a success.</positive_example>
+            <positive_example>Happy to talk through it — what kind of structure were you thinking on the unit and term side?</positive_example>
+            <positive_example>Glad you asked — let me know what you had in mind on volume and terms and I will work it from there.</positive_example>
+
+            <negative_example>Our price is $1200 per unit.
+            Reason: contains a digit and a currency — forbidden.</negative_example>
+            {% elif state.decision_action == "accept" %}
+            <task>Write ONE warm sentence closing the deal. {% if state.cialdini_mode == "commitment" %}Frame it as the start of a partnership; reinforce the buyer's good judgment.{% endif %} No numbers, no values.</task>
+
+            <positive_example>Wonderful — appreciate your trust, and I am personally going to make sure onboarding lands smoothly.</positive_example>
+            <positive_example>Glad we landed here; I will get my ops lead on the kickoff today.</positive_example>
 
             <negative_example>Closed at $1080 per unit.
             Reason: contains a digit and a currency — forbidden.</negative_example>
+
+            {% elif state.decision_action == "reject" and state.quantity_below_min %}
+            <task>The buyer asked for fewer units than the scenario minimum. Write ONE polite but firm sentence stating that the volume is too low to structure a deal, suggesting a higher quantity if they want to revisit. No prices, no margins.</task>
+
+            <positive_example>The order size you have in mind is below the volume we structure deals around — happy to revisit if you can scale up.</positive_example>
+
+            {% elif state.decision_action == "reject" and state.stall_detected %}
+            <task>Write ONE firm but unembarrassed sentence indicating that you have already stretched as far as you can on the same terms and need a different shape of proposal. No numbers, no values, no apology theater.</task>
+
+            <positive_example>I have stretched as far as I can on these terms and would only re-engage if the structure changes.</positive_example>
+            <positive_example>We are circling the same ground; I would rather pause and revisit when there is fresh room to move on either side.</positive_example>
+
+            {% elif state.decision_action == "reject" and state.quote_expired %}
+            <task>Write ONE polite sentence noting the quote has lapsed and that any new conversation would start from current pricing. Do NOT mention specific dates. No numbers.</task>
+
+            <positive_example>The quote has unfortunately lapsed; if you would like to re-open, I will need to re-cost it from current inputs.</positive_example>
+
             {% elif state.decision_action == "reject" %}
             <task>Write ONE polite sentence inviting the buyer to reconsider. No numbers, no values, no mention of cost, no meta-commentary about decisions.</task>
 
             <positive_example>Unfortunately the current terms make the deal unworkable, but I would be glad to revisit with a fresh proposal.</positive_example>
             <positive_example>I appreciate the offer, though we are not able to move forward under these conditions; happy to take another look if you can adjust.</positive_example>
 
-            <negative_example>Given the decision action is reject, I must use the polite sentence inviting reconsideration.
-            Reason: meta-commentary about the task — forbidden.</negative_example>
+            {% elif state.floor_locked %}
+            <task>Write ONE direct, calm sentence indicating you have already moved as far as you are authorized and that this is the firm's final position on this round. {% if state.cialdini_mode == "commitment" %}Reference the prior concessions you have already made.{% endif %} No numbers, no values.</task>
+
+            <positive_example>I have already moved twice on the structure, and this is genuinely the last position my team can defend on this deal.</positive_example>
+            <positive_example>This is where I have to plant a flag — beyond this point I would not be doing right by either side.</positive_example>
+
+            {% elif state.cialdini_mode == "authority" %}
+            <task>Write ONE sentence indicating you must take the request to the pricing committee, your VP, or the firm's deal desk before any further movement, and that you are advocating for the buyer. No numbers, no values, no specific dates.</task>
+
+            <positive_example>I will need to take this back to my deal desk before I can move further; I am genuinely advocating for this on your behalf.</positive_example>
+            <positive_example>To go beyond what I have already put on the table I need my VP to sign off — I will push for it.</positive_example>
+
+            {% elif state.cialdini_mode == "scarcity" %}
+            <task>Write ONE sentence emphasizing the quote is time-sensitive — manufacturing window, end of quarter, finance approval cycle. Vague pressure, no specific numbers or dates.</task>
+
+            <positive_example>I want to land this before the manufacturing window closes — beyond that, the inputs revalue and we both lose room.</positive_example>
+            <positive_example>The pricing approval I am working under has a tight shelf-life this quarter; we have a real incentive to converge soon.</positive_example>
+
+            {% elif state.cialdini_mode == "social_proof" %}
+            <task>Write ONE sentence pointing to other buyers in the same industry / segment who closed at comparable structures, without revealing identities or numbers.</task>
+
+            <positive_example>Two other firms in your segment landed on a comparable structure last quarter, which is roughly the shape I am working toward here.</positive_example>
+
+            {% elif state.cialdini_mode == "reciprocity" %}
+            <task>Write ONE sentence reminding the buyer of a concession you have already absorbed (e.g. shipping, lead time, payment terms) and asking for movement in return. No numbers.</task>
+
+            <positive_example>I have already absorbed the freight and the extended terms on my side — I would need a step in your direction to keep this balanced.</positive_example>
+
+            {% elif state.cialdini_mode == "commitment" %}
+            <task>Write ONE sentence linking the buyer's stated criteria from earlier in the conversation to the proposal you are offering, framing it as consistent with what they themselves said matters. No numbers.</task>
+
+            <positive_example>You said volume and reliability were the priorities — what I am proposing is built around exactly that, which is why I am holding the line here.</positive_example>
+
+            {% elif state.voss_mode == "label" %}
+            <task>Write ONE sentence beginning with a Voss-style label of the buyer's emotion or constraint ("It sounds like…", "It seems like…"). Mirror the underlying concern, then bridge to a price adjustment. No numbers.</task>
+
+            <positive_example>It sounds like the budget envelope is what is really binding you here, which is exactly why I am pushing back on the structure rather than just the headline.</positive_example>
+
+            {% elif state.voss_mode == "mirror" %}
+            <task>Write ONE sentence that picks up two or three key words from the buyer's last message and reflects them back as a question or near-statement, then steers toward the price recalibration. No numbers, no values.</task>
+
+            <positive_example>"Free shipping, cash"? — yes, and that is exactly the bundle that forces me to recalibrate the unit side to keep the deal honest.</positive_example>
+
+            {% elif state.voss_mode == "calibrated_q" %}
+            <task>Write ONE Voss-style calibrated question ("How am I supposed to…", "What would you do if…") that puts the buyer in the position of solving the seller's constraint. No numbers, no values.</task>
+
+            <positive_example>How am I supposed to make that work for the volume you are quoting without my margin going underwater?</positive_example>
+
+            {% elif state.voss_mode == "accusation_audit" %}
+            <task>Write ONE sentence that pre-empts the buyer's likely negative thought ("you are probably thinking…", "you might be feeling…") and disarms it before stating the recalibration. No numbers.</task>
+
+            <positive_example>You are probably thinking I am not moving fast enough — and that is fair — but I have a real ceiling I have to respect on the unit side.</positive_example>
+
             {% else %}
             <task>Write ONE contextual sentence justifying a price adjustment by pointing to volume, delivery window, or logistics. No numbers, no values.</task>
 
@@ -560,9 +1295,12 @@ nodes:
   # no numbers; Python injects the solver's exact integers around it.
   # This enforces the article's core claim: the LLM never writes a number.
   # A guardrail regex strips any digits the LLM leaked past the prompt.
+  #
+  # § 12.4: typo injection (when state.inject_typo is true) corrupts ONE
+  # word of the flavor sentence — never the deterministic price clause.
   - name: parse_generation
     run: |
-      import re
+      import os, random, re
 
       raw = state.get("generation_raw") or {}
       if isinstance(raw, dict):
@@ -581,18 +1319,106 @@ nodes:
       ]
       flavor_clean = " ".join(clean_sentences[:1]) if clean_sentences else ""
 
-      # Compose deterministic response around the solver's numbers (USD)
-      action = state.get("decision_action")
-      if action == "accept":
-        price = (state.get("decision_buyer_effective_cents") or 0) / 100
-        core = f"Closed at ${price:,.2f} per unit. {flavor_clean}".strip()
+      # § 12.4 — Typo injection.  Never touches the deterministic price clause.
+      def _inject_typo(text, seed):
+        if not text:
+          return text
+        words = text.split(" ")
+        # Restrict candidates: alphabetic, ≥ 5 chars, not the first word
+        cand_idx = [i for i, w in enumerate(words)
+                    if i > 0 and w.isalpha() and len(w) >= 5]
+        if not cand_idx:
+          return text
+        rng = random.Random(seed)
+        i = rng.choice(cand_idx)
+        w = words[i]
+        # Swap two adjacent letters in the middle of the word
+        j = rng.randint(1, len(w) - 2)
+        words[i] = w[:j] + w[j+1] + w[j] + w[j+2:]
+        return " ".join(words)
+
+      if state.get("inject_typo") and flavor_clean:
+        seed = int(os.environ.get("TEA_HUMANIZE_SEED") or 0) or (
+                 int(state.get("turn_num") or 0) * 31 + len(flavor_clean))
+        flavor_clean = _inject_typo(flavor_clean, seed)
+
+      # Compose deterministic response around the solver's numbers (USD).
+      # The price clause is owned by Python; the LLM never writes the digits.
+      action       = state.get("decision_action")
+      floor_locked = bool(state.get("floor_locked"))
+      cialdini     = state.get("cialdini_mode") or ""
+
+      # All counter/accept/clarify clauses echo the agreed_quantity so the
+      # buyer can never close on an ambiguous volume.  Mention the minimum
+      # order too — a clear constraint that the buyer can't claim was
+      # hidden later.
+      def _qty_clause(state):
+        agreed  = int(state.get("agreed_quantity") or state.get("quantity") or 0)
+        min_qty = int(state.get("min_quantity") or 0)
+        if agreed > 0 and min_qty > 0 and agreed >= min_qty:
+          return f" for {agreed:,} units (minimum order {min_qty:,})"
+        elif agreed > 0:
+          return f" for {agreed:,} units"
+        return ""
+
+      if action == "clarify":
+        # Buyer asked a question (or sent something unparseable).  Echo the
+        # list price deterministically so they have an anchor, and let the
+        # LLM flavor invite a counter.  No commitment, no concession state
+        # change.
+        list_price = (state.get("list_price_cents") or 0) / 100
+        product    = state.get("product_name") or "the product"
+        price_clause = (
+          f"Our list price is ${list_price:,.2f} per unit{_qty_clause(state)} "
+          f"({product}); standard terms net 30."
+        )
+        core = f"{price_clause} {flavor_clean}".strip()
+
+      elif action == "accept":
+        # Show the FACE value the buyer pays (e.g. $1094 net 90), not the
+        # solver's PV ($1050.24).  PV is for the seller's books; face value
+        # is what the buyer wires.  Term and quantity are part of the close
+        # so both parties have the same record.
+        face   = (state.get("offer_unit_cents") or 0) / 100
+        term   = state.get("offer_term_days") or 30
+        core   = (
+          f"Closed at ${face:,.2f} per unit, net {term}{_qty_clause(state)}. "
+          f"{flavor_clean}"
+        ).strip()
+
       elif action == "reject":
-        # Never reveal a number on rejection
-        core = flavor_clean or "The current terms do not make the deal workable; happy to take another look at a revised proposal."
+        # Never reveal a number on rejection.  Branch on WHY for the fallback.
+        if state.get("quantity_below_min"):
+          min_qty = int(state.get("min_quantity") or 0)
+          asked   = int(state.get("offer_quantity") or 0)
+          # OK to mention quantities here — they are the buyer's own claim
+          # and the scenario floor, not pricing.
+          fallback = (
+            f"The order size you proposed ({asked} units) is below our "
+            f"minimum order quantity of {min_qty}; we cannot structure a "
+            f"deal at that volume."
+          )
+        elif state.get("stall_detected"):
+          fallback = "I have stretched as far as I can on these terms — would only re-engage with a different shape of proposal."
+        elif state.get("quote_expired"):
+          fallback = "The quote has lapsed; any new conversation would have to start from current pricing."
+        else:
+          fallback = "The current terms do not make the deal workable; happy to take another look at a revised proposal."
+        core = flavor_clean or fallback
+
       else:  # counter
-        target = (state.get("decision_target_cents") or 0) / 100
-        term = state.get("offer_term_days") or 30
-        core = f"{flavor_clean} My counter is ${target:,.2f} per unit, net {term}.".strip()
+        target  = (state.get("decision_target_cents") or 0) / 100
+        term    = state.get("offer_term_days") or 30
+        qty_str = _qty_clause(state)
+        if floor_locked:
+          # Final-position framing — Karrass / commitment lever
+          price_clause = f"My final position is ${target:,.2f} per unit, net {term}{qty_str}."
+        elif cialdini == "authority":
+          # Higher-authority gambit: framed as conditional approval
+          price_clause = f"Pending sign-off from my deal desk, my best is ${target:,.2f} per unit, net {term}{qty_str}."
+        else:
+          price_clause = f"My counter is ${target:,.2f} per unit, net {term}{qty_str}."
+        core = f"{flavor_clean} {price_clause}".strip()
 
       history = list(state.get("chat_history", []))
       history.append({"role": "buyer", "content": state.get("user_message", "")})
@@ -603,6 +1429,44 @@ nodes:
         "chat_history": history,
         "turn_num": int(state.get("turn_num") or 0) + 1,
       }
+
+  # =========================================================================
+  # PHASE 3b — Humanize (§ 12.4).
+  # Latency + side-talk injection.  Latency is sampled in pick_persuasion_tactics
+  # and applied here (sleep before returning).  Set env TEA_HUMANIZE=0 to skip
+  # the sleep — useful for unit tests and one-shot scripting.
+  # =========================================================================
+
+  - name: humanize_response
+    run: |
+      import os, random, time
+
+      core   = state.get("agent_response") or ""
+      delay  = float(state.get("humanize_delay_seconds") or 0.0)
+      side   = bool(state.get("inject_side_talk"))
+      action = state.get("decision_action")
+
+      # Side-talk: a short business aside, prepended.  Only on counter turns,
+      # where it doesn't stomp on the close/reject script.
+      if side and action == "counter":
+        asides = [
+          "Quick aside — our finance closes books on Thursdays so I might be slow that day.",
+          "Heads up, we are between sales kick-offs, so allocation is tight on my side.",
+          "By the way, our ops lead is on PTO this week, so anything I commit I am committing alone.",
+          "Side note: this is the first deal of mine that has hit our new pricing committee process.",
+        ]
+        seed   = int(os.environ.get("TEA_HUMANIZE_SEED") or 0) or len(core)
+        rng    = random.Random(seed)
+        aside  = rng.choice(asides)
+        core   = f"{aside} {core}".strip()
+
+      # Latency: sleep so the buyer perceives a human "thinking" delay.
+      # Set TEA_HUMANIZE=0 to disable in CI / one-shot scripts.
+      humanize_env = os.environ.get("TEA_HUMANIZE", "1").strip().lower()
+      if delay > 0 and humanize_env not in ("0", "false", "no", ""):
+        time.sleep(delay)
+
+      return {"agent_response": core}
 
   # =========================================================================
   # PHASE 4 — Audit (Guardrail from the Epic).
@@ -629,9 +1493,13 @@ nodes:
           "extracted": {
             "offer_unit_cents": state.get("offer_unit_cents"),
             "offer_term_days":  state.get("offer_term_days"),
+            "offer_quantity":   state.get("offer_quantity"),
             "offer_demands":    state.get("offer_demands"),
             "offer_intent":     state.get("offer_intent"),
           },
+          "effective_min_margin_pct": state.get("effective_min_margin_pct"),
+          "quantity_below_min":       bool(state.get("quantity_below_min")),
+          "buyer_history_face_cents": state.get("buyer_offer_history") or [],
         },
         {
           "ts": ts, "session": session_id, "turn": turn, "step": "symbolic",
@@ -639,11 +1507,31 @@ nodes:
             "action":                    state.get("decision_action"),
             "target_cents":              state.get("decision_target_cents"),
             "floor_cents":               state.get("decision_floor_cents"),
+            "face_floor_cents":          state.get("decision_face_floor_cents"),
             "ceiling_cents":             state.get("decision_ceiling_cents"),
             "buyer_effective_cents":     state.get("decision_buyer_effective_cents"),
             "reason":                    state.get("decision_reason"),
+            "stall_detected":            bool(state.get("stall_detected")),
+            "floor_locked":              bool(state.get("floor_locked")),
+            "quote_expired":             bool(state.get("quote_expired")),
+            "concession_count":          int(state.get("concession_count") or 0),
+            "last_target_cents":         int(state.get("last_target_cents") or 0),
+            "prev_concession_delta_cents": int(state.get("prev_concession_delta_cents") or 0),
           },
           "chain": state.get("decision_chain") or [],
+        },
+        {
+          "ts": ts, "session": session_id, "turn": turn, "step": "tactics",
+          "tactics": {
+            "mood":                state.get("mood"),
+            "cialdini_mode":       state.get("cialdini_mode"),
+            "voss_mode":           state.get("voss_mode"),
+            "higher_authority_used": bool(state.get("higher_authority_used")),
+            "higher_authority_turn": int(state.get("higher_authority_turn") or 0),
+            "inject_typo":         bool(state.get("inject_typo")),
+            "inject_side_talk":    bool(state.get("inject_side_talk")),
+            "humanize_delay_seconds": float(state.get("humanize_delay_seconds") or 0.0),
+          },
         },
         {
           "ts": ts, "session": session_id, "turn": turn, "step": "neural_out",
@@ -663,29 +1551,45 @@ nodes:
 
   - name: check_complete
     run: |
-      action = state.get("decision_action")
-      intent = state.get("offer_intent")
-      turn = int(state.get("turn_num") or 0)
+      action      = state.get("decision_action")
+      intent      = state.get("offer_intent")
+      turn        = int(state.get("turn_num") or 0)
+      stall       = bool(state.get("stall_detected"))
+      qexpired    = bool(state.get("quote_expired"))
+      qty_low     = bool(state.get("quantity_below_min"))
 
-      complete = False
-      outcome = ""
+      complete    = False
+      outcome     = ""
       final_cents = 0
 
       if action == "accept":
         complete = True
-        outcome = "won"   # solver accepted at or above floor → by construction a win
+        outcome  = "won"   # solver accepted at or above floor → by construction a win
         final_cents = int(state.get("decision_buyer_effective_cents") or 0)
+      elif stall and action == "reject":
+        # § 12.4 — buyer was ratcheting with identical offers; we exit.
+        complete = True
+        outcome  = "stalled"
+      elif qexpired and action == "reject":
+        # § 12.4 — Cialdini scarcity stick fired.
+        complete = True
+        outcome  = "quote_expired"
+      elif qty_low and action == "reject":
+        # Buyer asked for fewer units than the scenario minimum.  Don't
+        # terminate immediately — let them come back with a real volume.
+        # Setting complete=False keeps the loop alive.
+        pass
       elif intent == "walk_away_threat" and action == "reject":
         complete = True
-        outcome = "walked_away"
+        outcome  = "walked_away"
       elif turn >= 10:
         complete = True
-        outcome = "impasse"
+        outcome  = "impasse"
 
       return {
         "negotiation_complete": complete,
-        "final_outcome": outcome,
-        "final_deal_cents": final_cents,
+        "final_outcome":        outcome,
+        "final_deal_cents":     final_cents,
       }
 
   - name: finalize
@@ -731,9 +1635,14 @@ nodes:
 
   - name: filter_turn_response
     run: |
+      ar = state.get("agent_response", "") or ""
       return {
         "turn_status": "awaiting_user",
-        "agent_response": state.get("agent_response", ""),
+        "agent_response": ar,
+        # Mirror under default CLI question keys so `tea-python run --interactive`
+        # finds the seller's reply with zero extra flags.
+        "next_question": ar,
+        "complete": False,
         "turn_num": state.get("turn_num"),
         "decision_action": state.get("decision_action"),
         "decision_target_cents": state.get("decision_target_cents"),
@@ -743,12 +1652,16 @@ nodes:
 
   - name: filter_final_response
     run: |
+      ar = state.get("agent_response", "") or ""
       return {
         "turn_status": "complete",
         "final_outcome": state.get("final_outcome"),
         "final_deal_cents": state.get("final_deal_cents"),
         "turns": state.get("turn_num"),
-        "agent_response": state.get("agent_response", ""),
+        "agent_response": ar,
+        # Mirror for the default CLI keys.
+        "next_question": ar,
+        "complete": True,
       }
 
 # ---------------------------------------------------------------------------
@@ -769,7 +1682,9 @@ edges:
   - from: emit_opener
     to: filter_turn_response
 
-  # Turn path: extract → decide → generate → log → check → branch
+  # Turn path:
+  #   extract → parse → record_buyer → decide → update_concession → pick_tactics →
+  #   generate → parse_generation → humanize → log → check → branch
   - from: entry_router
     to: extract_offer
     when: "state.get('route_to_turn')"
@@ -778,15 +1693,30 @@ edges:
     to: parse_extraction
 
   - from: parse_extraction
+    to: apply_volume_tier
+
+  - from: apply_volume_tier
+    to: record_buyer_offer
+
+  - from: record_buyer_offer
     to: decide
 
   - from: decide
+    to: update_concession_state
+
+  - from: update_concession_state
+    to: pick_persuasion_tactics
+
+  - from: pick_persuasion_tactics
     to: generate_response
 
   - from: generate_response
     to: parse_generation
 
   - from: parse_generation
+    to: humanize_response
+
+  - from: humanize_response
     to: log_audit
 
   - from: log_audit
@@ -803,9 +1733,13 @@ edges:
   - from: finalize
     to: filter_final_response
 
-  # Both filters terminate the run; the interactive CLI re-invokes at __start__
+  # Loop edge: after the interrupt at filter_turn_response, resume feeds back
+  # into entry_router so the next turn (with state.user_message just injected
+  # by the interactive runner) executes within the same stream invocation.
+  # Without this edge the graph would resume directly to __end__ and the LLM
+  # would never see the buyer's reply.
   - from: filter_turn_response
-    to: __end__
+    to: entry_router
 
   - from: filter_final_response
     to: __end__

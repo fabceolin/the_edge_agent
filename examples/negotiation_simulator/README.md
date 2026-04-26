@@ -1,5 +1,15 @@
 # Neuro-Symbolic Negotiation Simulator — Sprint 1 (CLI)
 
+> **LLM backend**: this example uses **Ollama** (OpenAI-compat endpoint).
+> The default `agent.yaml` points at a remote server with Qwen 3.5; swap
+> to a local Ollama serving the bundled `Modelfile.gemma4-e2b` (Gemma 4
+> E2B GGUF on disk) by editing `settings.llm` — see comments in the YAML.
+> Reasoning models (Qwen 3.x, Gemma 4) ship with thinking-mode on by
+> default; the agent passes `extra_body: {reasoning_effort: none}` to
+> keep the answer in `content` instead of `thinking`.
+
+
+
 Reference implementation for the article
 [Neuro-Symbolic B2B Negotiation: Gemma 4 + Prolog CLP(FD)](../../docs/articles/neurosymbolic-negotiation-simulator.md).
 
@@ -45,7 +55,35 @@ tea-python run --interactive agent.yaml \
 ```
 
 The agent loads the scenario, emits its opening line, then pauses for your
-reply after every turn.  Type your counter-offer and hit enter.
+reply after every turn. Type your counter-offer and **press Enter twice**
+(the CLI uses double-enter as a send delimiter so multi-line input is
+possible). Type `quit` or `exit` to abort.
+
+How it self-aligns with the default CLI flags:
+
+| What the CLI default looks for | What the agent populates | Where |
+|---|---|---|
+| `--question-key=…,message,…,next_question` | `next_question` | `filter_turn_response`, `emit_opener` |
+| `--response-key=response`                  | `entry_router` reads `state.response` and normalizes to `user_message` | `entry_router` |
+| `--complete-key=complete,done,finished`    | `complete` | `filter_final_response` |
+
+This means you do **not** need to pass `--question-key`, `--response-key`,
+or `--complete-key` — the agent matches the runner's defaults. A
+`settings.interview` block in the YAML declares the canonical names for
+forward-compatibility with future TEA releases.
+
+To suppress the realistic-latency sleep (handy when scripting / piping
+stdin in CI):
+
+```bash
+TEA_HUMANIZE=0 tea-python run --interactive agent.yaml \
+    --input '{"scenario_id": "b2b_laptops", "session_id": "demo01"}'
+```
+
+If the buyer asks a question (e.g. *"What is the current price?"*), the
+solver reaches the `clarify` branch — it answers with the list price and
+asks for an offer, **without** committing to anything. The agent never
+closes a deal on a non-offer (Section 12 of the article).
 
 ### Available scenarios
 
@@ -128,26 +166,40 @@ block feeds the neural layer flavor.
 | `decide.pl` | 4 | Reference Prolog module (same rules as inline node) |
 | `audit/*.jsonl` | Guardrail | Three-step reasoning log per turn |
 
-## 6. Backlog (future stories)
+## 6. Persuasion stack & bot-detection resistance (Section 12 of the article)
 
-### Story 6 — Concession Discipline (anti-ratcheting)
+Sprint 2 ships the full anti-ratcheting + persuasion stack, configured per-scenario
+under `negotiation_policy:` in `scenarios.yaml`.
 
-**Problem:** a human who knows they are talking to a bot can drag the session out
-with micro-offers ($950 → $952 → $954…) and learn the seller's concession curve.
-Sprint 1's only defense is the 10-turn impasse timer.
+| Mechanism | Where | Tell it neutralizes |
+|-----------|-------|---------------------|
+| Karrass 50% rule | Prolog `disciplined_counter/10` | concession-curve regularity |
+| Concession budget (anchor stickiness) | Prolog `disciplined_counter/10` | tirelessness |
+| Stall detector | Prolog `stall_detected_h/3` | tirelessness |
+| Quote expiry | state + Prolog | no real-time costs |
+| Higher-authority gambit ("let me check with my VP") | Cialdini *authority* prompt branch | determinism |
+| Stochastic latency (log-normal) | `humanize_response` node | latency homogeneity |
+| Voss tactic rotation (label / mirror / calibrated_q / accusation_audit) | prompt branches | linguistic perfection |
+| Cialdini lever rotation (scarcity / authority / social_proof / reciprocity / commitment) | prompt branches | determinism |
+| Mood drift (warm → cordial → firm → stern) | prompt persona | tirelessness |
+| Side-talk injection | `humanize_response` node | no off-path content |
+| Typo injection (off by default) | `parse_generation` | linguistic perfection |
+| First-person framing constraint | prompt | bot-style "we"-passive voice |
 
-**Approach (Prolog + state):**
-- Track `concession_count`, `last_target_cents`, `buyer_offer_history`.
-- *Karrass rule:* each new counter concedes ≤ 50% of the previous concession.
-- *Budget:* after 3 concessions the bot locks to the floor — no further movement.
-- *Stall detector:* if the buyer repeats the same offer twice, force `action=reject`.
-- *Cialdini on the neural side:* inject scarcity ("quote holds through end of week")
-  and final-round signaling as separate flavor branches in the generation prompt.
+The architectural rule: **stochastic in the language, deterministic in the numbers**.
+Latency, mood, side-talk, Cialdini/Voss rotation all live in the language layer.
+Karrass, budget, stall detector, BATNA, floor, ceiling, counter target all live
+in the solver. The price clause is always Python composing solver outputs.
+
+Set `TEA_HUMANIZE=0` in the environment to skip the latency sleep
+(useful for unit tests and one-shot scripting).
 
 Frameworks: Karrass (*The Negotiating Game*), Cialdini (*Influence*),
 Voss (*Never Split the Difference*), Fisher & Ury (*Getting to Yes*).
 
-### Story 7 — Browser UI (Sprint 2)
+## 7. Backlog (future stories)
+
+### Story 7 — Browser UI (Sprint 3)
 
 Port the interactive loop to a browser using
 [TEA WASM LLM](../../docs/articles/wasm-llm-browser-inference.md) and

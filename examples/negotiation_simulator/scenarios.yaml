@@ -13,6 +13,11 @@
 #
 # The `persona` block is consumed only by the neural layer (the seller voice).
 # Numbers in `persona` are purely flavor; the solver never reads them.
+#
+# The `negotiation_policy` block (Section 12 of the article) governs the
+# anti-ratcheting and bot-detection-resistance defenses. It is consumed by
+# both Prolog (concession discipline) and the LLM/runtime (humanization,
+# persuasion tactics). Numbers there ARE policy — never flavor.
 
 scenarios:
 
@@ -21,6 +26,7 @@ scenarios:
     product: "Enterprise Laptop Dell Vostro 15"
     currency: USD
     quantity: 500
+    min_quantity: 250           # reject if buyer asks for fewer than this
 
     # Business constraints (Story 1) — the Prolog solver owns these
     unit_cost: 800.00           # cost per unit
@@ -34,17 +40,56 @@ scenarios:
       90: 0.04
     batna_unit: 1050.00         # alternative client willing to pay this per unit
 
+    # Volume tiers — bigger orders accept lower per-unit margin.
+    # The tier with the largest `min_qty <= offer_quantity` applies.
+    # If offer_quantity < scenario.min_quantity, the agent rejects outright.
+    volume_tiers:
+      - min_qty: 250            # 250-499: small order, must be high margin
+        min_margin_pct: 22
+      - min_qty: 500            # 500-999: target volume
+        min_margin_pct: 15
+      - min_qty: 1000           # 1000+: bulk, slim margin acceptable
+        min_margin_pct: 10
+
     persona:
       buyer_role: "IT Director at a multinational pharmaceutical company"
       tone: "demanding, pragmatic, cites volume and purchase history"
       initial_stance: "opens with an aggressive request (30% discount) plus free shipping"
       walk_away_threshold_pct: 18   # buyer gives up if agent offers less than 18% discount
 
+    negotiation_policy:
+      # --- Concession discipline (Prolog, Section 12.4 of the article) ---
+      concession_budget: 3            # after N concessions, lock to floor
+      karrass_ratio_pct: 50           # each new concession ≤ this % of the previous
+      stall_repeat_threshold: 2       # same buyer offer N times → reject
+
+      # --- Quote validity (Cialdini scarcity, Section 12.4) ---
+      quote_validity_turns: 6         # after this many turns, quote expires
+      higher_authority_after_concessions: 2  # invoke "let me check with VP" after Nth concession
+
+      # --- Persuasion rotation (System 1 prompt branches, Section 12.4) ---
+      voss_tactics: [label, mirror, calibrated_q, accusation_audit]
+      cialdini_levers: [scarcity, authority, social_proof, reciprocity, commitment]
+      mood_progression: [warm, cordial, firm, stern]   # drifts with concession_count
+
+      # --- Humanization (runtime, Section 12.4) ---
+      humanize:
+        enabled: true
+        typo_rate: 0.04             # ~4% chance to introduce a typo per response
+        # Latency drawn from a log-normal: realistic seller "thinking" delay.
+        # mu=2.4, sigma=0.55 ≈ median 11s, p90 ~ 22s, p99 ~ 40s
+        latency_lognormal_mu: 2.4
+        latency_lognormal_sigma: 0.55
+        latency_min_seconds: 4
+        latency_max_seconds: 60
+        side_talk_rate: 0.15        # chance of injecting unrelated business chit-chat
+
   - id: saas_annual
     name: "SaaS — 50-seat Pro plan (annual)"
     product: "Pro Plan (50 seats, 12 months)"
     currency: USD
     quantity: 50
+    min_quantity: 25
 
     # "Cost" here is the marginal cost of serving one seat-year (infra + support)
     unit_cost: 40.00
@@ -57,17 +102,44 @@ scenarios:
       365: -0.05                # 5% discount for paying year upfront (negative interest)
     batna_unit: 115.00          # competitor's advertised offer
 
+    volume_tiers:
+      - min_qty: 25
+        min_margin_pct: 70
+      - min_qty: 50
+        min_margin_pct: 60
+      - min_qty: 100
+        min_margin_pct: 55
+
     persona:
       buyer_role: "Head of Operations at a scale-up"
       tone: "analytical, asks for ROI, pushes for an extended POC"
       initial_stance: "opens asking for 40% discount and 3 free months"
       walk_away_threshold_pct: 25
 
+    negotiation_policy:
+      concession_budget: 3
+      karrass_ratio_pct: 50
+      stall_repeat_threshold: 2
+      quote_validity_turns: 7
+      higher_authority_after_concessions: 2
+      voss_tactics: [label, mirror, calibrated_q, accusation_audit]
+      cialdini_levers: [scarcity, authority, social_proof, commitment]
+      mood_progression: [warm, cordial, firm, stern]
+      humanize:
+        enabled: true
+        typo_rate: 0.03
+        latency_lognormal_mu: 2.2
+        latency_lognormal_sigma: 0.5
+        latency_min_seconds: 3
+        latency_max_seconds: 45
+        side_talk_rate: 0.12
+
   - id: wholesale_shoes
     name: "Wholesale — 1,000 Pairs of Running Shoes"
     product: "Running shoe model TX-2 (1,000 pairs, mixed sizes)"
     currency: USD
     quantity: 1000
+    min_quantity: 500
 
     unit_cost: 25.00
     list_price: 60.00
@@ -80,11 +152,37 @@ scenarios:
       90: 0.05
     batna_unit: 45.00
 
+    volume_tiers:
+      - min_qty: 500
+        min_margin_pct: 25
+      - min_qty: 1000
+        min_margin_pct: 20
+      - min_qty: 2000
+        min_margin_pct: 15
+
     persona:
       buyer_role: "Buyer from a regional sporting-goods chain"
       tone: "classic haggler, uses volume as leverage"
       initial_stance: "offers $38 cash and threatens to walk to a competitor"
       walk_away_threshold_pct: 22
+
+    negotiation_policy:
+      concession_budget: 3
+      karrass_ratio_pct: 50
+      stall_repeat_threshold: 2
+      quote_validity_turns: 5
+      higher_authority_after_concessions: 2
+      voss_tactics: [label, mirror, calibrated_q, accusation_audit]
+      cialdini_levers: [scarcity, authority, social_proof, reciprocity]
+      mood_progression: [cordial, firm, stern]
+      humanize:
+        enabled: true
+        typo_rate: 0.05
+        latency_lognormal_mu: 2.5
+        latency_lognormal_sigma: 0.6
+        latency_min_seconds: 5
+        latency_max_seconds: 70
+        side_talk_rate: 0.18
 
 # Default scenario when none is passed via --input
 default_scenario: b2b_laptops
