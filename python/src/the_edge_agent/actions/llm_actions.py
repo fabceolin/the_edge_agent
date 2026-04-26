@@ -211,7 +211,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             },
             "codex": {
                 "command": "codex",
-                "args": ["exec", "-"],
+                "args": [
+                    "--yolo",
+                    "exec",
+                    "-c", "model=gpt-5.5",
+                    "-c", "model_reasoning_effort=xhigh",
+                    "-",
+                ],
                 "stdin_mode": "pipe",
                 "timeout": 108000,  # 1800 minutes
             },
@@ -376,9 +382,14 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     text=True,
                     env=env,
                 )
-                # Send input and close stdin
-                proc.stdin.write(prompt_text)
-                proc.stdin.close()
+                # In verbose mode we must feed stdin before the read-loop so the
+                # child process does not block waiting for input. In non-verbose
+                # mode we defer writing to communicate(input=...) below — calling
+                # stdin.close() manually here breaks communicate() on Python 3.13
+                # because it still calls stdin.flush() internally.
+                if verbose:
+                    proc.stdin.write(prompt_text)
+                    proc.stdin.close()
             elif stdin_mode == "file":
                 # Write to temp file for very large contexts
                 with tempfile.NamedTemporaryFile(
@@ -425,8 +436,16 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 stderr = proc.stderr.read() if proc.stderr else ""
                 proc.wait(timeout=5)
             else:
-                # Original behavior - read all at once
-                stdout, stderr = proc.communicate(timeout=provider_timeout)
+                # Original behavior - read all at once. Pass input via
+                # communicate() when stdin is a pipe so it manages flush/close
+                # correctly (Python 3.13 raises "I/O operation on closed file"
+                # if stdin was already closed manually).
+                if stdin_mode == "pipe" and not prompt_in_args:
+                    stdout, stderr = proc.communicate(
+                        input=prompt_text, timeout=provider_timeout
+                    )
+                else:
+                    stdout, stderr = proc.communicate(timeout=provider_timeout)
 
             # Clean up temp file if used
             if temp_path:

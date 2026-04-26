@@ -1,0 +1,192 @@
+name: autonomous-prompt-codex
+description: |
+  Run any prompt autonomously via Codex CLI with a Ralph-style refinement loop
+  (inspired by https://github.com/breezewish/CodexPotter).
+
+  Each iteration:
+    1. Codex reads MAIN.md (task) and STATUS.md (last attempt status, if any).
+    2. Does work. Writes STATUS.md whose first line is one of:
+         DONE
+         NEEDS_MORE_WORK: <one-line reason>
+    3. The graph reads STATUS.md, decides DONE → finish, otherwise loop until
+       max_iterations.
+
+  Usage:
+    tea run examples/workflows/autonomous-prompt-codex.yaml \
+      --input '{"arg": "refactor the auth module to use JWT", "max_iterations": 5}'
+
+state_schema:
+  arg: str
+  max_iterations: int
+  iteration: int
+  workspace: str
+  status: str
+  status_body: str
+  history: list
+  output: object
+
+initial_state:
+  max_iterations: 5
+  iteration: 0
+  status: ""
+  status_body: ""
+  history: []
+
+settings:
+  shell_providers:
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.5"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: init_workspace
+    description: Create the per-run workspace and seed MAIN.md with the task.
+    run: |
+      import os, time
+
+      run_id = time.strftime("%Y%m%d-%H%M%S")
+      workspace = os.path.join("_codexpotter", run_id)
+      os.makedirs(workspace, exist_ok=True)
+
+      task = state.get("arg", "").strip()
+      with open(os.path.join(workspace, "MAIN.md"), "w") as f:
+          f.write(f"# Task\n\n{task}\n")
+
+      # Reset STATUS.md if a stale one exists from a previous interrupted run
+      status_path = os.path.join(workspace, "STATUS.md")
+      if os.path.exists(status_path):
+          os.remove(status_path)
+
+      return {
+          "workspace": workspace,
+          "iteration": 0,
+          "status": "",
+          "status_body": "",
+          "history": [],
+      }
+
+  - name: execute
+    description: Run codex on the task, with prior STATUS.md as continuation context.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            # Autonomous Ralph Loop
+
+            **Iteration:** {{ state.iteration + 1 }} of {{ state.max_iterations }}
+            **Workspace:** `{{ state.workspace }}/`
+
+            ## Operating Rules
+
+            1. **Execute completely** - Do the entire task without stopping to ask for confirmation or clarification.
+            2. **Use tools directly** - Read files, write code, run commands. Do not describe what you would do - just do it.
+            3. **Make decisions** - If you encounter ambiguity, choose the most conservative/safe option and proceed.
+            4. **No interaction** - Do not ask the user questions. Do not pause for input. Do not suggest alternatives.
+            5. **Be thorough** - Read relevant files before modifying them. Run tests after making changes. Verify your work.
+
+            ## Iteration Protocol
+
+            1. Read `{{ state.workspace }}/MAIN.md` for the canonical task.
+            2. If `{{ state.workspace }}/STATUS.md` exists, read it first — it contains the result of the previous attempt and may include test failures, partial progress, or follow-ups to address. Do **not** restart from scratch; continue from where the previous iteration left off.
+            3. Do the work (write code, run tests, fix issues).
+            4. **At the end**, write `{{ state.workspace }}/STATUS.md`. The **first line** must be EXACTLY one of:
+               - `DONE`  — the task is fully complete and verified (tests pass, requirements met).
+               - `NEEDS_MORE_WORK: <one-line reason>`  — more iterations needed; describe what still needs doing.
+            5. After the first line, write a short markdown summary: what was done in this iteration, what remains, any blockers.
+
+            **CRITICAL**: STATUS.md is how the loop decides whether to call you again. If you do not write it, or its first line is malformed, the loop assumes failure and retries.
+
+            ## Task
+
+            See `{{ state.workspace }}/MAIN.md`.
+    output: output
+
+  - name: check_status
+    description: Parse STATUS.md, increment iteration, decide DONE / RETRY / FAIL.
+    run: |
+      import os
+
+      workspace = state.get("workspace", "")
+      status_path = os.path.join(workspace, "STATUS.md")
+      iteration = state.get("iteration", 0) + 1
+
+      if not os.path.exists(status_path):
+          status = "MISSING"
+          body = ""
+      else:
+          with open(status_path) as f:
+              content = f.read()
+          first_line = content.splitlines()[0].strip() if content.strip() else ""
+          body = content
+          if first_line == "DONE" or first_line.startswith("DONE "):
+              status = "DONE"
+          elif first_line.startswith("NEEDS_MORE_WORK"):
+              status = "RETRY"
+          else:
+              status = "MALFORMED"
+
+      history = state.get("history", []) + [{
+          "iteration": iteration,
+          "status": status,
+          "first_line": body.splitlines()[0][:200] if body.strip() else "",
+      }]
+
+      print(f"[ralph] iteration={iteration} status={status}")
+      return {"iteration": iteration, "status": status, "status_body": body, "history": history}
+
+  - name: summarize
+    description: Build the final output payload from the last STATUS.md.
+    run: |
+      reached_max = state.get("iteration", 0) >= state.get("max_iterations", 5)
+      finished = state.get("status") == "DONE"
+
+      return {
+          "output": {
+              "success": finished,
+              "status": state.get("status", ""),
+              "iterations_used": state.get("iteration", 0),
+              "max_iterations": state.get("max_iterations", 5),
+              "reached_max_iterations": reached_max and not finished,
+              "workspace": state.get("workspace", ""),
+              "final_status_body": state.get("status_body", ""),
+              "history": state.get("history", []),
+          }
+      }
+
+edges:
+  - from: __start__
+    to: init_workspace
+
+  - from: init_workspace
+    to: execute
+
+  - from: execute
+    to: check_status
+
+  # Loop back if codex said NEEDS_MORE_WORK / didn't write STATUS / wrote garbage,
+  # AND we still have iterations left.
+  - from: check_status
+    to: execute
+    condition: "{{ state.status != 'DONE' and state.iteration < state.max_iterations }}"
+
+  # Otherwise (DONE, or budget exhausted) finalize.
+  - from: check_status
+    to: summarize
+    condition: "{{ state.status == 'DONE' or state.iteration >= state.max_iterations }}"
+
+  - from: summarize
+    to: __end__
