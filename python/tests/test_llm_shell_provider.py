@@ -519,6 +519,111 @@ edges:
         finally:
             os.unlink(temp_path)
 
+    def test_yaml_engine_parses_bare_shell_providers(self):
+        """settings.shell_providers (bare) is accepted for backward compat."""
+        from the_edge_agent import YAMLEngine
+        import tempfile
+        import os
+
+        yaml_content = """
+name: test-agent
+state_schema:
+  input: str
+  output: str
+
+settings:
+  shell_providers:
+    bare_claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 1800
+
+nodes:
+  - name: test
+    run: |
+      return {"output": "done"}
+
+edges:
+  - from: __start__
+    to: test
+  - from: test
+    to: __end__
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+
+        try:
+            engine = YAMLEngine()
+            engine.load_from_file(temp_path)
+
+            assert "bare_claude" in engine.shell_providers
+            config = engine.shell_providers["bare_claude"]
+            assert config["command"] == "claude"
+            assert config["args"] == ["-p", "{prompt}", "--dangerously-skip-permissions"]
+            assert config["timeout"] == 1800
+            assert config["verbose"] is True
+        finally:
+            os.unlink(temp_path)
+
+    def test_yaml_engine_canonical_overrides_bare_on_conflict(self):
+        """When the same provider name appears in both paths, the canonical
+        settings.llm.shell_providers entry wins."""
+        from the_edge_agent import YAMLEngine
+        import tempfile
+        import os
+
+        yaml_content = """
+name: test-agent
+state_schema:
+  input: str
+  output: str
+
+settings:
+  shell_providers:
+    only_in_bare:
+      command: bare-only
+      timeout: 100
+    overlap:
+      command: from-bare
+      timeout: 200
+  llm:
+    shell_providers:
+      overlap:
+        command: from-canonical
+        timeout: 999
+      only_in_canonical:
+        command: canon-only
+        timeout: 300
+
+nodes:
+  - name: test
+    run: |
+      return {"output": "done"}
+
+edges:
+  - from: __start__
+    to: test
+  - from: test
+    to: __end__
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+
+        try:
+            engine = YAMLEngine()
+            engine.load_from_file(temp_path)
+
+            assert engine.shell_providers["only_in_bare"]["command"] == "bare-only"
+            assert engine.shell_providers["only_in_canonical"]["command"] == "canon-only"
+            # canonical wins on conflict
+            assert engine.shell_providers["overlap"]["command"] == "from-canonical"
+            assert engine.shell_providers["overlap"]["timeout"] == 999
+        finally:
+            os.unlink(temp_path)
+
 
 class TestShellProviderFileModeNotImplemented(unittest.TestCase):
     """Test file mode for large contexts."""
