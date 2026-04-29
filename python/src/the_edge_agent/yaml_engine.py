@@ -491,7 +491,7 @@ class YAMLEngine:
         self.llm_settings: Dict[str, Any] = {}  # Default LLM settings from settings.llm
         self.shell_providers: Dict[
             str, Any
-        ] = {}  # Shell CLI providers from settings.llm.shell_providers
+        ] = {}  # Shell CLI providers from settings.shell_providers or settings.llm.shell_providers
 
         # Checkpoint tracking
         self._last_checkpoint_path: Optional[str] = None
@@ -905,6 +905,14 @@ class YAMLEngine:
         # TEA-KIROKU-005: Store full config for CLI access (interview prompts, etc.)
         self._config = config
 
+        # TEA-LLM-004: Parse shell_providers from bare path
+        # (settings.shell_providers) for backward compatibility with example
+        # YAMLs that predate the canonical settings.llm.shell_providers nesting.
+        # Both paths produce identical engine.shell_providers state; when the
+        # same provider name is defined in both, the canonical (namespaced)
+        # path wins because it is processed afterwards in the llm_config block.
+        self._process_shell_providers(settings.get("shell_providers", {}))
+
         # Extract LLM settings for default injection into llm.call actions
         # Maps settings.llm.deployment -> model, settings.llm.* -> other params
         # Process templates at load time (e.g., {{ env.VAR | default('value') }})
@@ -942,42 +950,10 @@ class YAMLEngine:
                     else:
                         self.llm_settings[key] = raw_value
 
-            # TEA-LLM-004: Parse shell_providers configuration
-            # Allows configuring CLI commands like claude, gemini, qwen
-            shell_providers_config = llm_config.get("shell_providers", {})
-            if isinstance(shell_providers_config, dict):
-                for provider_name, provider_config in shell_providers_config.items():
-                    if isinstance(provider_config, dict):
-                        processed_config = {}
-                        for key, value in provider_config.items():
-                            if isinstance(value, str):
-                                # Process templates and expand env vars
-                                processed_config[key] = self._process_template(
-                                    value, {}
-                                )
-                            elif isinstance(value, list):
-                                # Process list items (like args)
-                                processed_config[key] = [
-                                    (
-                                        self._process_template(v, {})
-                                        if isinstance(v, str)
-                                        else v
-                                    )
-                                    for v in value
-                                ]
-                            elif isinstance(value, dict):
-                                # Process dict items (like env)
-                                processed_config[key] = {
-                                    k: (
-                                        self._process_template(v, {})
-                                        if isinstance(v, str)
-                                        else v
-                                    )
-                                    for k, v in value.items()
-                                }
-                            else:
-                                processed_config[key] = value
-                        self.shell_providers[provider_name] = processed_config
+            # TEA-LLM-004: Parse shell_providers from canonical path
+            # (settings.llm.shell_providers). Wins on key conflict against the
+            # bare path applied earlier.
+            self._process_shell_providers(llm_config.get("shell_providers", {}))
 
         # TEA-BUILTIN-011: Configure rate limiters from YAML settings
         rate_limiters_config = settings.get("rate_limiters", {})
@@ -1834,6 +1810,40 @@ class YAMLEngine:
         accesses engine._template_cache directly.
         """
         return self._template_processor._template_cache
+
+    def _process_shell_providers(self, shell_providers_config: Any) -> None:
+        """Merge a shell_providers config dict into self.shell_providers.
+
+        Accepts the dict from either settings.shell_providers (legacy/example
+        convention) or settings.llm.shell_providers (documented canonical path).
+        Calling this twice is safe: later calls override on key conflict, so the
+        canonical path wins when both are present in the same YAML.
+
+        String values inside provider configs (command, args items, env values)
+        are passed through Jinja2 so env vars and other templating still work.
+        """
+        if not isinstance(shell_providers_config, dict):
+            return
+        for provider_name, provider_config in shell_providers_config.items():
+            if not isinstance(provider_config, dict):
+                continue
+            processed_config: Dict[str, Any] = {}
+            for key, value in provider_config.items():
+                if isinstance(value, str):
+                    processed_config[key] = self._process_template(value, {})
+                elif isinstance(value, list):
+                    processed_config[key] = [
+                        self._process_template(v, {}) if isinstance(v, str) else v
+                        for v in value
+                    ]
+                elif isinstance(value, dict):
+                    processed_config[key] = {
+                        k: self._process_template(v, {}) if isinstance(v, str) else v
+                        for k, v in value.items()
+                    }
+                else:
+                    processed_config[key] = value
+            self.shell_providers[provider_name] = processed_config
 
     def _process_template(
         self,
