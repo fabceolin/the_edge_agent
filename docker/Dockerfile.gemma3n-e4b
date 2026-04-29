@@ -61,7 +61,7 @@ COPY python/ /src/python/
 WORKDIR /src/python
 
 # Install TEA with all extras including llm support
-RUN pip install --no-cache-dir ".[all,prolog,lua,opik,llm]"
+RUN pip install --no-cache-dir ".[all,prolog,lua,opik,llm-local]"
 
 # Clean up the venv to reduce size
 RUN find /opt/tea-venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
