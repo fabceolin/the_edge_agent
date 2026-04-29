@@ -147,8 +147,9 @@ setup(
             # textgrad excluded by default (P2)
         ],
         # TEA-RELEASE-004.5: Local LLM support via llama-cpp-python
+        # Bumped to 0.3.21 for Gemma 4 architecture support (llama.cpp >= b5042-ish)
         "llm-local": [
-            "llama-cpp-python==0.3.19",
+            "llama-cpp-python==0.3.21",
         ],
         "all": [
             "openai==2.9.0",

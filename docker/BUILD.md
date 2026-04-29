@@ -10,6 +10,7 @@ TEA provides Docker images for both Python and Rust implementations. **Python is
 | `tea:full` | Python | All features: Prolog, Lua, Opik |
 | `tea:base` | Python | Minimal Python runtime |
 | `tea:gemma3-1b` | Python | Full + bundled Gemma 3 1B model |
+| `tea:gemma4-e2b` | Python | Full + bundled Gemma 4 E2B model (UD-Q4_K_XL) |
 | `tea:rust-latest` | Rust | Rust full variant |
 | `tea:rust-base` | Rust | Minimal Rust runtime |
 
@@ -22,6 +23,7 @@ TEA provides Docker images for both Python and Rust implementations. **Python is
 | `gemma3-1b` | `Dockerfile.gemma3-1b` | ~2GB | Full + Gemma 3 1B Q8_0 model |
 | `gemma3-4b` | `Dockerfile.gemma3-4b` | ~5GB | Full + Gemma 3 4B Q8_0 model |
 | `gemma3n-e4b` | `Dockerfile.gemma3n-e4b` | ~8.5GB | Full + Gemma 3N E4B model |
+| `gemma4-e2b` | `Dockerfile.gemma4-e2b` | ~4.5GB | Full + Gemma 4 E2B UD-Q4_K_XL model |
 | `phi4-mini` | `Dockerfile.phi4-mini` | ~3.5GB | Full + Phi-4 mini Q8_0 model |
 | `qwen3-8b` | `Dockerfile.qwen3-8b` | ~6GB | Full + Qwen 3 8B Q4_K_M model |
 
@@ -185,6 +187,7 @@ docker run --rm --entrypoint sh tea:rust-gemma3-1b -c 'ls -lh $TEA_MODEL_PATH'
 | `tea:base` | Python base variant |
 | `tea:full` | Python full variant |
 | `tea:gemma3-1b` | Python + Gemma 3 1B model |
+| `tea:gemma4-e2b` | Python + Gemma 4 E2B model (UD-Q4_K_XL) |
 | `tea:1.2.3` | Versioned Python full |
 | `tea:1.2.3-base` | Versioned Python base |
 

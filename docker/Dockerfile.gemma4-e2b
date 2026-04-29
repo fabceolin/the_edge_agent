@@ -1,0 +1,148 @@
+# TEA-DIST-001: Docker LLM Image - Gemma 4 E2B-it (UD-Q4_K_XL)
+#
+# Full TEA image with bundled Gemma 4 E2B instruction-tuned GGUF model
+# (Unsloth Dynamic Q4_K_XL quantization, ~3.17GB).
+# Self-contained for offline LLM inference without external model downloads.
+#
+# Build: docker build -t tea:gemma4-e2b -f docker/Dockerfile.gemma4-e2b .
+# Size: ~4.5GB
+#
+# Variants:
+#   - tea:base (~400MB) - Minimal core dependencies only
+#   - tea:full (~772MB) - All features (Prolog, Lua, Opik)
+#   - tea:gemma3-1b (~2GB) - Full + bundled Gemma 3 1B model
+#   - tea:gemma3-4b (~5GB) - Full + bundled Gemma 3 4B model
+#   - tea:gemma4-e2b (~4.5GB) - Full + bundled Gemma 4 E2B model (UD-Q4_K_XL)
+#   - tea:phi4-mini (~5GB) - Full + bundled Phi-4 mini model
+#
+# Model: unsloth/gemma-4-E2B-it-GGUF (UD-Q4_K_XL)
+# Source: Hugging Face (https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF)
+
+# =============================================================================
+# Stage 1: Builder - Install build dependencies and compile packages
+# =============================================================================
+# NOTE: Model is downloaded directly in final stage to avoid layer duplication
+# that would require ~6.3GB during build (3.17GB in downloader + 3.17GB in final)
+# =============================================================================
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    software-properties-common \
+    build-essential \
+    git \
+    curl \
+    ca-certificates \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SWI-Prolog 9.3+ from PPA
+RUN add-apt-repository ppa:swi-prolog/stable -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    swi-prolog \
+    swi-prolog-nox \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.12 -m venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools
+
+# Copy Python source for installation
+COPY python/ /src/python/
+WORKDIR /src/python
+
+# Install TEA with all extras including local LLM support (llama-cpp-python)
+RUN pip install --no-cache-dir ".[all,prolog,lua,opik,llm-local]"
+
+# Clean up the venv to reduce size
+RUN find /opt/tea-venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
+    && find /opt/tea-venv -type f -name "*.pyc" -delete 2>/dev/null || true \
+    && find /opt/tea-venv -type f -name "*.pyo" -delete 2>/dev/null || true \
+    && rm -rf /opt/tea-venv/share/doc 2>/dev/null || true \
+    && rm -rf /opt/tea-venv/share/man 2>/dev/null || true
+
+# Verify installations
+RUN python -c "import the_edge_agent; print(f'TEA version: {the_edge_agent.__version__}')"
+RUN python -c "import llama_cpp; print('llama-cpp-python: OK')" || echo "llama-cpp will be verified at runtime"
+
+# =============================================================================
+# Stage 2: Runtime - Image with bundled model
+# =============================================================================
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies only (curl needed for model download)
+# libgomp1 is required by llama-cpp-python's libllama.so (OpenMP runtime)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    libgomp1 \
+    software-properties-common \
+    ca-certificates \
+    curl \
+    && add-apt-repository ppa:swi-prolog/stable -y \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    swi-prolog-nox \
+    && apt-get purge -y software-properties-common \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/* \
+    && rm -rf /usr/share/doc/* \
+    && rm -rf /usr/share/man/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/tea-venv /opt/tea-venv
+ENV PATH="/opt/tea-venv/bin:$PATH"
+
+# Download model directly in final stage to avoid layer duplication
+# This saves ~3.17GB of overlay storage during build
+RUN mkdir -p /opt/tea-models && \
+    curl -L -o /opt/tea-models/gemma4-e2b.gguf \
+    "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-UD-Q4_K_XL.gguf?download=true" && \
+    ls -lh /opt/tea-models/ && \
+    test -f /opt/tea-models/gemma4-e2b.gguf
+
+# Set Python and model environment
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV TEA_MODEL_PATH="/opt/tea-models/gemma4-e2b.gguf"
+ENV TEA_MODEL_NAME="gemma4-e2b"
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash tea \
+    && mkdir -p /home/tea/.tea \
+    && chown -R tea:tea /home/tea
+
+# Switch to non-root user
+USER tea
+
+# Set working directory for mounted volumes
+WORKDIR /work
+
+# Labels for container registry
+LABEL org.opencontainers.image.source="https://github.com/fabceolin/the_edge_agent"
+LABEL org.opencontainers.image.description="TEA Gemma4-E2B - Full features with bundled Gemma 4 E2B model (UD-Q4_K_XL)"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL tea.variant="gemma4-e2b"
+LABEL tea.model="gemma4-e2b"
+LABEL tea.model.quantization="UD-Q4_K_XL"
+LABEL tea.model.size="3.17GB"
+LABEL tea.model.source="huggingface"
+
+# Entrypoint is the tea CLI
+ENTRYPOINT ["tea"]
+
+# Default command shows help
+CMD ["--help"]
