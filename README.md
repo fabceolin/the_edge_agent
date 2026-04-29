@@ -148,6 +148,38 @@ TEA includes 20+ built-in actions. Full documentation in [docs/capabilities/](do
 
 **Python** is the reference implementation with the complete feature set. **Rust** provides a lighter-weight alternative for embedded scenarios with a subset of actions. All implementations share the same YAML syntax.
 
+### Cross-Platform Wrapper (`tea.com`)
+
+If you already have Docker, the easiest way to run TEA on **any** OS is the `tea.com` wrapper — a single 1.1MB [Actually Portable Executable](https://github.com/jart/cosmopolitan) that runs unmodified on Linux (x86_64, aarch64), macOS (x86_64, arm64), Windows (x86_64), FreeBSD, NetBSD, and OpenBSD. It invokes the official TEA Docker image for you, so the same command works everywhere.
+
+```bash
+# Linux / macOS
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea.com -o tea
+chmod +x tea
+./tea --version
+
+# Windows (Command Prompt / PowerShell)
+curl -L https://github.com/fabceolin/the_edge_agent/releases/latest/download/tea.com -o tea.exe
+tea --version
+```
+
+Run any agent — same command on every platform:
+
+```bash
+./tea run examples/llm/hello-world.yaml --input '{"prompt":"hi"}'
+```
+
+**Offline LLM with one env var.** Switch to a Docker image that bundles a GGUF model and run inference on CPU, no AppImage download required:
+
+```bash
+TEA_VERSION=gemma4-e2b ./tea run examples/llm/hello-world.yaml \
+    --input '{"prompt":"hi"}'
+```
+
+Available bundled-model tags: `gemma3-1b`, `gemma3-4b`, `gemma3n-e4b`, `gemma4-e2b`, `phi4-mini`, `qwen3-8b`. See [docker/BUILD.md](docker/BUILD.md) for the full image catalog and [`wrapper/cosmo-c/README.md`](wrapper/cosmo-c/README.md) for environment variables (`TEA_IMAGE`, `TEA_VERSION`, `TEA_GPU`, API-key passthrough).
+
+**Requires:** Docker installed and running. No Python, Rust, or AppImage needed.
+
 ### Browser LLM (WASM)
 
 Run TEA workflows with local LLM inference entirely in the browser:
