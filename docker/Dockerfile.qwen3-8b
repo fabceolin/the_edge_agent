@@ -82,8 +82,10 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies only (curl needed for model download)
+# libgomp1 is required by llama-cpp-python's libllama.so (OpenMP runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
+    libgomp1 \
     software-properties-common \
     ca-certificates \
     curl \
