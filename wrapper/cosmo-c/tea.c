@@ -218,6 +218,34 @@ static int get_cwd(char *buf, size_t bufsize) {
     return 0;
 }
 
+/* Helper: Append a shell-escaped argument to *p (advances *p, never overruns end).
+ * Always wraps the argument in double quotes and escapes the four characters
+ * that retain special meaning inside double quotes in POSIX sh: \  "  $  `
+ * Returns 0 on success, -1 if there is not enough room in the buffer. */
+static int append_shell_arg(char **p, char *end, const char *arg) {
+    char *q = *p;
+    /* leading space + opening quote */
+    if (end - q < 3) return -1;
+    *q++ = ' ';
+    *q++ = '"';
+    for (const char *c = arg; *c; c++) {
+        char ch = *c;
+        if (ch == '\\' || ch == '"' || ch == '$' || ch == '`') {
+            if (end - q < 2) return -1;
+            *q++ = '\\';
+        } else {
+            if (end - q < 1) return -1;
+        }
+        *q++ = ch;
+    }
+    /* closing quote + NUL */
+    if (end - q < 2) return -1;
+    *q++ = '"';
+    *q = '\0';
+    *p = q;
+    return 0;
+}
+
 /* Show wrapper version */
 static void show_version(void) {
     printf("tea-wrapper %s (cosmopolitan)\n", WRAPPER_VERSION);
@@ -345,20 +373,14 @@ static int run_docker(int argc, char *argv[]) {
     /* Add image name */
     p += snprintf(p, end - p, " %s", image);
 
-    /* Add user arguments (skip argv[0] which is program name) */
+    /* Add user arguments (skip argv[0] which is program name).
+     * Always shell-escape so embedded quotes/$/backticks survive the round-trip
+     * through system() -> /bin/sh -c -> docker -> container argv. */
     for (i = 1; i < argc; i++) {
-        /* Quote arguments that contain spaces */
-        if (strchr(argv[i], ' ') || strchr(argv[i], '"') || strchr(argv[i], '\'')) {
-            p += snprintf(p, end - p, " \"%s\"", argv[i]);
-        } else {
-            p += snprintf(p, end - p, " %s", argv[i]);
+        if (append_shell_arg(&p, end, argv[i]) != 0) {
+            fprintf(stderr, "Error: Command too long\n");
+            return 127;
         }
-    }
-
-    /* Check for buffer overflow */
-    if (p >= end) {
-        fprintf(stderr, "Error: Command too long\n");
-        return 127;
     }
 
     /* Execute */
