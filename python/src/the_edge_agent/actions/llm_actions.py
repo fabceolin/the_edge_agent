@@ -414,26 +414,35 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             # TEA-LLM-004.1: Read output - line by line if verbose, else all at once
             if verbose:
-                # Read and print line by line
-                stdout_lines = []
+                # Multiplex stdout and stderr so the child never blocks writing
+                # to a full pipe buffer (~64KB on Linux).
+                import selectors
+
+                sel = selectors.DefaultSelector()
+                sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+                sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+
+                stdout_lines: list = []
+                stderr_lines: list = []
                 start_time = time.time()
-                while True:
+                while sel.get_map():
                     if time.time() - start_time > provider_timeout:
                         proc.kill()
                         raise subprocess.TimeoutExpired(full_command, provider_timeout)
-
-                    line = proc.stdout.readline()
-                    if not line:
-                        if proc.poll() is not None:
-                            break
-                        continue
-
-                    stdout_lines.append(line)
-                    sys.stderr.write(line)
-                    sys.stderr.flush()
+                    for key, _ in sel.select(timeout=1.0):
+                        line = key.fileobj.readline()
+                        if not line:
+                            sel.unregister(key.fileobj)
+                            continue
+                        if key.data == "stdout":
+                            stdout_lines.append(line)
+                            sys.stderr.write(line)
+                            sys.stderr.flush()
+                        else:
+                            stderr_lines.append(line)
 
                 stdout = "".join(stdout_lines)
-                stderr = proc.stderr.read() if proc.stderr else ""
+                stderr = "".join(stderr_lines)
                 proc.wait(timeout=5)
             else:
                 # Original behavior - read all at once. Pass input via
@@ -614,10 +623,18 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             start_time = time.time()
 
-            # Use select for timeout support on Unix systems
-            # Fall back to simple read on Windows
+            # Multiplex stdout and stderr so the child never blocks writing to a
+            # full pipe buffer (~64KB on Linux). Falls back to a one-shot read
+            # on platforms where pipes aren't selectable (e.g., Windows).
+            stderr_lines: list = []
             try:
-                while True:
+                import selectors
+
+                sel = selectors.DefaultSelector()
+                sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+                sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+
+                while sel.get_map():
                     elapsed = time.time() - start_time
                     if elapsed >= provider_timeout:
                         proc.kill()
@@ -626,21 +643,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                             "success": False,
                         }
 
-                    # Try to read a line
-                    line = proc.stdout.readline()
-                    if not line:
-                        # Check if process has ended
-                        if proc.poll() is not None:
-                            break
-                        continue
-
-                    full_content.append(line)
-                    chunk_count += 1
-
-                    # TEA-LLM-004.1: Print to stderr in verbose mode
-                    if verbose:
-                        sys.stderr.write(line)
-                        sys.stderr.flush()
+                    for key, _ in sel.select(timeout=1.0):
+                        line = key.fileobj.readline()
+                        if not line:
+                            sel.unregister(key.fileobj)
+                            continue
+                        if key.data == "stdout":
+                            full_content.append(line)
+                            chunk_count += 1
+                            if verbose:
+                                sys.stderr.write(line)
+                                sys.stderr.flush()
+                        else:
+                            stderr_lines.append(line)
             except Exception:
                 # Fallback: just read all output
                 remaining = proc.stdout.read()
@@ -661,7 +676,10 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 except Exception:
                     pass
 
-            stderr_output = proc.stderr.read() if proc.stderr else ""
+            if stderr_lines:
+                stderr_output = "".join(stderr_lines)
+            else:
+                stderr_output = proc.stderr.read() if proc.stderr else ""
 
             if proc.returncode != 0:
                 return {
