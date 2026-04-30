@@ -382,14 +382,13 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     text=True,
                     env=env,
                 )
-                # In verbose mode we must feed stdin before the read-loop so the
-                # child process does not block waiting for input. In non-verbose
-                # mode we defer writing to communicate(input=...) below — calling
-                # stdin.close() manually here breaks communicate() on Python 3.13
-                # because it still calls stdin.flush() internally.
-                if verbose:
-                    proc.stdin.write(prompt_text)
-                    proc.stdin.close()
+                # Verbose mode feeds stdin inside the selector loop below
+                # (interleaved with stdout/stderr drains) so a >64KB prompt
+                # cannot deadlock when the child writes to stderr/stdout
+                # before consuming all of stdin. Non-verbose mode hands stdin
+                # to communicate(), which manages flush/close (Python 3.13
+                # raises "I/O operation on closed file" if we close stdin
+                # manually here).
             elif stdin_mode == "file":
                 # Write to temp file for very large contexts
                 with tempfile.NamedTemporaryFile(
@@ -414,35 +413,73 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             # TEA-LLM-004.1: Read output - line by line if verbose, else all at once
             if verbose:
-                # Multiplex stdout and stderr so the child never blocks writing
-                # to a full pipe buffer (~64KB on Linux).
+                # Multiplex stdin/stdout/stderr so neither side can deadlock
+                # on a full pipe buffer (~64KB on Linux). Use os.read/os.write
+                # on the raw fds so a chunk without a newline (e.g., a long
+                # progress line) doesn't make readline() block while the other
+                # streams have data ready.
                 import selectors
 
                 sel = selectors.DefaultSelector()
                 sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
                 sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
 
-                stdout_lines: list = []
-                stderr_lines: list = []
+                stdin_bytes = b""
+                stdin_offset = 0
+                if proc.stdin is not None:
+                    stdin_bytes = prompt_text.encode("utf-8")
+                    sel.register(proc.stdin, selectors.EVENT_WRITE, "stdin")
+
+                stdout_chunks: list = []
+                stderr_chunks: list = []
                 start_time = time.time()
                 while sel.get_map():
                     if time.time() - start_time > provider_timeout:
                         proc.kill()
                         raise subprocess.TimeoutExpired(full_command, provider_timeout)
                     for key, _ in sel.select(timeout=1.0):
-                        line = key.fileobj.readline()
-                        if not line:
+                        if key.data == "stdin":
+                            if stdin_offset >= len(stdin_bytes):
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                                continue
+                            try:
+                                n = os.write(
+                                    key.fileobj.fileno(),
+                                    stdin_bytes[stdin_offset:stdin_offset + 65536],
+                                )
+                            except BrokenPipeError:
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                                continue
+                            stdin_offset += n
+                            if stdin_offset >= len(stdin_bytes):
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                            continue
+                        data = os.read(key.fileobj.fileno(), 4096)
+                        if not data:
                             sel.unregister(key.fileobj)
                             continue
+                        text_chunk = data.decode("utf-8", errors="replace")
                         if key.data == "stdout":
-                            stdout_lines.append(line)
-                            sys.stderr.write(line)
+                            stdout_chunks.append(text_chunk)
+                            sys.stderr.write(text_chunk)
                             sys.stderr.flush()
                         else:
-                            stderr_lines.append(line)
+                            stderr_chunks.append(text_chunk)
 
-                stdout = "".join(stdout_lines)
-                stderr = "".join(stderr_lines)
+                stdout = "".join(stdout_chunks)
+                stderr = "".join(stderr_chunks)
                 proc.wait(timeout=5)
             else:
                 # Original behavior - read all at once. Pass input via
@@ -585,9 +622,9 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     env=env,
                     bufsize=1,  # Line buffered for streaming
                 )
-                # Send input and close stdin to signal end of input
-                proc.stdin.write(prompt_text)
-                proc.stdin.close()
+                # Stdin is fed inside the selector loop below (interleaved with
+                # stdout/stderr drains) so a >64KB prompt cannot deadlock when
+                # the child writes to stderr/stdout before consuming all input.
             elif stdin_mode == "file":
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".txt", delete=False
@@ -623,16 +660,22 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
             start_time = time.time()
 
-            # Multiplex stdout and stderr so the child never blocks writing to a
+            # Multiplex stdin/stdout/stderr so neither side can deadlock on a
             # full pipe buffer (~64KB on Linux). Falls back to a one-shot read
             # on platforms where pipes aren't selectable (e.g., Windows).
-            stderr_lines: list = []
+            stderr_chunks: list = []
             try:
                 import selectors
 
                 sel = selectors.DefaultSelector()
                 sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
                 sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+
+                stdin_bytes = b""
+                stdin_offset = 0
+                if proc.stdin is not None:
+                    stdin_bytes = prompt_text.encode("utf-8")
+                    sel.register(proc.stdin, selectors.EVENT_WRITE, "stdin")
 
                 while sel.get_map():
                     elapsed = time.time() - start_time
@@ -644,18 +687,47 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         }
 
                     for key, _ in sel.select(timeout=1.0):
-                        line = key.fileobj.readline()
-                        if not line:
+                        if key.data == "stdin":
+                            if stdin_offset >= len(stdin_bytes):
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                                continue
+                            try:
+                                n = os.write(
+                                    key.fileobj.fileno(),
+                                    stdin_bytes[stdin_offset:stdin_offset + 65536],
+                                )
+                            except BrokenPipeError:
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                                continue
+                            stdin_offset += n
+                            if stdin_offset >= len(stdin_bytes):
+                                sel.unregister(key.fileobj)
+                                try:
+                                    key.fileobj.close()
+                                except Exception:
+                                    pass
+                            continue
+                        data = os.read(key.fileobj.fileno(), 4096)
+                        if not data:
                             sel.unregister(key.fileobj)
                             continue
+                        text_chunk = data.decode("utf-8", errors="replace")
                         if key.data == "stdout":
-                            full_content.append(line)
+                            full_content.append(text_chunk)
                             chunk_count += 1
                             if verbose:
-                                sys.stderr.write(line)
+                                sys.stderr.write(text_chunk)
                                 sys.stderr.flush()
                         else:
-                            stderr_lines.append(line)
+                            stderr_chunks.append(text_chunk)
             except Exception:
                 # Fallback: just read all output
                 remaining = proc.stdout.read()
@@ -676,8 +748,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 except Exception:
                     pass
 
-            if stderr_lines:
-                stderr_output = "".join(stderr_lines)
+            if stderr_chunks:
+                stderr_output = "".join(stderr_chunks)
             else:
                 stderr_output = proc.stderr.read() if proc.stderr else ""
 
