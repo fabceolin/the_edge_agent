@@ -99,9 +99,9 @@ class TestShellProviderLlmCall(unittest.TestCase):
         assert call_kwargs["stdin"] == subprocess.PIPE
         assert call_kwargs["text"] is True
 
-        # Verify messages were written to stdin (implementation uses stdin.write instead of communicate input)
-        mock_proc.stdin.write.assert_called_once()
-        input_text = mock_proc.stdin.write.call_args[0][0]
+        # Verify the prompt was passed via communicate(input=...)
+        mock_proc.communicate.assert_called_once()
+        input_text = mock_proc.communicate.call_args.kwargs.get("input", "")
         assert "You are helpful" in input_text
         assert "What is 2+2" in input_text
 
@@ -422,9 +422,9 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
                 shell_provider="gemini",
             )
 
-            # Check the input written to stdin (implementation uses stdin.write instead of communicate input)
-            mock_proc.stdin.write.assert_called_once()
-            input_text = mock_proc.stdin.write.call_args[0][0]
+            # Check the input passed via communicate(input=...)
+            mock_proc.communicate.assert_called_once()
+            input_text = mock_proc.communicate.call_args.kwargs.get("input", "")
             assert "Test message" in input_text
 
     def test_format_system_message(self):
@@ -457,9 +457,9 @@ class TestShellProviderMessageFormatting(unittest.TestCase):
                 shell_provider="gemini",
             )
 
-            # Check the input written to stdin (implementation uses stdin.write instead of communicate input)
-            mock_proc.stdin.write.assert_called_once()
-            input_text = mock_proc.stdin.write.call_args[0][0]
+            # Check the input passed via communicate(input=...)
+            mock_proc.communicate.assert_called_once()
+            input_text = mock_proc.communicate.call_args.kwargs.get("input", "")
             assert "System:" in input_text
             assert "helpful assistant" in input_text
 
