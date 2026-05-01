@@ -729,11 +729,30 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                         else:
                             stderr_chunks.append(text_chunk)
             except Exception:
-                # Fallback: just read all output
-                remaining = proc.stdout.read()
-                if remaining:
-                    full_content.append(remaining)
-                    chunk_count += 1
+                # Fallback for environments where pipes aren't selectable
+                # (e.g., Windows, mocked subprocess in tests). Feed stdin
+                # synchronously and drain stdout via readline().
+                if proc.stdin is not None:
+                    try:
+                        proc.stdin.write(prompt_text)
+                        proc.stdin.close()
+                    except Exception:
+                        pass
+                try:
+                    while True:
+                        line = proc.stdout.readline()
+                        if not line:
+                            break
+                        full_content.append(line)
+                        chunk_count += 1
+                        if verbose:
+                            sys.stderr.write(line)
+                            sys.stderr.flush()
+                except Exception:
+                    remaining = proc.stdout.read() if proc.stdout else ""
+                    if remaining:
+                        full_content.append(remaining)
+                        chunk_count += 1
 
             # Wait for process to complete
             try:
