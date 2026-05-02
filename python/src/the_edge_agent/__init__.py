@@ -42,6 +42,12 @@ from .tracing import (
     ConsoleExporter,
     FileExporter,
     CallbackExporter,
+    LlmPayloadFileExporter,
+    AsyncFileExporter,
+    LLM_PAYLOAD_KEY,
+    PII_WARNING_HEADER,
+    LlmPayloadSpan,
+    replace_binary_payloads,
 )
 
 # Observability (TEA-OBS-001.1)
@@ -134,12 +140,18 @@ __all__ = [
     "get_executor",
     "register_executor",
     "available_strategies",
-    # Tracing (TEA-BUILTIN-001.3)
+    # Tracing (TEA-BUILTIN-001.3 / TEA-OBS-003)
     "TraceContext",
     "TraceExporter",
     "ConsoleExporter",
     "FileExporter",
     "CallbackExporter",
+    "LlmPayloadFileExporter",
+    "AsyncFileExporter",
+    "LLM_PAYLOAD_KEY",
+    "PII_WARNING_HEADER",
+    "LlmPayloadSpan",
+    "replace_binary_payloads",
     # Observability (TEA-OBS-001.1)
     "ObservabilityContext",
     "EventStream",

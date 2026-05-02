@@ -173,7 +173,9 @@ edges:
         try:
             result = runner.invoke(app, ["validate", temp_yaml])
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("is valid", result.output)
+            # TEA-DX-001.6: success output is "OK: <file> (N nodes, M edges) [structural checks only — run blocks not executed]"
+            self.assertIn("OK:", result.output)
+            self.assertIn("structural checks only", result.output)
         finally:
             Path(temp_yaml).unlink()
 

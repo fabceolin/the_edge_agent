@@ -1,0 +1,19 @@
+name: dead-key-compound
+state_schema:
+  start: bool
+nodes:
+  - name: real_step
+    run: |
+      return {"start": True}
+  - name: target
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: real_step
+  - from: real_step
+    to: target
+    condition:
+      type: expression
+      value: "state.completely_unknown_key > 0"
+  - from: target
+    to: __end__

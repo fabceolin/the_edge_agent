@@ -452,7 +452,9 @@ edges:
         try:
             result = runner.invoke(app, ["validate", temp_yaml])
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("valid", result.output.lower())
+            # TEA-DX-001.6: success output uses "OK:" prefix with scope qualifier
+            self.assertIn("OK:", result.output)
+            self.assertIn("structural checks only", result.output)
         finally:
             Path(temp_yaml).unlink()
 

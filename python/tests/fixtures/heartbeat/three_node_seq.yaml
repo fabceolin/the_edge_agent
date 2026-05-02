@@ -1,0 +1,34 @@
+# TEA-DX-001.7: Three sequential nodes for heartbeat tests.
+name: heartbeat-three-node-seq
+state_schema:
+  count: int
+
+nodes:
+  - name: a
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": state.get("count", 0) + 1}
+  - name: b
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": state.get("count", 0) + 1}
+  - name: c
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": state.get("count", 0) + 1}
+
+edges:
+  - from: __start__
+    to: a
+  - from: a
+    to: b
+  - from: b
+    to: c
+  - from: c
+    to: __end__
+
+config:
+  raise_exceptions: false

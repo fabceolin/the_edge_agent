@@ -202,33 +202,64 @@ github://[owner]/[repo]@[branch]/[path/to/workflow.yaml]
 | Story Development | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml` |
 | Standard Cycle | `github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-standard-cycle.yaml` |
 
+### 4.1.1 Pinning the TEA binary with `--dot-exec` (required for source checkouts)
+
+The orchestrator builds per-node tmux commands by prefixing whatever binary `--dot-exec` resolves to. **Default is `tea`, but on hosts that also have `tea-python` or another shadowing binary on `PATH`, the wrong binary is picked up and each node exits in ~2 seconds with no usable error.**
+
+Always pin `--dot-exec` to the absolute path of the binary inside your TEA source checkout's venv:
+
+```bash
+--dot-exec /path/to/the_edge_agent/python/.venv/bin/tea
+```
+
+This guarantees:
+- The same TEA version that resolves the DOT and dispatches windows also runs each node.
+- No `PATH` shadowing surprises (`tea-python`, system `tea`, pip-installed `tea` in another venv).
+- The dry-run output (`--dot-dry-run`) shows the exact binary path each tmux window will execute, so you can verify before launching.
+
+Quick sanity check before running:
+
+```bash
+/path/to/the_edge_agent/python/.venv/bin/tea --version   # confirm binary exists and version matches expectation
+which tea-python                                          # if this resolves outside your source checkout, you NEED --dot-exec
+```
+
 ### 4.2 Examples
 
 ```bash
 # Command Mode: Execute embedded commands
 tea run --from-dot workflow.dot --dot-session my-workflow --dot-max-parallel 4
 
-# Workflow Mode with local file
-tea run --from-dot stories.dot --dot-workflow bmad-story-validation.yaml --dot-max-parallel 3
+# Workflow Mode with local file (pin --dot-exec to source-tree binary; see §4.1.1)
+tea run --from-dot stories.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
+    --dot-max-parallel 3
 
 # Workflow Mode with GitHub URL (recommended)
 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 3
 
 # Development workflow from GitHub with verbose output
 TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 2 \
     --dot-session epic-dev
 
 # With additional input merged into each execution
 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-input '{"mode": "sequential"}'
 
-# Preview execution plan
-tea run --from-dot workflow.dot --dot-dry-run
+# Preview execution plan (always run this first to verify the resolved per-node command)
+tea run --from-dot workflow.dot \
+    --dot-workflow bmad-story-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
+    --dot-dry-run
 ```
 
 ## 5. DOT File Structure
@@ -329,12 +360,14 @@ When workflows call `llm.call` with shell providers (e.g., Claude Code), output 
 ```bash
 # See Claude Code output while running (with GitHub URL)
 TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
-    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml
+    --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea
 
 # Export for all commands in session
 export TEA_SHELL_VERBOSE=1
 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 3
 ```
 
@@ -461,17 +494,20 @@ After generating a DOT file, always provide execution commands:
 # Validation workflow from GitHub (recommended)
 tea run --from-dot examples/dot/tea-game-validation.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 3
 
 # Development workflow from GitHub with verbose output
 TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 2 \
     --dot-session epic-dev
 
 # Alternative: Local workflow file
 tea run --from-dot stories.dot \
     --dot-workflow examples/workflows/bmad-story-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 3
 
 # Monitor progress
@@ -539,11 +575,13 @@ Example with short labels and path resolution:
 # Validation workflow - run before development
 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-validation.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 3
 
 # Development workflow - implement features
 TEA_SHELL_VERBOSE=1 tea run --from-dot stories.dot \
     --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-development.yaml \
+    --dot-exec /path/to/the_edge_agent/python/.venv/bin/tea \
     --dot-max-parallel 2 \
     --dot-session sprint-dev
 ```
@@ -590,7 +628,7 @@ project/
 |--------------------|---------------------|------|
 | Simple validation | 10 min | `--dot-timeout 600` |
 | Story development | 1 hour | `--dot-timeout 3600` |
-| Complex epic | 15 hours | `--dot-timeout 54000` (default) |
+| Complex epic | 15 hours (default) | omit `--dot-timeout` (uses the 54000s default) |
 
 ## 12. Conclusion
 

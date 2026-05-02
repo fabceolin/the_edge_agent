@@ -1,0 +1,32 @@
+name: dynamic-parallel-valid
+state_schema:
+  items: list
+  results: list
+nodes:
+  - name: prepare
+    run: |
+      return {"items": state.get("items", [1, 2, 3])}
+
+  - name: fan_out
+    type: dynamic_parallel
+    items: "{{ state.items }}"
+    item_var: item
+    fan_in: collect
+    action:
+      uses: file.read
+      with:
+        path: "/tmp/dummy.txt"
+
+  - name: collect
+    run: |
+      return {"results": parallel_results or []}
+
+edges:
+  - from: __start__
+    to: prepare
+  - from: prepare
+    to: fan_out
+  - from: fan_out
+    to: collect
+  - from: collect
+    to: __end__

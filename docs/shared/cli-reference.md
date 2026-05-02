@@ -69,6 +69,118 @@ tea run workflow.yaml -vvv    # trace
 tea run workflow.yaml -q      # quiet (errors only)
 ```
 
+## Progress Heartbeat (TEA-DX-001.7)
+
+```bash
+# Emit one progress line on stderr per node completion (default off)
+tea run workflow.yaml --heartbeat
+tea run workflow.yaml --quiet --heartbeat        # silent stdout, heartbeat-only stderr
+```
+
+The `--heartbeat` flag is the recommended middle ground between `--quiet`
+(no output) and `--stream` (full NDJSON). It prints exactly one line to
+**stderr** per node completion:
+
+- Success: `[<node_name> done in <duration>]`
+- Failure: `[<node_name> FAILED in <duration>]`
+- Parallel branches: `[parallel:<branch_name> done in <duration>]`
+
+Notes:
+
+- Default off; combine with any other run flag.
+- Output goes to **stderr** so stdout pipelines and `--output` redirects
+  remain byte-identical to a non-heartbeat run.
+- Durations are wall-clock deltas between consecutive engine events
+  (`50ms` / `1.2s` / `2m 18s` / `1h 1m 40s`).
+- Pair with `--quiet` for long workflows where you want progress signal
+  without the verbosity of `--stream`. `--heartbeat` together with
+  `--stream` works but is redundant — prefer one or the other.
+
+## Intermediate State Dumps for Debug (TEA-DX-001.3)
+
+```bash
+# Write per-node JSON state snapshots to <dir> as the workflow runs (default off)
+tea run workflow.yaml --debug-state ./dumps/
+```
+
+The `--debug-state <dir>` flag captures the state after every node so you
+can inspect the failure point post-mortem when a multi-node workflow
+raises before reaching `__end__` and the `--output` file would otherwise
+be empty.
+
+File naming:
+
+- Success: `<NN>-after-<node_name>.json` (e.g. `01-after-classify.json`)
+- Failure: `<NN>-FAILED-<node_name>.json` — payload includes a
+  `traceback` field
+- `<NN>` is a zero-padded sequence counter for the run
+
+Notes:
+
+- The dump dir is created if missing; pre-existing files in the dir are
+  preserved (you can `rm -rf` between runs).
+- A `WARNING:` line is emitted to stderr at startup whenever
+  `--debug-state` is set, surviving `--quiet`. The flag is intended for
+  development; do not enable it in production / CI.
+- Node-name path components are sanitized: characters outside
+  `[A-Za-z0-9_-]` are replaced with `_` so a YAML node name like
+  `../../etc/passwd` cannot escape the dump directory.
+- Compatible with `--quiet`, `--stream`, `--show-graph`, and
+  `--checkpoint` — combine freely.
+- For parallel / `dynamic_parallel` blocks, only the parent fan-out and
+  fan-in nodes are dumped; per-branch events (`parallel_state`,
+  `parallel_error`, `branch_complete`) do not produce extra files.
+- **Redaction scope (Option B):** `--debug-state` does **not** redact
+  state fields. Whatever lives in state is written to disk as-is, and
+  exception messages appear verbatim in the FAILED dump's `traceback`
+  field. Keep secrets in the secrets backend
+  (`tea run --secrets ...` / `secrets.get`), not in state. The startup
+  `WARNING` exists precisely to make this scope explicit at every
+  invocation.
+- Dump-write failures (e.g. read-only / full-disk dump dir) are
+  swallowed and logged at DEBUG level — they never replace the user's
+  actual node exception.
+- No size cap in v1; on very long workflows with large states this can
+  fill disk fast — use a dedicated directory and clean up afterwards.
+
+### Troubleshooting: empty `--output` after a mid-run failure
+
+If a node raises before reaching `__end__`, the `--output` file is
+empty/missing because the engine never reaches the terminal `final`
+event. Re-run with `--debug-state ./dumps/` to capture per-node JSON
+snapshots; the last `<NN>-after-...` file is the state right before the
+failure, and `<NN>-FAILED-...` contains both the pre-node state and the
+exception traceback.
+
+## Trace File Override (TEA-DX-001.2)
+
+```bash
+# Override settings.trace_file for a single run
+tea run workflow.yaml --trace-file ./traces/run-1.jsonl
+tea run workflow.yaml --trace-file '${TRACE_DIR}/run.jsonl'   # ${ENV_VAR} expansion
+```
+
+The `--trace-file` flag wires a JSON-lines `FileExporter` for the run
+without requiring YAML edits or temp YAML rendering. Useful for external
+runners that re-execute the same YAML many times with per-run trace paths.
+
+Precedence and implicit behavior:
+
+- **CLI `--trace-file` overrides `settings.trace_file`.** When set, the
+  YAML's trace path is ignored.
+- **Implicitly enables `auto_trace=true`** even if YAML has
+  `settings.auto_trace: false` — the user's intent is clear when they ask
+  for a trace path on the command line.
+- **Implicitly switches `trace_exporter` to `"file"`** if it is unset or
+  `"console"`. If the YAML already specifies `trace_exporter: file`, only
+  the path is overridden (exporter type unchanged).
+- The path supports `${ENV_VAR}` and `${ENV_VAR:-default}` expansion via
+  the same helper used by `settings.trace_file` (parity with
+  TEA-DX-001.1).
+- A bad path (e.g. parent-not-a-directory) exits with a
+  `typer.BadParameter` error referencing `--trace-file`, not a raw Python
+  traceback.
+
 ## Exit Condition Control (TEA-CLI-008)
 
 ```bash

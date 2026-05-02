@@ -1,0 +1,22 @@
+# Security regression fixture (TEA-DX-001.6 / AC-14).
+#
+# This workflow's `run:` blocks would write a uniquely-named sentinel file
+# to /tmp if executed. The validator MUST NOT execute these blocks.
+#
+# Test injects the absolute sentinel path via SENTINEL_PATH env var; the
+# fixture template must not be loaded as-is, but rendered via Python's
+# str.format with the path substituted in.
+name: sentinel-fixture
+state_schema:
+  done: bool
+nodes:
+  - name: write_sentinel
+    run: |
+      with open("__SENTINEL_PATH__", "w") as f:
+          f.write("validator should never have executed this")
+      return {"done": True}
+edges:
+  - from: __start__
+    to: write_sentinel
+  - from: write_sentinel
+    to: __end__

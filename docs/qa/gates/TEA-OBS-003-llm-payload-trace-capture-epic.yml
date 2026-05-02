@@ -1,0 +1,157 @@
+schema: 1
+story: "TEA-OBS-003"
+story_title: "LLM Payload Trace Capture — Epic"
+gate: PASS
+status_reason: >-
+  Re-review after Dev Agent (James) closed all five `top_issues` from the prior
+  CONCERNS gate. Verification: (1) release-binding DoD line landed at epic
+  line 146 (closes SEC-001 score-9 structural gap); (2) NFR-AC-1..12 codified
+  across 003.1/003.2/003.3 child stories with deferred items explicitly marked
+  in Future / Deferred Follow-ups; (3) AC-3 CLI-vs-YAML merge semantics pinned
+  (de-duplicated merge; CLI > YAML on bool); (4) implementation-drift claim
+  reconciled — both LlmPayloadFileExporter (separate exporter at tracing.py:209)
+  AND FileExporter._project_for_slim (TECH-001 single-source-of-truth strip)
+  are intentionally complementary; (5) trace_payload_redact and three other
+  follow-ups durably logged. 003.1 child-story gate already PASS; 003.2 and
+  003.3 child stories Ready for Review (gate runs pending). Tests green:
+  64 in test_tea_obs003_payload.py + 171 in adjacent observability/CLI suites.
+  Final epic closure depends on the per-child-story gate runs for 003.2/003.3.
+reviewer: "Quinn (Test Architect)"
+updated: "2026-05-02T20:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals:
+    critical: 0   # SEC-001 downgraded by release-binding DoD + child-story mitigations
+    high: 0       # all prior high-severity gate issues closed
+    medium: 0     # all prior medium-severity gate issues closed
+    low: 2        # latency benchmark numbers in docs (PERF-DOC-001, low); deferred NFR-AC follow-up story (low)
+  highest:
+    id: SEC-001
+    score: 6  # downgraded from 9 by release-binding DoD + retention WARNING + opt-in default
+    title: "PII (CNPJ, financial, customer) written to plaintext disk via opt-in capture"
+    status: "MITIGATED at epic level — release-binding DoD ensures 003.1+003.2 ship together; warning-vs-fail-init for production tracked as DEFERRED follow-up"
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Run *review-story for TEA-OBS-003.2 and TEA-OBS-003.3 to publish their gate files"
+      - "Three NFR-ACs marked DEFERRED in 003.1 (NFR-AC-1 production-fail escalation, NFR-AC-4 size cap + per-record truncation, NFR-AC-7 mid-run flag toggle) need a follow-up pickup story when TEA_ENV becomes a first-class codebase convention and production-volume data informs size-cap thresholds"
+      - "Per-call latency overhead numbers in docs/python/observability.md (PERF-DOC-001 from 003.1 gate, low severity)"
+      - "Adoption of trace_payload_retention_days in production configs (operator-discipline signal for SEC-001)"
+      - "Sync exporter p99 latency by storage backend; promote 003.3 from stretch to required default if early adopters report degradation"
+
+quality_score: 80   # 100 - (0 × 20) - (2 × 10) [Performance CONCERNS + (deferred-NFR-AC bucket counted as a soft CONCERNS at epic-planning scope)]
+expires: "2026-05-16T00:00:00Z"   # 2 weeks from review date
+
+evidence:
+  tests_reviewed: 78           # planned scenarios from embedded test design
+  tests_implemented_observed: 64   # passing tests in python/tests/test_tea_obs003_payload.py (re-run 2026-05-02)
+  tests_adjacent_passing: 171  # test_yaml_engine_observability + test_cli + test_cli_unified + test_yaml_dynamic_parallel (re-run 2026-05-02)
+  risks_identified: 14
+  risks_mitigated_or_tracked: 14
+  trace:
+    ac_covered:
+      - "003.1-AC-1..18 (FULL — see 003.1 child gate for per-AC verification)"
+      - "003.2-AC-1..17 (per-AC verification deferred to 003.2 child gate)"
+      - "003.3-AC-1..19 (per-AC verification deferred to 003.3 child gate)"
+      - "NFR-AC-1..12 codified across 003.1 / 003.2 / 003.3 child stories"
+      - "Epic Definition of Done — release-binding bullet now present (line 146)"
+    ac_gaps:
+      - "Three NFR-ACs explicitly marked DEFERRED in 003.1 (NFR-AC-1 production-fail escalation, NFR-AC-4 size cap + truncation, NFR-AC-7 mid-run flag toggle) — tracked in Future / Deferred Follow-ups, not silent gaps"
+      - "003.2 + 003.3 per-AC verification pending child-story gate runs"
+  files_verified:
+    - "docs/stories/TEA-OBS-003-llm-payload-trace-capture-epic.md (release-binding DoD line 146; Future/Deferred Follow-ups lines 155-160)"
+    - "docs/stories/TEA-OBS-003.1-llm-payload-capture-core.md (Part G NFR-Derived ACs lines 89-102; AC-3 merge semantics line 123)"
+    - "docs/stories/TEA-OBS-003.2-payload-retention-cleanup.md (Part F NFR-Derived ACs lines 73-85)"
+    - "docs/stories/TEA-OBS-003.3-async-exporter-gzip.md (Part F NFR-Derived ACs lines 81-95)"
+    - "python/src/the_edge_agent/tracing.py (FileExporter line 161; LlmPayloadFileExporter line 209; AsyncFileExporter line 285 — all separate classes; drift claim closed)"
+    - "docs/qa/gates/TEA-OBS-003.1-llm-payload-capture-core.yml (child-story gate PASS)"
+
+nfr_validation:
+  security:
+    status: CONCERNS  # downgraded from FAIL by release-binding DoD landing
+    notes: >-
+      SEC-001 (PII to plaintext disk) score-9 path closed at epic level by
+      release-binding DoD line (Stories 003.1 + 003.2 must release together).
+      Residual exposure: NFR-AC-1's production-fail escalation is currently
+      a *warning* at engine init (DEFERRED in 003.1 because TEA_ENV is not a
+      codebase convention yet). Acceptable bounded residual; tracked as a
+      monitor follow-up. SEC-002 (glob safety) verified mitigated by tests
+      at python/tests/test_tea_obs003_payload.py:78,82 + INFO log of
+      resolved capture list at yaml_engine.py:946-953.
+  performance:
+    status: CONCERNS  # unchanged
+    notes: >-
+      TECH-001 sync exporter latency mitigated when 003.3 ships (Ready for
+      Review). OPS-001 disk-fill bounded for v1 by opt-in + retention
+      cleanup (003.2) + gzip (003.3); explicit size-cap rotation +
+      per-record truncation (NFR-AC-4) is DEFERRED with rationale and
+      tracked. Per-call latency benchmark numbers in observability.md
+      pending (PERF-DOC-001, low).
+  reliability:
+    status: PASS   # was CONCERNS; lifted by drift reconciliation + child-gate PASS
+    notes: >-
+      Default-off invariant has both fuzz tests AND AC contract (NFR-AC-6).
+      Separate-exporter design verified at tracing.py:209 — drift claim
+      closed. Cleanup boundary cases codified in 003.2 (NFR-AC-8). 003.1
+      child gate also lifts Reliability to PASS. Mid-run flag toggle
+      (NFR-AC-7) is DEFERRED because engine creates fresh trace context
+      per run — not a supported axis today, tracked.
+  maintainability:
+    status: PASS   # unchanged
+    notes: >-
+      Additive design on stable TraceExporter Protocol; no new external
+      deps for 003.1-003.2; gzip stdlib for 003.3; LlmPayloadSpan TypedDict
+      pins captured-field schema; embedded QA Notes block is well-
+      instrumented and machine-greppable; Future / Deferred Follow-ups
+      makes residual scope explicit.
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Run *review-story for TEA-OBS-003.2 and TEA-OBS-003.3 to publish per-child-story gate files; epic Definition of Done cannot be checked off until both run"
+      refs:
+        - "docs/stories/TEA-OBS-003.2-payload-retention-cleanup.md"
+        - "docs/stories/TEA-OBS-003.3-async-exporter-gzip.md"
+    - action: "Open a follow-up story for the three DEFERRED NFR-ACs (NFR-AC-1 production-fail escalation, NFR-AC-4 size cap + per-record truncation, NFR-AC-7 mid-run flag toggle) once TEA_ENV (or equivalent production-mode signal) becomes a first-class codebase convention and production-volume data is available to inform thresholds"
+      refs:
+        - "docs/stories/TEA-OBS-003-llm-payload-trace-capture-epic.md#future--deferred-follow-ups"
+    - action: "Add per-call latency benchmark numbers (capture-on vs capture-off median + p99 for 1 KB and 50 KB payloads) to docs/python/observability.md async section (closes PERF-DOC-001 from 003.1 child gate)"
+      refs:
+        - "docs/python/observability.md"
+        - "docs/qa/gates/TEA-OBS-003.1-llm-payload-capture-core.yml"
+    - action: "Promote AC-18 (PII warning placement) doc smoke from substring-presence to structural-placement (within first 20 lines of section)"
+      refs:
+        - "docs/qa/assessments/TEA-OBS-003-trace-20260501.md"
+    - action: "Re-evaluate at 003.1 retro whether to promote Story 003.3 (async + gzip) from stretch to required-default for slow-disk targets"
+      refs:
+        - "docs/stories/TEA-OBS-003.3-async-exporter-gzip.md"
+
+history:
+  - at: "2026-05-02T00:00:00Z"
+    gate: CONCERNS
+    note: >-
+      Initial epic-level review (Quinn). FAIL by deterministic risk threshold
+      (SEC-001 score 9) downgraded to CONCERNS for epic-planning artifact
+      because the gaps were documentation edits (release-binding DoD bullet,
+      NFR-AC propagation, AC-3 semantics pin) — not unaddressed risks.
+      Five top_issues opened: EPIC-DOD-001 (high), EPIC-AC-002 (high),
+      EPIC-AC-003 (medium), EPIC-IMPL-DRIFT-001 (medium), EPIC-FOLLOWUP-001
+      (low).
+  - at: "2026-05-02T20:00:00Z"
+    gate: PASS
+    note: >-
+      Re-review after Dev Agent (James, Change Log v1.1) closed all five
+      top_issues. Verified: release-binding DoD line at epic line 146;
+      NFR-AC-1..12 codified in 003.1 Part G / 003.2 Part F / 003.3 Part F
+      with DEFERRED items tracked in Future / Deferred Follow-ups; AC-3
+      merge semantics pinned with implementation reference at
+      yaml_engine.py:879-885; LlmPayloadFileExporter (tracing.py:209)
+      confirmed as separate exporter (drift claim closed); redaction hook
+      durably logged. Tests re-run green (64 + 171). 003.1 child gate
+      already PASS; 003.2 and 003.3 child gates pending. Quality score
+      lifted from 70 → 80; Security from FAIL → CONCERNS (acceptable
+      residual); Reliability from CONCERNS → PASS.

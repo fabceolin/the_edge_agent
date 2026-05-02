@@ -1,0 +1,19 @@
+name: console-exporter
+state_schema:
+  value: int
+  result: str
+
+settings:
+  auto_trace: true
+  trace_exporter: console
+
+nodes:
+  - name: process
+    run: |
+      return {"result": "ok"}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

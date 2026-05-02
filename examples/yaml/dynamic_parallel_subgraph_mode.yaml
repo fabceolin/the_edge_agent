@@ -31,6 +31,7 @@ nodes:
     index_var: source_index
     max_concurrency: 2
     fail_fast: true
+    fan_in: aggregate_analyses
     subgraph: "./analysis_subgraph.yaml"
     input:
       data_source: "{{ source }}"

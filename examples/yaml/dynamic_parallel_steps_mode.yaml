@@ -38,6 +38,7 @@ nodes:
     item_var: doc
     index_var: doc_index
     max_concurrency: 2
+    fan_in: combine_results
     steps:
       # Step 1: Extract key points (simulated - would use LLM in production)
       - name: extract_keywords

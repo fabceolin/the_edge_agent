@@ -1,0 +1,13 @@
+name: two-unreferenced
+nodes:
+  - name: main
+    run: 'return {}'
+  - name: orphan_one
+    run: 'return {}'
+  - name: orphan_two
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: main
+  - from: main
+    to: __end__

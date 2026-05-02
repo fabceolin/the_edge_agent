@@ -1,0 +1,15 @@
+name: return-dict
+nodes:
+  - name: producer
+    run: |
+      return {"score": 42, "label": "high"}
+  - name: branch
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: producer
+  - from: producer
+    to: branch
+    when: "state.score > 10"
+  - from: branch
+    to: __end__

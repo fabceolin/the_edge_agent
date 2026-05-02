@@ -1,0 +1,18 @@
+name: dict-assignment
+state_schema:
+  source: str
+nodes:
+  - name: writer
+    run: |
+      state["computed"] = "yes"
+      return {"source": "x"}
+  - name: branch
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: writer
+  - from: writer
+    to: branch
+    when: "state.computed == 'yes'"
+  - from: branch
+    to: __end__

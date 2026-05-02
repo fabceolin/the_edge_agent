@@ -1,0 +1,14 @@
+name: invalid-jinja-condition
+nodes:
+  - name: step1
+    run: 'return {}'
+  - name: step2
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: step2
+    condition: "{{ this is not valid jinja %} %}"
+  - from: step2
+    to: __end__

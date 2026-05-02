@@ -29,6 +29,7 @@ nodes:
     index_var: i
     max_concurrency: 3
     fail_fast: false
+    fan_in: aggregate
     action:
       uses: http.get
       with:

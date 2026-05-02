@@ -1,0 +1,15 @@
+name: simple-trace-test
+state_schema:
+  value: int
+  result: str
+
+nodes:
+  - name: process
+    run: |
+      return {"result": f"value={state.get('value', 0)}"}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

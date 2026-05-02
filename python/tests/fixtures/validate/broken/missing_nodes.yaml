@@ -1,0 +1,4 @@
+name: missing-nodes-field
+edges:
+  - from: __start__
+    to: __end__

@@ -279,6 +279,31 @@ engine = YAMLEngine(trace_exporter="console", trace_verbose=True)
 engine = YAMLEngine(trace_exporter="file", trace_file="./traces.jsonl")
 ```
 
+#### `tea run --trace-file <path>` (TEA-DX-001.2)
+
+Override `settings.trace_file` for a single run from the command line —
+useful for external runners that execute the same YAML many times with
+per-run trace paths and don't want to render a temp YAML file:
+
+```bash
+tea run workflow.yaml --trace-file ./traces/run-$(date +%s).jsonl
+tea run workflow.yaml --trace-file '${TRACE_DIR}/run.jsonl'  # ${ENV_VAR} expansion
+```
+
+Precedence and implicit behavior:
+
+- **CLI `--trace-file` overrides `settings.trace_file`.** When set, the YAML's
+  trace path is ignored.
+- **When set, `auto_trace` is implicitly enabled** even if YAML has
+  `settings.auto_trace: false` — the user's intent is clear.
+- **`trace_exporter` is implicitly switched to `"file"`** if it is unset or
+  `"console"`. If the YAML already specifies `trace_exporter: file`, only the
+  path is overridden (exporter type unchanged).
+- The path supports `${ENV_VAR}` and `${ENV_VAR:-default}` expansion via the
+  same helper used by `settings.trace_file` (TEA-DX-001.1 parity).
+- A bad path (e.g. parent-not-a-directory) exits with a `typer.BadParameter`
+  error referencing `--trace-file`, not a raw Python traceback.
+
 ## Environment Variables
 
 | Variable | Description | Default |

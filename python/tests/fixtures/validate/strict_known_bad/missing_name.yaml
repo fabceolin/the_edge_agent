@@ -1,0 +1,9 @@
+# Strict-only failure: top-level `name` is missing.
+nodes:
+  - name: only_step
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: only_step
+  - from: only_step
+    to: __end__

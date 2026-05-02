@@ -1,0 +1,9 @@
+name: broken
+nodes:
+  - name: x
+    run: 'return {}'
+  - name: y
+edges:
+  - from: __start__
+    to: x
+    invalid: yaml: [:

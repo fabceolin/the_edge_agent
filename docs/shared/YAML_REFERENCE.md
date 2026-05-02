@@ -742,6 +742,48 @@ nodes:
 
 See [Python Actions Reference](../python/actions-reference.md) and [Rust Actions Reference](../rust/actions-reference.md) for complete action documentation (search for "Local LLM Provider").
 
+#### `settings.trace_*` - Tracing Output (TEA-DX-001.1)
+
+Configure auto-trace output destination. Three keys are recognized and all
+support `${VAR}` and `${VAR:-default}` environment-variable expansion so the
+trace path can vary per run without rendering YAML to a temp file:
+
+```yaml
+settings:
+  auto_trace: true
+  trace_exporter: file              # console | file | opik
+  trace_file: ${TEA_TRACE_FILE}     # ${VAR} expansion supported
+  # trace_file: ${TEA_TRACE_FILE:-/tmp/agent.jsonl}  # default fallback
+```
+
+**Expansion semantics** (mirrors `expand_env_vars` used by `settings.ltm`,
+`settings.secrets`, `settings.firestore`):
+
+| Form                          | Behavior                                              |
+|-------------------------------|-------------------------------------------------------|
+| `${VAR}` (set)                | Replaced with the env var's value.                    |
+| `${VAR}` (unset, no default)  | Replaced with the empty string `""` (no exception).   |
+| `${VAR:-default}` (unset)     | Replaced with the literal text after `:-`.            |
+| Literal value (no `${...}`)   | Passes through unchanged — no behavior change.        |
+
+**Empty `trace_file` after expansion.** If `trace_exporter: file` and the
+post-expansion `trace_file` is empty (e.g., `${UNSET_VAR}` with no default),
+the runner logs a `WARNING` and skips appending a `FileExporter` rather than
+opening a file at the empty path. Other exporters (console, opik) are
+unaffected.
+
+**Operator-trust note.** The resolved `trace_file` is written to the
+filesystem as authored, and trace payloads can include LLM I/O and snapshots
+of state. Treat the env source as part of the trust boundary — do not feed
+untrusted strings into `${TEA_TRACE_FILE}`, and avoid routing trace output
+through shared / world-readable / log-aggregator-scraped paths unless that
+disclosure is acceptable for the workflow.
+
+**Narrow expansion.** Only `trace_file`, `trace_exporter`, and `trace_format`
+are expanded. Sibling keys under `settings:` (and elsewhere in the YAML, such
+as `nodes[*].run` source or `variables.prompt_template`) keep any literal
+`${...}` markers intact.
+
 ---
 
 ## Node Specification
@@ -1570,6 +1612,129 @@ edges:
 4. **Single producer** per stream channel
 
 For complete documentation including troubleshooting, see [Stream Channels Reference](./yaml-reference/streams.md).
+
+---
+
+## Dynamic Parallel
+
+`type: dynamic_parallel` fans out one branch per item in a runtime-resolved
+collection (typically `{{ state.batches }}` or similar). Each branch runs the
+configured body once with `item` and `index` injected into the branch's
+input state, and a fan-in node aggregates the results.
+
+<!-- LOAD-BEARING ANCHOR: the slug `dynamic-parallel-branch-body-modes` is
+referenced by TEA-DX-001.5 enriched error messages (see
+python/src/the_edge_agent/yaml_nodes.py `_DOC_ANCHOR`). Do not rename this
+heading without updating those references. -->
+### Dynamic Parallel: Branch Body Modes {#dynamic-parallel-branch-body-modes}
+
+A `dynamic_parallel` node MUST have **exactly one** of `action`, `steps`, or
+`subgraph` set — they are **mutually exclusive**. The table below summarises
+when to use each, what the branch sees as input state, whether the body can
+be reused outside `dynamic_parallel`, and where it is defined. Side-by-side
+minimal examples follow the table.
+
+| Mode | When to use | Branch state | Reusability | Where it's defined | Example link |
+|------|-------------|--------------|-------------|--------------------|--------------|
+| [`action:`](#dyn-parallel-example-action) | One registered action per item (HTTP call, LLM call, single action invocation). | Deep copy of full parent state with `item` and `index` injected. | High — the action is a registered, reusable function callable from any node. | Inline mapping (`uses:` + `with:`) under the `dynamic_parallel` node. | [Action mode example](#dyn-parallel-example-action) · `examples/yaml/dynamic_parallel_action_mode.yaml` |
+| [`steps:`](#dyn-parallel-example-steps) | A short inline sequence per item that doesn't justify its own workflow file. | Deep copy of full parent state with `item` and `index` injected; subsequent steps see prior steps' outputs merged in. | Low — steps are local to this node. Copy-paste to reuse. | Inline list of step entries under the `dynamic_parallel` node. | [Steps mode example](#dyn-parallel-example-steps) · `examples/yaml/dynamic_parallel_steps_mode.yaml` |
+| [`subgraph:`](#dyn-parallel-example-subgraph) | Per-item logic large enough to deserve its own YAML, its own tests, or use by other workflows. | **Scoped subset only** — branch sees just the keys produced by the `input:` mapping (`item`/`index` available inside the mapping expressions). | Highest — the subgraph YAML is the unit of reuse and can be invoked independently. | Path to a separate YAML workflow file (with `input:` mapping). | [Subgraph mode example](#dyn-parallel-example-subgraph) · `examples/yaml/dynamic_parallel_subgraph_mode.yaml` |
+
+**Quick rules of thumb:**
+
+- One HTTP / LLM / action call per item → **`action:`**.
+- Two or three inline steps that share branch-local state → **`steps:`**.
+- More than three steps, or any logic with its own tests / multiple
+  call-sites → **`subgraph:`**.
+
+**Mutual-exclusion rule.** Exactly one of `action`, `steps`, or `subgraph`
+must be set per `dynamic_parallel` node. Specifying zero or more than one is
+a parse-time error.
+
+**`fan_in:` requirement.** Every `dynamic_parallel` node also requires a
+sibling `fan_in:` key (NOT nested under `action:`/`steps:`/`subgraph:` or any
+`branch:` block) that names an existing node. The named node receives the
+aggregated `parallel_results` list.
+
+**Common errors** (see also TEA-DX-001.5 enriched messages):
+
+- Two of `action`/`steps`/`subgraph` together →
+  `"conflicting branch-body keys present"`.
+- Zero of `action`/`steps`/`subgraph` →
+  `"missing one of 'action', 'steps', or 'subgraph'"`.
+- No `fan_in:` → `"missing required key 'fan_in'"`.
+- `fan_in:` pointing at an undefined node →
+  `"fan_in target '<name>' is not a defined node"`.
+
+#### Minimal examples
+
+##### Action mode {#dyn-parallel-example-action}
+
+```yaml
+- name: fetch_all
+  type: dynamic_parallel
+  items: "{{ state.urls }}"
+  item_var: url
+  fan_in: aggregate
+  action:
+    uses: http.get
+    with: { url: "{{ url }}" }
+    output: response
+```
+
+##### Steps mode {#dyn-parallel-example-steps}
+
+```yaml
+- name: process_documents
+  type: dynamic_parallel
+  items: "{{ state.documents }}"
+  item_var: doc
+  fan_in: combine_results
+  steps:
+    - run: "return {'word_count': len(state['doc']['content'].split())}"
+    - run: "return {'doc_id': state['doc']['id']}"
+```
+
+##### Subgraph mode {#dyn-parallel-example-subgraph}
+
+```yaml
+- name: analyze_sources
+  type: dynamic_parallel
+  items: "{{ state.data_sources }}"
+  item_var: source
+  fan_in: aggregate_analyses
+  subgraph: "./analysis_subgraph.yaml"
+  input:
+    data_source: "{{ source }}"
+    config: "{{ state.analysis_config }}"
+```
+
+For full working agents that exercise each mode end-to-end, see the
+matching files under `examples/yaml/`.
+
+---
+
+## Validating Workflows
+
+Run pre-flight structural validation on a workflow YAML without executing
+nodes:
+
+```bash
+tea validate workflow.yaml
+```
+
+The command performs structural checks only — it does **not** execute
+`run:` blocks, instantiate LLM clients, or read API-key environment
+variables. Use it in CI to catch YAML errors before a workflow burns LLM
+calls and fails halfway through.
+
+Adding `--strict` promotes soft warnings (unreferenced nodes, dead
+state-key references) to errors. Best-effort static analysis with known
+false-positive risk; intended for curated, well-known-good fixture sets in
+CI rather than blanket adoption against arbitrary user workflows.
+
+For full reference (exit codes, output formats, programmatic API,
+security properties), see [`cli-validate.md`](../python/cli-validate.md).
 
 ---
 

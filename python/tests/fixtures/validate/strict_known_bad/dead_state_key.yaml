@@ -1,0 +1,24 @@
+name: dead-state-key
+state_schema:
+  amount: int
+nodes:
+  - name: classify
+    run: |
+      return {"amount": state.get("amount", 0)}
+  - name: branch_a
+    run: 'return {}'
+  - name: branch_b
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: classify
+  - from: classify
+    to: branch_a
+    when: "state.never_set_anywhere == 'yes'"
+  - from: classify
+    to: branch_b
+    when: "state.also_dead"
+  - from: branch_a
+    to: __end__
+  - from: branch_b
+    to: __end__

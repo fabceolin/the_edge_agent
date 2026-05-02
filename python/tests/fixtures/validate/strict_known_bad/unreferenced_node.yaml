@@ -1,0 +1,11 @@
+name: unreferenced-node
+nodes:
+  - name: step1
+    run: 'return {}'
+  - name: orphan_node
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: __end__

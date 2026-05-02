@@ -1,0 +1,60 @@
+# TEA-DX-001.7: Static parallel fan-out for heartbeat tests.
+# Three single-node parallel branches join at fan_in.
+name: heartbeat-parallel-fanout
+state_schema:
+  count: int
+
+nodes:
+  - name: start_node
+    run: |
+      return {"count": 0}
+  - name: branch_1
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": 1}
+  - name: branch_2
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": 2}
+  - name: branch_3
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"count": 3}
+  - name: fan_in
+    fan_in: true
+    run: |
+      total = 0
+      for r in (parallel_results or []):
+          state_dict = r.state if hasattr(r, "state") else r
+          total += int(state_dict.get("count", 0))
+      return {"count": total}
+
+edges:
+  - from: __start__
+    to: start_node
+  - from: start_node
+    to: branch_1
+    type: parallel
+    fan_in: fan_in
+  - from: start_node
+    to: branch_2
+    type: parallel
+    fan_in: fan_in
+  - from: start_node
+    to: branch_3
+    type: parallel
+    fan_in: fan_in
+  - from: branch_1
+    to: fan_in
+  - from: branch_2
+    to: fan_in
+  - from: branch_3
+    to: fan_in
+  - from: fan_in
+    to: __end__
+
+config:
+  raise_exceptions: false

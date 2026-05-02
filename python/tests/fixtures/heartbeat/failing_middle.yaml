@@ -1,0 +1,32 @@
+# TEA-DX-001.7: Three-node workflow with failing middle node for heartbeat tests.
+name: heartbeat-failing-middle
+state_schema:
+  value: int
+
+nodes:
+  - name: a
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      return {"value": 1}
+  - name: b
+    run: |
+      import time as _t
+      _t.sleep(0.01)
+      raise RuntimeError("boom")
+  - name: c
+    run: |
+      return {"value": state.get("value", 0) + 100}
+
+edges:
+  - from: __start__
+    to: a
+  - from: a
+    to: b
+  - from: b
+    to: c
+  - from: c
+    to: __end__
+
+config:
+  raise_exceptions: false

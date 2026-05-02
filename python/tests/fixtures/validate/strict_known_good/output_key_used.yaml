@@ -1,0 +1,24 @@
+name: output-key-used
+state_schema:
+  raw: str
+nodes:
+  - name: extract
+    run: 'return {"raw": "data"}'
+    output: parsed
+  - name: branch_a
+    run: 'return {}'
+  - name: branch_b
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: extract
+  - from: extract
+    to: branch_a
+    when: "state.parsed"
+  - from: extract
+    to: branch_b
+    when: "not state.parsed"
+  - from: branch_a
+    to: __end__
+  - from: branch_b
+    to: __end__

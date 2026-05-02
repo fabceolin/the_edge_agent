@@ -1,0 +1,27 @@
+name: with-condition
+state_schema:
+  value: int
+  result: str
+nodes:
+  - name: classify
+    run: |
+      return {"value": state.get("value", 0)}
+  - name: small_branch
+    run: |
+      return {"result": "small"}
+  - name: big_branch
+    run: |
+      return {"result": "big"}
+edges:
+  - from: __start__
+    to: classify
+  - from: classify
+    to: small_branch
+    when: "state.value < 10"
+  - from: classify
+    to: big_branch
+    when: "state.value >= 10"
+  - from: small_branch
+    to: __end__
+  - from: big_branch
+    to: __end__

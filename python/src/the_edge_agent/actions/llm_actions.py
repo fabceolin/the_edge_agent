@@ -60,6 +60,83 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
     # Track wrapped clients to prevent double-wrapping
     _opik_wrapped_clients = set()
 
+    def _capture_llm_payload_to_span(
+        messages: Optional[list],
+        result: Optional[Dict[str, Any]],
+        response: Any = None,
+    ) -> None:
+        """Inject the captured LLM payload into the current trace span.
+
+        TEA-OBS-003.1 wiring: when the engine has payload capture enabled
+        for the parent YAML node, this helper:
+
+          1. Locates the active span via ``engine._trace_context.current_span()``.
+          2. Replaces bytes-typed message content with ``{"type": "binary_omitted", ...}``
+             placeholders to avoid serializing raw PDFs/images.
+          3. Stores the documented field set under
+             ``span['metadata'][LLM_PAYLOAD_KEY]``.
+
+        Wrapped in try/except so a tracing failure never breaks the
+        underlying ``llm.call`` return value.
+        """
+        try:
+            if engine is None:
+                return
+            capture_setting = getattr(engine, "_llm_payload_capture", False)
+            if not capture_setting:
+                return
+            ctx = getattr(engine, "_trace_context", None)
+            if ctx is None:
+                return
+            span = ctx.current_span()
+            if span is None:
+                return
+            node_name = (span.get("metadata") or {}).get("node")
+            from ..yaml_engine import YAMLEngine as _YAMLEngine
+            if not _YAMLEngine._should_capture_payload(node_name, capture_setting):
+                return
+
+            from ..tracing import replace_binary_payloads, LLM_PAYLOAD_KEY
+
+            sanitized_messages = (
+                replace_binary_payloads(messages) if messages is not None else None
+            )
+
+            usage = (result or {}).get("usage") or {}
+            tokens_input = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+            tokens_output = (
+                usage.get("completion_tokens") if isinstance(usage, dict) else None
+            )
+
+            model_name = None
+            stop_reason = None
+            if response is not None:
+                model_name = getattr(response, "model", None)
+                try:
+                    choice0 = response.choices[0]
+                    stop_reason = getattr(choice0, "finish_reason", None)
+                except (AttributeError, IndexError, TypeError):
+                    stop_reason = None
+
+            payload: Dict[str, Any] = {
+                "messages_input": sanitized_messages,
+                "response_content": (result or {}).get("content"),
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output,
+                "model": model_name,
+                "stop_reason": stop_reason,
+                "cost_usd": (result or {}).get("cost_usd"),
+            }
+
+            metadata = span.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                span["metadata"] = metadata
+            metadata[LLM_PAYLOAD_KEY] = payload
+        except Exception:
+            # Trace failures must never propagate to the LLM call.
+            pass
+
     def _deep_serialize(obj):
         """
         Recursively serialize Pydantic objects and nested structures to plain dicts.
@@ -1151,6 +1228,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
                 if extra_fields:
                     result.update(extra_fields)
+                # TEA-OBS-003.1: capture into trace span (best-effort)
+                _capture_llm_payload_to_span(messages, result, response)
                 return result
 
             # No retry logic (max_retries=0)
@@ -1356,6 +1435,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 result["cost_usd"] = calculate_cost(model, usage)
             if extra_fields:
                 result.update(extra_fields)
+            # TEA-OBS-003.1: capture into trace span (best-effort)
+            _capture_llm_payload_to_span(messages, result, response)
             return result
 
         # No retry logic (max_retries=0) - respect Retry-After once

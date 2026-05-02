@@ -67,12 +67,67 @@ For complete action documentation including parameters and examples, see the [YA
 ## Table of Contents
 
 - [Quick Reference](#quick-reference)
+- [Run Block Globals](#run-block-globals)
 - [Core Actions (P0)](#core-actions-p0)
 - [Integration Actions (P1)](#integration-actions-p1)
 - [Reasoning Actions (P2)](#reasoning-actions-p2)
 - [Utility Actions (P3)](#utility-actions-p3)
 - [Deprecated Actions](#deprecated-actions)
 - [Custom Actions](#custom-actions)
+
+---
+
+## Run Block Globals
+
+Inline Python `run:` blocks execute with a fixed set of names pre-bound in
+the `exec()` globals. Authors can read and write these directly without
+Jinja interpolation.
+
+| Name        | Type    | Lifetime           | Description                                                                  |
+|-------------|---------|--------------------|------------------------------------------------------------------------------|
+| `state`     | `dict`  | per-node invocation | Current state passed in by the engine; updates are merged via the return value. |
+| `variables` | `dict`  | engine-shared       | The same dict as `engine.variables` — backs `{{ variables.x }}` Jinja access. |
+| `actions`   | `dict`  | engine-shared       | Action registry (`engine.actions_registry`) — call e.g. `actions["llm.call"](...)`. |
+| `json`      | module  | static              | Standard library `json` (always pre-imported).                               |
+| `requests`  | module  | static (lazy)       | Pre-imported only if the `run:` source contains the substring `requests`.    |
+| `datetime`  | module  | static (lazy)       | Pre-imported only if the source contains the substring `datetime`.           |
+| `OpenAI`    | class   | static (lazy)       | Pre-imported when `OpenAI`/`openai` is referenced and the SDK is installed.  |
+
+`with:`-supplied kwargs are merged **after** these names, so a kwarg literally
+named `state`, `variables`, or `actions` shadows the engine binding for that
+invocation. Non-dict kwargs are passed through verbatim — no auto-coercion.
+
+### `variables` — read and write
+
+```yaml
+variables:
+  max_retries: 3
+
+nodes:
+  - name: do_thing
+    run: |
+      retries = variables.get("max_retries", 1)   # read
+      variables["last_attempt"] = retries          # write — visible to subsequent nodes
+      return {"retries": retries}
+```
+
+The same dict is shared with Jinja: `{{ variables.last_attempt }}` in a
+later node sees the value written above.
+
+### Parallel safety
+
+`variables` is bound **by reference** to `engine.variables`. The semantics
+of in-branch writes depend on `settings.parallel.strategy`:
+
+| Strategy   | In-branch write to `variables[k]`                                                                              |
+|------------|----------------------------------------------------------------------------------------------------------------|
+| `thread`   | Visible to all branches and to fan-in. Concurrent branches **race** on shared keys — last write wins, non-deterministically. |
+| `process`  | **Discarded.** The worker has its own copy of `engine.variables`; mutations never cross back at fan-in.        |
+| `remote`   | **Discarded** for the same reason as `process`.                                                                |
+
+For per-flow data, return it from the branch and consume it via
+`parallel_results` at the fan-in node. Reserve `variables` for read-only or
+single-writer mutations.
 
 ---
 
@@ -246,6 +301,11 @@ Integration actions connect TEA with external systems and enable multi-agent wor
 | `agent.sequential` | Chain multiple agents where output feeds into next agent's input. |
 | `agent.coordinate` | Coordinator pattern with leader agent dispatching to workers. |
 | `agent.crewai_delegate` | Delegate to CrewAI for complex multi-agent workflows. |
+
+> **Per-item fan-out:** for fanning a single action (or steps / a subgraph) over a
+> runtime-resolved collection, use the `dynamic_parallel` node type. See
+> [Dynamic Parallel: Branch Body Modes](../shared/YAML_REFERENCE.md#dynamic-parallel-branch-body-modes)
+> for a side-by-side comparison of `action:` vs `steps:` vs `subgraph:`.
 
 ### firestore.*
 

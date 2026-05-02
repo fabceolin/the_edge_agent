@@ -20,6 +20,7 @@ import yaml
 import json
 import os
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Union
 
 from jinja2 import Environment, BaseLoader, StrictUndefined
@@ -52,7 +53,14 @@ from .memory import (  # noqa: E402
     _parse_hierarchical_ltm_config,
     _is_hierarchical_nested_config,
 )
-from .tracing import TraceContext, ConsoleExporter, FileExporter, CallbackExporter  # noqa: E402
+from .tracing import (  # noqa: E402
+    TraceContext,
+    ConsoleExporter,
+    FileExporter,
+    CallbackExporter,
+    LlmPayloadFileExporter,
+    AsyncFileExporter,
+)
 from .observability import ObservabilityContext  # noqa: E402
 from .actions import build_actions_registry, register_cache_jinja_filters  # noqa: E402
 from .yaml_templates import TemplateProcessor, DotDict  # noqa: E402
@@ -298,6 +306,18 @@ class YAMLEngine:
 
         # Auto-trace flag (can be enabled via YAML settings)
         self._auto_trace = False
+
+        # TEA-OBS-003: LLM payload trace capture (configured from YAML or CLI).
+        # ``False`` = disabled (default). ``True`` = capture every llm.call.
+        # ``List[str]`` = capture only when the parent YAML node name matches
+        # at least one fnmatch glob.
+        self._llm_payload_capture: Union[bool, List[str]] = False
+        # Async / compression / retention knobs (Stories 003.2 and 003.3).
+        self._trace_payload_async: bool = False
+        self._trace_payload_compress: Optional[str] = None
+        self._trace_payload_retention_days: Optional[int] = None
+        # Async exporter handle so callers (CLI, tests) can drain on shutdown.
+        self._trace_payload_async_exporter: Optional[AsyncFileExporter] = None
 
         # TEA-CLI-001: CLI overrides for --gguf and --backend
         # Set via cli.py after engine creation
@@ -746,6 +766,223 @@ class YAMLEngine:
         """
         self._engine_config.add_opik_exporter_from_config()
 
+    @staticmethod
+    def _normalize_payload_capture(value: Any) -> Union[bool, List[str]]:
+        """Coerce ``auto_trace_llm_payloads`` raw value to a normalised form.
+
+        Accepted truthy forms: ``True``; non-empty list of glob strings.
+        Anything else (None, False, [], 0, empty string, "False", "0", etc.)
+        is treated as "no capture".
+
+        Standalone ``*`` and ``**`` patterns are rejected because they would
+        match every node and silently negate the per-node opt-in safeguard.
+        """
+        if value is None or value is False:
+            return False
+        if value is True:
+            return True
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped in ("", "false", "0", "no", "off"):
+                return False
+            if stripped in ("true", "1", "yes", "on"):
+                return True
+            value = [value]
+        if isinstance(value, (list, tuple)):
+            patterns = [str(p).strip() for p in value if str(p).strip()]
+            if not patterns:
+                return False
+            for pat in patterns:
+                if pat in ("*", "**"):
+                    raise ValueError(
+                        "auto_trace_llm_payloads rejects standalone "
+                        f"'{pat}' glob (would match every node and defeat "
+                        "the per-node opt-in safeguard). Use a more "
+                        "specific pattern like 'extract_*' or set "
+                        "auto_trace_llm_payloads: true to capture all "
+                        "nodes intentionally."
+                    )
+            return patterns
+        return False
+
+    @staticmethod
+    def _should_capture_payload(
+        node_name: Optional[str],
+        capture_setting: Union[bool, List[str]],
+    ) -> bool:
+        """Return True if the node matches the resolved capture setting."""
+        if not capture_setting:
+            return False
+        if capture_setting is True:
+            return True
+        if not node_name:
+            return False
+        import fnmatch
+
+        return any(fnmatch.fnmatchcase(node_name, pat) for pat in capture_setting)
+
+    def _resolve_payload_file_path(self, settings: Dict[str, Any]) -> str:
+        """Resolve where the *.llm.jsonl[.gz] payload file lives.
+
+        AC-7..AC-9 preference order:
+          1. Sibling of an explicit trace_file (``run.jsonl`` →
+             ``run.llm.jsonl``).
+          2. CWD fallback ``tea-llm-payloads-<run_id>.jsonl`` so two
+             parallel runs in the same directory don't collide.
+        """
+        import uuid as _uuid
+
+        EXPANDED_TRACE_KEYS = ("trace_file",)
+        trace_subset = expand_env_vars(
+            {k: settings[k] for k in EXPANDED_TRACE_KEYS if k in settings}
+        )
+        trace_file = trace_subset.get("trace_file")
+
+        if not trace_file and self._trace_context is not None:
+            for exp in self._trace_context.exporters:
+                if isinstance(exp, FileExporter) and getattr(exp, "path", None):
+                    trace_file = str(exp.path)
+                    break
+
+        suffix = (
+            ".llm.jsonl.gz"
+            if self._trace_payload_compress == "gzip"
+            else ".llm.jsonl"
+        )
+
+        if trace_file:
+            base = Path(trace_file)
+            stem = base.name
+            for tail in (".jsonl", ".json"):
+                if stem.endswith(tail):
+                    stem = stem[: -len(tail)]
+                    break
+            return str(base.parent / (stem + suffix))
+
+        run_id = _uuid.uuid4().hex[:12]
+        return str(Path.cwd() / f"tea-llm-payloads-{run_id}{suffix}")
+
+    def _configure_llm_payload_capture(self, settings: Dict[str, Any]) -> None:
+        """Wire ``auto_trace_llm_payloads`` and the payload exporter (TEA-OBS-003)."""
+        if not self._enable_tracing or self._trace_context is None:
+            self._llm_payload_capture = self._normalize_payload_capture(
+                settings.get("auto_trace_llm_payloads", False)
+            )
+            return
+
+        capture = self._normalize_payload_capture(
+            settings.get("auto_trace_llm_payloads", False)
+        )
+
+        cli_force = self.cli_overrides.get("trace_llm_payloads")
+        cli_patterns = self.cli_overrides.get("trace_llm_payloads_for")
+        if cli_patterns:
+            existing = capture if isinstance(capture, list) else []
+            merged = list(existing)
+            for pat in cli_patterns:
+                if pat not in merged:
+                    merged.append(pat)
+            capture = self._normalize_payload_capture(merged)
+        if cli_force is True:
+            if not isinstance(capture, list):
+                capture = True
+        elif cli_force is False and not cli_patterns:
+            capture = False
+
+        self._llm_payload_capture = capture
+
+        async_flag = settings.get("trace_payload_async")
+        if isinstance(async_flag, str):
+            async_flag = async_flag.strip().lower() in ("true", "1", "yes", "on")
+        self._trace_payload_async = bool(async_flag)
+
+        compress = settings.get("trace_payload_compress")
+        if isinstance(compress, str) and compress.strip():
+            compress_val = compress.strip().lower()
+            if compress_val == "gzip":
+                self._trace_payload_compress = "gzip"
+            elif compress_val in ("none", "false", "off"):
+                self._trace_payload_compress = None
+            else:
+                raise ValueError(
+                    f"trace_payload_compress: unsupported codec '{compress}'. "
+                    "Only 'gzip' is currently supported."
+                )
+        else:
+            self._trace_payload_compress = None
+
+        retention_raw = settings.get("trace_payload_retention_days")
+        if retention_raw is not None:
+            try:
+                retention_int = int(retention_raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "trace_payload_retention_days must be a positive integer, "
+                    f"got {retention_raw!r}"
+                )
+            if retention_int < 1:
+                raise ValueError(
+                    "trace_payload_retention_days must be >= 1 "
+                    f"(got {retention_int})"
+                )
+            self._trace_payload_retention_days = retention_int
+        else:
+            self._trace_payload_retention_days = None
+
+        if not capture:
+            return
+
+        self._auto_trace = True
+
+        if self._trace_payload_retention_days is None:
+            logger.warning(
+                "LLM payload capture is enabled without a retention policy. "
+                "Captured prompts and responses may contain PII. "
+                "Set 'trace_payload_retention_days' or run "
+                "'tea trace cleanup' periodically."
+            )
+
+        if isinstance(capture, list):
+            logger.info(
+                "TEA-OBS-003: LLM payload capture enabled for nodes matching: %s",
+                ", ".join(capture),
+            )
+        else:
+            logger.info(
+                "TEA-OBS-003: LLM payload capture enabled for ALL llm.call nodes."
+            )
+
+        already_present = any(
+            isinstance(e, LlmPayloadFileExporter)
+            or (
+                isinstance(e, AsyncFileExporter)
+                and isinstance(
+                    getattr(e, "_wrapped", None), LlmPayloadFileExporter
+                )
+            )
+            for e in self._trace_context.exporters
+        )
+        if already_present:
+            return
+
+        payload_path = self._resolve_payload_file_path(settings)
+        logger.info(
+            "TEA-OBS-003: writing LLM payload trace to %s%s",
+            payload_path,
+            " (gzip-compressed)"
+            if self._trace_payload_compress == "gzip"
+            else "",
+        )
+
+        payload_exporter: Any = LlmPayloadFileExporter(
+            payload_path, compress=self._trace_payload_compress
+        )
+        if self._trace_payload_async:
+            payload_exporter = AsyncFileExporter(payload_exporter)
+            self._trace_payload_async_exporter = payload_exporter
+
+        self._trace_context.exporters.append(payload_exporter)
+
     def _configure_memory_infrastructure(self, config: Dict[str, Any]) -> None:
         """
         Configure Firebase Agent Memory Infrastructure from YAML settings.
@@ -888,6 +1125,42 @@ class YAMLEngine:
             ... }
             >>> graph = engine.load_from_dict(config, checkpointer=MemoryCheckpointer())
         """
+        # TEA-DX-001.6: Pre-flight structural validation. Surfaces YAML errors
+        # BEFORE any side-effects (LLM clients, LTM connections, secrets) so
+        # `tea run` produces the same errors at engine init that `tea validate`
+        # produces statically. Errors are aggregated and raised as a single
+        # ValueError to preserve the engine's "raise on init" contract.
+        from .yaml_validation import validate_workflow_dict
+
+        _structural_errors = validate_workflow_dict(config, strict=False)
+        # Filter to hard errors only (warnings are --strict-only and never
+        # surface here). Skip if no `nodes` field present yet — engine has
+        # legacy callers that pass partial configs in tests.
+        _hard_errors = [
+            e
+            for e in _structural_errors
+            if e.is_error()
+            and e.code
+            in (
+                "DUPLICATE_NODE",
+                "EDGE_FROM_UNDEFINED",
+                "EDGE_TO_UNDEFINED",
+                "GOTO_UNDEFINED",
+                "DYN_PARALLEL_MODE",
+                "DYN_PARALLEL_MISSING_FAN_IN",
+                "DYN_PARALLEL_FAN_IN_UNDEFINED",
+                "DYN_PARALLEL_MISSING_ITEMS",
+                "PARALLEL_FAN_IN_UNDEFINED",
+            )
+        ]
+        if _hard_errors:
+            messages = "; ".join(
+                f"[{e.code}] {e.message}" for e in _hard_errors
+            )
+            raise ValueError(
+                f"Workflow validation failed: {messages}"
+            )
+
         # Extract global variables
         self.variables = config.get("variables", {})
 
@@ -984,16 +1257,48 @@ class YAMLEngine:
             self._auto_trace = True
             # Configure trace exporter from settings if not already set
             if self._trace_context is not None and not self._trace_context.exporters:
-                trace_exporter = settings.get("trace_exporter", "console")
-                trace_file = settings.get("trace_file")
+                # TEA-DX-001.1: Narrowly expand ${VAR} / ${VAR:-default} in known
+                # trace keys. Keep this list aligned with the trace-related
+                # settings consumed below; do NOT blanket-expand `settings` —
+                # other keys (e.g. variables.prompt_template) may legitimately
+                # contain literal ${...}.
+                EXPANDED_TRACE_KEYS = ("trace_file", "trace_exporter", "trace_format")
+                trace_subset = expand_env_vars(
+                    {k: settings[k] for k in EXPANDED_TRACE_KEYS if k in settings}
+                )
+                trace_exporter = trace_subset.get("trace_exporter", "console")
+                trace_file = trace_subset.get("trace_file")
                 if trace_exporter == "console":
                     self._trace_context.exporters.append(ConsoleExporter(verbose=False))
-                elif trace_exporter == "file" and trace_file:
-                    self._trace_context.exporters.append(FileExporter(trace_file))
+                elif trace_exporter == "file":
+                    if trace_file:
+                        self._trace_context.exporters.append(FileExporter(trace_file))
+                    else:
+                        # NFR-AC-2: missing env var with no default expands to ""
+                        # via expand_env_vars; warn loudly so operators don't
+                        # silently lose tracing.
+                        logger.warning(
+                            "settings.trace_exporter='file' but settings.trace_file "
+                            "expanded to empty string (likely a missing env var "
+                            "with no default); skipping FileExporter."
+                        )
                 elif trace_exporter == "opik":
                     self._add_opik_exporter_from_config()
         else:
             self._auto_trace = False
+
+        # TEA-OBS-003.1: Parse LLM payload capture settings.
+        # ``auto_trace_llm_payloads`` accepts:
+        #   - false / unset / None: no capture (default)
+        #   - true: capture every llm.call
+        #   - list[str]: capture only nodes whose YAML name matches at least
+        #     one fnmatch glob (e.g. ``[extract_batch_*, correct]``)
+        # When capture is active we force ``_auto_trace = True`` so the node
+        # wrapper produces spans for the LlmPayloadFileExporter to consume,
+        # and we register the second exporter alongside the existing slim
+        # FileExporter (whose strip_llm_payload=True default keeps payloads
+        # out of the main spans file).
+        self._configure_llm_payload_capture(settings)
 
         # TEA-BUILTIN-005.3: Add Opik exporter if trace_export is enabled in config
         if (
@@ -1398,6 +1703,14 @@ class YAMLEngine:
 
         # Add nodes and collect inline interrupt definitions
         nodes_list = config.get("nodes", [])
+        # TEA-DX-001.5: Pre-compute the set of declared node names so that
+        # NodeFactory's parse-time validation can produce a "fan_in target X
+        # is not a defined node — declared nodes: [...]" message.
+        self._known_node_names = {
+            n.get("name")
+            for n in nodes_list
+            if isinstance(n, dict) and n.get("name")
+        }
         interrupt_before_nodes = []
         interrupt_after_nodes = []
         for node_config in nodes_list:

@@ -39,6 +39,7 @@ load_dotenv(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"), override=False
 )  # Load from package root
 import json  # noqa: E402
+import re  # noqa: E402
 import yaml  # noqa: E402
 import importlib  # noqa: E402
 import importlib.util  # noqa: E402
@@ -53,6 +54,7 @@ from datetime import datetime, timezone  # noqa: E402
 import typer  # noqa: E402
 
 from the_edge_agent import YAMLEngine, __version__  # noqa: E402
+from the_edge_agent.memory.base import expand_env_vars  # noqa: E402
 from the_edge_agent.serialization import TeaJSONEncoder  # noqa: E402
 from the_edge_agent.cache import (  # noqa: E402
     RemoteFileCache,
@@ -408,6 +410,78 @@ def emit_ndjson_event(event_type: str, **kwargs):
         **kwargs,
     }
     print(json.dumps(event, cls=TeaJSONEncoder), flush=True)
+
+
+# =============================================================================
+# TEA-DX-001.7: Quiet-mode heartbeat helpers
+# =============================================================================
+
+
+def format_duration(seconds: float) -> str:
+    """Format a duration in seconds as a human-readable string.
+
+    Examples:
+        0.05  -> "50ms"
+        1.2   -> "1.2s"
+        45.3  -> "45.3s"
+        138   -> "2m 18s"
+        3700  -> "1h 1m 40s"
+    """
+    if seconds is None:
+        return "0ms"
+    try:
+        seconds = float(seconds)
+    except (TypeError, ValueError):
+        return "0ms"
+    if seconds < 0:
+        seconds = 0.0
+    if seconds < 1.0:
+        return f"{int(round(seconds * 1000))}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    if seconds < 3600:
+        total = int(seconds)
+        m, s = divmod(total, 60)
+        return f"{m}m {s}s"
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h {m}m {s}s"
+
+
+def parallel_branch_label(branch: str) -> str:
+    """Return the canonical heartbeat label for a parallel branch (AC-9).
+
+    Format: ``parallel:<branch_name>``.
+    """
+    return f"parallel:{branch}"
+
+
+def emit_heartbeat(
+    node: Optional[str],
+    duration: float,
+    failed: bool = False,
+    branch: Optional[str] = None,
+) -> None:
+    """Emit a single heartbeat line to stderr (TEA-DX-001.7).
+
+    Format:
+        ``[<node> done in <duration>]``
+        ``[<node> FAILED in <duration>]``
+        ``[parallel:<branch> done in <duration>]``   (when ``branch`` is set)
+        ``[parallel:<branch> FAILED in <duration>]`` (when ``branch`` set + failed)
+
+    Defensive: any formatting exception is swallowed so heartbeat output
+    never alters exit codes or interrupts workflow execution.
+    """
+    try:
+        label = parallel_branch_label(branch) if branch else (node or "<unknown>")
+        status = "FAILED" if failed else "done"
+        line = f"[{label} {status} in {format_duration(duration)}]"
+        print(line, file=sys.stderr, flush=True)
+    except Exception:
+        # Heartbeat must never propagate exceptions or change exit codes
+        return
 
 
 def load_checkpoint(checkpoint_path: str) -> Dict[str, Any]:
@@ -797,6 +871,49 @@ def run(
         help="Start from the node with this label. Finds the wave containing the node and "
         "starts from that step. Mutually exclusive with --dot-start-wave/--dot-start-step.",
     ),
+    # TEA-DX-001.2: Override settings.trace_file for this run
+    trace_file: Optional[str] = typer.Option(
+        None,
+        "--trace-file",
+        help="Override settings.trace_file for this run. Implicitly enables auto_trace and "
+        "switches trace_exporter to 'file' if unset or 'console'. Supports ${ENV_VAR} expansion.",
+    ),
+    # TEA-DX-001.7: Quiet-mode heartbeat
+    heartbeat: bool = typer.Option(
+        False,
+        "--heartbeat",
+        help=(
+            "Emit a one-line progress heartbeat to stderr after each node "
+            "completes ('[<node> done in <duration>]'). Independent of --quiet "
+            "and --stream. Recommended pairing: --quiet --heartbeat for long "
+            "workflows where you want progress signal without full streaming."
+        ),
+    ),
+    # TEA-OBS-003.1: LLM payload capture flags.
+    trace_llm_payloads: bool = typer.Option(
+        False,
+        "--trace-llm-payloads",
+        help="Capture every llm.call's request messages and response into a "
+        "separate <trace-file>.llm.jsonl file. Equivalent to setting "
+        "auto_trace_llm_payloads: true. WARNING: captured payloads may contain PII.",
+    ),
+    trace_llm_payloads_for: Optional[List[str]] = typer.Option(
+        None,
+        "--trace-llm-payloads-for",
+        help="Capture llm.call payloads only for nodes whose name matches this glob "
+        "(repeatable). Merges with auto_trace_llm_payloads from YAML.",
+    ),
+    # TEA-DX-001.3: Intermediate state dumps for post-mortem debugging.
+    debug_state: Optional[Path] = typer.Option(
+        None,
+        "--debug-state",
+        help=(
+            "Write per-node state snapshots to <dir> as the workflow runs. "
+            "Files are named <NN>-after-<node>.json on success and "
+            "<NN>-FAILED-<node>.json on exception. Intended for development; "
+            "captured state may contain PII. Default: off."
+        ),
+    ),
 ):
     """Execute a workflow."""
     setup_logging(verbose, quiet)
@@ -866,7 +983,6 @@ def run(
 
         # Import and execute DOT directly
         import subprocess
-        import re
         from collections import defaultdict, deque
         from the_edge_agent.dot_parser import (
             parse_dot,
@@ -1480,8 +1596,58 @@ def run(
         actions_modules=actions_module, actions_files=actions_file
     )
 
+    # TEA-DX-001.2: --trace-file CLI override.
+    # Expand ${ENV_VAR} patterns in the supplied path (matches TEA-DX-001.1
+    # behavior for settings.trace_file).
+    cli_trace_file: Optional[str] = None
+    if trace_file is not None:
+        cli_trace_file = expand_env_vars(trace_file)
+
+        # AC-4: Force-load the YAML through the dict path so we can inject
+        # ``settings.auto_trace: true`` before the engine builds its node
+        # graph. Node-level auto-trace wrapping is decided at load time based
+        # on ``engine._auto_trace`` — if YAML opts out
+        # (``settings.auto_trace: false``), node functions are unwrapped and
+        # no spans are emitted, regardless of installed exporters. Forcing
+        # the setting here guarantees AC-2 / AC-4 behavior.
+        if merged_config is None:
+            try:
+                with open(resolved_file) as f:
+                    merged_config = yaml.safe_load(f)
+                if not isinstance(merged_config, dict):
+                    typer.echo(
+                        "Error: Workflow YAML must be a mapping, got "
+                        f"{type(merged_config).__name__}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+            except yaml.YAMLError as e:
+                typer.echo(f"Error loading workflow: {e}", err=True)
+                raise typer.Exit(1)
+        merged_config.setdefault("settings", {})
+        if not isinstance(merged_config["settings"], dict):
+            merged_config["settings"] = {}
+        merged_config["settings"]["auto_trace"] = True
+
     # Create engine
-    engine = YAMLEngine(actions_registry=cli_actions or {})
+    engine_kwargs: Dict[str, Any] = {"actions_registry": cli_actions or {}}
+    if cli_trace_file is not None:
+        # Wire CLI path through to FileExporter via the existing constructor
+        # kwarg. Force exporter to "file" so the FileExporter is installed
+        # immediately; YAML's settings.trace_file (if any) is then ignored
+        # because ``_configure_from_settings`` only adds exporters when none
+        # are already present.
+        engine_kwargs["trace_file"] = cli_trace_file
+        engine_kwargs["trace_exporter"] = "file"
+
+    try:
+        engine = YAMLEngine(**engine_kwargs)
+    except (OSError, IOError) as e:
+        # AC-12: bad trace path → typer.BadParameter, not a raw traceback
+        raise typer.BadParameter(
+            f"Cannot open trace file '{cli_trace_file}': {e}",
+            param_hint="--trace-file",
+        )
 
     # TEA-CLI-001: Apply CLI overrides for --gguf and --backend
     if cli_model_path or cli_backend:
@@ -1489,6 +1655,18 @@ def run(
             "model_path": cli_model_path,
             "backend": cli_backend,
         }
+
+    # TEA-OBS-003.1: Wire CLI payload-capture flags into engine.cli_overrides
+    # so that _configure_llm_payload_capture (called during load_from_file)
+    # can pick them up and merge with the YAML setting.
+    if trace_llm_payloads or trace_llm_payloads_for:
+        engine.cli_overrides.setdefault("trace_llm_payloads", False)
+        if trace_llm_payloads:
+            engine.cli_overrides["trace_llm_payloads"] = True
+        if trace_llm_payloads_for:
+            engine.cli_overrides["trace_llm_payloads_for"] = list(
+                trace_llm_payloads_for
+            )
 
     # TEA-BUILTIN-012.3: Configure secrets backend from CLI flags
     if secrets_backend:
@@ -1517,6 +1695,29 @@ def run(
     elif secrets_dict:
         engine.secrets = secrets_dict
 
+    # TEA-DX-001.2 AC-4: Inject ``settings.auto_trace = true`` into the YAML
+    # config when --trace-file is set. The engine resets ``_auto_trace`` from
+    # settings during ``load_from_file``/``load_from_dict``, so simply
+    # pre-setting the flag on the engine instance is not durable. Mutating
+    # the settings dict at YAML load time makes AC-4 robust.
+    def _force_auto_trace_in_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+        cfg = dict(cfg) if cfg else {}
+        settings_block = dict(cfg.get("settings") or {})
+        settings_block["auto_trace"] = True
+        cfg["settings"] = settings_block
+        return cfg
+
+    if cli_trace_file is not None and merged_config is None:
+        try:
+            with open(str(resolved_file), "r") as _fh:
+                merged_config = yaml.safe_load(_fh) or {}
+        except Exception as e:
+            typer.echo(f"Error loading workflow: {e}", err=True)
+            raise typer.Exit(1)
+
+    if cli_trace_file is not None and merged_config is not None:
+        merged_config = _force_auto_trace_in_config(merged_config)
+
     try:
         # YE.8: Use merged config if overlays were applied, otherwise load from file
         if merged_config is not None:
@@ -1526,6 +1727,10 @@ def run(
     except Exception as e:
         typer.echo(f"Error loading workflow: {e}", err=True)
         raise typer.Exit(1)
+
+    # TEA-DX-001.2 AC-4: defensive re-affirmation post-load.
+    if cli_trace_file is not None:
+        engine._auto_trace = True
 
     # Merge YAML's initial_state with CLI input (CLI input takes precedence)
     # This allows workflows to define default state values in initial_state
@@ -1791,6 +1996,66 @@ def run(
         except Exception as e:
             logging.getLogger(__name__).debug(f"Could not enter Opik context: {e}")
 
+    # TEA-DX-001.7: Heartbeat timing state. We use wall-clock delta between
+    # consecutive engine events instead of an explicit ``node_start`` event
+    # (the engine does not emit one). The sequential cursor is reset only when
+    # the run starts. Per-branch cursors track parallel branches independently
+    # so interleaved branches do not cross-contaminate timing.
+    heartbeat_seq_cursor = time.monotonic() if heartbeat else None
+    heartbeat_branch_cursors: Dict[str, float] = {}
+
+    # TEA-DX-001.3: --debug-state per-node state dump state.
+    debug_state_dir: Optional[Path] = None
+    debug_state_step = 0
+    if debug_state is not None:
+        debug_state_dir = Path(debug_state)
+        debug_state_dir.mkdir(parents=True, exist_ok=True)
+        # AC-12: Loud startup banner that survives --quiet so operators do
+        # not accidentally leave this on in production / CI.
+        typer.echo(
+            f"WARNING: --debug-state is enabled (dir: {debug_state_dir}). "
+            f"Captured state may contain sensitive data; intended for "
+            f"development only.",
+            err=True,
+        )
+
+    def _safe_node_name(name: Optional[str]) -> str:
+        """Sanitize a node name for use in a filename (path-traversal safe)."""
+        if not name:
+            return "_"
+        # Allow alnum, dash, underscore. Replace everything else with _.
+        cleaned = re.sub(r"[^A-Za-z0-9_\-]", "_", str(name))
+        return cleaned[:128] or "_"
+
+    def _dump_state(
+        prefix: str, node_name: Optional[str], state_obj: Any,
+        traceback_str: Optional[str] = None,
+    ) -> None:
+        """Write a per-node JSON state dump. Errors are swallowed."""
+        nonlocal debug_state_step
+        if debug_state_dir is None:
+            return
+        try:
+            debug_state_step += 1
+            payload = {
+                "step": debug_state_step,
+                "node": node_name,
+                "state": state_obj,
+            }
+            if traceback_str is not None:
+                payload["traceback"] = traceback_str
+            fname = (
+                f"{debug_state_step:02d}-{prefix}-"
+                f"{_safe_node_name(node_name)}.json"
+            )
+            target = debug_state_dir / fname
+            with open(target, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2, cls=TeaJSONEncoder, default=str)
+        except Exception as exc:
+            logging.getLogger(__name__).debug(
+                f"--debug-state: could not write dump for {node_name}: {exc}"
+            )
+
     try:
         while True:
             completed = False
@@ -1798,6 +2063,65 @@ def run(
             for event in compiled.stream(current_state, checkpoint=checkpoint_path):
                 event_type = event.get("type")
                 node = event.get("node")
+
+                # TEA-DX-001.7: Emit one-line heartbeat per node completion.
+                # Independent of --quiet/--stream/--show-graph (AC-1, AC-3, AC-4,
+                # AC-7). Goes to stderr only (AC-4). Default-off (AC-5).
+                if heartbeat:
+                    now = time.monotonic()
+                    if event_type == "state":
+                        # Sequential / fan-in node completion (AC-2, AC-10).
+                        baseline = heartbeat_seq_cursor or now
+                        emit_heartbeat(node, now - baseline)
+                        heartbeat_seq_cursor = now
+                    elif event_type == "error":
+                        # Sequential failure (AC-6, AC-15).
+                        baseline = heartbeat_seq_cursor or now
+                        emit_heartbeat(node, now - baseline, failed=True)
+                        heartbeat_seq_cursor = now
+                    elif event_type == "parallel_state":
+                        # Static-parallel branch node completion (AC-9, AC-16).
+                        branch = event.get("branch") or node or ""
+                        baseline = heartbeat_branch_cursors.get(
+                            branch, heartbeat_seq_cursor or now
+                        )
+                        emit_heartbeat(node, now - baseline, branch=branch)
+                        heartbeat_branch_cursors[branch] = now
+                    elif event_type == "parallel_error":
+                        # Static-parallel branch failure (AC-6, AC-9, AC-15).
+                        branch = event.get("branch") or node or ""
+                        baseline = heartbeat_branch_cursors.get(
+                            branch, heartbeat_seq_cursor or now
+                        )
+                        emit_heartbeat(
+                            node, now - baseline, failed=True, branch=branch
+                        )
+                        heartbeat_branch_cursors[branch] = now
+
+                # TEA-DX-001.3: --debug-state per-node JSON dumps.
+                # AC-13 engine-event mapping:
+                #   - sequential / fan-in node completion → dump on `state`
+                #   - sequential failure                  → dump on `error`
+                #   - parallel parent / dynamic_parallel  → dump once on the
+                #       parent's own `state` event (the engine emits one
+                #       `state` event for the fan-out parent and one for
+                #       the fan-in node).
+                #   - per-branch `parallel_state` / `parallel_error` /
+                #       `branch_complete` events do NOT trigger dumps —
+                #       they would violate AC-9 by writing N files for an
+                #       N-branch fan-out.
+                # We never inspect 'final' — final state is captured by
+                # the existing --output mechanism.
+                if debug_state_dir is not None:
+                    if event_type == "state":
+                        _dump_state(
+                            "after", node, event.get("state", {})
+                        )
+                    elif event_type == "error":
+                        _dump_state(
+                            "FAILED", node, event.get("state", {}),
+                            traceback_str=str(event.get("error", "")),
+                        )
 
                 # TEA-CLI-006: Process graph progress events from engine queue
                 # These events are emitted by dynamic_parallel nodes for --show-graph
@@ -2279,56 +2603,118 @@ def validate(
     detailed: bool = typer.Option(
         False, "--detailed", help="Show detailed validation info"
     ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help=(
+            "Promote soft warnings (unreferenced nodes, dead state-key "
+            "references) to errors. Best-effort static analysis with known "
+            "false-positive risk."
+        ),
+    ),
 ):
-    """Validate a workflow without execution."""
+    """
+    Validate a workflow without executing nodes (TEA-DX-001.6).
+
+    Performs structural checks only; does NOT execute `run:` blocks,
+    instantiate LLM clients, open LTM connections, or read API-key
+    environment variables.
+
+    Checks performed:
+      - YAML parse errors
+      - Required top-level fields (nodes)
+      - Node-name uniqueness
+      - Edge from/to references declared nodes (or __start__/__end__)
+      - dynamic_parallel: exactly one of action/steps/subgraph + valid fan_in
+      - parallel edges have fan_in target
+      - condition: expressions parse as valid Jinja2
+      - goto targets reference declared nodes
+
+    Not checked (out of scope for v1):
+      - Semantic correctness of `run:` block contents
+      - Runtime template undefined errors
+      - LLM API availability or credentials
+      - LTM/storage backend reachability
+    """
+    # Lazy import: keep validate's import surface minimal so AC-13's allow-list
+    # is not violated when running this command in isolation.
+    from the_edge_agent.yaml_validation import (
+        validate_workflow,
+        format_error,
+    )
+
     if not file.exists():
         typer.echo(f"Error: File not found: {file}", err=True)
         raise typer.Exit(1)
 
-    try:
-        content = file.read_text()
-        config = yaml.safe_load(content)
-    except yaml.YAMLError as e:
-        typer.echo(f"Error: Invalid YAML syntax: {e}", err=True)
+    errors = validate_workflow(str(file), strict=strict)
+
+    if detailed and not any(e.code == "YAML_PARSE" for e in errors):
+        try:
+            config = yaml.safe_load(file.read_text())
+        except yaml.YAMLError:
+            config = None
+        if isinstance(config, dict):
+            typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
+            if config.get("description"):
+                typer.echo(f"Description: {config.get('description')}")
+            nodes = config.get("nodes", []) or []
+            typer.echo(f"\nNodes: {len(nodes)}")
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                name = node.get("name", "unnamed")
+                action = node.get("uses") or node.get("action")
+                if action:
+                    typer.echo(f"  - {name} (uses: {action})")
+                else:
+                    typer.echo(f"  - {name}")
+            edges = config.get("edges", []) or []
+            typer.echo(f"\nEdges: {len(edges)}")
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                from_node = edge.get("from", "?")
+                to_node = edge.get("to")
+                targets = edge.get("targets")
+                if to_node:
+                    typer.echo(f"  - {from_node} -> {to_node}")
+                if targets:
+                    for result, target in targets.items():
+                        typer.echo(f"  - {from_node} --[{result}]--> {target}")
+            typer.echo("")
+
+    if errors:
+        for err in errors:
+            typer.echo(format_error(err, str(file)), err=True)
+            typer.echo("", err=True)
+        # Summary line.
+        n_err = sum(1 for e in errors if e.is_error())
+        n_warn = sum(1 for e in errors if e.is_warning())
+        summary_parts = []
+        if n_err:
+            summary_parts.append(f"{n_err} error(s)")
+        if n_warn:
+            summary_parts.append(f"{n_warn} warning(s)")
+        typer.echo(
+            f"FAIL: {file} ({', '.join(summary_parts)})",
+            err=True,
+        )
         raise typer.Exit(1)
 
-    if detailed:
-        typer.echo(f"Workflow: {config.get('name', 'unnamed')}")
-        if config.get("description"):
-            typer.echo(f"Description: {config.get('description')}")
-
-        nodes = config.get("nodes", [])
-        typer.echo(f"\nNodes: {len(nodes)}")
-        for node in nodes:
-            name = node.get("name", "unnamed")
-            action = node.get("uses") or node.get("action")
-            if action:
-                typer.echo(f"  - {name} (uses: {action})")
-            else:
-                typer.echo(f"  - {name}")
-
-        edges = config.get("edges", [])
-        typer.echo(f"\nEdges: {len(edges)}")
-        for edge in edges:
-            from_node = edge.get("from", "?")
-            to_node = edge.get("to")
-            targets = edge.get("targets")
-            if to_node:
-                typer.echo(f"  - {from_node} -> {to_node}")
-            if targets:
-                for result, target in targets.items():
-                    typer.echo(f"  - {from_node} --[{result}]--> {target}")
-
-    # Actually try to build the graph to validate
+    # Success — count nodes/edges from parsed config.
     try:
-        engine = YAMLEngine()
-        graph = engine.load_from_dict(config)
-        _ = graph.compile()
-    except Exception as e:
-        typer.echo(f"\nValidation failed: {e}", err=True)
-        raise typer.Exit(1)
-
-    typer.echo(f"\n✓ {file} is valid")
+        config = yaml.safe_load(file.read_text())
+    except yaml.YAMLError:
+        config = {}
+    if not isinstance(config, dict):
+        config = {}
+    n_nodes = len(config.get("nodes", []) or [])
+    n_edges = len(config.get("edges", []) or [])
+    typer.echo(
+        f"OK: {file} ({n_nodes} nodes, {n_edges} edges) "
+        f"[structural checks only — run blocks not executed]"
+    )
 
 
 @app.command()
@@ -2743,6 +3129,146 @@ def get_git_remote_repo() -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+# =============================================================================
+# TEA-OBS-003.2 / TEA-OBS-003.3: tea trace subcommand group
+# =============================================================================
+
+trace_app = typer.Typer(
+    help="Manage LLM payload trace files (cleanup, decompress, etc.).",
+    no_args_is_help=True,
+)
+app.add_typer(trace_app, name="trace")
+
+
+@trace_app.command("cleanup")
+def trace_cleanup_cmd(
+    directory: Optional[Path] = typer.Argument(
+        None,
+        help="Directory to scan (default: current working directory). "
+        "Cleanup is non-recursive by default.",
+    ),
+    older_than: Optional[float] = typer.Option(
+        None,
+        "--older-than",
+        help="Delete payload files whose mtime is older than N days. Required.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="List files that would be deleted; make no changes.",
+    ),
+    pattern: Optional[List[str]] = typer.Option(
+        None,
+        "--pattern",
+        help="Override the file glob (default: *.llm.jsonl, *.llm.jsonl.gz). Repeatable.",
+    ),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        help="Descend into subdirectories. Symlinked subdirs are skipped, never followed.",
+    ),
+):
+    """Delete LLM payload trace files older than the configured retention.
+
+    Example: ``tea trace cleanup ./traces --older-than 30 --dry-run``
+
+    Designed for cron / systemd timers - non-recursive by default and
+    refuses to follow symlinks. ``--dry-run`` is the safety net before
+    committing to a real deletion in scheduled jobs.
+    """
+    from the_edge_agent.trace_cleanup import (
+        cleanup_trace_files,
+        format_summary,
+    )
+
+    if older_than is None:
+        typer.echo(
+            "Error: --older-than is required. "
+            "Set 'trace_payload_retention_days' in YAML or pass --older-than N.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    if older_than <= 0:
+        typer.echo(
+            f"Error: --older-than must be > 0, got {older_than}. "
+            "Refusing to delete fresh files (would race with active writers).",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    target = directory if directory is not None else Path.cwd()
+    if not target.exists():
+        typer.echo(f"Error: directory not found: {target}", err=True)
+        raise typer.Exit(2)
+
+    def _per_file_log(action, cand):
+        size_mb = cand.size / (1024 * 1024)
+        prefix = "[dry-run] would delete" if action == "would-delete" else "deleted"
+        mtime_str = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(cand.mtime)
+        )
+        typer.echo(
+            f"{prefix}: {cand.path} ({size_mb:.2f} MB, mtime={mtime_str})"
+        )
+
+    try:
+        result = cleanup_trace_files(
+            target,
+            older_than_days=older_than,
+            patterns=pattern,
+            recursive=recursive,
+            dry_run=dry_run,
+            log_each=_per_file_log,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(format_summary(result))
+
+    failed = result.get("failed", []) or []
+    if failed:
+        for entry in failed:
+            typer.echo(
+                f"ERROR: failed to delete {entry['path']}: {entry['error']}",
+                err=True,
+            )
+        deleted_count = len(result.get("deleted", []) or [])
+        typer.echo(
+            f"Failed to delete {len(failed)} of "
+            f"{len(failed) + deleted_count} files. Exit 1.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
+@trace_app.command("cat")
+def trace_cat_cmd(
+    paths: List[Path] = typer.Argument(
+        ..., help="One or more *.llm.jsonl or *.llm.jsonl.gz files to print."
+    ),
+):
+    """Print one or more payload trace files to stdout (auto-decompresses .gz)."""
+    from the_edge_agent.trace_cleanup import cat_payload_file
+
+    exit_code = 0
+    for p in paths:
+        if not p.exists():
+            typer.echo(f"Error: file not found: {p}", err=True)
+            exit_code = 2
+            continue
+        try:
+            sys.stdout.write(cat_payload_file(p))
+        except OSError as exc:
+            typer.echo(f"Error: failed to read {p}: {exc}", err=True)
+            exit_code = 2
+        except Exception as exc:
+            typer.echo(f"Error: failed to decode {p}: {exc}", err=True)
+            exit_code = 2
+    if exit_code != 0:
+        raise typer.Exit(exit_code)
 
 
 @app.command("report-bug")

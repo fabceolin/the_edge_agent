@@ -1,0 +1,20 @@
+name: dyn-parallel-two-modes
+nodes:
+  - name: collect
+    run: 'return {}'
+  - name: spread
+    type: dynamic_parallel
+    items: "[1, 2, 3]"
+    fan_in: collect
+    action:
+      uses: file.read
+      with: { path: "x" }
+    steps:
+      - run: 'return {}'
+edges:
+  - from: __start__
+    to: spread
+  - from: spread
+    to: collect
+  - from: collect
+    to: __end__

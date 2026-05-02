@@ -47,7 +47,8 @@ class TestDynamicParallelParseTimeValidation:
             ],
         }
         engine = YAMLEngine()
-        with pytest.raises(ValueError, match="requires 'items' expression"):
+        # TEA-DX-001.5 / TEA-DX-001.6: messages now use "missing required key 'items'"
+        with pytest.raises(ValueError, match=r"missing required key '?items'?"):
             engine.load_from_dict(config)
 
     def test_missing_execution_mode_raises_error(self):
@@ -70,7 +71,8 @@ class TestDynamicParallelParseTimeValidation:
         }
         engine = YAMLEngine()
         with pytest.raises(
-            ValueError, match="requires exactly one of: action, steps, subgraph"
+            ValueError,
+            match=r"(missing branch-body key|conflicting branch-body keys)",
         ):
             engine.load_from_dict(config)
 
@@ -95,7 +97,8 @@ class TestDynamicParallelParseTimeValidation:
         }
         engine = YAMLEngine()
         with pytest.raises(
-            ValueError, match="requires exactly one of: action, steps, subgraph"
+            ValueError,
+            match=r"(missing branch-body key|conflicting branch-body keys)",
         ):
             engine.load_from_dict(config)
 
@@ -116,7 +119,8 @@ class TestDynamicParallelParseTimeValidation:
             ],
         }
         engine = YAMLEngine()
-        with pytest.raises(ValueError, match="requires 'fan_in' target node"):
+        # TEA-DX-001.5 / TEA-DX-001.6: message now uses "missing required key 'fan_in'"
+        with pytest.raises(ValueError, match=r"missing required key '?fan_in'?"):
             engine.load_from_dict(config)
 
     def test_invalid_max_concurrency_raises_error(self):

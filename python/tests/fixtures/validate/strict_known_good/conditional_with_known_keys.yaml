@@ -1,0 +1,25 @@
+name: conditional-with-known-keys
+state_schema:
+  amount: int
+  category: str
+nodes:
+  - name: classify
+    run: |
+      return {"amount": state.get("amount", 0), "category": "x"}
+  - name: low_path
+    run: 'return {}'
+  - name: high_path
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: classify
+  - from: classify
+    to: low_path
+    when: "state.amount < 100"
+  - from: classify
+    to: high_path
+    when: "state.amount >= 100"
+  - from: low_path
+    to: __end__
+  - from: high_path
+    to: __end__

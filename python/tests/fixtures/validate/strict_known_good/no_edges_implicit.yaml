@@ -1,0 +1,8 @@
+name: no-edges-implicit
+state_schema:
+  out: str
+nodes:
+  - name: step1
+    run: 'return {"out": "a"}'
+  - name: step2
+    run: 'return {"out": "b"}'

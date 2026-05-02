@@ -1,0 +1,9 @@
+name: edge-from-undefined
+nodes:
+  - name: step1
+    run: 'return {}'
+edges:
+  - from: __start__
+    to: step1
+  - from: phantom_node
+    to: __end__

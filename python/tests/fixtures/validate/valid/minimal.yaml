@@ -1,0 +1,12 @@
+name: minimal-valid
+state_schema:
+  value: int
+nodes:
+  - name: step1
+    run: |
+      return {"result": state.get("value", 0) * 2}
+edges:
+  - from: __start__
+    to: step1
+  - from: step1
+    to: __end__

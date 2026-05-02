@@ -9,6 +9,7 @@ Test categories:
 Test summary: 24 tests (19 unit + 5 integration) | P0: 7 | P1: 14 | P2: 3
 """
 
+import logging
 import unittest
 import tempfile
 import os
@@ -18,7 +19,10 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+
+import pytest
 
 from the_edge_agent import (
     YAMLEngine,
@@ -594,6 +598,302 @@ class TestAutoInstrumentation(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0]["status"], "error")
         self.assertIn("test error", captured[0]["error"])
+
+
+class TestSettingsTraceFileEnvExpansion(unittest.TestCase):
+    """TEA-DX-001.1: Settings-block env & template expansion for trace_* keys."""
+
+    def _build_config(self, **trace_settings):
+        return {
+            "settings": {"auto_trace": True, **trace_settings},
+            "nodes": [{"name": "n", "run": "result = state"}],
+            "edges": [
+                {"from": "__start__", "to": "n"},
+                {"from": "n", "to": "__end__"},
+            ],
+        }
+
+    def test_unit_001_env_var_expanded_for_trace_file(self):
+        """UNIT-001: ${TEA_TRACE_FILE} is expanded before FileExporter is built."""
+        os.environ["TEA_TRACE_FILE"] = "/tmp/dx001_unit001.jsonl"
+        try:
+            engine = YAMLEngine()
+            engine.load_from_dict(
+                self._build_config(
+                    trace_exporter="file",
+                    trace_file="${TEA_TRACE_FILE}",
+                )
+            )
+            self.assertIsNotNone(engine._trace_context)
+            self.assertEqual(len(engine._trace_context.exporters), 1)
+            exp = engine._trace_context.exporters[0]
+            self.assertIsInstance(exp, FileExporter)
+            self.assertEqual(str(exp.path), "/tmp/dx001_unit001.jsonl")
+            # Cleanup
+            try:
+                os.remove(exp.path)
+            except OSError:
+                pass
+        finally:
+            os.environ.pop("TEA_TRACE_FILE", None)
+
+    def test_unit_004_default_fallback_resolves(self):
+        """UNIT-004: ${UNSET:-default} uses the default."""
+        os.environ.pop("DX001_UNSET_VAR", None)
+        engine = YAMLEngine()
+        engine.load_from_dict(
+            self._build_config(
+                trace_exporter="file",
+                trace_file="${DX001_UNSET_VAR:-/tmp/dx001_default.jsonl}",
+            )
+        )
+        self.assertEqual(len(engine._trace_context.exporters), 1)
+        self.assertIsInstance(engine._trace_context.exporters[0], FileExporter)
+        self.assertEqual(
+            str(engine._trace_context.exporters[0].path),
+            "/tmp/dx001_default.jsonl",
+        )
+
+    def test_unit_005_literal_path_passes_through(self):
+        """UNIT-005: literal paths (no markers) pass through unchanged."""
+        engine = YAMLEngine()
+        engine.load_from_dict(
+            self._build_config(
+                trace_exporter="file",
+                trace_file="/tmp/dx001_literal.jsonl",
+            )
+        )
+        self.assertEqual(len(engine._trace_context.exporters), 1)
+        self.assertEqual(
+            str(engine._trace_context.exporters[0].path),
+            "/tmp/dx001_literal.jsonl",
+        )
+
+    def test_unit_006_missing_var_no_default_expands_to_empty(self):
+        """UNIT-006: ${UNSET} (no default) expands to "" (no exception)."""
+        os.environ.pop("DX001_UNSET_VAR", None)
+        from the_edge_agent.memory import expand_env_vars
+
+        # Direct helper assertion: empty string, no exception
+        self.assertEqual(expand_env_vars("${DX001_UNSET_VAR}"), "")
+
+    def test_unit_007_empty_trace_file_warns_and_skips_exporter(self):
+        """UNIT-007: trace_exporter=file + empty trace_file -> WARN + no exporter."""
+        os.environ.pop("DX001_UNSET_VAR", None)
+        engine = YAMLEngine()
+        with self.assertLogs("the_edge_agent.yaml_engine", level="WARNING") as cm:
+            engine.load_from_dict(
+                self._build_config(
+                    trace_exporter="file",
+                    trace_file="${DX001_UNSET_VAR}",
+                )
+            )
+        # No FileExporter appended
+        self.assertEqual(len(engine._trace_context.exporters), 0)
+        # Warning mentions trace_file
+        self.assertTrue(any("trace_file" in msg for msg in cm.output))
+
+    def test_unit_008_narrow_expansion_does_not_touch_other_keys(self):
+        """UNIT-008: AC-7 — narrow expansion does NOT expand other settings keys."""
+        os.environ["USER_TEST_DX001"] = "alice"
+        try:
+            engine = YAMLEngine()
+            config = {
+                "settings": {
+                    "auto_trace": True,
+                    "trace_exporter": "console",
+                    # variables block is reserved for engine-level variables;
+                    # pass a sibling key under settings to confirm no expansion.
+                },
+                "variables": {"prompt_template": "Hello ${USER_TEST_DX001}"},
+                "nodes": [{"name": "n", "run": "result = state"}],
+                "edges": [
+                    {"from": "__start__", "to": "n"},
+                    {"from": "n", "to": "__end__"},
+                ],
+            }
+            engine.load_from_dict(config)
+            # variables.prompt_template MUST remain a literal — narrow expansion
+            # only touches trace_file/trace_exporter/trace_format.
+            self.assertEqual(
+                engine.variables.get("prompt_template"),
+                "Hello ${USER_TEST_DX001}",
+            )
+        finally:
+            os.environ.pop("USER_TEST_DX001", None)
+
+    def test_unit_002_exporter_value_expanded(self):
+        """UNIT-002: ${VAR} for trace_exporter resolves correctly."""
+        os.environ["DX001_TRACE_EXPORTER"] = "console"
+        try:
+            engine = YAMLEngine()
+            engine.load_from_dict(
+                self._build_config(
+                    trace_exporter="${DX001_TRACE_EXPORTER}",
+                )
+            )
+            self.assertEqual(len(engine._trace_context.exporters), 1)
+            self.assertIsInstance(engine._trace_context.exporters[0], ConsoleExporter)
+        finally:
+            os.environ.pop("DX001_TRACE_EXPORTER", None)
+
+    def test_unit_002b_exporter_value_expanded_to_file(self):
+        """UNIT-002 (variant): ${VAR} for trace_exporter can resolve to 'file'."""
+        os.environ["DX001_TRACE_EXPORTER"] = "file"
+        os.environ["TEA_TRACE_FILE"] = "/tmp/dx001_002b.jsonl"
+        try:
+            engine = YAMLEngine()
+            engine.load_from_dict(
+                self._build_config(
+                    trace_exporter="${DX001_TRACE_EXPORTER}",
+                    trace_file="${TEA_TRACE_FILE}",
+                )
+            )
+            self.assertEqual(len(engine._trace_context.exporters), 1)
+            self.assertIsInstance(engine._trace_context.exporters[0], FileExporter)
+            self.assertEqual(
+                str(engine._trace_context.exporters[0].path),
+                "/tmp/dx001_002b.jsonl",
+            )
+        finally:
+            os.environ.pop("DX001_TRACE_EXPORTER", None)
+            os.environ.pop("TEA_TRACE_FILE", None)
+
+    def test_unit_009_load_called_twice_keeps_exporter_count_stable(self):
+        """UNIT-009 (TECH-004): idempotency — second load_from_dict does not
+        re-append exporter."""
+        engine = YAMLEngine()
+        cfg = self._build_config(
+            trace_exporter="file",
+            trace_file="/tmp/dx001_idempotent.jsonl",
+        )
+        engine.load_from_dict(cfg)
+        engine.load_from_dict(cfg)
+        # Second call sees `_trace_context.exporters` non-empty and skips the
+        # narrow-expansion + FileExporter-append branch.
+        self.assertEqual(len(engine._trace_context.exporters), 1)
+        self.assertIsInstance(engine._trace_context.exporters[0], FileExporter)
+
+    def test_unit_003_trace_format_present_does_not_break_load(self):
+        """UNIT-003 (P2): trace_format is in the narrow-expansion list and
+        does not break load even though the engine does not currently
+        consume it (CG-1)."""
+        os.environ["DX001_TRACE_FORMAT"] = "jsonl"
+        try:
+            engine = YAMLEngine()
+            engine.load_from_dict(
+                self._build_config(
+                    trace_exporter="console",
+                    trace_format="${DX001_TRACE_FORMAT}",
+                )
+            )
+            self.assertEqual(len(engine._trace_context.exporters), 1)
+        finally:
+            os.environ.pop("DX001_TRACE_FORMAT", None)
+
+
+class TestSettingsTraceFileIntegration(unittest.TestCase):
+    """TEA-DX-001.1 integration tests (INT-002 / INT-004 / INT-005)."""
+
+    def test_int_002_run_block_with_dollar_var_preserved_verbatim(self):
+        """INT-002 (P1): ${VAR} inside a node `run` block is NOT pre-expanded —
+        narrow expansion does not bleed into source code."""
+        os.environ["USER_TEST_DX001_INT"] = "alice"
+        try:
+            engine = YAMLEngine()
+            run_source = "result = {'msg': '${USER_TEST_DX001_INT}'}"
+            config = {
+                "settings": {
+                    "auto_trace": True,
+                    "trace_exporter": "console",
+                },
+                "nodes": [{"name": "n1", "run": run_source}],
+                "edges": [
+                    {"from": "__start__", "to": "n1"},
+                    {"from": "n1", "to": "__end__"},
+                ],
+            }
+            engine.load_from_dict(config)
+            # Stored raw config preserves the ${...} marker verbatim.
+            self.assertEqual(
+                engine._config["nodes"][0]["run"], run_source
+            )
+        finally:
+            os.environ.pop("USER_TEST_DX001_INT", None)
+
+    def test_int_004_yaml_reference_documents_trace_env_expansion(self):
+        """INT-004 (P1, NFR-AC-3): YAML_REFERENCE.md documents settings.trace_*
+        env semantics, default fallback, empty-→-skip-with-warning, and
+        operator-trust note."""
+        repo_root = Path(__file__).resolve().parents[2]
+        ref = repo_root / "docs" / "shared" / "YAML_REFERENCE.md"
+        self.assertTrue(ref.exists(), f"missing: {ref}")
+        text = ref.read_text(encoding="utf-8")
+
+        self.assertIn("settings.trace_", text)
+        # Env-expansion syntax demonstrated.
+        self.assertIn("${", text)
+        # Default-fallback syntax explicit.
+        self.assertIn(":-", text)
+        # Empty-→-skip behavior + warning called out.
+        self.assertRegex(text, r"(?i)skip")
+        self.assertRegex(text, r"(?i)warning")
+
+    def test_int_005_inline_comment_lists_expanded_trace_keys(self):
+        """INT-005 (P2, NFR-AC-4): narrow-expansion call site lists the three
+        expanded keys near a TEA-DX-001.1 marker so future schema additions
+        surface in code review."""
+        repo_root = Path(__file__).resolve().parents[2]
+        engine_src = (
+            repo_root / "python" / "src" / "the_edge_agent" / "yaml_engine.py"
+        )
+        text = engine_src.read_text(encoding="utf-8")
+        self.assertIn("TEA-DX-001.1", text)
+        # All three expanded keys appear in the source.
+        for key in ("trace_file", "trace_exporter", "trace_format"):
+            self.assertIn(key, text)
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    sorted(
+        str(p)
+        for p in (
+            Path(__file__).resolve().parents[2] / "examples" / "yaml"
+        ).rglob("*.yaml")
+    ),
+)
+def test_int_001_examples_yaml_no_spurious_empty_trace_warning(yaml_path, caplog):
+    """INT-001 (P1, AC-5): every examples/yaml/*.yaml load must NOT emit a
+    spurious empty-trace_file WARNING. Pre-existing load failures (missing
+    backends, imports, etc.) are out of scope and silently tolerated — this
+    is a behavior-delta guard, not a "every example must load" assertion."""
+    engine = YAMLEngine()
+    yaml_dir = os.path.dirname(yaml_path)
+    with caplog.at_level("WARNING", logger="the_edge_agent.yaml_engine"):
+        try:
+            import yaml as _yaml
+
+            with open(yaml_path, "r", encoding="utf-8") as f:
+                cfg = _yaml.safe_load(f)
+            if not isinstance(cfg, dict):
+                pytest.skip(f"non-dict YAML: {yaml_path}")
+            engine.load_from_dict(cfg, yaml_dir=yaml_dir)
+        except Exception:
+            # Pre-existing load issues are out of scope for AC-5.
+            pass
+
+    bad = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+        and "trace_file" in r.getMessage()
+        and "empty" in r.getMessage().lower()
+    ]
+    assert not bad, (
+        f"unexpected empty-trace_file warning(s) for {yaml_path}: "
+        f"{[r.getMessage() for r in bad]}"
+    )
 
 
 if __name__ == "__main__":

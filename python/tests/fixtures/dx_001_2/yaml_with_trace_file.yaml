@@ -1,0 +1,20 @@
+name: yaml-with-trace-file
+state_schema:
+  value: int
+  result: str
+
+settings:
+  auto_trace: true
+  trace_exporter: file
+  trace_file: yaml_default.jsonl
+
+nodes:
+  - name: process
+    run: |
+      return {"result": "ok"}
+
+edges:
+  - from: __start__
+    to: process
+  - from: process
+    to: __end__

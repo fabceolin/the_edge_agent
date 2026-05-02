@@ -291,6 +291,18 @@ class EngineConfig:
         """
         engine = self._engine
 
+        # TEA-OBS-003.3 RELI-001: drain the async LLM payload exporter so
+        # in-flight batches reach disk before the process exits. Daemon
+        # worker threads otherwise die with the interpreter and lose any
+        # spans queued since the last time/size flush.
+        async_exporter = getattr(engine, "_trace_payload_async_exporter", None)
+        if async_exporter is not None:
+            try:
+                async_exporter.close()
+            except Exception:
+                pass
+            engine._trace_payload_async_exporter = None
+
         if engine._ltm_backend is not None:
             try:
                 engine._ltm_backend.close()

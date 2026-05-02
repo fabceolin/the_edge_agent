@@ -1,0 +1,17 @@
+name: dyn-parallel-no-fan-in
+nodes:
+  - name: collect
+    run: 'return {}'
+  - name: spread
+    type: dynamic_parallel
+    items: "[1, 2, 3]"
+    action:
+      uses: file.read
+      with: { path: "x" }
+edges:
+  - from: __start__
+    to: spread
+  - from: spread
+    to: collect
+  - from: collect
+    to: __end__

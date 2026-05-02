@@ -29,6 +29,7 @@ nodes:
     index_var: idx
     max_concurrency: 2
     fail_fast: true  # Stop processing when first validation fails
+    fan_in: report
     steps:
       - name: check_value
         language: python

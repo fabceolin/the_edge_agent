@@ -714,6 +714,14 @@ class NodeFactory:
             # Prepare execution context
             exec_globals = {
                 "state": state,
+                # TEA-DX-001.4: expose engine variables dict in run: scope so
+                # authors can write `variables.get("x", N)` instead of
+                # interpolating `{{ variables.x | default(N) }}` into Python
+                # source. Placed before **kwargs so a `with:` kwarg literally
+                # named `variables` overrides per AC-5.
+                "variables": (
+                    engine.variables if hasattr(engine, "variables") else {}
+                ),
                 **kwargs,
                 # Common imports
                 "json": json,
@@ -1138,28 +1146,81 @@ class NodeFactory:
         )
 
         # Parse-time validation (AC: 9)
+        # TEA-DX-001.5: Richer error messages — name the YAML key path,
+        # show a one-line example fragment, and link to the docs anchor.
+        _DOC_ANCHOR = "docs/shared/YAML_REFERENCE.md#dynamic-parallel"
+
         if not items_expr:
             raise ValueError(
-                f"dynamic_parallel node '{node_name}' requires 'items' expression"
+                f"dynamic_parallel node '{node_name}': missing required key "
+                f"'items'.\n"
+                f"  Add an items expression as a sibling of action/steps/subgraph, "
+                f"e.g.:\n"
+                f"      items: \"{{{{ state.batches }}}}\"\n"
+                f"  See {_DOC_ANCHOR}"
             )
 
         # Validate exactly one execution mode
-        mode_count = sum(
-            [
-                action_config is not None,
-                steps_config is not None,
-                subgraph_path is not None,
-            ]
-        )
-        if mode_count != 1:
+        present_modes = [
+            name
+            for name, val in (
+                ("action", action_config),
+                ("steps", steps_config),
+                ("subgraph", subgraph_path),
+            )
+            if val is not None
+        ]
+        mode_count = len(present_modes)
+        if mode_count == 0:
             raise ValueError(
-                f"dynamic_parallel node '{node_name}' requires exactly one of: "
-                f"action, steps, subgraph"
+                f"dynamic_parallel node '{node_name}': missing branch-body "
+                f"key.\n"
+                f"  Add exactly one of: 'action', 'steps', or "
+                f"'subgraph'.\n"
+                f"  Quick guide:\n"
+                f"      action:   a single registered action call per item\n"
+                f"      steps:    a sequential list of step entries per item\n"
+                f"      subgraph: a separate workflow file per item\n"
+                f"  See {_DOC_ANCHOR}"
+            )
+        if mode_count > 1:
+            conflict_keys = ", ".join(repr(k) for k in present_modes)
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}': conflicting "
+                f"branch-body keys.\n"
+                f"  Conflicting keys: {conflict_keys}.\n"
+                f"  Exactly one of action/steps/subgraph is allowed.\n"
+                f"  Did you mean to remove one?\n"
+                f"  See {_DOC_ANCHOR}"
             )
 
         if not fan_in_target:
             raise ValueError(
-                f"dynamic_parallel node '{node_name}' requires 'fan_in' target node"
+                f"dynamic_parallel node '{node_name}': missing required key "
+                f"'fan_in'.\n"
+                f"  Add a sibling 'fan_in' (NOT nested under 'branch:')\n"
+                f"  naming the node that should collect parallel results, "
+                f"e.g.:\n"
+                f"      fan_in: collect_results\n"
+                f"  See {_DOC_ANCHOR}"
+            )
+
+        # Validate that fan_in references a known node name when possible.
+        # The engine maintains a list of known node names on
+        # ``self._engine._known_node_names`` after the YAML load pass; if
+        # unavailable (loader path differences), skip — the legacy generic
+        # error still surfaces at edge-resolution time.
+        known_nodes = getattr(self._engine, "_known_node_names", None)
+        if known_nodes and fan_in_target not in known_nodes:
+            declared = sorted(known_nodes)
+            raise ValueError(
+                f"dynamic_parallel node '{node_name}': fan_in target "
+                f"'{fan_in_target}'\n"
+                f"  is not a defined node.\n"
+                f"  Declared nodes: {declared}\n"
+                f"  Pick one of the declared nodes, e.g.:\n"
+                f"      fan_in: {declared[0] if declared else 'collect'}\n"
+                f"  See {_DOC_ANCHOR}"
             )
 
         # Validate max_concurrency if specified (AC: 10)
