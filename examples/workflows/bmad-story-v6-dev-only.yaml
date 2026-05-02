@@ -1,0 +1,181 @@
+name: bmad-story-v6-dev-only
+description: |
+  BMad v6 Dev-Only Workflow - runs ONLY the developer agent on a story.
+
+  No TEA artifacts required (no ATDD, no NFR, no trace, no code review).
+  Intended for rapid batch implementation when you want the dev agent to
+  burn through a story list without formal quality gates.
+
+  For the full development cycle with gates, use bmad-story-v6-develop.yaml.
+
+  Flow:
+  1. Resolve the story path (by file path, key, or substring).
+  2. Invoke `bmad-bmm-dev-story <story-path>` via Claude shell provider.
+  3. Print a compact summary.
+
+  Usage:
+    tea run examples/workflows/bmad-story-v6-dev-only.yaml --input '{"arg": "story-11-1-validation-scripts"}'
+
+  From DOT (Workflow Mode):
+    tea run --from-dot all-stories.dot \
+        --dot-workflow github://fabceolin/the_edge_agent@main/examples/workflows/bmad-story-v6-dev-only.yaml \
+        --dot-max-parallel 3
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  story_id: str
+  current_status: str
+  dev_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: resolve_story_path
+    description: Convert story key or substring to full story path
+    run: |
+      import os
+      import glob
+      import yaml
+      import re
+
+      arg = state.get("arg", "")
+      story_path = None
+      story_key = None
+
+      if os.path.isfile(arg):
+          story_path = arg
+          story_key = os.path.basename(arg).replace(".md", "")
+      else:
+          config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+          impl_artifacts = "_bmad-output/implementation-artifacts"
+
+          for config_path in config_paths:
+              if os.path.exists(config_path):
+                  try:
+                      with open(config_path, 'r') as f:
+                          config = yaml.safe_load(f)
+                      impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                      break
+                  except:
+                      pass
+
+          patterns = [
+              os.path.join(impl_artifacts, f"{arg}.md"),
+              os.path.join(impl_artifacts, f"*{arg}*.md"),
+              f"**/{arg}.md"
+          ]
+
+          for pattern in patterns:
+              matches = glob.glob(pattern, recursive=True)
+              if matches:
+                  story_path = matches[0]
+                  story_key = os.path.basename(story_path).replace(".md", "")
+                  break
+
+          if not story_path:
+              story_key = arg
+              story_path = os.path.join(impl_artifacts, f"{arg}.md")
+
+      story_id = story_key
+      id_match = re.match(r'^(\d+-\d+)', story_key)
+      if id_match:
+          story_id = id_match.group(1)
+
+      current_status = "unknown"
+      if story_path and os.path.isfile(story_path):
+          try:
+              with open(story_path, 'r') as f:
+                  content = f.read(500)
+              status_match = re.search(r'^Status:\s*(\S+)', content, re.MULTILINE)
+              if status_match:
+                  current_status = status_match.group(1).lower()
+          except:
+              pass
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              DEV-ONLY WORKFLOW - PREPARATION               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story:    {story_key:<49} ║
+      ║ Story ID: {story_id:<49} ║
+      ║ Status:   {current_status:<49} ║
+      ║ Path:     {(story_path or 'NOT FOUND'):<49} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      if not story_path or not os.path.isfile(story_path):
+          raise Exception(f"Story file not found for arg='{arg}'")
+
+      return {
+          "story_path": story_path,
+          "story_key": story_key,
+          "story_id": story_id,
+          "current_status": current_status,
+      }
+
+  - name: dev_story
+    description: Implement the story (dev agent only — no gates, no reviews)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Execute story development for: {{ state.story_path }}
+
+            Run command: bmad-bmm-dev-story {{ state.story_path }}
+
+            INSTRUCTIONS:
+            1. Implement all tasks sequentially from the story file.
+            2. Write unit tests for the implemented functionality.
+            3. Update the File List and Dev Agent Record sections of the story.
+            4. Do NOT run ATDD, NFR, traceability, or code review — those are
+               out of scope for this workflow.
+
+            When done print: DEV_STORY_COMPLETED
+    output: dev_output
+
+  - name: summary
+    description: Compact final summary
+    run: |
+      story_key = state.get("story_key", "unknown")
+      output = state.get("dev_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      completed = "DEV_STORY_COMPLETED" in text
+      final = "completed" if completed else "incomplete"
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              BMad v6 Dev-Only Workflow Complete            ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story:  {story_key:<51} ║
+      ║ Result: {final.upper():<51} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {"final_status": final}
+
+edges:
+  - from: __start__
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: dev_story
+  - from: dev_story
+    to: summary
+  - from: summary
+    to: __end__
