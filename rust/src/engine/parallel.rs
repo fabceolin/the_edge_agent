@@ -169,12 +169,10 @@ impl CircuitBreaker {
                     opened_at: Instant::now(),
                 };
             }
-            CircuitState::Closed => {
-                if *failure_count >= self.config.failure_threshold {
-                    *state = CircuitState::Open {
-                        opened_at: Instant::now(),
-                    };
-                }
+            CircuitState::Closed if *failure_count >= self.config.failure_threshold => {
+                *state = CircuitState::Open {
+                    opened_at: Instant::now(),
+                };
             }
             _ => {}
         }
