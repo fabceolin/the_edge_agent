@@ -622,7 +622,7 @@ class TestCleanupCli(unittest.TestCase):
         from typer.testing import CliRunner
         from the_edge_agent.cli import app
 
-        runner = CliRunner()
+        runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
         return runner.invoke(app, ["trace", "cleanup", str(self.root), *args])
 
     def test_missing_older_than_exits_2(self):
@@ -655,7 +655,7 @@ class TestCleanupCli(unittest.TestCase):
         from typer.testing import CliRunner
         from the_edge_agent.cli import app
 
-        runner = CliRunner()
+        runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
         result = runner.invoke(app, ["trace", "cleanup", "--help"])
         self.assertEqual(result.exit_code, 0)
         # AC-14: docstring/example surfaces in --help output
@@ -668,7 +668,7 @@ class TestCleanupCli(unittest.TestCase):
         from typer.testing import CliRunner
         from the_edge_agent.cli import app
 
-        runner = CliRunner()
+        runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
         result = runner.invoke(app, ["trace", "cleanup", "--help"])
         self.assertIn("--recursive", result.output)
 
@@ -698,7 +698,7 @@ class TestCleanupCli(unittest.TestCase):
 
         _Path.unlink = _failing_unlink
         try:
-            runner = CliRunner()
+            runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
             result = runner.invoke(
                 app, ["trace", "cleanup", str(self.root), "--older-than", "30"]
             )

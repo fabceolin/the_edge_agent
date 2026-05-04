@@ -19,7 +19,7 @@ from the_edge_agent.yaml_validation import (
 )
 
 
-runner = CliRunner()
+runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
 
 
 def _write_yaml(tmp_path: Path, data: dict, name: str = "wf.yaml") -> Path:

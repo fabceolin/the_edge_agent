@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from the_edge_agent.cli import app
 
 
-runner = CliRunner()
+runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb"})
 
 
 def _write_yaml(tmp_path: Path, data: dict, name: str = "wf.yaml") -> Path:
