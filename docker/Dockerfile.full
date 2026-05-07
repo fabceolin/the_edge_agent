@@ -34,18 +34,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install SWI-Prolog 9.3+ from PPA (required for janus-swi).
-# Bypass `add-apt-repository` (flaky launchpad.net API); configure source manually
-# against ppa.launchpadcontent.net (CDN-backed and reliable).
-RUN install -d -m 0755 /usr/share/keyrings \
-    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xE8B739E3753FF4A12360BA6A4AB3A5F60EA9AEB3" \
-       | gpg --dearmor -o /usr/share/keyrings/swi-prolog.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/swi-prolog.gpg] https://ppa.launchpadcontent.net/swi-prolog/stable/ubuntu/ noble main" \
-       > /etc/apt/sources.list.d/swi-prolog.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    swi-prolog \
-    swi-prolog-nox \
+# Install SWI-Prolog 9.3+ via shared install script (PPA + retry + version check).
+# Required for janus-swi bindings.
+COPY scripts/install-swi-prolog-from-ppa.sh /tmp/
+RUN bash /tmp/install-swi-prolog-from-ppa.sh swi-prolog swi-prolog-nox \
+    && rm -f /tmp/install-swi-prolog-from-ppa.sh \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -84,21 +77,15 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies only (minimized package set).
-# Bypass `add-apt-repository` (flaky launchpad.net API); configure source manually
-# against ppa.launchpadcontent.net (CDN-backed and reliable).
+# Shared install script pulls SWI-Prolog from the PPA with retry + version check.
+COPY scripts/install-swi-prolog-from-ppa.sh /tmp/
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
     ca-certificates \
     curl \
     gnupg \
-    && install -d -m 0755 /usr/share/keyrings \
-    && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xE8B739E3753FF4A12360BA6A4AB3A5F60EA9AEB3" \
-       | gpg --dearmor -o /usr/share/keyrings/swi-prolog.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/swi-prolog.gpg] https://ppa.launchpadcontent.net/swi-prolog/stable/ubuntu/ noble main" \
-       > /etc/apt/sources.list.d/swi-prolog.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    swi-prolog-nox \
+    && bash /tmp/install-swi-prolog-from-ppa.sh swi-prolog-nox \
+    && rm -f /tmp/install-swi-prolog-from-ppa.sh \
     && apt-get purge -y curl gnupg \
     && apt-get autoremove -y \
     && apt-get clean \

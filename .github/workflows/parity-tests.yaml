@@ -34,10 +34,8 @@ jobs:
         sudo apt-get update
         # Install graphviz for pygraphviz
         sudo apt-get install -y libgraphviz-dev graphviz
-        # Install SWI-Prolog 9.x from official PPA for janus-swi
-        sudo apt-add-repository -y ppa:swi-prolog/stable
-        sudo apt-get update
-        sudo apt-get install -y swi-prolog
+        # Install SWI-Prolog 9.x for janus-swi (shared script handles PPA + retries).
+        bash scripts/install-swi-prolog-from-ppa.sh swi-prolog
 
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
@@ -95,10 +93,8 @@ jobs:
         sudo apt-get update
         # Install graphviz for pygraphviz
         sudo apt-get install -y libgraphviz-dev graphviz
-        # Install SWI-Prolog 9.x from official PPA for janus-swi
-        sudo apt-add-repository -y ppa:swi-prolog/stable
-        sudo apt-get update
-        sudo apt-get install -y swi-prolog
+        # Install SWI-Prolog 9.x for janus-swi (shared script handles PPA + retries).
+        bash scripts/install-swi-prolog-from-ppa.sh swi-prolog
 
     - name: Install Python package
       run: |

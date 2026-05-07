@@ -26,20 +26,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12-venv \
     python3.12-dev \
     python3-pip \
-    software-properties-common \
     build-essential \
     git \
     curl \
+    gnupg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install SWI-Prolog 9.3+ from PPA
-# Required for janus-swi bindings
-RUN add-apt-repository ppa:swi-prolog/stable -y \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    swi-prolog \
-    swi-prolog-nox \
+# Install SWI-Prolog 9.3+ via shared install script (PPA + retry + version check).
+# Required for janus-swi bindings.
+COPY scripts/install-swi-prolog-from-ppa.sh /tmp/
+RUN bash /tmp/install-swi-prolog-from-ppa.sh swi-prolog swi-prolog-nox \
+    && rm -f /tmp/install-swi-prolog-from-ppa.sh \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
@@ -77,16 +75,17 @@ FROM ubuntu:24.04
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies only (minimized package set)
+# Install runtime dependencies only (minimized package set).
+# Shared install script pulls SWI-Prolog from the PPA with retry + version check.
+COPY scripts/install-swi-prolog-from-ppa.sh /tmp/
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 \
-    software-properties-common \
     ca-certificates \
-    && add-apt-repository ppa:swi-prolog/stable -y \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    swi-prolog-nox \
-    && apt-get purge -y software-properties-common \
+    curl \
+    gnupg \
+    && bash /tmp/install-swi-prolog-from-ppa.sh swi-prolog-nox \
+    && rm -f /tmp/install-swi-prolog-from-ppa.sh \
+    && apt-get purge -y curl gnupg \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \

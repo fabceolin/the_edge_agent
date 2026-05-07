@@ -57,13 +57,10 @@ jobs:
 
       - name: Install SWI-Prolog 9.1+
         run: |
-          # Official PPA required for 9.1+
-          sudo apt-add-repository -y ppa:swi-prolog/stable
-          sudo apt-get update
-          sudo apt-get install -y swi-prolog-nox pkg-config
+          # Shared script: PPA via ppa.launchpadcontent.net + retry + version check.
+          bash scripts/install-swi-prolog-from-ppa.sh swi-prolog-nox
+          sudo apt-get install -y --no-install-recommends pkg-config
 
-          # Verify version (must be 9.1+)
-          swipl --version
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
           echo "SWI-Prolog home: $SWIPL_HOME"
 
@@ -358,14 +355,11 @@ jobs:
 
       - name: Install SWI-Prolog 9.1+, OpenMP, and Vulkan
         run: |
-          # Official PPA required for 9.1+
-          sudo apt-add-repository -y ppa:swi-prolog/stable
-          sudo apt-get update
+          # Shared script: PPA via ppa.launchpadcontent.net + retry + version check.
+          bash scripts/install-swi-prolog-from-ppa.sh swi-prolog-nox
           # Note: libvulkan-dev only (glslc/glslang-tools provided by LunarG SDK later)
-          sudo apt-get install -y swi-prolog-nox pkg-config libgomp1 libvulkan-dev
+          sudo apt-get install -y --no-install-recommends pkg-config libgomp1 libvulkan-dev
 
-          # Verify version (must be 9.1+)
-          swipl --version
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
           echo "SWI-Prolog home: $SWIPL_HOME"
 
