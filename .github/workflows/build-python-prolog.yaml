@@ -358,7 +358,7 @@ jobs:
           # Shared script: PPA via ppa.launchpadcontent.net + retry + version check.
           bash scripts/install-swi-prolog-from-ppa.sh swi-prolog-nox
           # Note: libvulkan-dev only (glslc/glslang-tools provided by LunarG SDK later)
-          sudo apt-get install -y --no-install-recommends pkg-config libgomp1 libvulkan-dev
+          sudo apt-get install -y --no-install-recommends pkg-config libgomp1 libvulkan-dev spirv-headers
 
           SWIPL_HOME=$(swipl --dump-runtime-variables | grep PLBASE= | cut -d= -f2 | tr -d '";')
           echo "SWI-Prolog home: $SWIPL_HOME"
@@ -552,7 +552,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build libgmp-dev libssl-dev \
             zlib1g-dev libarchive-dev libpcre2-dev libyaml-dev \
             libreadline-dev libedit-dev pkg-config libgomp1 \
-            libvulkan-dev glslang-tools glslc libopenblas-dev gcc-14 g++-14
+            libvulkan-dev glslang-tools glslc spirv-headers libopenblas-dev gcc-14 g++-14
 
           # Clone and build SWI-Prolog 9.3.x
           git clone --depth 1 --branch V9.3.24 https://github.com/SWI-Prolog/swipl-devel.git /tmp/swipl-devel
