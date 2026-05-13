@@ -2,7 +2,7 @@ name: bmad-v6-story-cycle
 description: |
   BMad v6 Standard Story Cycle - Development workflow WITHOUT formal TEA QA gates.
 
-  PREREQUISITE: Story must already exist (created via bmad-bmm-create-story)
+  PREREQUISITE: Story must already exist (created via bmad-create-story)
 
   Use this workflow for rapid development cycles where TEA validation is not required.
   For formal QA gates (risk assessment, NFR, traceability), use bmad-story-v6-full-with-qa-cycle.yaml instead.
@@ -151,7 +151,7 @@ nodes:
       """)
 
       if not story_exists:
-          print("\n⚠️  WARNING: Story file not found. Create it first with bmad-bmm-create-story")
+          print("\n⚠️  WARNING: Story file not found. Create it first with bmad-create-story")
 
       return {
           "story_path": story_path,
@@ -178,10 +178,10 @@ nodes:
       ║  ⚠️  Story file does not exist!                             ║
       ║                                                            ║
       ║  Please create the story first:                            ║
-      ║  bmad-bmm-create-story {state.get('story_key', 'story-key'):<33} ║
+      ║  bmad-create-story {state.get('story_key', 'story-key'):<33} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
-      raise Exception(f"Story not found: {state.get('story_key', 'unknown')}. Create it first with bmad-bmm-create-story")
+      raise Exception(f"Story not found: {state.get('story_key', 'unknown')}. Create it first with bmad-create-story")
 
   # NODE: Validate Story (VS) - Using create-story checklist
   - name: validate_story
@@ -268,7 +268,7 @@ nodes:
 
   # NODE 4: Correct Course (unified architect + pm corrections)
   - name: correct_course
-    description: Execute bmad-bmm-correct-course to fix story issues
+    description: Execute bmad-correct-course to fix story issues
     uses: llm.call
     with:
       provider: shell
@@ -279,7 +279,7 @@ nodes:
           content: |
             The story validation FAILED. Execute course correction.
 
-            Run command: bmad-bmm-correct-course
+            Run command: bmad-correct-course
 
             Story file: {{ state.story_path }}
 
@@ -342,7 +342,7 @@ nodes:
       ║                                                            ║
       ║  Next steps (manual intervention required):                ║
       ║  1. Review the story file for remaining issues             ║
-      ║  2. Run: bmad-bmm-create-story -v {state.get('story_key', '')}             ║
+      ║  2. Run: bmad-create-story -v {state.get('story_key', '')}             ║
       ║  3. Fix issues manually                                    ║
       ║  4. Re-run this workflow                                   ║
       ║                                                            ║
@@ -357,7 +357,7 @@ nodes:
 
   # NODE 7: Dev Story (DS)
   - name: dev_story
-    description: Execute bmad-bmm-dev-story to implement the story
+    description: Execute bmad-dev-story to implement the story
     uses: llm.call
     with:
       provider: shell
@@ -368,7 +368,7 @@ nodes:
           content: |
             Execute story development for: {{ state.story_path }}
 
-            Run command: bmad-bmm-dev-story {{ state.story_path }}
+            Run command: bmad-dev-story {{ state.story_path }}
 
             The Dev Story workflow will:
             1. Read each task from the story
@@ -393,7 +393,7 @@ nodes:
 
   # NODE 8: Code Review (CR) - Adversarial review
   - name: code_review
-    description: Execute bmad-bmm-code-review for adversarial senior dev review
+    description: Execute bmad-code-review for adversarial senior dev review
     uses: llm.call
     with:
       provider: shell
@@ -404,7 +404,7 @@ nodes:
           content: |
             Execute adversarial code review for: {{ state.story_path }}
 
-            Run command: bmad-bmm-code-review {{ state.story_path }}
+            Run command: bmad-code-review {{ state.story_path }}
 
             The Code Review workflow performs ADVERSARIAL Senior Developer review that:
             - Finds 3-10 specific problems in EVERY story
@@ -526,7 +526,7 @@ nodes:
 
   # NODE 12: Sprint Status update
   - name: sprint_status
-    description: Execute bmad-bmm-sprint-status to finalize story status
+    description: Execute bmad-sprint-status to finalize story status
     uses: llm.call
     with:
       provider: shell
@@ -537,7 +537,7 @@ nodes:
           content: |
             Update sprint status after story completion.
 
-            Run command: bmad-bmm-sprint-status
+            Run command: bmad-sprint-status
 
             The Sprint Status workflow will:
             1. Summarize current sprint status

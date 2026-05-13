@@ -173,7 +173,7 @@ nodes:
           content: |
             Execute TEA ATDD (AT) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-atdd
+            Run command: bmad-testarch-atdd
 
             The ATDD workflow will:
             1. Generate acceptance tests based on story criteria
@@ -200,7 +200,7 @@ nodes:
           content: |
             Execute story development for: {{ state.story_path }}
 
-            Run command: bmad-bmm-dev-story {{ state.story_path }}
+            Run command: bmad-dev-story {{ state.story_path }}
 
             Risk Level: {{ state.risk_level }}
 
@@ -226,7 +226,7 @@ nodes:
           content: |
             Execute TEA Test Automation (TA) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-automate
+            Run command: bmad-testarch-automate
 
             Risk Level: {{ state.risk_level }}
 
@@ -252,7 +252,7 @@ nodes:
           content: |
             Execute TEA Test Review (RV) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-review
+            Run command: bmad-testarch-test-review
 
             The Test Review workflow will:
             1. Evaluate test quality
@@ -304,7 +304,7 @@ nodes:
           content: |
             Execute code review for: {{ state.story_path }}
 
-            Run command: bmad-bmm-code-review {{ state.story_path }}
+            Run command: bmad-code-review {{ state.story_path }}
 
             Quality Score from TEA: {{ state.quality_score }}
             Risk Level: {{ state.risk_level }}
@@ -472,7 +472,7 @@ nodes:
         - role: user
           content: |
             Update sprint status.
-            Run command: bmad-bmm-sprint-status
+            Run command: bmad-sprint-status
 
             Story: {{ state.story_key }}
             Quality Score: {{ state.quality_score }}

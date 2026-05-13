@@ -335,7 +335,7 @@ nodes:
           content: |
             Execute TEA Test Design (TD) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-test-design
+            Run command: bmad-testarch-test-design
 
             The Test Design workflow will:
             1. Analyze story requirements
@@ -400,7 +400,7 @@ nodes:
           content: |
             Execute TEA NFR Assessment (NR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-nfr
+            Run command: bmad-testarch-nfr
 
             The NFR Assessment workflow will:
             1. Evaluate non-functional requirements coverage
@@ -437,7 +437,7 @@ nodes:
           content: |
             Execute TEA Requirements Tracing (TR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-trace
+            Run command: bmad-testarch-trace
 
             The Requirements Tracing workflow will:
             1. Map all requirements to test coverage
@@ -497,7 +497,7 @@ nodes:
           content: |
             Execute story validation for: {{ state.story_path }}
 
-            Run command: bmad-bmm-create-story -v {{ state.story_path }}
+            Run command: bmad-create-story -v {{ state.story_path }}
 
             QA Gate Status from previous steps:
             - Risk Level: {{ state.risk_level }}
@@ -595,7 +595,7 @@ nodes:
           content: |
             QA Validation FAILED. Execute course correction.
 
-            Run command: bmad-bmm-correct-course
+            Run command: bmad-correct-course
 
             Story: {{ state.story_path }}
             Gate Decision: {{ state.gate_decision }}
@@ -669,7 +669,7 @@ nodes:
           content: |
             Execute TEA ATDD (AT) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-atdd
+            Run command: bmad-testarch-atdd
 
             The ATDD workflow will:
             1. Generate acceptance tests based on story criteria
@@ -696,7 +696,7 @@ nodes:
           content: |
             Execute story development for: {{ state.story_path }}
 
-            Run command: bmad-bmm-dev-story {{ state.story_path }}
+            Run command: bmad-dev-story {{ state.story_path }}
 
             Risk Level: {{ state.risk_level }}
 
@@ -722,7 +722,7 @@ nodes:
           content: |
             Execute TEA Test Automation (TA) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-automate
+            Run command: bmad-testarch-automate
 
             Risk Level: {{ state.risk_level }}
 
@@ -752,7 +752,7 @@ nodes:
           content: |
             POST-DEVELOPMENT: Re-run TEA Requirements Tracing for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-trace
+            Run command: bmad-testarch-trace
 
             CONTEXT: This is POST-IMPLEMENTATION verification.
             - Tests now exist (from ATDD and test automation)
@@ -813,7 +813,7 @@ nodes:
           content: |
             POST-DEVELOPMENT: Re-run TEA NFR Assessment for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-nfr
+            Run command: bmad-testarch-nfr
 
             CONTEXT: This is POST-IMPLEMENTATION verification.
             - Code now exists
@@ -882,7 +882,7 @@ nodes:
           content: |
             Execute TEA Test Review (RV) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-test-review
+            Run command: bmad-testarch-test-review
 
             The Test Review workflow will:
             1. Evaluate test quality
@@ -934,7 +934,7 @@ nodes:
           content: |
             Execute code review for: {{ state.story_path }}
 
-            Run command: bmad-bmm-code-review {{ state.story_path }}
+            Run command: bmad-code-review {{ state.story_path }}
 
             Quality Score from TEA: {{ state.quality_score }}
             Risk Level: {{ state.risk_level }}
@@ -1102,7 +1102,7 @@ nodes:
         - role: user
           content: |
             Update sprint status.
-            Run command: bmad-bmm-sprint-status
+            Run command: bmad-sprint-status
 
             Story: {{ state.story_key }}
             Quality Score: {{ state.quality_score }}

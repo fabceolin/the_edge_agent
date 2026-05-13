@@ -374,7 +374,7 @@ nodes:
           content: |
             Execute TEA NFR Assessment (NR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-nfr
+            Run command: bmad-testarch-nfr
 
             The NFR Assessment workflow will:
             1. Evaluate non-functional requirements coverage
@@ -472,7 +472,7 @@ nodes:
           content: |
             Execute TEA Test Design (TD) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-test-design
+            Run command: bmad-testarch-test-design
 
             IMPORTANT CONTEXT FROM PRIOR ANALYSIS:
             - Risk Level: {{ state.risk_level }}
@@ -519,7 +519,7 @@ nodes:
           content: |
             Execute TEA Requirements Tracing (TR) for story: {{ state.story_path }}
 
-            Run command: bmad-tea-testarch-trace
+            Run command: bmad-testarch-trace
 
             The Requirements Tracing workflow will:
             1. Map all requirements to test coverage
@@ -579,7 +579,7 @@ nodes:
           content: |
             Execute story validation for: {{ state.story_path }}
 
-            Run command: bmad-bmm-create-story -v {{ state.story_path }}
+            Run command: bmad-create-story -v {{ state.story_path }}
 
             QA Gate Status from previous steps:
             - Risk Level: {{ state.risk_level }}
@@ -679,7 +679,7 @@ nodes:
           content: |
             QA Validation FAILED. Execute course correction.
 
-            Run command: bmad-bmm-correct-course
+            Run command: bmad-correct-course
 
             Story: {{ state.story_path }}
             Gate Decision: {{ state.gate_decision }}
