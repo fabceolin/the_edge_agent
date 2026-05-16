@@ -1,6 +1,10 @@
 name: bmad-story-v6-validation
 description: |
-  BMad v6 Validation Workflow - Full QA Gates Phase using TEA module.
+  BMad v6 Validation Workflow - QA Gates with parallel Risk Profile + NFR.
+
+  Flow: PO Validation → [Risk Profile ∥ NFR Assessment] → Test Design → Traceability → Validate Story
+  - Risk Profile and NFR Assessment run IN PARALLEL before Test Design
+  - Test Design receives risk + NFR context for better informed test strategy
 
   REQUIREMENT: Install TEA module (Test Architect Enterprise)
   Command: npx bmad-method install → Select "Test Architect (TEA)"
@@ -22,11 +26,12 @@ description: |
      - Validate story using create-story checklist
      - GO/NO-GO decision before TEA QA
 
-  3. QA VALIDATION PHASE (TEA Module):
-     - Test Design (TD) - risk assessment + test strategy
-     - NFR Assessment (NR) - non-functional requirements
-     - Requirements Tracing (TR) - traceability + gate decision
-     - Final Validate Story (VS) - checklist
+  3. QA VALIDATION PHASE (TEA Module) - REORDERED:
+     a. [PARALLEL] Risk Profile (RP) + NFR Assessment (NR)
+     b. Merge risk + NFR results
+     c. Test Design (TD) - informed by risk profile + NFR findings
+     d. Requirements Tracing (TR) - traceability + gate decision
+     e. Final Validate Story (VS) - checklist
 
   4. CORRECTION LOOP (if validation failed, max 1 iteration):
      - Correct Course (CC)
@@ -54,10 +59,13 @@ state_schema:
   po_validate_output: str
   po_validation_status: str
   po_readiness_score: int
-  # QA Validation phase (TEA module)
-  test_design_output: str
+  # QA Validation phase (TEA module) - reordered
+  risk_profile_output: str
   risk_level: str
+  risk_summary: str
   nfr_output: str
+  nfr_summary: str
+  test_design_output: str
   trace_output: str
   gate_decision: str
   validate_story_output: str
@@ -284,7 +292,7 @@ nodes:
       """)
 
       if po_validation_status == "GO":
-          print("\n✓ PO VALIDATION PASSED - Proceeding to TEA QA phase...")
+          print("\n✓ PO VALIDATION PASSED - Proceeding to parallel Risk Profile + NFR phase...")
       else:
           print("\n⚠️  PO VALIDATION FAILED - Story needs correction before TEA QA...")
 
@@ -294,12 +302,27 @@ nodes:
       }
 
   # ============================================================================
-  # QA VALIDATION PHASE (TEA Module)
+  # QA VALIDATION PHASE (TEA Module) - REORDERED
+  # Step 1: Risk Profile + NFR Assessment run IN PARALLEL
+  # Step 2: Test Design uses both outputs
+  # Step 3: Traceability + Gate Decision
   # ============================================================================
 
-  # NODE: TEA Test Design (TD) - Risk Assessment + Test Strategy
-  - name: tea_test_design
-    description: Execute TEA Test Design workflow with risk assessment
+  # NODE: Entry point for parallel fan-out (needed because type:parallel ignores when)
+  - name: start_qa_phase
+    description: Entry point for QA phase - triggers parallel Risk Profile + NFR
+    run: |
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║     STARTING QA PHASE - Parallel Risk Profile + NFR        ║
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      return {}
+
+  # NODE: Risk Profile (RP) - Comprehensive risk assessment (PARALLEL BRANCH A)
+  - name: risk_profile
+    description: Execute comprehensive risk assessment for the story
     uses: llm.call
     with:
       provider: shell
@@ -308,61 +331,36 @@ nodes:
       messages:
         - role: user
           content: |
-            Execute TEA Test Design (TD) for story: {{ state.story_path }}
+            Execute Risk Profile assessment for story: {{ state.story_path }}
 
-            Run command: bmad-testarch-test-design
+            Run command: /risk-profile
 
-            The Test Design workflow will:
-            1. Analyze story requirements
-            2. Perform RISK ASSESSMENT (P0-P3 prioritization)
-            3. Design test strategy based on risk level
-            4. Create test scenarios matrix
-            5. Output to test-design folder
+            The Risk Profile task will:
+            1. Identify risks across 6 categories (TECH, SEC, PERF, DATA, BUS, OPS)
+            2. Assess each risk using probability × impact scoring
+            3. Create risk matrix with prioritization
+            4. Provide mitigation strategies
+            5. Generate risk-based testing recommendations
 
             INSTRUCTIONS:
-            1. Run the workflow completely
-            2. Capture the RISK LEVEL (Critical/High/Medium/Low)
-            3. Document test priorities
+            1. Run the risk profile completely for this story
+            2. Capture the overall RISK LEVEL
+            3. Document the risk summary (critical count, high count, highest risk)
 
             After completion, append to story file {{ state.story_path }}:
-            ## TEA - Test Design
-            - Risk Level: [extracted risk level]
-            - Test Strategy: [summary]
-            - Priority Tests: [P0/P1 items]
+            ## TEA - Risk Profile
+            - Overall Risk Level: [Critical/High/Medium/Low]
+            - Critical Risks: [count]
+            - High Risks: [count]
+            - Highest Risk: [ID and title]
+            - Key Mitigations: [summary of must-fix items]
 
             Print RISK_LEVEL:[Critical|High|Medium|Low] at the end
-            Print: TEST_DESIGN_COMPLETED
-    output: test_design_output
+            Print RISK_SUMMARY:[brief one-line summary] at the end
+            Print: RISK_PROFILE_COMPLETED
+    output: risk_profile_output
 
-  # NODE: Extract risk level from test design output
-  - name: extract_risk_level
-    description: Parse risk level from test design output
-    run: |
-      import re
-
-      output = state.get("test_design_output", {})
-      if isinstance(output, dict):
-          text = output.get("content", "")
-      else:
-          text = str(output) if output else ""
-
-      # Extract risk level
-      risk_match = re.search(r'RISK_LEVEL:\s*(Critical|High|Medium|Low)', text, re.IGNORECASE)
-      if risk_match:
-          risk_level = risk_match.group(1).upper()
-      elif "critical" in text.lower():
-          risk_level = "CRITICAL"
-      elif "high" in text.lower() and "risk" in text.lower():
-          risk_level = "HIGH"
-      elif "medium" in text.lower():
-          risk_level = "MEDIUM"
-      else:
-          risk_level = "LOW"
-
-      print(f"Risk Level Detected: {risk_level}")
-      return {"risk_level": risk_level}
-
-  # NODE: TEA NFR Assessment (NR)
+  # NODE: TEA NFR Assessment (NR) - Non-functional requirements (PARALLEL BRANCH B)
   - name: tea_nfr_assessment
     description: Execute TEA NFR Assessment workflow
     uses: llm.call
@@ -396,8 +394,116 @@ nodes:
             - Scalability: [coverage status]
             - Gaps: [identified gaps]
 
+            Print NFR_SUMMARY:[brief one-line summary of gaps] at the end
             Print: NFR_ASSESSMENT_COMPLETED
     output: nfr_output
+
+  # NODE: Fan-in - Merge Risk Profile + NFR results
+  - name: merge_risk_nfr
+    description: Merge parallel Risk Profile and NFR Assessment results
+    fan_in: true
+    run: |
+      import re
+
+      # Extract risk level from risk_profile_output
+      rp_output = state.get("risk_profile_output", {})
+      if isinstance(rp_output, dict):
+          rp_text = rp_output.get("content", "")
+      else:
+          rp_text = str(rp_output) if rp_output else ""
+
+      risk_match = re.search(r'RISK_LEVEL:\s*(Critical|High|Medium|Low)', rp_text, re.IGNORECASE)
+      if risk_match:
+          risk_level = risk_match.group(1).upper()
+      elif "critical" in rp_text.lower():
+          risk_level = "CRITICAL"
+      elif "high" in rp_text.lower() and "risk" in rp_text.lower():
+          risk_level = "HIGH"
+      elif "medium" in rp_text.lower():
+          risk_level = "MEDIUM"
+      else:
+          risk_level = "LOW"
+
+      risk_summary_match = re.search(r'RISK_SUMMARY:\s*(.+)', rp_text)
+      risk_summary = risk_summary_match.group(1).strip() if risk_summary_match else "No summary available"
+
+      # Extract NFR summary from nfr_output
+      nfr_output = state.get("nfr_output", {})
+      if isinstance(nfr_output, dict):
+          nfr_text = nfr_output.get("content", "")
+      else:
+          nfr_text = str(nfr_output) if nfr_output else ""
+
+      nfr_summary_match = re.search(r'NFR_SUMMARY:\s*(.+)', nfr_text)
+      nfr_summary = nfr_summary_match.group(1).strip() if nfr_summary_match else "No summary available"
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║        PARALLEL PHASE COMPLETE - Risk + NFR Merged         ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {state.get('story_key', 'unknown'):<52} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Risk Level: {risk_level:<47} ║
+      ║ Risk Summary: {risk_summary[:44]:<44} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ NFR Summary: {nfr_summary[:45]:<45} ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ → Both outputs will feed into Test Design (TD)             ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {
+          "risk_level": risk_level,
+          "risk_summary": risk_summary,
+          "nfr_summary": nfr_summary
+      }
+
+  # NODE: TEA Test Design (TD) - Now informed by Risk Profile + NFR
+  - name: tea_test_design
+    description: Execute TEA Test Design workflow informed by risk profile and NFR findings
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Execute TEA Test Design (TD) for story: {{ state.story_path }}
+
+            Run command: bmad-testarch-test-design
+
+            IMPORTANT CONTEXT FROM PRIOR ANALYSIS:
+            - Risk Level: {{ state.risk_level }}
+            - Risk Summary: {{ state.risk_summary }}
+            - NFR Summary: {{ state.nfr_summary }}
+
+            Use the risk profile and NFR findings above to inform your test design.
+            Prioritize test scenarios that address identified risks and NFR gaps.
+
+            The Test Design workflow will:
+            1. Analyze story requirements
+            2. Use RISK PROFILE findings to prioritize test areas
+            3. Use NFR ASSESSMENT gaps to ensure non-functional coverage
+            4. Design test strategy based on risk level
+            5. Create test scenarios matrix
+            6. Output to test-design folder
+
+            INSTRUCTIONS:
+            1. Run the workflow completely
+            2. Ensure high-risk areas from risk profile get P0/P1 test coverage
+            3. Ensure NFR gaps are addressed in test scenarios
+            4. Document test priorities
+
+            After completion, append to story file {{ state.story_path }}:
+            ## TEA - Test Design
+            - Risk Level: {{ state.risk_level }} (from Risk Profile)
+            - Test Strategy: [summary informed by risk + NFR]
+            - Priority Tests: [P0/P1 items covering identified risks]
+            - NFR Test Coverage: [tests addressing NFR gaps]
+
+            Print: TEST_DESIGN_COMPLETED
+    output: test_design_output
 
   # NODE: TEA Requirements Tracing (TR) - Gate Decision
   - name: tea_requirements_tracing
@@ -479,11 +585,12 @@ nodes:
             - Gate Decision: {{ state.gate_decision }}
 
             VALIDATION CRITERIA:
-            1. TEA Test Design section exists
+            1. TEA Risk Profile section exists
             2. TEA NFR Assessment section exists
-            3. TEA Requirements Trace section exists
-            4. Gate Decision is PASS or CONDITIONAL
-            5. Story meets Definition of Ready
+            3. TEA Test Design section exists
+            4. TEA Requirements Trace section exists
+            5. Gate Decision is PASS or CONDITIONAL
+            6. Story meets Definition of Ready
 
             If gate_decision is FAIL, mark validation as FAILED.
             If all sections exist and gate is PASS/CONDITIONAL, mark as PASSED.
@@ -538,8 +645,9 @@ nodes:
       ║ Story: {state.get('story_key', 'unknown'):<52} ║
       ║ Story Status: {current_status:<45} ║
       ╠════════════════════════════════════════════════════════════╣
-      ║ TEA Test Design:      ✓ Completed                          ║
+      ║ TEA Risk Profile:     ✓ Completed                          ║
       ║ TEA NFR Assessment:   ✓ Completed                          ║
+      ║ TEA Test Design:      ✓ Completed (informed by RP + NFR)   ║
       ║ TEA Requirements Trace: ✓ Completed                        ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
@@ -619,8 +727,12 @@ nodes:
           "po_validate_output": "",
           "po_validation_status": "",
           "po_readiness_score": 0,
-          "test_design_output": "",
+          "risk_profile_output": "",
+          "risk_level": "",
+          "risk_summary": "",
           "nfr_output": "",
+          "nfr_summary": "",
+          "test_design_output": "",
           "trace_output": "",
           "gate_decision": "",
           "validation_status": ""
@@ -680,8 +792,9 @@ nodes:
       ║ PO Readiness Score: {state.get('po_readiness_score', 0)}/10                               ║
       ║ PO Validation: {state.get('po_validation_status', 'UNKNOWN'):<44} ║
       ╠════════════════════════════════════════════════════════════╣
-      ║ TEA Test Design: ✓ Created                                 ║
-      ║ TEA NFR Assessment: ✓ Created                              ║
+      ║ TEA Risk Profile: ✓ Created                                ║
+      ║ TEA NFR Assessment: ✓ Created  (parallel with Risk Profile)║
+      ║ TEA Test Design: ✓ Created (informed by RP + NFR)          ║
       ║ TEA Traceability: ✓ Created                                ║
       ╠════════════════════════════════════════════════════════════╣
       ║ Risk Level: {state.get('risk_level', 'UNKNOWN'):<47} ║
@@ -693,6 +806,9 @@ nodes:
           """)
       return {}
 
+# ==============================================================================
+# EDGES - Reordered with parallel Risk Profile + NFR Assessment
+# ==============================================================================
 edges:
   # PREPARATION
   - from: __start__
@@ -704,8 +820,9 @@ edges:
     when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) == True"
 
   # If already validated but missing TEA artifacts, create them (skip PO validation)
+  # Go directly to parallel Risk Profile + NFR phase
   - from: resolve_story_path
-    to: tea_test_design
+    to: start_qa_phase
     when: "state.get('already_validated', False) == True and state.get('tea_artifacts_exist', False) != True"
 
   # Normal flow: proceed to PO validation if not already validated
@@ -722,9 +839,9 @@ edges:
     to: validate_story
     when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) == True"
 
-  # If PO passed AND no TEA artifacts, run TEA phases
+  # If PO passed AND no TEA artifacts, route to start_qa_phase for parallel fan-out
   - from: check_po_validation
-    to: tea_test_design
+    to: start_qa_phase
     when: "state.get('po_validation_status') == 'GO' and state.get('tea_artifacts_exist', False) != True"
 
   - from: check_po_validation
@@ -735,12 +852,29 @@ edges:
     to: validation_failed
     when: "state.get('po_validation_status') != 'GO' and state.get('correction_attempt', 0) >= 1"
 
-  # QA VALIDATION PHASE (TEA)
-  - from: tea_test_design
-    to: extract_risk_level
-  - from: extract_risk_level
+  # PARALLEL FAN-OUT: start_qa_phase → [risk_profile, tea_nfr_assessment] → merge_risk_nfr
+  - from: start_qa_phase
+    to: risk_profile
+    type: parallel
+    fan_in: merge_risk_nfr
+
+  - from: start_qa_phase
     to: tea_nfr_assessment
+    type: parallel
+    fan_in: merge_risk_nfr
+
+  # Parallel branches converge at fan-in node
+  - from: risk_profile
+    to: merge_risk_nfr
   - from: tea_nfr_assessment
+    to: merge_risk_nfr
+
+  # After merge: Test Design uses combined risk + NFR context
+  - from: merge_risk_nfr
+    to: tea_test_design
+
+  # Test Design → Traceability → Gate Decision
+  - from: tea_test_design
     to: tea_requirements_tracing
   - from: tea_requirements_tracing
     to: extract_gate_decision
