@@ -242,7 +242,7 @@ nodes:
           content: |
             PO Validation FAILED. Execute course correction.
 
-            Run command: bmad-bmm-correct-course
+            Run command: bmad-correct-course
 
             Story: {{ state.story_path }}
             Readiness Score: {{ state.po_readiness_score }}/10

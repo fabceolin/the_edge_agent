@@ -10,7 +10,7 @@ description: |
 
   Flow:
   1. Resolve the story path (by file path, key, or substring).
-  2. Invoke `bmad-bmm-dev-story <story-path>` via Claude shell provider.
+  2. Invoke `bmad-dev-story <story-path>` via Claude shell provider.
   3. Print a compact summary.
 
   Usage:
@@ -134,7 +134,7 @@ nodes:
           content: |
             Execute story development for: {{ state.story_path }}
 
-            Run command: bmad-bmm-dev-story {{ state.story_path }}
+            Run command: bmad-dev-story {{ state.story_path }}
 
             INSTRUCTIONS:
             1. Implement all tasks sequentially from the story file.

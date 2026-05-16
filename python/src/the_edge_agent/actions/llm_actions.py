@@ -583,12 +583,58 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "success": False,
                 }
 
-            return {
-                "content": stdout.strip(),
-                "usage": {},  # CLI doesn't provide token counts
+            content = stdout.strip()
+            usage_dict: Dict[str, Any] = {}
+            cost_usd: Optional[float] = None
+            model_usage = None
+            # If the CLI was invoked with --output-format=json (e.g. Claude
+            # Code's `claude -p ... --output-format=json`), stdout is a single
+            # JSON object carrying `result`, `usage`, `total_cost_usd`. Parse
+            # it so the trace span gets real token/cost numbers instead of {}.
+            try:
+                parsed = json.loads(content)
+            except (json.JSONDecodeError, ValueError):
+                parsed = None
+            if (
+                isinstance(parsed, dict)
+                and parsed.get("type") == "result"
+                and "result" in parsed
+            ):
+                content = parsed.get("result") or ""
+                u = parsed.get("usage") or {}
+                if isinstance(u, dict):
+                    input_tokens = u.get("input_tokens") or 0
+                    output_tokens = u.get("output_tokens") or 0
+                    cache_creation = u.get("cache_creation_input_tokens") or 0
+                    cache_read = u.get("cache_read_input_tokens") or 0
+                    # Map to OpenAI-style field names so TEA's tracing extractor
+                    # (which reads `prompt_tokens` / `completion_tokens` /
+                    # `total_tokens`) populates the span. Keep Anthropic-native
+                    # names alongside for downstream attribution.
+                    prompt_total = input_tokens + cache_creation + cache_read
+                    usage_dict = {
+                        "prompt_tokens": prompt_total,
+                        "completion_tokens": output_tokens,
+                        "total_tokens": prompt_total + output_tokens,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_creation_input_tokens": cache_creation,
+                        "cache_read_input_tokens": cache_read,
+                    }
+                cost_usd = parsed.get("total_cost_usd")
+                model_usage = parsed.get("modelUsage")
+
+            result = {
+                "content": content,
+                "usage": usage_dict,
                 "provider": "shell",
                 "shell_provider": shell_provider,
             }
+            if cost_usd is not None:
+                result["cost_usd"] = cost_usd
+            if model_usage is not None:
+                result["model_usage"] = model_usage
+            return result
 
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -1025,12 +1071,21 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     "(e.g., shell_provider='claude')",
                     "success": False,
                 }
-            return _execute_shell_provider(
+            shell_result = _execute_shell_provider(
                 shell_provider=shell_provider,
                 messages=messages,
                 timeout=timeout,
                 **kwargs,
             )
+            # Mirror what the LiteLLM/OpenAI/local branches do: hand the
+            # captured usage/cost off to the trace exporter so spans for
+            # shell-provider llm.call nodes get tokens_input/tokens_output/
+            # cost_usd populated when auto_trace_llm_payloads is enabled.
+            _capture_llm_payload_to_span(
+                messages,
+                shell_result if isinstance(shell_result, dict) else None,
+            )
+            return shell_result
 
         # Local provider - uses llama-cpp-python backend (TEA-RELEASE-004.5)
         if resolved_provider == "local":
