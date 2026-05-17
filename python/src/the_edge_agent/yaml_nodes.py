@@ -1392,8 +1392,43 @@ class NodeFactory:
                     branch_state[item_var] = item
                     branch_state[index_var] = index
 
+                    # uPilot story 3.5 AC1: open a per-branch span on the
+                    # worker thread before invoking the branch function.
+                    # ``TraceContext`` uses ``threading.local()`` for the
+                    # span stack — worker threads start with an empty
+                    # stack, so ``llm.call`` actions called inside the
+                    # branch would see ``current_span() is None`` and
+                    # silently drop their ``llm_payload`` metadata. With a
+                    # branch span in place, the LLM-payload capture
+                    # helper attaches its dict to *this* span and the
+                    # ``LlmPayloadFileExporter`` writes one line per
+                    # branch to the sibling ``*.llm.jsonl`` file.
+                    #
+                    # ``metadata.node`` is set to the *parent* node name so
+                    # ``auto_trace_llm_payloads`` glob allowlists keyed on
+                    # node names still match (the parent
+                    # ``dynamic_parallel`` span uses the same value).
+                    branch_span = None
+                    if enable_tracing and trace_context is not None:
+                        branch_span = trace_context.start_span(
+                            name=branch_name,
+                            metadata={
+                                "node": node_name,
+                                "branch_index": index,
+                                "dynamic_parallel": True,
+                            },
+                        )
+
                     # Execute branch function
-                    result_state = branch_func(branch_state, **kwargs)
+                    try:
+                        result_state = branch_func(branch_state, **kwargs)
+                    except Exception as exc:
+                        if branch_span is not None and trace_context is not None:
+                            trace_context.end_span(status="error", error=str(exc))
+                        raise
+                    else:
+                        if branch_span is not None and trace_context is not None:
+                            trace_context.end_span(status="ok")
 
                     branch_end = time_module.time()
                     timing_ms = int((branch_end - branch_start) * 1000)
