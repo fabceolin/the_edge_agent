@@ -1,0 +1,3 @@
+# Generated artifacts — DB snapshots, visualization outputs, downloaded game files.
+data/
+__pycache__/

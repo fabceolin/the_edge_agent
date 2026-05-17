@@ -1,0 +1,132 @@
+name: bmad-quick-dev-gemini
+description: |
+  BMad Quick Dev (Gemini variant) - Simplified single-step development workflow.
+
+  Runs only the /bmad-quick-dev agent, passing the story path as parameter.
+  Uses Gemini CLI as the shell provider with full bypass settings:
+    gemini -y -m gemini-3.1-pro-preview -p
+
+  Input: story_path or arg (story name/path).
+
+  Usage:
+    tea run examples/workflows/bmad-quick-dev-gemini.yaml --input '{"arg": "path/to/story.md"}'
+    tea run examples/workflows/bmad-quick-dev-gemini.yaml --input '{"story_path": "path/to/story.md"}'
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  quick_dev_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    gemini:
+      command: gemini
+      args:
+        - "-y"
+        - "-m"
+        - "gemini-3.1-pro-preview"
+        - "-p"
+        - ""
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: resolve_story_path
+    description: Resolve story path from arg if needed
+    run: |
+      import os
+      import glob
+      import yaml
+
+      if state.get("story_path"):
+          story_path = state.get("story_path")
+          story_key = state.get("story_key") or os.path.basename(story_path).replace(".md", "")
+          return {"story_path": story_path, "story_key": story_key}
+
+      arg = state.get("arg", "")
+
+      if os.path.isfile(arg):
+          story_key = os.path.basename(arg).replace(".md", "")
+          return {"story_path": arg, "story_key": story_key}
+
+      config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+      impl_artifacts = "_bmad-output/implementation-artifacts"
+
+      for config_path in config_paths:
+          if os.path.exists(config_path):
+              try:
+                  with open(config_path, 'r') as f:
+                      config = yaml.safe_load(f)
+                  impl_artifacts = config.get("implementation_artifacts", impl_artifacts)
+                  break
+              except:
+                  pass
+
+      patterns = [
+          os.path.join(impl_artifacts, f"{arg}.md"),
+          os.path.join(impl_artifacts, f"*{arg}*.md"),
+          f"**/{arg}.md"
+      ]
+
+      for pattern in patterns:
+          matches = glob.glob(pattern, recursive=True)
+          if matches:
+              story_path = matches[0]
+              story_key = os.path.basename(story_path).replace(".md", "")
+              return {"story_path": story_path, "story_key": story_key}
+
+      story_key = arg
+      story_path = os.path.join(impl_artifacts, f"{arg}.md")
+      return {"story_path": story_path, "story_key": story_key}
+
+  - name: bmad_quick_dev
+    description: Run /bmad-quick-dev agent with story path
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: gemini
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            Run command: /bmad-quick-dev {{ state.story_path }}
+
+            When done print: QUICK_DEV_COMPLETED
+    output: quick_dev_output
+
+  - name: summary
+    description: Generate final summary
+    run: |
+      story_key = state.get("story_key", "unknown")
+      output = state.get("quick_dev_output", {})
+      if isinstance(output, dict):
+          text = output.get("content", "")
+      else:
+          text = str(output) if output else ""
+
+      completed = "QUICK_DEV_COMPLETED" in text
+      final = "completed" if completed else "incomplete"
+
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║              BMad Quick Dev Complete                       ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Story: {story_key:<52} ║
+      ║ Status: {final:<51} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+
+      return {"final_status": final}
+
+edges:
+  - from: __start__
+    to: resolve_story_path
+  - from: resolve_story_path
+    to: bmad_quick_dev
+  - from: bmad_quick_dev
+    to: summary
+  - from: summary
+    to: __end__

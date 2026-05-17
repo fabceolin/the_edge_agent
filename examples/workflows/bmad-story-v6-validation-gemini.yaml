@@ -1,11 +1,14 @@
-name: bmad-story-v6-validation-v2
+name: bmad-story-v6-validation-gemini
 description: |
-  BMad v6 Validation Workflow V2 - Reordered QA Gates with parallel Risk Profile + NFR.
+  BMad v6 Validation Workflow (Gemini variant) - QA Gates with parallel Risk Profile + NFR.
 
-  CHANGES FROM V1:
-  - Risk Profile and NFR Assessment now run IN PARALLEL before Test Design
+  Same as bmad-story-v6-validation.yaml but uses Gemini CLI as the shell provider
+  with full bypass settings:
+    gemini -y -m gemini-3.1-pro-preview -p
+
+  Flow: PO Validation → [Risk Profile ∥ NFR Assessment] → Test Design → Traceability → Validate Story
+  - Risk Profile and NFR Assessment run IN PARALLEL before Test Design
   - Test Design receives risk + NFR context for better informed test strategy
-  - New flow: PO Validation → [Risk Profile ∥ NFR Assessment] → Test Design → Traceability → Validate Story
 
   REQUIREMENT: Install TEA module (Test Architect Enterprise)
   Command: npx bmad-method install → Select "Test Architect (TEA)"
@@ -41,7 +44,7 @@ description: |
 
   Output: Validated story with TEA artifacts, ready for development phase.
 
-  Usage: tea run examples/workflows/bmad-story-v6-validation-v2.yaml --input '{"arg": "epic-1-story-1"}'
+  Usage: tea run examples/workflows/bmad-story-v6-validation-gemini.yaml --input '{"arg": "epic-1-story-1"}'
 
 state_schema:
   arg: str
@@ -77,9 +80,15 @@ state_schema:
 
 settings:
   shell_providers:
-    claude:
-      command: claude
-      args: ["-p", "{prompt}", "--dangerously-skip-permissions"]
+    gemini:
+      command: gemini
+      args:
+        - "-y"
+        - "-m"
+        - "gemini-3.1-pro-preview"
+        - "-p"
+        - ""
+      stdin_mode: pipe
       verbose: true
       timeout: 108000
 
@@ -218,7 +227,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -327,7 +336,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -367,7 +376,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -465,7 +474,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -512,7 +521,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -572,7 +581,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -672,7 +681,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: claude
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user

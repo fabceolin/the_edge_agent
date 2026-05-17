@@ -1,12 +1,12 @@
-name: bmad-story-v6-development-codex
+name: bmad-story-v6-development-gemini
 description: |
-  BMad v6 Development Workflow (Codex variant) - Implementation Phase.
+  BMad v6 Development Workflow (Gemini variant) - Implementation Phase.
 
-  Same as bmad-story-v6-development.yaml but uses Codex CLI as the shell provider
+  Same as bmad-story-v6-development.yaml but uses Gemini CLI as the shell provider
   with full bypass settings:
-    codex --yolo exec -c model=gpt-5.5 -c model_reasoning_effort=xhigh -
+    gemini -y -m gemini-3.1-pro-preview -p
 
-  PREREQUISITE: Story must pass validation (run bmad-story-v6-validation-codex.yaml first)
+  PREREQUISITE: Story must pass validation (run bmad-story-v6-validation-gemini.yaml first)
 
   Development flow:
   1. DEVELOPMENT PHASE:
@@ -19,10 +19,10 @@ description: |
 
   Input: story_path and optionally risk_level from validation phase.
 
-  Usage: tea run examples/workflows/bmad-story-v6-development-codex.yaml --input '{"arg": "path/to/story.md"}'
+  Usage: tea run examples/workflows/bmad-story-v6-development-gemini.yaml --input '{"arg": "path/to/story.md"}'
 
   Or with full state from validation:
-    tea run examples/workflows/bmad-story-v6-development-codex.yaml \
+    tea run examples/workflows/bmad-story-v6-development-gemini.yaml \
       --input '{"story_path": "path/to/story.md", "risk_level": "HIGH", "gate_decision": "PASS"}'
 
 state_schema:
@@ -47,16 +47,14 @@ state_schema:
 
 settings:
   shell_providers:
-    codex:
-      command: codex
+    gemini:
+      command: gemini
       args:
-        - "--yolo"
-        - "exec"
-        - "-c"
-        - "model=gpt-5.5"
-        - "-c"
-        - "model_reasoning_effort=xhigh"
-        - "-"
+        - "-y"
+        - "-m"
+        - "gemini-3.1-pro-preview"
+        - "-p"
+        - ""
       stdin_mode: pipe
       verbose: true
       timeout: 108000
@@ -166,7 +164,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -193,7 +191,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 7200
       messages:
         - role: user
@@ -219,7 +217,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -245,7 +243,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -297,7 +295,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -439,7 +437,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 3600
       messages:
         - role: user
@@ -466,7 +464,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: gemini
       timeout: 600
       messages:
         - role: user
