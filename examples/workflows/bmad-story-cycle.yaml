@@ -1,0 +1,434 @@
+name: bmad-story-cycle
+description: |
+  Subgraph BMad — ciclo completo de UMA story: create (se faltar) → dev → review adversarial
+  (loop dev→review→fix até aprovar ou esgotar ciclos) → finish (commit + status). Reusado pelos
+  dois workflows de épico (bmad-dev-cycle sequencial e bmad-epic-waves paralelo).
+
+  Port direto do bloco Create+Dev+Review-loop+Finish do bmad-dev-cycle.js (Claude Code),
+  adaptado para primitivas tea (llm.call codex + goto condicional + run: Python).
+
+  Decisões de port:
+  - Schema JSON validado do Workflow tool → marcador FINAL_STATUS + regex (padrão dos YAMLs
+    Codex existentes).
+  - Dois shell_providers: `codex` (dev/fix/create) e `codex_review` (review), ambos
+    gpt-5.5/xhigh. Para divergir o modelo de review, edite só o bloco codex_review.
+  - `in_worktree`: quando True (chamado pelo epic-waves graph mode), o finish commita no
+    branch do worktree e NÃO marca sprint-status (o merge/status é externo, serializado).
+    Quando False (dev-cycle sequencial), o finish commita e marca sprint-status done.
+  - review/fix rodam no MESMO contexto do dev (o subgraph é uma unidade só dentro do worktree
+    do graph mode). No JS eles precisavam receber `worktreePath` porque cada agent() com
+    isolation abria árvore vazia nova; aqui isso não existe.
+
+  Input (--input JSON):
+    repo_path, epic_key, epic_num, story_key, title, story_path,
+    skills_dir, implementation_artifacts_dir, sprint_status_path,
+    communication_language, document_output_language, user_name,
+    test_command, target_branch,
+    create_if_missing (bool), max_review_cycles (int), in_worktree (bool)
+
+state_schema:
+  repo_path: str
+  epic_key: str
+  epic_num: str
+  story_key: str
+  title: str
+  story_path: str
+  skills_dir: str
+  implementation_artifacts_dir: str
+  sprint_status_path: str
+  communication_language: str
+  document_output_language: str
+  user_name: str
+  test_command: str
+  target_branch: str
+  create_if_missing: bool
+  max_review_cycles: int
+  in_worktree: bool
+  create_output: str
+  dev_output: str
+  review_output: str
+  review_status: str
+  review_fix_attempt: int
+  last_action_was_fix: bool
+  finish_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_review:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # 0. GARANTIR ARQUIVO DE STORY
+  # ============================================================================
+  - name: ensure_story_file
+    description: Decide se pula criação, cria a story, ou aborta por arquivo ausente
+    run: |
+      import os
+      story_path = state.get("story_path", "") or ""
+      key = state.get("story_key", "")
+      impl_dir = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      repo_path = state.get("repo_path", ".")
+
+      # Resolve story_path efetivo se veio vazio
+      if not story_path:
+          candidate = os.path.join(repo_path, impl_dir, f"{key}.md") if not os.path.isabs(impl_dir) else os.path.join(impl_dir, f"{key}.md")
+          if os.path.isfile(candidate):
+              story_path = candidate
+
+      exists = bool(story_path) and os.path.isfile(story_path)
+      create_if_missing = state.get("create_if_missing", True)
+
+      if exists:
+          print(f"Story {key}: arquivo existe ({story_path}) — pulando criação.")
+          return {"story_path": story_path, "_next": "dev_story"}
+      if not create_if_missing:
+          print(f"PARANDO: {key} não tem arquivo de story e create_if_missing=false.")
+          return {"story_path": story_path, "final_status": "missing_story_file", "_next": "__end__"}
+      print(f"Story {key}: sem arquivo — criando.")
+      return {"story_path": story_path, "_next": "create_story"}
+    goto:
+      - if: "state.get('_next') == 'dev_story'"
+        to: dev_story
+      - if: "state.get('_next') == 'create_story'"
+        to: create_story
+      - to: __end__
+
+  - name: create_story
+    description: Cria o arquivo de story (key explícita, sem tocar sprint-status, sem commit)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}.
+            Comunique-se em {{ state.communication_language }}; escreva código/testes/docs em {{ state.document_output_language }} (siga a convenção do repo). Usuário: {{ state.user_name }}.
+
+            ⛔ **NÃO edite `{{ state.sprint_status_path }}`** (a marcação de status é externa/serializada), não faça commit, não edite `epics.md`.
+
+            TASK: crie o arquivo de story para **Story {{ state.story_key }}** ("{{ state.title }}"), seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-create-story/SKILL.md` (leia o arquivo inteiro, inclusive o <workflow>).
+            - A story alvo já está escolhida: `{{ state.story_key }}`. NÃO rode a auto-discovery do skill; vá direto para a construção com esta key.
+            - Escreva em `{{ state.implementation_artifacts_dir }}/{{ state.story_key }}.md`.
+            - Se `python3 _bmad/scripts/resolve_customization.py` falhar, use os defaults de `_bmad/bmm/config.yaml`.
+            - ZERO intervenção humana: não pergunte; registre dúvidas em open-questions no final da story.
+            - Análise exaustiva: seção {{ state.epic_key }} em `_bmad-output/planning-artifacts/epics.md`, CLAUDE.md, `**/project-context.md`, docs de arquitetura, e o CÓDIGO REAL dos módulos que a story menciona.
+
+            Imprima `CREATED: <path>` ao final.
+    output: create_output
+
+  - name: resolve_created_path
+    description: Resolve o story_path efetivo após a criação
+    run: |
+      import os, re
+      out = state.get("create_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      repo_path = state.get("repo_path", ".")
+      impl_dir = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      key = state.get("story_key", "")
+      expected = os.path.join(repo_path, impl_dir, f"{key}.md") if not os.path.isabs(impl_dir) else os.path.join(impl_dir, f"{key}.md")
+      story_path = expected
+      m = re.search(r'CREATED:\s*(\S+)', text)
+      if m:
+          p = m.group(1)
+          cand = p if os.path.isabs(p) else os.path.join(repo_path, p)
+          if os.path.isfile(cand):
+              story_path = cand
+      if not os.path.isfile(story_path) and os.path.isfile(expected):
+          story_path = expected
+      print(f"story_path resolvido: {story_path}")
+      return {"story_path": story_path}
+
+  # ============================================================================
+  # 1. DEV
+  # ============================================================================
+  - name: dev_story
+    description: Implementa a story start-to-finish (bmad-dev-story), baseline + red-green-refactor + lint + commit
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio. {{ "#in_worktree" if state.in_worktree else "#in_main_tree" }}
+            {% if state.in_worktree %}Você está num **worktree git isolado** do graph mode: outras stories do mesmo épico rodam em paralelo, em worktrees irmãs. Nada do que você faz aqui afeta a árvore delas, e nada delas afeta a sua.
+            ISOLATION RULES (violar quebra as outras stories da onda):
+            - **NÃO edite `{{ state.sprint_status_path }}`.** A marcação de status acontece fora deste worktree, em etapa serializada. Se editar aqui, o merge desta story conflita com o merge de TODA outra story da mesma onda (todas tocam a mesma região do arquivo).
+            - **NUNCA `git add -A` ou `git add .`** — sempre `git add <file1> <file2>` por nome. Outras sessões/agentes podem ter deixado arquivos na árvore; varrer tudo mistura trabalho alheio no seu commit e é destrutivo.
+            - Não faça merge/rebase/switch de branch. Fique no branch já checkout neste worktree.
+            {% else %}Você está no repo real em {{ state.repo_path }} (branch atual, sem worktree isolado — as mudanças são permanentes e sequenciais).
+            - **NUNCA** `git add -A` nem `git add .` — sempre `git add <arquivo>` explícito (regra global do usuário).
+            {% endif %}
+            Comunique-se em {{ state.communication_language }}; escreva código/testes/docs em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
+            Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
+
+            Antes de agir, carregue contexto de projeto se existir: CLAUDE.md, **/project-context.md, e docs de arquitetura referenciados pela própria story (Dev Notes) — respeite invariantes centrais documentados ali (ex.: fail-closed). Épicos com dependência sequencial rígida costumam ter uma "Task 0" bloqueante exigindo confirmar no sprint-status.yaml que a anterior está "done" e ler o CÓDIGO REAL da anterior — respeite se presente.
+
+            Implemente esta story do zero ao fim seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-dev-story/SKILL.md` (leia o arquivo inteiro, inclusive o <workflow> com passos 1 a 10). Adapte para rodar sem humano:
+            - Ignore `python3 _bmad/scripts/resolve_customization.py` se falhar; use defaults de `_bmad/bmm/config.yaml`.
+            - Nunca pare por "milestone"/"sessão" — só pare com todos os ACs/tasks completos (Status -> "review") ou num HALT genuíno (dependência real ausente, decisão arquitetural não coberta). Se acontecer, comece o resumo com "HALT:".
+            - Red-green-refactor de verdade: teste que falha primeiro, implementação mínima, depois suíte completa (não pule regressão).
+            - **BASELINE:** ANTES de qualquer alteração rode `{{ state.test_command }}` e registre o número exato (ex.: "873 passed, 10 skipped"). Ao final rode de novo e confirme baseline + novos = total. Reporte AMBOS os números.
+            - Rode o **linter/type-checker QUE ESTE REPO CONFIGURA** nos arquivos novos/alterados (ruff/mypy, eslint/tsc, clippy, golangci-lint — descubra qual no CI e no manifesto). Se o repo não configura nenhum, diga; se configura e a ferramenta não está instalada, diga também. Nunca afirme "limpo" sem rodar de fato.
+            - Nunca implemente fallback silencioso que mascare falha (viola princípio de confiabilidade documentado).
+            - Atualize a File List e o Dev Agent Record da story. Status -> "review".
+            - **COMMIT** (`git add <arquivo>` por nome + commit). {% if state.in_worktree %}O merge no branch de integração acontece depois, fora deste worktree.{% else %}Não faça commit ainda — isso acontece depois da revisão (o finish cuida disso).{% endif %}
+
+            {% if not state.in_worktree %}NÃO faça commit de git ainda — isso acontece depois da revisão (nó finish).{% endif %}
+
+            Ao final resuma: o que foi implementado, testes (baseline antes, total depois, comando + resultado real, não alegado), resultado do lint/typecheck (ou por que não rodou), e lista de arquivos alterados.
+            Imprima `DEV_DONE` ao final.
+    output: dev_output
+
+  # ============================================================================
+  # 2. REVIEW (loop dev→review→fix)
+  # ============================================================================
+  - name: code_review
+    description: Review adversarial autônomo (codex_review), imprime FINAL_STATUS + ACTION_ITEMS
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_review
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio. Comunique-se em {{ state.communication_language }}; código/testes/docs em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
+            Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
+
+            Ciclo de revisão #{{ state.review_fix_attempt | default(0) | int + 1 }}. Você é um revisor sênior ADVERSARIAL, em modo AUTÔNOMO: não há humano disponível, então VOCÊ decide o veredito. Siga o espírito de `{{ state.skills_dir }}/bmad-code-review/SKILL.md` e seus steps em `{{ state.skills_dir }}/bmad-code-review/steps/` (gather-context, review, triage).
+
+            {% if state.in_worktree %}Você está no MESMO worktree onde o dev implementou a story. {% endif %}Rode `git diff` e `git status` para ver exatamente o que mudou nesta story. Revise:
+            1. Todos os Acceptance Criteria foram de fato satisfeitos (não apenas alegados)?
+            2. Existe fallback silencioso que viola algum princípio de confiabilidade central do projeto?
+            3. Os testes que a story exige existem de verdade e passam? **Rode-os você mesmo** e reconfira os números de baseline/total que o dev alegou (rode `{{ state.test_command }}` de novo) — não aceite alegação sem reconferir.
+            4. Há regressão em comportamento pré-existente coberto por testes do repo?
+            5. Rode o linter/type-checker que este repo configura sobre os arquivos tocados você mesmo — não aceite o autorrelato do dev. Se a ferramenta não está instalada/configurada, reporte como actionItem de severidade "low" (lacuna de tooling pré-existente, não bloqueia esta story).
+            6. Riscos de segurança óbvios introduzidos por esta mudança.
+            {% if state.in_worktree %}7. **Específico do modo paralelo:** esta story tocou `{{ state.sprint_status_path }}`? Se tocou, é actionItem "high" — viola o isolamento e conflita no merge com as outras stories da onda.{% endif %}
+
+            verdict="approve" apenas se não houver nenhum item "high" pendente.
+
+            Ao final, imprima EXATAMENTE:
+            - uma linha `FINAL_STATUS: APPROVED` (ou `CHANGES_REQUESTED` ou `BLOCKED`)
+            - uma seção começando com `ACTION_ITEMS:` com cada item numa linha `  [high|medium|low] (file: <path opcional>) <descrição>`
+            - uma linha `BLOCKING_COUNT: <n>`
+    output: review_output
+
+  - name: check_review_status
+    description: Parseia o veredito do review e decide o próximo passo (porta as regex dos YAMLs Codex)
+    run: |
+      import re
+
+      out = state.get("review_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      text_lower = text.lower()
+
+      # Marcador explícito primeiro (o prompt pediu FINAL_STATUS:)
+      review_status = None
+      m = re.search(r'final_status:\s*(approved|changes_requested|blocked)', text_lower)
+      if m:
+          review_status = m.group(1).upper()
+          if review_status == "CHANGES_REQUESTED":
+              review_status = "CHANGES_REQUESTED"
+          print(f"Veredito via FINAL_STATUS: {review_status}")
+      else:
+          # Fallback: mesmos padrões do bmad-story-v6-development-codex.yaml
+          approved = [
+              r'\*\*outcome:?\*\*\s*approved', r'outcome:\s*approved',
+              r'\*\*decision:?\*\*\s*approved', r'decision:\s*approved',
+              r'\blgtm\b', r'code\s+review\s+passed', r'no\s+(?:blocking\s+)?issues?\s+found',
+              r'approve\s+with\s+comments', r'\bapprove\b(?!\s+requested)',
+          ]
+          blocked = [r'review_blocked', r'\*\*status:?\*\*\s*blocked', r'status:\s*blocked',
+                    r'outcome:\s*blocked', r'critical\s+blocker']
+          changes = [r'outcome:\s*changes\s*requested', r'changes?\s+requested',
+                     r'needs?\s+(?:more\s+)?changes', r'must\s+(?:be\s+)?fix']
+          for p in approved:
+              if re.search(p, text_lower): review_status = "APPROVED"; break
+          if not review_status:
+              for p in blocked:
+                  if re.search(p, text_lower): review_status = "BLOCKED"; break
+          if not review_status:
+              for p in changes:
+                  if re.search(p, text_lower): review_status = "CHANGES_REQUESTED"; break
+          if not review_status:
+              review_status = "CHANGES_REQUESTED"
+              print("Sem marcador explícito — default CHANGES_REQUESTED")
+
+      attempt = state.get("review_fix_attempt", 0) + 1
+      max_cycles = state.get("max_review_cycles", 3)
+      last_was_fix = state.get("last_action_was_fix", False)
+
+      # Força parada no máximo de ciclos
+      if attempt >= max_cycles and review_status != "APPROVED":
+          if last_was_fix:
+              # Há um fix que não foi re-revisado: roda um review de confirmação (porta a lógica do JS)
+              print(f"Ciclos esgotados ({attempt}/{max_cycles}) com fix pendente — review de confirmação.")
+              return {"review_status": "NEEDS_CONFIRMATION", "review_fix_attempt": attempt}
+          print(f"Ciclos esgotados ({attempt}/{max_cycles}) sem fix pendente — finalizando.")
+          return {"review_status": "MAX_ATTEMPTS", "review_fix_attempt": attempt}
+
+      print(f"Review #{attempt}: {review_status}")
+      return {"review_status": review_status, "review_fix_attempt": attempt}
+    goto:
+      - if: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) < state.get('max_review_cycles', 3)"
+        to: fix_review
+      - if: "state.get('review_status') == 'APPROVED'"
+        to: finish_story
+      - if: "state.get('review_status') == 'NEEDS_CONFIRMATION'"
+        to: confirm_review
+      - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS']"
+        to: finish_story
+      - to: finish_story
+
+  - name: fix_review
+    description: Corrige os action items do review e commita no branch
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio. Comunique-se em {{ state.communication_language }}; código em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
+            Story alvo: {{ state.story_key }}, arquivo {{ state.story_path }}.
+
+            Um ciclo de code review encontrou problemas (veredito abaixo). Corrija cada action item, rode os testes relevantes de novo (sem pular regressão), atualize a story (Tasks/Subtasks, File List, Dev Agent Record, Change Log) conforme `{{ state.skills_dir }}/bmad-dev-story/SKILL.md`, e {% if state.in_worktree %}commit a correção neste mesmo branch.{% else %}NÃO commit ainda (o finish cuida disso).{% endif %}
+
+            ⛔ {% if state.in_worktree %}Não edite `{{ state.sprint_status_path }}` e nunca `git add -A`/`.` — sempre `git add <arquivo>` por nome.{% else %}Nunca `git add -A`/`.` — sempre `git add <arquivo>` por nome. Não faça commit ainda.{% endif %}
+
+            Resultado do review:
+            {{ state.review_output if state.review_output is string else (state.review_output.get('content','') if state.review_output else '') }}
+
+            Resuma o que foi corrigido e quais testes confirmam a correção. Imprima `FIX_DONE` ao final.
+    output: dev_output
+
+  - name: confirm_review
+    description: Review de confirmação após ciclos esgotados com fix pendente (porta a lógica do JS)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_review
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio. Review de CONFIRMAÇÃO.
+            Story alvo: {{ state.story_key }}, arquivo {{ state.story_path }}.
+
+            Os ciclos de correção se esgotaram e o último fix ainda não tinha sido re-revisado. O veredito anterior descrevia o estado ANTES da correção. Rode `git diff`/`git status`, rode `{{ state.test_command }}`, e decida: APPROVED se os itens bloqueantes foram resolvidos, senão CHANGES_REQUESTED ou BLOCKED.
+
+            Imprima `FINAL_STATUS: <APPROVED|CHANGES_REQUESTED|BLOCKED>`, `ACTION_ITEMS:` (se houver), e `BLOCKING_COUNT: <n>`.
+    output: review_output
+
+  - name: check_confirm_status
+    description: Decide o fim após o review de confirmação
+    run: |
+      import re
+      out = state.get("review_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      m = re.search(r'final_status:\s*(approved|changes_requested|blocked)', text.lower())
+      status = m.group(1).upper() if m else "CHANGES_REQUESTED"
+      print(f"Confirmação: {status}")
+      return {"review_status": status}
+    goto:
+      - if: "state.get('review_status') == 'APPROVED'"
+        to: finish_story
+      - to: finish_story
+
+  # ============================================================================
+  # 3. FINISH (commit + status)
+  # ============================================================================
+  - name: finish_story
+    description: Reconfere suíte, commit só dos arquivos da story, e status done se não-worktree
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}{% if state.in_worktree %} (dentro do worktree isolado desta story){% endif %}. Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
+            Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
+
+            O code review desta story já rodou e o veredito foi:
+            {{ state.review_status }}
+
+            Seu papel é FINALIZAR (commit + status), não revisar de novo. Mas não aceite o veredito no escuro — verifique antes de commitar:
+            1. **Reconfira a árvore.** Rode `{{ state.test_command }}` e confirme verde. Rode `git status --porcelain` e confira a File List da story contra os arquivos modificados. Se a suíte falhar, ou aparecerem arquivos que NÃO pertencem a esta story (trabalho de outra sessão no mesmo repo), PARE: devolva committed=false e descreva o que encontrou, sem commitar.
+            2. **Confira a coerência do veredito.** Se o verdict acima não for APPROVED, PARE e devolva committed=false — finalizar uma story reprovada não é sua decisão.
+            3. Commite APENAS os arquivos individuais da File List (código, testes, docs, story file{% if not state.in_worktree %}, sprint-status.yaml{% endif %}) — jamais `git add -A`/`.`. {% if not state.in_worktree %}ATENÇÃO, este repo tem sessões concorrentes: `git add` nominal seguido de `git commit` leva o ÍNDICE INTEIRO. Rode `git diff --cached --name-only` ANTES de commitar; se aparecer arquivo que não é seu, use `git commit --only <arquivo1> <arquivo2>`. Confira com `git show --stat HEAD` depois.{% endif %}
+            4. Mensagem: rode `git log --oneline -5` e `git log -1 --format=%b` para reproduzir o padrão REAL deste repo (inclusive a linha Co-Authored-By exata). Assunto: `feat(story-{{ state.story_key }}): Story {{ state.epic_num }}.{{ state.story_key.split('-')[1] if '-' in state.story_key else '' }}: <título curto>`. Use heredoc.
+            {% if not state.in_worktree %}5. Atualize `{{ state.sprint_status_path }}`: `development_status["{{ state.story_key }}"] = "done"` e `last_updated` para hoje, preservando comentários/definições. Commit só esse arquivo (`git add <path>`){% else %}5. **NÃO edite `{{ state.sprint_status_path }}`** — a marcação de status é externa e serializada (fora deste worktree). Só commit os arquivos da story no branch do worktree.{% endif %}
+            6. Atualize a story file: Status -> "done".
+
+            Retorne committed=true/false, o SHA (`git rev-parse HEAD`), se sprint-status foi atualizado (false se in_worktree), e notas. Imprima `FINISH_DONE` ao final.
+    output: finish_output
+
+  - name: summary
+    description: Sintetiza o status final da story
+    run: |
+      out = state.get("finish_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      committed = "true" in text.lower().split("committed:")[1][:10].lower() if "committed:" in text.lower() else False
+      status = state.get("review_status", "UNKNOWN")
+      if state.get("final_status") == "missing_story_file":
+          final = "missing_story_file"
+      elif status == "APPROVED" and committed:
+          final = "completed"
+      elif status in ("BLOCKED", "MAX_ATTEMPTS"):
+          final = "incomplete"
+      else:
+          final = "incomplete"
+      print(f"Story {state.get('story_key')}: final_status={final} (review={status})")
+      return {"final_status": final}
+
+edges:
+  - from: __start__
+    to: ensure_story_file
+  - from: create_story
+    to: resolve_created_path
+  - from: resolve_created_path
+    to: dev_story
+  - from: dev_story
+    to: code_review
+  - from: fix_review
+    to: code_review
+  - from: confirm_review
+    to: check_confirm_status
+  - from: finish_story
+    to: summary
+  - from: summary
+    to: __end__

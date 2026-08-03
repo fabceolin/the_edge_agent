@@ -1,0 +1,853 @@
+name: bmad-epic-waves
+description: |
+  BMad — fluxo de épico PARALELO por ondas: analisa dependências entre as stories do épico,
+  deriva as ondas (paralelizando o máximo que o grafo permite), roda cada story num git worktree
+  isolado, com integração (merge) e marcação de status serializada ao fim de cada onda. Quando
+  o épico fecha 100%, escreve a retrospective e flippa o pseudo-key epic-N para done.
+
+  Port direto do bmad-epic-waves.js (Claude Code Workflow tool) para tea YAML.
+
+  Mapeamento de primitivas:
+  - computeWaves() (JS, determinístico) → nó `run:` Python (port ipsis litteris).
+  - parallel() fan-out por onda → execution.run mode: graph com use_worktrees:true
+    (graph mode faz topológico + worktree por task + merge).
+  - agent(prompt,{schema}) → llm.call codex + marcadores FINAL_STATUS/EDGE/...
+  - sprint-status done no merge (serial, mergePrompt) → nó run: Python (determinístico).
+
+  Input (--input JSON):
+    arg (obrigatório): "epic-10", "10" ou 10
+    repo_path (obrigatório): path absoluto do repo alvo
+    only_wave (int, opcional): roda só a onda N (respeita teto de agentes)
+    max_review_cycles (int, default 3)
+    run_retrospective (bool, default true)
+    flip_epic_status (bool, default true)
+    dry_run (bool, default false): só computa e loga o plano de ondas, não executa
+    stop_after_prep (bool, default false): cria as stories faltantes e para
+    auto_create_stories (bool, default true)
+    deps (dict, opcional): override do grafo {to: [from,...]}; pula inferência
+    reprocess_done (bool, default false)
+    stop_on_wave_failure (bool, default true)
+    skills_dir (str, opcional): default {repo_path}/.claude/skills
+
+  Uso:
+    tea run examples/workflows/bmad-epic-waves.yaml \
+      --input '{"arg":"epic-10","repo_path":"/home/fabricio/src/licityeasy"}'
+    # Só ver o plano:
+    tea run examples/workflows/bmad-epic-waves.yaml \
+      --input '{"arg":"epic-10","repo_path":"...","dry_run":true}'
+
+state_schema:
+  arg: str
+  repo_path: str
+  epic_num: str
+  epic_key: str
+  max_review_cycles: int
+  run_retrospective: bool
+  flip_epic_status: bool
+  dry_run: bool
+  stop_after_prep: bool
+  auto_create_stories: bool
+  only_wave: int
+  deps: dict
+  reprocess_done: bool
+  stop_on_wave_failure: bool
+  skills_dir: str
+  epic_label: str
+  communication_language: str
+  document_output_language: str
+  user_name: str
+  test_command: str
+  target_branch: str
+  implementation_artifacts_dir: str
+  sprint_status_path: str
+  stories: list
+  candidates: list
+  missing_files: list
+  prep_create_output: str
+  reconcile_output: str
+  sprint_status_intact: bool
+  prep_committed: bool
+  prep_head_sha: str
+  graph_output: str
+  graph_edges: list
+  graph_analysis: str
+  deps_resolved: dict
+  waves: list
+  wave_tasks: list
+  run_waves_results: dict
+  marked_done: list
+  all_done: bool
+  done_count: int
+  total_count: int
+  suite_green: bool
+  suite_covers_the_epic: bool
+  retro_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+  # NOTA: execution.run / settings.execution NÃO existem como action no tea 0.9.108
+  # (ExecutionOrchestrator existe como lib mas não está wired ao `tea run`). As ondas
+  # rodam via DOT nativo: build_waves gera um .dot, run_waves chama `tea run --from-dot`.
+  # Worktree por story, quando necessário, via git.worktree_create no subgraph.
+
+nodes:
+  # ============================================================================
+  # DISCOVER — determinístico (porta o discover do JS epic-waves)
+  # ============================================================================
+  - name: discover_epic
+    description: Descobre stories, langs, test_command, target_branch, impl_artifacts_dir
+    run: |
+      import os, re, glob, subprocess, yaml
+      repo = state.get("repo_path", ".")
+      os.chdir(repo) if os.path.isdir(repo) else None
+      arg = str(state.get("arg", ""))
+      m = re.search(r'(\d+)', arg)
+      if not m: return {"final_status": "error_bad_epic_arg"}
+      epic_num, epic_key = m.group(1), f"epic-{m.group(1)}"
+
+      config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+      impl_artifacts = "_bmad-output/implementation-artifacts"
+      comm_lang, doc_lang, user_name = "Português", "Português", "Fabrício"
+      for cp in config_paths:
+          if os.path.exists(cp):
+              try:
+                  cfg = yaml.safe_load(open(cp)) or {}
+                  impl_artifacts = cfg.get("implementation_artifacts", impl_artifacts)
+                  comm_lang = cfg.get("communication_language", comm_lang)
+                  doc_lang = cfg.get("document_output_language", doc_lang)
+                  user_name = cfg.get("user_name", user_name)
+                  break
+              except Exception: pass
+      # Resolve placeholders da config ({project-root} → relativo ao repo, {repo} idem)
+      for ph in ["{project-root}", "{repo}", repo]:
+          impl_artifacts = impl_artifacts.replace(ph, "")
+      impl_artifacts = impl_artifacts.lstrip("/") or impl_artifacts
+      sprint_status_path = os.path.join(impl_artifacts, "sprint-status.yaml")
+
+      try:
+          target_branch = subprocess.check_output(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, text=True).strip()
+      except Exception:
+          target_branch = "main"
+
+      ss_full = os.path.join(repo, sprint_status_path)
+      stories, epic_label = [], epic_key
+      if os.path.isfile(ss_full):
+          ss = yaml.safe_load(open(ss_full)) or {}
+          dev_status = ss.get("development_status", {}) or {}
+          for key, val in dev_status.items():
+              if not re.match(rf'^{epic_num}-', key): continue
+              if key in (epic_key, f"{epic_key}-retrospective"): continue
+              status = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
+              sp = os.path.join(repo, impl_artifacts, f"{key}.md")
+              has_file = os.path.isfile(sp)
+              title = key
+              if has_file:
+                  try:
+                      h1 = re.search(r'^#\s+(.+)$', open(sp).read(1500), re.M)
+                      if h1: title = h1.group(1).strip()
+                  except Exception: pass
+              stories.append({"key": key, "title": title, "status": (status or "").lower(), "has_story_file": has_file, "story_path": sp if has_file else ""})
+      epics_md = os.path.join(repo, "_bmad-output/planning-artifacts/epics.md")
+      if os.path.isfile(epics_md):
+          try:
+              m2 = re.search(rf'^#+\s*.*\b{re.escape(epic_key)}\b[^\n]*', open(epics_md).read(), re.M | re.I)
+              if m2: epic_label = m2.group(0).lstrip('#').strip()
+          except Exception: pass
+
+      # test_command
+      test_command = ""
+      for tf in ["Makefile","pyproject.toml","package.json","Cargo.toml"]:
+          p = os.path.join(repo, tf)
+          if not os.path.isfile(p): continue
+          try:
+              if tf == "Makefile" and re.search(r'^test:', open(p).read(), re.M): test_command = "make test"
+              elif tf == "pyproject.toml" and re.search(r'pytest', open(p).read(), re.I): test_command = "pytest -q"
+              elif tf == "package.json":
+                  import json as _j; pkg = _j.load(open(p))
+                  if "test" in (pkg.get("scripts") or {}): test_command = "npm test"
+              elif tf == "Cargo.toml": test_command = "cargo test"
+          except Exception: pass
+          if test_command: break
+
+      reprocess = state.get("reprocess_done", False)
+      candidates = [s for s in stories if reprocess or s.get("status") != "done"]
+      missing = [s for s in candidates if not s.get("has_story_file")]
+
+      # dry_run: pula a PREP inteira (prep_reconcile marca sprint-status/epic — escrita
+      # destrutiva que não faz sentido em dry_run; evita também o bug do fan_in vazio).
+      skip_prep = bool(state.get("dry_run")) or not candidates
+      print(f"Épico {epic_key} (\"{epic_label}\"): {len(stories)} stories, {len(candidates)} candidatas, {len(missing)} sem arquivo. branch={target_branch} suite={test_command or '(nenhuma)'}")
+      return {
+          "epic_num": epic_num, "epic_key": epic_key, "epic_label": epic_label,
+          "communication_language": comm_lang, "document_output_language": doc_lang, "user_name": user_name,
+          "test_command": test_command, "target_branch": target_branch,
+          "implementation_artifacts_dir": impl_artifacts, "sprint_status_path": sprint_status_path,
+          "stories": stories, "candidates": candidates, "missing_files": missing,
+          "skills_dir": state.get("skills_dir") or os.path.join(repo, ".claude/skills"),
+          "_skip_prep": skip_prep,
+      }
+    goto:
+      - if: "state.get('_skip_prep')"
+        to: graph_infer
+      - to: prep_create
+
+  # ============================================================================
+  # PREP — cria stories faltantes (fan-out), reconcilia status, commita
+  # ============================================================================
+  - name: prep_create
+    description: Cria em paralelo as stories faltantes (mesma árvore, sem worktree, sem tocar sprint-status)
+    type: dynamic_parallel
+    items: "{{ state.missing_files }}"
+    item_var: mstory
+    max_concurrency: 4
+    fail_fast: false
+    subgraph: "./bmad-create-story.yaml"
+    input:
+      repo_path: "{{ state.repo_path }}"
+      epic_key: "{{ state.epic_key }}"
+      epic_num: "{{ state.epic_num }}"
+      story_key: "{{ mstory.key }}"
+      title: "{{ mstory.title }}"
+      skills_dir: "{{ state.skills_dir }}"
+      implementation_artifacts_dir: "{{ state.implementation_artifacts_dir }}"
+      sprint_status_path: "{{ state.sprint_status_path }}"
+      communication_language: "{{ state.communication_language }}"
+      document_output_language: "{{ state.document_output_language }}"
+      user_name: "{{ state.user_name }}"
+    output: prep_create_results
+    fan_in: prep_reconcile
+
+  - name: prep_reconcile
+    description: Fan-in serial — checa arquivos criados e marca sprint-status UMA vez (porta reconcilePrompt)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
+
+            {{ state.missing_files | length }} stories do {{ state.epic_key }} acabaram de ser criadas em paralelo por agentes irmãos, que tinham PROIBIÇÃO de tocar sprint-status. Seu trabalho é o fan-in: checar o que existe no disco e fazer TODAS as marcações de status de uma vez. Você é o único agente escrevendo neste arquivo agora.
+
+            Sempre leia do disco — não confie em memória nem em autorrelato.
+
+            1. **Cheque cada arquivo esperado** (existe, não vazio, tem conteúdo de story de verdade — ACs, Dev Notes — e não um stub de uma linha):
+            {% for s in state.missing_files %}   - {{ state.implementation_artifacts_dir }}/{{ s.key }}.md  (key: {{ s.key }})
+            {% endfor %}
+            2. **Procure colisões:** liste os `{{ state.epic_num }}-*.md` em `{{ state.implementation_artifacts_dir }}/` e reporte em `duplicates` qualquer arquivo que NÃO está na lista acima, ou dois com conteúdo praticamente idêntico (assinatura de dois agentes tendo escrito a mesma story).
+            3. **Marque os statuses** em `{{ state.sprint_status_path }}`, só para os keys cujo arquivo passou o item 1: `development_status[<key>] = "ready-for-dev"`, e `{{ state.epic_key }}` de `backlog` para `in-progress`. Atualize `last_updated`.
+               **Formato de `last_updated` (OBRIGATÓRIO):** a linha atual é um scalar `YYYY-MM-DD` seguido de um comentário histórico longo após `#`. Preserve EXATAMENTE esse formato — troque só a data (a de hoje, `YYYY-MM-DD` sem aspas, sem horário/ISO), e mantenha o comentário `# ...` inteiro na mesma linha. NÃO converta para ISO, NÃO adicione aspas, NÃO remova o comentário. Se um status já está no valor alvo, não reescreva a linha (escrita idempotente).
+               **Edição surgical, nunca regeneração:** mude só essas linhas. Não regenere o arquivo, não remova comentários (o topo costuma ser um log histórico longo), não toque `action_items`, não altere entries de outros époc, e NUNCA rebaixe um status existente (`done` nunca volta).
+            4. **Valide o arquivo depois de escrever:** ainda parseia como YAML válido (`python3 -c "import yaml; yaml.safe_load(open('{{ state.sprint_status_path }}'))"`), o número de linhas não diminuiu, e `action_items` tem o mesmo número de itens. Reporte `sprint_status_intact` baseado nessa checagem real.
+            5. Não commita nada.
+
+            Imprima ao final:
+            - `ALL_PRESENT: true|false`
+            - `MISSING: <keys sem arquivo válido, separados por vírgula>`
+            - `DUPLICATES: <paths suspeitos>`
+            - `STATUS_UPDATED: <keys marcados, separados por vírgula>`
+            - `SPRINT_STATUS_INTACT: true|false`
+
+            **Formato estrito dos marcadores** (um parser por linha lê isto — NUNCA escreva a
+            palavra "none", "n/a" ou "-" como valor): quando uma lista for vazia, deixe o
+            campo em branco após os dois-pontos (ex.: `MISSING:` sozinho numa linha). Para
+            listas não-vazias, separe os itens por vírgula sem "none". Use exatamente um
+            marcador por linha, na ordem acima.
+    output: reconcile_output
+
+  - name: parse_reconcile
+    description: Parseia o resultado do reconcile e decide abortar ou commitar
+    run: |
+      import re, os
+      out = state.get("reconcile_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      t = text.lower()
+      all_present = "all_present: true" in t
+      intact = "sprint_status_intact: true" in t
+      # [ \t]* (NÃO \s*) — \s casa '\n' e faz o regex saltar a linha, capturando o
+      # campo seguinte quando MISSING/DUPLICATES vêm vazios. Ex.: "MISSING:\nDUPLICATES:\nSTATUS_UPDATED: k"
+      # com \s* vira missing_after=['duplicates:'] e duplicates=['status_updated: k'].
+      # _sentinel filtra "none"/"n/a"/"-"/"nil"/"null" que o Codex às vezes escreve para
+      # indicar "vazio" (já vimos "MISSING: none" virar missing_after=['none'] → ABORT falso).
+      _sentinels = {"", "none", "n/a", "na", "-", "nil", "null", "nenhum", "nenhuma"}
+      def _norm_list(raw):
+          return [k.strip() for k in (raw.split(",") if raw else []) if k.strip().lower() not in _sentinels]
+      miss_m = re.search(r'missing:[ \t]*([^\n]*)', t)
+      missing_after = _norm_list(miss_m.group(1) if miss_m else "")
+      dup_m = re.search(r'duplicates:[ \t]*([^\n]*)', t)
+      duplicates = _norm_list(dup_m.group(1) if dup_m else "")
+      print(f"Reconcile: all_present={all_present} intact={intact} missing_after={missing_after} duplicates={duplicates}")
+      # Atualiza story_paths das criadas
+      repo = state.get("repo_path", ".")
+      impl = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      stories = state.get("stories", [])
+      for s in stories:
+          if not s.get("has_story_file"):
+              sp = os.path.join(repo, impl, f"{s['key']}.md")
+              if os.path.isfile(sp):
+                  s["has_story_file"] = True
+                  s["story_path"] = sp
+      if not all_present or missing_after:
+          return {"_prep_next": "abort_missing", "missing_after": missing_after, "stories": stories}
+      return {"_prep_next": "prep_commit", "sprint_status_intact": intact, "duplicates": duplicates, "stories": stories}
+    goto:
+      - if: "state.get('_prep_next') == 'abort_missing'"
+        to: abort_missing
+      - to: prep_commit
+
+  - name: prep_commit
+    description: Commita os arquivos criados + sprint-status (git add por nome, determinístico)
+    run: |
+      import os, re, subprocess
+      repo = state.get("repo_path", ".")
+      impl = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      ss = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
+      missing = state.get("missing_files", [])
+      # Paths a commitar (relativos ao repo)
+      paths = [os.path.join(impl, f"{m['key']}.md") for m in missing]
+      paths.append(ss)
+      # só os que existem
+      to_add = [p for p in paths if os.path.isfile(os.path.join(repo, p))]
+      if not to_add:
+          # nada para commitar (stories já existiam) — segue com HEAD atual
+          try: head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
+          except Exception: head = ""
+          print("Prep: nada novo para commitar.")
+          return {"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"}
+      # git add por nome (nunca -A)
+      subprocess.run(["git","add"] + to_add, cwd=repo, check=True)
+      staged = subprocess.check_output(["git","diff","--cached","--name-only"], cwd=repo, text=True).strip().splitlines()
+      # Escrita idempotente: o reconcile pode reportar STATUS_UPDATED mas não produzir diff
+      # (status já era o alvo). Nada staged = nada a commitar — segue com HEAD atual, não
+      # tenta `git commit` (que retornaria != 0 com "nothing to commit" → abort falso).
+      if not staged:
+          try: head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
+          except Exception: head = ""
+          print("Prep: nada novo para commitar (status já marcado, escrita idempotente).")
+          return {"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"}
+      # Copia padrão de commit do repo (Co-Authored-By)
+      try:
+          prev_body = subprocess.check_output(["git","log","-1","--format=%b"], cwd=repo, text=True)
+      except Exception:
+          prev_body = ""
+      co_auth = ""
+      mco = re.search(r'(Co-Authored-By:.*)', prev_body, re.M)
+      if mco: co_auth = "\n\n" + mco.group(1)
+      msg = f"docs({state.get('epic_key')}): create the epic's story files\n\n{len(to_add)} stories criadas, statuses movidos para ready-for-dev.{co_auth}"
+      r = subprocess.run(["git","commit","-m", msg], cwd=repo, capture_output=True, text=True)
+      if r.returncode != 0:
+          print(f"prep_commit falhou: {r.stderr}")
+          return {"prep_committed": False, "_prep_next": "abort_commit_failed"}
+      head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
+      print(f"Prep commitado: {head} ({len(to_add)} arquivos)")
+      return {"prep_committed": True, "prep_head_sha": head, "_prep_next": "check_stop"}
+    goto:
+      - if: "state.get('_prep_next') == 'abort_commit_failed'"
+        to: abort_commit_failed
+      - to: check_stop_after_prep
+
+  - name: check_stop_after_prep
+    description: Se stop_after_prep, para aqui
+    run: |
+      if state.get("stop_after_prep"):
+          print("stop_after_prep — parando. Revise os arquivos de story antes de rodar o épico.")
+          return {"final_status": "stopped_after_prep"}
+      return {"_stop": False}
+    goto:
+      - if: "state.get('stop_after_prep')"
+        to: __end__
+      - to: graph_infer
+
+  - name: abort_missing
+    description: Aborta por stories faltantes após PREP
+    run: |
+      print(f"ABORT: stories ainda faltando após PREP: {state.get('missing_after')}")
+      return {"final_status": "story_creation_incomplete"}
+    goto: __end__
+
+  - name: abort_commit_failed
+    description: Aborta por falha no commit da PREP
+    run: |
+      print("ABORT: prep_commit_failed — stories criadas mas não commitadas. Commite à mão (git add por nome) e rode de novo.")
+      return {"final_status": "prep_commit_failed"}
+    goto: __end__
+
+  # ============================================================================
+  # GRAPH — inferência de dependências (LLM) + ondas (determinístico)
+  # ============================================================================
+  - name: graph_infer
+    description: Decide se usa deps override ou infere o grafo com LLM
+    run: |
+      if state.get("deps"):
+          print("args.deps fornecido — inferência de grafo PULADA.")
+          return {"_graph_next": "build_waves"}
+      return {"_graph_next": "graph_llm"}
+    goto:
+      - if: "state.get('_graph_next') == 'build_waves'"
+        to: build_waves
+      - to: graph_llm
+
+  - name: graph_llm
+    description: Infere as arestas de dependência entre stories (porta graphPrompt do JS)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
+
+            Sua tarefa é UMA coisa: descobrir as dependências entre as stories do {{ state.epic_key }} ("{{ state.epic_label }}"). Você NÃO implementa nada e NÃO decide o que roda em paralelo — só retorna as arestas do grafo. O agrupamento em ondas é computado depois, em código, a partir do que você retorna.
+
+            Stories (use estas keys EXATAS nas arestas):
+            {% for s in state.candidates %}- {{ s.key }} — "{{ s.title }}" ({{ s.story_path }})
+            {% endfor %}
+
+            FONTES, em ordem de peso evidencial:
+            1. O arquivo de cada story: Dev Notes, "Task 0"/pré-condições bloqueantes, menções literais a outra story ("depends on", "after X is done", "reuses the module from Y").
+            2. A seção {{ state.epic_key }} em `_bmad-output/planning-artifacts/epics.md` — notas de ordenação obrigatória, fundações declaradas, trade-offs.
+            3. Os arquivos que cada story diz que vai tocar (File List planejada, paths citados nos ACs) e o CÓDIGO REAL nesses paths.
+
+            Retorne DOIS tipos de aresta:
+            - **kind=logic**: story `to` precisa do que `from` constrói — um módulo, um contrato, uma decisão. Implementar fora de ordem produz código incoerente.
+            - **kind=file**: as duas editam o MESMO arquivo, sem dependência conceitual. Importa porque cada story roda num worktree isolado e é mergeada depois: duas stories editando o mesmo arquivo na mesma onda produzem conflito de merge. Serializá-las é mais barato que resolver o conflito.
+
+            ⚠️ **VIÉS OBRIGATÓRIO — os erros não são simétricos.** Uma aresta FALTANTE faz duas stories que deveriam ser sequenciais rodarem juntas: conflito de merge no melhor caso, código incoerente no pior. Uma aresta EXTRA só custa paralelismo — o pipeline fica mais lento e nada quebra. Portanto: **na dúvida, ADICIONE a aresta.** Não tente maximizar paralelismo; maximize a chance de a ordem estar correta. Só omita uma aresta quando há evidência positiva de que as duas stories são realmente independentes.
+
+            REGRAS:
+            - `evidence` deve ser concreta e verificável: citação literal da story, ou path do arquivo compartilhado. Nunca "parecem relacionadas".
+            - Não invente aresta só da NUMERAÇÃO. 10-2 vir depois de 10-1 não implica dependência; muitos épicos têm stories numeradas sequencialmente mas mutualmente independentes.
+            - Sem ciclos. Se A e B parecem depender um do outro, escolha a direção que reflete a ordem real de construção e explique em `analysis`.
+            - Em `analysis`, diga também o que você checou e concluiu ser INDEPENDENTE — a ausência de aresta é uma asserção sua, e precisa ser deliberada.
+
+            Imprima cada aresta numa linha: `EDGE: <from> -> <to> [kind] EVIDENCE: <evidence>`
+            Ao final, uma linha `ANALYSIS: <texto>` (pode usar várias linhas começando com `ANALYSIS:`).
+    output: graph_output
+
+  - name: build_waves
+    description: Porta computeWaves() do JS — resolve prefixos, layers topológico, constrói tasks p/ execution.run
+    run: |
+      import os, re, json
+
+      candidates = state.get("candidates", [])
+      stories = state.get("stories", [])
+      epic_num = state.get("epic_num", "")
+      epic_key = state.get("epic_key", "")
+      keys = [c["key"] for c in candidates]
+      key_set = set(keys)
+      finished_keys = [s["key"] for s in stories if s.get("status") == "done" and s["key"] not in key_set]
+
+      # Parse edges do graph_output (ou usa deps override)
+      deps_raw = state.get("deps") or {}
+      edges = []
+      analysis = ""
+      if not deps_raw:
+          out = state.get("graph_output", {})
+          text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+          for line in text.splitlines():
+              em = re.match(r'\s*EDGE:\s*(\S+)\s*->\s*(\S+)\s*\[(\w+)\]\s*EVIDENCE:\s*(.*)$', line)
+              if em:
+                  edges.append({"from": em.group(1), "to": em.group(2), "kind": em.group(3), "evidence": em.group(4)})
+              elif line.strip().startswith("ANALYSIS:"):
+                  analysis += line.split("ANALYSIS:",1)[1].strip() + " "
+          # Monta deps_raw a partir das edges (to depende de from)
+          for e in edges:
+              deps_raw.setdefault(e["to"], []).append(e["from"])
+
+      # ---- Port do computeWaves() ----
+      def resolve(raw, origin=""):
+          if raw in key_set: return raw
+          hits = [k for k in keys if k == raw or k.startswith(raw + "-")]
+          if len(hits) == 1: return hits[0]
+          if len(hits) > 1:
+              raise Exception(f'dependência "{raw}" é AMBÍGUA — bate com {len(hits)}: {hits}')
+          fin = [k for k in finished_keys if k == raw or k.startswith(raw + "-")]
+          if fin:
+              print(f'Dependência "{raw}" já done ({fin}) — satisfeita, removida do layering.')
+              return None
+          raise Exception(f'dependência "{raw}" não bate com nenhuma story de {epic_key}')
+
+      deps = {k: [] for k in keys}
+      for raw_k, raw_list in (deps_raw or {}).items():
+          k = resolve(raw_k)
+          if k is None: continue
+          deps[k] = [d for d in (resolve(dd, k) for dd in (raw_list or [])) if d is not None]
+
+      wave = {}
+      visiting = set()
+      def depth(k, trail):
+          if k in wave: return wave[k]
+          if k in visiting:
+              raise Exception(f'CICLO de dependência: {" -> ".join(trail + [k])}')
+          visiting.add(k)
+          w = 1
+          for d in deps[k]:
+              w = max(w, depth(d, trail + [k]) + 1)
+          visiting.discard(k)
+          wave[k] = w
+          return w
+      for k in keys: depth(k, [])
+
+      max_wave = max(wave.values()) if wave else 0
+      all_waves = [[k for k in keys if wave[k] == i] for i in range(1, max_wave + 1)]
+
+      only_wave = state.get("only_wave")
+      if only_wave:
+          waves = [all_waves[only_wave - 1]] if 1 <= only_wave <= len(all_waves) else []
+          print(f"onlyWave={only_wave}: executando só a onda {only_wave}.")
+      else:
+          waves = all_waves
+
+      serial_cost = len(candidates) - len(waves)
+      print(f"Épico {epic_key}: {len(candidates)} candidatas em {len(waves)} onda(s) — {serial_cost} passo(s) salvos vs. sequencial.")
+      for i, w in enumerate(waves):
+          print(f"  Onda {i+1} ({len(w)} em paralelo): {', '.join(w)}")
+      for e in edges:
+          print(f"  {e['from']} -> {e['to']} [{e['kind']}] {e['evidence'][:80]}")
+
+      # ---- Gera o grafo DOT (Command Mode) — o tea --from-dot faz topological sort + ondas nativo ----
+      # execution.run NÃO existe no tea 0.9.108; o DOT é a primitiva nativa de ondas com deps.
+      import tempfile
+      repo = state.get("repo_path", ".")
+      # binário tea absoluto (evita PATH shadowing dentro das tmux windows do DOT)
+      tea_bin = os.environ.get("TEA_BIN") or "/home/fabricio/src/the_edge_agent/.venv/bin/tea"
+      # subgraph_path DEVE ser absoluto: o run_waves chama `tea --from-dot` com cwd=repo_path
+      # (licityeasy), onde `examples/workflows/` não existe. Deriva do tea_bin (venv/bin -> repo).
+      _tea_home = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(tea_bin))))
+      subgraph_path = state.get("subgraph_path") or os.path.join(_tea_home, "examples", "workflows", "bmad-story-cycle.yaml")
+      if not os.path.isabs(subgraph_path):
+          subgraph_path = os.path.join(_tea_home, subgraph_path)
+      skills_dir = state.get("skills_dir") or os.path.join(repo, ".claude/skills")
+      common = {
+          "repo_path": repo, "epic_key": epic_key, "epic_num": epic_num,
+          "skills_dir": skills_dir,
+          "implementation_artifacts_dir": state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts"),
+          "sprint_status_path": state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml"),
+          "communication_language": state.get("communication_language", "Português"),
+          "document_output_language": state.get("document_output_language", "Português"),
+          "user_name": state.get("user_name", "Fabrício"),
+          "test_command": state.get("test_command", ""),
+          "target_branch": state.get("target_branch", "main"),
+          "create_if_missing": False,  # PREP já criou tudo
+          "max_review_cycles": int(state.get("max_review_cycles", 3)),
+          "in_worktree": bool(state.get("in_worktree", False)),  # DOT não cria worktree; False roda no checkout
+      }
+      cmap = {c["key"]: c for c in candidates}
+      # IDs seguros no DOT (keys têm hífen): s<idx>; label = key (mostra no tmux/output)
+      id_of = {k: f"s{i}" for i, k in enumerate(keys)}
+      lines = ['digraph epic_waves {', '  rankdir=TB;', '  node [shape=box];',
+               '  Start [label="Start", shape=ellipse];', '  End [label="End", shape=ellipse];']
+      for k in keys:
+          c = cmap[k]
+          payload = dict(common)
+          payload.update({"story_key": k, "title": c.get("title", k), "story_path": c.get("story_path", "")})
+          j = json.dumps(payload)
+          # command: tea run subgraph --input '<json>'; aspas duplas do JSON escapadas p/ DOT (\"), backslash (\\)
+          cmd = f"{tea_bin} run {subgraph_path} --input '{j}'"
+          cmd_dot = cmd.replace('\\', '\\\\').replace('"', '\\"')
+          label_dot = k.replace('"', '\\"')
+          lines.append(f'  {id_of[k]} [label="{label_dot}" command="{cmd_dot}"];')
+      # Arestas de dependência (from -> to) e ligação a Start/End
+      has_children = set()
+      for k in keys:
+          for d in deps[k]:
+              lines.append(f'  {id_of[d]} -> {id_of[k]};')
+              has_children.add(d)
+      for k in keys:
+          if not deps[k]:
+              lines.append(f'  Start -> {id_of[k]};')
+      for k in keys:
+          if k not in has_children:
+              lines.append(f'  {id_of[k]} -> End;')
+      lines.append('}')
+      dot_content = "\n".join(lines)
+      dot_dir = os.path.join(tempfile.gettempdir(), "tea-epic-waves")
+      os.makedirs(dot_dir, exist_ok=True)
+      dot_path = os.path.join(dot_dir, f"{epic_key}.dot")
+      with open(dot_path, "w") as f:
+          f.write(dot_content)
+      print(f"DOT gerado: {dot_path} ({len(keys)} nós, {sum(len(v) for v in deps.values())} arestas)")
+
+      if state.get("dry_run"):
+          print("DRY_RUN — não executando. Plano de ondas acima; DOT em " + dot_path)
+          return {"final_status": "dry_run", "waves": [[k for k in w] for w in waves], "graph_edges": edges, "dot_path": dot_path}
+
+      return {"waves": waves, "graph_edges": edges, "graph_analysis": analysis, "deps_resolved": deps, "dot_path": dot_path, "only_wave": only_wave}
+    goto:
+      - if: "state.get('final_status') == 'dry_run'"
+        to: __end__
+      - to: run_waves
+
+  # ============================================================================
+  # RUN WAVES — DOT nativo (tea run --from-dot). execution.run NÃO existe no tea
+  # 0.9.108; o DOT é a primitiva nativa de ondas com dependências (topological sort
+  # + paralelo via tmux + retomada por wave/step/label).
+  # ============================================================================
+  - name: run_waves
+    description: Executa as stories em ondas via DOT nativo (tea run --from-dot)
+    run: |
+      import os, subprocess, re
+      dot_path = state.get("dot_path")
+      if not dot_path or not os.path.isfile(dot_path):
+          print("run_waves: dot_path ausente — pulando (nada para executar)")
+          return {"run_waves_results": {"rc": 0, "stdout": "", "succeeded": [], "all_ok": True, "skipped": True}}
+      tea_bin = os.environ.get("TEA_BIN") or "/home/fabricio/src/the_edge_agent/.venv/bin/tea"
+      epic_key = state.get("epic_key", "epic")
+      max_parallel = int(state.get("dot_max_parallel", 4))
+      dot_timeout = int(state.get("dot_timeout", 10800))
+      cmd = [tea_bin, "run", "--from-dot", dot_path,
+             "--dot-exec", tea_bin,
+             "--dot-max-parallel", str(max_parallel),
+             "--dot-session", f"epic-{epic_key}"]
+      only_wave = state.get("only_wave")
+      if only_wave:
+          cmd += ["--dot-start-wave", str(only_wave)]
+      if state.get("dry_run"):
+          cmd += ["--dot-dry-run"]
+      print("run_waves: " + " ".join(cmd))
+      proc = subprocess.run(cmd, cwd=state.get("repo_path", "."),
+                           capture_output=True, text=True, timeout=dot_timeout)
+      out = proc.stdout or ""
+      err = proc.stderr or ""
+      print(out[-3000:])
+      if err:
+          print("STDERR:", err[-1500:])
+      succeeded = re.findall(r'Completed:\s+(\S+)', out)
+      failed = re.findall(r'Failed:\s+(\S+)', out)
+      # "Nodes: N/M succeeded" indica sucesso total; rc==0 é requerido
+      m_nodes = re.search(r'Nodes:\s+(\d+)/(\d+)\s+succeeded', out)
+      all_ok = bool(m_nodes) and m_nodes.group(1) == m_nodes.group(2) and proc.returncode == 0
+      print(f"run_waves: rc={proc.returncode} succeeded={succeeded} failed={failed} all_ok={all_ok}")
+      return {"run_waves_results": {"rc": proc.returncode, "stdout": out[-6000:], "stderr": err[-2000:],
+                                    "succeeded": succeeded, "failed": failed, "all_ok": all_ok}}
+    goto:
+      - if: "not state.get('run_waves_results', {}).get('all_ok') and state.get('stop_on_wave_failure', True)"
+        to: summary
+      - to: mark_done
+
+  # ============================================================================
+  # MARK DONE — serial, determinístico (porta o mergePrompt de sprint-status)
+  # ============================================================================
+  - name: mark_done
+    description: Marca cada story integrada como done no sprint-status e commita (git add por nome)
+    run: |
+      import os, re, subprocess, yaml
+      from datetime import date
+      repo = state.get("repo_path", ".")
+      ss_rel = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
+      ss_full = os.path.join(repo, ss_rel)
+      today = date.today().isoformat()
+      marked = []
+      if not os.path.isfile(ss_full):
+          print("sprint-status.yaml ausente — pulando mark_done")
+          return {"marked_done": []}
+      # Edição textual surgical: development_status[<key>] = "done"
+      with open(ss_full) as f:
+          lines = f.readlines()
+      # Marca só as stories que efetivamente rodaram com sucesso no DOT
+      # (labels dos nós DOT = story_key). Se não houver lista de succeeded, cai p/ todas candidatas.
+      res = state.get("run_waves_results", {}) or {}
+      succ = res.get("succeeded") or []
+      keys = [c["key"] for c in state.get("candidates", [])]
+      if succ:
+          # normaliza: label do DOT pode vir com sufixo/path; casa por substring do story_key
+          keys = [k for k in keys if any(k in s for s in succ)] or keys
+      new_lines = []
+      for ln in lines:
+          m = re.match(r'^(\s*)([A-Za-z0-9_-]+):\s*(.+)$', ln)
+          if m and m.group(2) in keys:
+              indent, key, rest = m.group(1), m.group(2), m.group(3)
+              # se valor é um status simples, troca por done; preserva comentário inline
+              comment = ""
+              if '#' in rest: comment = " " + rest[rest.index('#'):]
+              new_lines.append(f'{indent}{key}: done{comment}\n')
+              marked.append(key)
+          else:
+              new_lines.append(ln)
+      # atualiza last_updated
+      out = []
+      for ln in new_lines:
+          if re.match(r'^\s*last_updated:\s*.*$', ln):
+              out.append(f'last_updated: {today}\n')
+          else:
+              out.append(ln)
+      with open(ss_full, "w") as f:
+          f.writelines(out)
+      # valida YAML
+      try:
+          yaml.safe_load(open(ss_full))
+      except Exception as e:
+          print(f"⚠️ sprint-status.yaml não parseia após mark_done: {e}")
+      # commit por arquivo
+      subprocess.run(["git","add", ss_rel], cwd=repo, check=True)
+      r = subprocess.run(["git","commit","-m", f"chore(sprint): {state.get('epic_key')} wave -> done"], cwd=repo, capture_output=True, text=True)
+      if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr).lower():
+          print(f"mark_done commit falhou: {r.stderr}")
+      print(f"Marcadas done: {marked}")
+      return {"marked_done": marked}
+
+  # ============================================================================
+  # VERIFY — determinístico + suite coverage
+  # ============================================================================
+  - name: verify_epic
+    description: Confere all_done no sprint-status e roda a suíte (porta verifyPrompt)
+    run: |
+      import os, re, subprocess, yaml
+      repo = state.get("repo_path", ".")
+      ss_full = os.path.join(repo, state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml"))
+      epic_num, epic_key = state.get("epic_num",""), state.get("epic_key","")
+      done = total = 0
+      if os.path.isfile(ss_full):
+          ss = yaml.safe_load(open(ss_full)) or {}
+          for key, val in (ss.get("development_status", {}) or {}).items():
+              if not re.match(rf'^{epic_num}-', key): continue
+              if key in (epic_key, f"{epic_key}-retrospective"): continue
+              total += 1
+              st = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
+              if (st or "").lower() == "done": done += 1
+      all_done = total > 0 and done == total
+      # suite
+      suite_green = False
+      tc = state.get("test_command", "")
+      if tc:
+          try:
+              r = subprocess.run(tc, shell=True, cwd=repo, capture_output=True, text=True, timeout=1800)
+              suite_green = r.returncode == 0
+              if not suite_green:
+                  print(f"Suíte NÃO verde:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
+          except Exception as e:
+              print(f"Suíte não roda: {e}")
+      print(f"Verify: {done}/{total} done, suite_green={suite_green}")
+      return {"all_done": all_done, "done_count": done, "total_count": total, "suite_green": suite_green}
+
+  # ============================================================================
+  # RETRO — condicional (porta retroPrompt, com flip do epic-N)
+  # ============================================================================
+  - name: decide_retro
+    description: Decide se dispara retrospective + flip
+    run: |
+      run_retro = (state.get("run_retrospective", True)
+                   and state.get("all_done", False)
+                   and not state.get("only_wave")
+                   and not state.get("dry_run"))
+      print(f"Retrospective: {'vai rodar' if run_retro else 'pulada'}")
+      return {"_run_retro": run_retro}
+    goto:
+      - if: "state.get('_run_retro')"
+        to: retro_run
+      - to: summary
+
+  - name: retro_run
+    description: Escreve a retro, flippa epic-N para done, 2 commits separados (porta retroPrompt)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Todas as stories do {{ state.epic_key }} ("{{ state.epic_label }}") estão "done" em `{{ state.sprint_status_path }}` e já foram mergeadas em `{{ state.target_branch }}`. Comunique-se em {{ state.communication_language }}; doc em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
+
+            **STEP 0 — NÃO DUPLIQUE.** Antes de tudo, procure retro existente (`*{{ state.epic_key }}*retro*` em `{{ state.implementation_artifacts_dir }}/`) e confira se `development_status["{{ state.epic_key }}"]` já é "done".
+            - Se AMBOS já existem: **não escreva nem commita nada.** Retorne ok=true, epicFlipped=false, e explique que já estava fechado.
+            - Se só um existe: faça **só a parte faltante**.
+
+            Siga o espírito de `{{ state.skills_dir }}/bmad-retrospective/SKILL.md`, modo não-interativo (sem "party mode", sem perguntas).
+
+            **ANTES DE ESCREVER, REÚNA EVIDÊNCIA:**
+            - Leia as retros anteriores do repo (`*retro*` em implementation-artifacts) e **siga o formato da mais recente**. Não invente estrutura.
+            - Leia os Dev Agent Records e follow-up/debt de cada story do épico.
+            - `git log --oneline` sobre o range do épico e `git diff --stat` p/ métricas.
+            - Se houver doc de test-design/risk do épico, compare previstos vs. materializados.
+
+            **Fatos desta run que a retro deve incorporar:**
+            - Ondas executadas: {{ state.waves }}
+            - Verify: {{ state.done_count }}/{{ state.total_count }} done · suíte {{ 'VERDE' if state.suite_green else 'NÃO verde' }}
+            - Stories marcadas done: {{ state.marked_done }}
+
+            **O documento precisa ter** (adapte às seções da retro anterior):
+            1. Métricas de entrega — stories, commits/SHAs, ciclos de review por story, movimento da suíte, conflitos de merge. Números.
+            2. O que funcionou — ancorado em verificável.
+            3. A lição principal — classe de problema, não incidente.
+            4. Dívidas e perguntas em aberto, NOMEADAS.
+            5. Preparação p/ o próximo épico — recomendações concretas. Sem estimativas de tempo.
+
+            **Não adoce.** Se entregou menos que prometido, se um AC foi contornado, se a cobertura é cega — escreva.
+
+            **Ao terminar, faça DOIS commits separados** (`git add <arquivo>` por nome, **nunca** `git add -A`/`.`):
+            1. O documento de retro, em `{{ state.implementation_artifacts_dir }}/` com o mesmo padrão de nome das anteriores. Mensagem: `docs({{ state.epic_key }}): retrospective`.
+            {% if state.flip_epic_status %}2. **FLIP de status** em `{{ state.sprint_status_path }}`:
+               - `development_status["{{ state.epic_key }}"] = "done"` (hoje está in-progress/backlog).
+               - `development_status["{{ state.epic_key }}-retrospective"] = "done"`, com comentário na mesma linha citando o arquivo de retro e a lição principal em meia linha. Se essa key não existe, não invente — reporte nas notas.
+               - `last_updated` = hoje, com novo headline descrevendo o fechamento + dívidas em aberto. **PRESERVE o headline anterior** movendo-o para uma linha `# Previous: <date> — <text>` logo abaixo (padrão deste arquivo).
+               - Antes de commitar, valide que o YAML ainda parseia e que a contagem de keys de `development_status` é a mesma.
+               - Commit só esse arquivo (`git add <path>`, nunca -A): mensagem `chore(sprint): {{ state.epic_key }} -> done + retrospective`.
+            {% else %}2. **NÃO toque o status do épico** (flipEpicStatus=false). Reporte epicFlipped=false.{% endif %}
+
+            Imprima `RETRO_DONE: <path>` e `EPIC_FLIPPED: true|false` ao final.
+    output: retro_output
+
+  - name: summary
+    description: Relatório final do épico
+    run: |
+      suite = "VERDE" if state.get("suite_green") else "NÃO verde"
+      retro = "rodou" if state.get("_run_retro") else "pulada"
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║         BMAD EPIC-WAVES — ÉPICO CONCLUÍDO                  ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Épico: {state.get('epic_key','?'):<53} ║
+      ║ Label: {state.get('epic_label','?'):<53} ║
+      ║ Ondas: {len(state.get('waves',[])):<54} ║
+      ║ Verify: {state.get('done_count',0)}/{state.get('total_count',0)} done — all_done={str(state.get('all_done',False)):<27} ║
+      ║ Suíte: {suite:<48} ║
+      ║ Retrospective: {retro:<48} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      final = "completed" if state.get("all_done") else "incomplete"
+      return {"final_status": final, "epic": state.get("epic_key")}
+
+edges:
+  - from: __start__
+    to: discover_epic
+  - from: prep_create
+    to: prep_reconcile
+  - from: prep_reconcile
+    to: parse_reconcile
+  - from: prep_commit
+    to: check_stop_after_prep
+  - from: graph_infer
+    to: graph_llm
+  - from: graph_llm
+    to: build_waves
+  - from: build_waves
+    to: run_waves
+  - from: run_waves
+    to: mark_done
+  - from: mark_done
+    to: verify_epic
+  - from: verify_epic
+    to: decide_retro
+  - from: retro_run
+    to: summary
+  - from: summary
+    to: __end__

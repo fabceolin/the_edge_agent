@@ -1,0 +1,358 @@
+name: bmad-dev-cycle
+description: |
+  BMad — fluxo de épico SEQUENCIAL: descobre as stories do épico em sprint-status.yaml e roda
+  dev→review→commit em ordem estrita, uma por vez, parando a cadeia se uma story reprovar em
+  review após max_review_cycles. Dispara retrospective quando o épico fecha 100%.
+
+  Port direto do bmad-dev-cycle.js (Claude Code Workflow tool) para tea YAML.
+  Alternativa autônoma ao skill bmad-story-automator (que usa tmux/Stop hook e interrompe).
+
+  Diferenças vs. o JS:
+  - discover/verify viram nó `run:` Python determinístico (o JS usava um agente; ler YAML
+    e contar statuses é mais confiável como código).
+  - O loop por story usa dynamic_parallel com max_concurrency:1 + fail_fast (sequencial,
+    para no 1º fracasso = equivale ao `stopped=true` do JS).
+  - O ciclo de cada story (dev+review+commit) é o subgraph bmad-story-cycle.yaml.
+  - O veredito do review usa marcador FINAL_STATUS + regex (não schema JSON).
+
+  Input (--input JSON):
+    arg (obrigatório): "epic-5", "5" ou 5
+    repo_path (obrigatório): path absoluto do repo alvo
+    max_review_cycles (int, default 3)
+    run_retrospective (bool, default true)
+    reprocess_done (bool, default false): reprocessa stories já "done"
+    story_keys (list, opcional): sobrescreve a descoberta (lista explícita de keys na ordem)
+    skills_dir (str, opcional): default {repo_path}/.claude/skills
+
+  Uso:
+    tea run examples/workflows/bmad-dev-cycle.yaml \
+      --input '{"arg":"epic-5","repo_path":"/home/fabricio/src/licityeasy"}'
+
+state_schema:
+  arg: str
+  repo_path: str
+  epic_num: str
+  epic_key: str
+  max_review_cycles: int
+  run_retrospective: bool
+  reprocess_done: bool
+  story_keys: list
+  skills_dir: str
+  epic_label: str
+  communication_language: str
+  document_output_language: str
+  user_name: str
+  test_command: str
+  target_branch: str
+  implementation_artifacts_dir: str
+  sprint_status_path: str
+  stories: list
+  pending: list
+  cycle_results: list
+  all_done: bool
+  done_count: int
+  total_count: int
+  retro_output: str
+  final_status: str
+
+settings:
+  shell_providers:
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  # ============================================================================
+  # DISCOVER — determinístico (Python lê sprint-status.yaml + config.yaml + epics.md)
+  # ============================================================================
+  - name: discover_epic
+    description: Descobre stories do épico, langs, test_command, target_branch (porta o discover do JS)
+    run: |
+      import os, re, glob, subprocess
+      try:
+          import yaml
+      except ImportError:
+          print("PyYAML não instalado — pip install pyyaml"); return {"final_status": "error_no_yaml"}
+
+      repo = state.get("repo_path", ".")
+      os.chdir(repo) if os.path.isdir(repo) else None
+
+      # Extrai número do épico
+      arg = str(state.get("arg", ""))
+      m = re.search(r'(\d+)', arg)
+      if not m:
+          return {"final_status": "error_bad_epic_arg"}
+      epic_num = m.group(1)
+      epic_key = f"epic-{epic_num}"
+
+      # implementation_artifacts dir via config
+      config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
+      impl_artifacts = "_bmad-output/implementation-artifacts"
+      comm_lang, doc_lang, user_name = "Português", "Português", "Fabrício"
+      for cp in config_paths:
+          if os.path.exists(cp):
+              try:
+                  with open(cp) as f:
+                      cfg = yaml.safe_load(f) or {}
+                  impl_artifacts = cfg.get("implementation_artifacts", impl_artifacts)
+                  comm_lang = cfg.get("communication_language", comm_lang)
+                  doc_lang = cfg.get("document_output_language", doc_lang)
+                  user_name = cfg.get("user_name", user_name)
+                  break
+              except Exception:
+                  pass
+      # Resolve placeholders da config ({project-root} → relativo ao repo, {repo} idem)
+      for ph in ["{project-root}", "{repo}", repo]:
+          impl_artifacts = impl_artifacts.replace(ph, "")
+      impl_artifacts = impl_artifacts.lstrip("/") or impl_artifacts
+      sprint_status_path = os.path.join(impl_artifacts, "sprint-status.yaml")
+
+      # target branch
+      try:
+          target_branch = subprocess.check_output(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, text=True).strip()
+      except Exception:
+          target_branch = "main"
+
+      # Lê sprint-status.yaml
+      ss_full = os.path.join(repo, sprint_status_path)
+      stories = []
+      epic_label = epic_key
+      if os.path.isfile(ss_full):
+          with open(ss_full) as f:
+              ss = yaml.safe_load(f) or {}
+          dev_status = ss.get("development_status", {}) if isinstance(ss, dict) else {}
+          # Stories do épico: keys matching "<epic_num>-<algo>", excluindo pseudo-chaves
+          for key, val in dev_status.items():
+              if not re.match(rf'^{epic_num}-', key):
+                  continue
+              if key in (epic_key, f"{epic_key}-retrospective"):
+                  continue
+              status = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
+              # story file path
+              sp = os.path.join(repo, impl_artifacts, f"{key}.md")
+              has_file = os.path.isfile(sp)
+              # título: H1 do arquivo de story, senão do epics.md
+              title = key
+              if has_file:
+                  try:
+                      with open(sp) as f:
+                          first_lines = f.read(1500)
+                      h1 = re.search(r'^#\s+(.+)$', first_lines, re.M)
+                      if h1: title = h1.group(1).strip()
+                  except Exception:
+                      pass
+              stories.append({"key": key, "title": title, "status": (status or "").lower(), "has_story_file": has_file, "story_path": sp if has_file else ""})
+      # epic_label de epics.md
+      epics_md = os.path.join(repo, "_bmad-output/planning-artifacts/epics.md")
+      if os.path.isfile(epics_md):
+          try:
+              with open(epics_md) as f:
+                  epics = f.read()
+              m2 = re.search(rf'^#+\s*.*\b{re.escape(epic_key)}\b[^\n]*', epics, re.M | re.I)
+              if m2: epic_label = m2.group(0).lstrip('#').strip()
+          except Exception:
+              pass
+
+      # test_command: detecta no CI/manifesto/Completion Notes
+      test_command = ""
+      for tc_file in ["Makefile", "pyproject.toml", "package.json", "Cargo.toml"]:
+          if os.path.isfile(os.path.join(repo, tc_file)):
+              if tc_file == "Makefile":
+                  # procura target test
+                  try:
+                      mk = open(os.path.join(repo, tc_file)).read()
+                      if re.search(r'^test:', mk, re.M): test_command = "make test"
+                  except Exception: pass
+              elif tc_file == "pyproject.toml":
+                  if re.search(r'pytest', open(os.path.join(repo, tc_file)).read(), re.I): test_command = "pytest -q"
+              elif tc_file == "package.json":
+                  import json as _j
+                  try:
+                      pkg = _j.load(open(os.path.join(repo, tc_file)))
+                      if "test" in (pkg.get("scripts") or {}): test_command = "npm test"
+                  except Exception: pass
+              elif tc_file == "Cargo.toml":
+                  test_command = "cargo test"
+              if test_command: break
+
+      # pending: honra story_keys override, exclui done (a menos de reprocess_done)
+      override = state.get("story_keys") or []
+      if override:
+          omap = {s["key"]: s for s in stories}
+          ordered = [omap[k] for k in override if k in omap]
+      else:
+          ordered = stories
+      reprocess = state.get("reprocess_done", False)
+      pending = [s for s in ordered if reprocess or s.get("status") != "done"]
+
+      print(f"Épico {epic_key} (\"{epic_label}\"): {len(ordered)} stories, {len(pending)} pendentes. branch={target_branch} suite={test_command or '(nenhuma)'}")
+      return {
+          "epic_num": epic_num, "epic_key": epic_key, "epic_label": epic_label,
+          "communication_language": comm_lang, "document_output_language": doc_lang, "user_name": user_name,
+          "test_command": test_command, "target_branch": target_branch,
+          "implementation_artifacts_dir": impl_artifacts, "sprint_status_path": sprint_status_path,
+          "stories": ordered, "pending": pending,
+          "skills_dir": state.get("skills_dir") or os.path.join(repo, ".claude/skills"),
+      }
+
+  # ============================================================================
+  # RUN STORIES — sequencial via dynamic_parallel (max_concurrency=1, fail_fast)
+  # ============================================================================
+  - name: run_stories
+    description: Roda o ciclo de cada story pendente em sequência (para no 1º fracasso)
+    type: dynamic_parallel
+    items: "{{ state.pending }}"
+    item_var: story
+    index_var: story_idx
+    max_concurrency: 1
+    fail_fast: true
+    subgraph: "./bmad-story-cycle.yaml"
+    input:
+      repo_path: "{{ state.repo_path }}"
+      epic_key: "{{ state.epic_key }}"
+      epic_num: "{{ state.epic_num }}"
+      story_key: "{{ story.key }}"
+      title: "{{ story.title }}"
+      story_path: "{{ story.story_path }}"
+      skills_dir: "{{ state.skills_dir }}"
+      implementation_artifacts_dir: "{{ state.implementation_artifacts_dir }}"
+      sprint_status_path: "{{ state.sprint_status_path }}"
+      communication_language: "{{ state.communication_language }}"
+      document_output_language: "{{ state.document_output_language }}"
+      user_name: "{{ state.user_name }}"
+      test_command: "{{ state.test_command }}"
+      target_branch: "{{ state.target_branch }}"
+      create_if_missing: true
+      max_review_cycles: "{{ state.max_review_cycles | default(3) | int }}"
+      in_worktree: false
+    output: cycle_results
+    fan_in: collect_results
+
+  - name: collect_results
+    description: Agrega o final_status de cada story
+    run: |
+      results = state.get("cycle_results", []) or []
+      agg = []
+      for r in results:
+          s = r.get("state", {}) if isinstance(r, dict) else {}
+          agg.append({"story": s.get("story_key"), "final_status": s.get("final_status", "unknown")})
+      ok = sum(1 for a in agg if a["final_status"] == "completed")
+      print(f"Stories concluídas: {ok}/{len(agg)}")
+      return {"cycle_summary": agg, "cycle_ok_count": ok}
+
+  # ============================================================================
+  # VERIFY — determinístico (relê sprint-status do disco)
+  # ============================================================================
+  - name: verify_epic
+    description: Confere no sprint-status.yaml se 100% das stories do épico estão "done"
+    run: |
+      import os, re, yaml
+      repo = state.get("repo_path", ".")
+      ss_full = os.path.join(repo, state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml"))
+      epic_num = state.get("epic_num", "")
+      epic_key = state.get("epic_key", f"epic-{epic_num}")
+      done = total = 0
+      if os.path.isfile(ss_full):
+          with open(ss_full) as f:
+              ss = yaml.safe_load(f) or {}
+          for key, val in (ss.get("development_status", {}) or {}).items():
+              if not re.match(rf'^{epic_num}-', key): continue
+              if key in (epic_key, f"{epic_key}-retrospective"): continue
+              total += 1
+              st = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
+              if (st or "").lower() == "done": done += 1
+      all_done = total > 0 and done == total
+      print(f"Verify: {done}/{total} done — all_done={all_done}")
+      return {"all_done": all_done, "done_count": done, "total_count": total}
+
+  # ============================================================================
+  # RETRO — condicional (goto)
+  # ============================================================================
+  - name: decide_retro
+    description: Decide se dispara retrospective
+    run: |
+      run_retro = state.get("run_retrospective", True) and state.get("all_done", False)
+      print(f"Retrospective: {'vai rodar' if run_retro else 'pulada'}")
+      return {"_run_retro": run_retro}
+    goto:
+      - if: "state.get('_run_retro')"
+        to: retro_run
+      - to: summary
+
+  - name: retro_run
+    description: Escreve a retrospectiva do épico e commita (porta o retroPrompt do JS)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Todas as stories do {{ state.epic_key }} ("{{ state.epic_label }}") estão "done" em `{{ state.sprint_status_path }}`.
+
+            **STEP 0 — NÃO DUPLIQUE trabalho.** Antes de tudo, procure retro existente (`*{{ state.epic_key }}*retro*` em `{{ state.implementation_artifacts_dir }}/`) e confira se `development_status["{{ state.epic_key }}"]` já é "done". Se ambos existirem, **não escreva nem commita nada** — retorne ok=true dizendo que já estava fechado.
+
+            Siga o espírito de `{{ state.skills_dir }}/bmad-retrospective/SKILL.md`, mas em modo YOLO/não-interativo (sem "party mode" ao vivo, sem perguntas). Comunique-se em {{ state.communication_language }}; doc em {{ state.document_output_language }}.
+
+            **ANTES DE ESCREVER, REÚNA EVIDÊNCIA** — a retro é documento de fatos, não impressões:
+            - Leia as retros anteriores do repo (`*retro*` em implementation-artifacts) e **siga o formato da mais recente** (seções, tom, nível de detalhe). Não invente estrutura nova.
+            - Leia os Dev Agent Records e as seções de follow-up/debt de cada story do épico.
+            - Rode `git log --oneline` sobre o range do épico e `git diff --stat` p/ métricas.
+            - Se houver doc de test-design/risk do épico, compare riscos previstos vs. materializados.
+
+            **O documento precisa ter** (adapte aos nomes de seção da retro anterior):
+            1. Métricas de entrega — stories, commits/SHAs, ciclos de review por story, movimento da suíte, conflitos de merge. Números, não adjetivos.
+            2. O que funcionou — cada item ancorado em algo verificável.
+            3. A lição principal — o mais importante que o épico ensinou, nomeado como classe de problema.
+            4. Dívidas e perguntas em aberto, NOMEADAS — incluindo o que o épico deliberadamente não fez.
+            5. Preparação p/ o próximo épico — recomendações concretas. Sem estimativas de tempo.
+
+            **Não adoce.** Se o épico entregou menos que prometido, se um AC foi contornado, se a cobertura é cega — escreva. Retro lisonjeira é inútil.
+
+            Commit individual (`git add <arquivo>`, nunca -A): mensagem `docs({{ state.epic_key }}): retrospective`.
+
+            Imprima `RETRO_DONE: <path>` ao final.
+    output: retro_output
+
+  - name: summary
+    description: Relatório final do épico
+    run: |
+      cs = state.get("cycle_summary", [])
+      print(f"""
+      ╔════════════════════════════════════════════════════════════╗
+      ║           BMAD DEV-CYCLES — ÉPICO CONCLUÍDO               ║
+      ╠════════════════════════════════════════════════════════════╣
+      ║ Épico: {state.get('epic_key','?'):<53} ║
+      ║ Label: {state.get('epic_label','?'):<53} ║
+      ║ Stories concluídas: {state.get('cycle_ok_count',0)}/{len(cs):<41} ║
+      ║ Verify: {state.get('done_count',0)}/{state.get('total_count',0)} done — all_done={state.get('all_done',False):<27} ║
+      ║ Retrospective: {'rodou' if state.get('_run_retro') else 'pulada':<48} ║
+      ╚════════════════════════════════════════════════════════════╝
+      """)
+      final = "completed" if state.get("all_done") else "incomplete"
+      return {"final_status": final, "epic": state.get("epic_key")}
+
+edges:
+  - from: __start__
+    to: discover_epic
+  - from: discover_epic
+    to: run_stories
+  - from: run_stories
+    to: verify_epic
+  - from: verify_epic
+    to: decide_retro
+  - from: retro_run
+    to: summary
+  - from: summary
+    to: __end__

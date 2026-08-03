@@ -1,0 +1,137 @@
+name: bmad-create-story
+description: |
+  Subgraph BMad — cria UM arquivo de story do épico, sem tocar sprint-status e sem commit.
+  Invocado em fan-out pela fase PREP do bmad-epic-waves (uma instância por story faltante).
+
+  Princípio de isolamento da PREP: N agentes irmãos criam stories em paralelo NA MESMA
+  árvore. A única forma de isso ser seguro é proibir a escrita em sprint-status.yaml
+  (a marcação de status acontece depois, numa única etapa serializada de fan-in).
+
+  Input (--input JSON):
+    repo_path, epic_key, epic_num, story_key, title,
+    skills_dir, implementation_artifacts_dir, sprint_status_path,
+    communication_language, document_output_language, user_name
+
+  Uso:
+    tea run examples/workflows/bmad-create-story.yaml \
+      --input '{"repo_path":"...","epic_key":"epic-10","epic_num":"10","story_key":"10-3-...","title":"...","skills_dir":".../.claude/skills","implementation_artifacts_dir":"_bmad-output/implementation-artifacts","sprint_status_path":"_bmad-output/implementation-artifacts/sprint-status.yaml","communication_language":"Português","document_output_language":"Português","user_name":"Fabrício"}'
+
+state_schema:
+  repo_path: str
+  epic_key: str
+  epic_num: str
+  story_key: str
+  title: str
+  skills_dir: str
+  implementation_artifacts_dir: str
+  sprint_status_path: str
+  communication_language: str
+  document_output_language: str
+  user_name: str
+  create_output: str
+  created: bool
+  story_path: str
+  notes: str
+
+settings:
+  shell_providers:
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: create_story
+    description: Cria o arquivo de story (key explícita, sem auto-discovery, sem tocar sprint-status)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}.
+            Comunique-se em {{ state.communication_language }}; escreva código/testes/docs em {{ state.document_output_language }} (siga a convenção já usada no repo). Usuário: {{ state.user_name }}.
+
+            Outras stories do mesmo épico estão sendo criadas AGORA, em paralelo, por agentes irmãos — NA MESMA árvore que a sua (não há worktree isolado nesta fase). Há uma única regra de isolamento, e ela é absoluta:
+
+            ⛔ **NÃO edite `{{ state.sprint_status_path }}`.** Nem para marcar sua story como ready-for-dev, nem para mover o épico para in-progress. O skill vai mandar fazer isso — **ignore essa parte**. Toda a marcação acontece depois, de uma vez, numa etapa serializada. Se você escrever nesse arquivo, sua escrita e a dos agentes irmãos se sobrepõem e alguém perde a sua.
+            Também: não faça commit de nada (`git add`/`git commit` são proibidos nesta fase) e não edite `epics.md`.
+
+            TASK: crie o arquivo de story para **Story {{ state.story_key }}** ("{{ state.title }}"), seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-create-story/SKILL.md` — leia o arquivo inteiro, inclusive o bloco <workflow>.
+
+            - **A story alvo já está escolhida: `{{ state.story_key }}`.** NÃO rode a auto-discovery do skill (o passo "encontre a PRIMEIRA story onde status == backlog"): ela elegeria a story errada e colidiria com seus agentes irmãos. Vá direto para o passo de construção da story com esta key.
+            - Escreva em `{{ state.implementation_artifacts_dir }}/{{ state.story_key }}.md`. Esta key já está registrada no sprint-status e o resto do pipeline casa o arquivo de story com ela — não invente outro nome.
+            - Se `python3 _bmad/scripts/resolve_customization.py` falhar, use os defaults de `_bmad/bmm/config.yaml` e siga.
+            - ZERO INTERVENÇÃO HUMANA: não há ninguém para responder. Não faça perguntas; registre dúvidas numa seção de open-questions no final da própria story.
+            - Análise exaustiva, como o skill exige: a seção {{ state.epic_key }} em `_bmad-output/planning-artifacts/epics.md` (sua story E as notas de ordenação/trade-off no cabeçalho do épico), CLAUDE.md, `**/project-context.md`, os docs de arquitetura do repo, e o CÓDIGO REAL dos módulos que a story menciona. O propósito do arquivo é dar ao dev tudo o que ele precisa para não reinventar a roda, usar a biblioteca errada, e quebrar regressão.
+
+            Ao final, imprima exatamente uma linha `CREATED: <path relativo do arquivo escrito>` e resuma: ok, storyFilePath (o path que você REALMENTE escreveu), openQuestions e notas.
+    output: create_output
+
+  - name: check_created
+    description: Valida que o arquivo foi escrito e não é um stub vazio
+    run: |
+      import os
+      import re
+
+      repo_path = state.get("repo_path", ".")
+      out = state.get("create_output", {})
+      if isinstance(out, dict):
+          text = out.get("content", "") or ""
+      else:
+          text = str(out) if out else ""
+
+      impl_dir = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      key = state.get("story_key", "")
+      expected = os.path.join(repo_path, impl_dir, f"{key}.md") if not os.path.isabs(impl_dir) else os.path.join(impl_dir, f"{key}.md")
+      # Tenta também o path que o agente declarou em CREATED:
+      declared = None
+      m = re.search(r'CREATED:\s*(\S+)', text)
+      if m:
+          declared = m.group(1)
+
+      candidates = [expected]
+      if declared:
+          if os.path.isabs(declared):
+              candidates.append(declared)
+          else:
+              candidates.append(os.path.join(repo_path, declared))
+              candidates.append(declared)
+
+      story_path = None
+      for c in candidates:
+          if c and os.path.isfile(c) and os.path.getsize(c) > 200:
+              story_path = c
+              break
+
+      created = bool(story_path)
+      if not created:
+          # Arquivo existe mas é stub minúsculo? Ainda assim registra, mas sinaliza.
+          for c in candidates:
+              if c and os.path.isfile(c):
+                  story_path = c
+                  break
+          print(f"⚠️  Arquivo de story para {key} ausente ou muito pequeno (stub?). Caminhos tentados: {candidates}")
+      else:
+          print(f"Story criada: {story_path} ({os.path.getsize(story_path)} bytes)")
+
+      return {"created": created, "story_path": story_path or "", "notes": text[-800:]}
+
+edges:
+  - from: __start__
+    to: create_story
+  - from: create_story
+    to: check_created
+  - from: check_created
+    to: __end__
