@@ -74,7 +74,17 @@ state_schema:
   deps_resolved: dict
   waves: list
   wave_tasks: list
+  dot_path: str
   run_waves_results: dict
+  # ---- modo multi-épico + worktree por story ----
+  multi_epic: bool            # True quando arg="all"/"pending"/lista de épicos
+  epic_nums: list             # ex.: ["8","29"] no modo multi
+  epic_keys: list             # ex.: ["epic-8","epic-29"]
+  story_keys_filter: list     # subset opcional de keys a rodar (piloto controlado)
+  worktrees: list             # [{key, path, branch}] criadas por build_waves
+  worktree_base: str          # dir base das worktrees (default /tmp/tea-wt-<epic_key>)
+  merged_ok: list             # stories mergeadas sem conflito
+  merge_conflicts: list       # stories com conflito de merge (fail-closed)
   marked_done: list
   all_done: bool
   done_count: int
@@ -114,10 +124,25 @@ nodes:
       import os, re, glob, subprocess, yaml
       repo = state.get("repo_path", ".")
       os.chdir(repo) if os.path.isdir(repo) else None
-      arg = str(state.get("arg", ""))
-      m = re.search(r'(\d+)', arg)
-      if not m: return {"final_status": "error_bad_epic_arg"}
-      epic_num, epic_key = m.group(1), f"epic-{m.group(1)}"
+      arg = str(state.get("arg", "")).strip().lower()
+      # Modo multi-épico: arg in {"all","pending","*","epics"} OU lista/CSV de números.
+      multi_epic = arg in ("all", "pending", "*", "epics")
+      epic_nums, epic_keys = [], []
+      if multi_epic:
+          epic_key = "epics-all"
+          epic_num = ""
+      else:
+          # arg pode ser "8", "epic-8", "8,29", "epic-8,epic-29"
+          nums = re.findall(r'(\d+)', arg)
+          if not nums: return {"final_status": "error_bad_epic_arg"}
+          if len(nums) > 1:
+              multi_epic = True
+              epic_nums = nums
+              epic_keys = [f"epic-{n}" for n in nums]
+              epic_key = "epics-" + "-".join(nums)
+              epic_num = ""
+          else:
+              epic_num, epic_key = nums[0], f"epic-{nums[0]}"
 
       config_paths = ["_bmad/bmm/config.yaml", ".bmad/bmm/config.yaml"]
       impl_artifacts = "_bmad-output/implementation-artifacts"
@@ -148,9 +173,23 @@ nodes:
       if os.path.isfile(ss_full):
           ss = yaml.safe_load(open(ss_full)) or {}
           dev_status = ss.get("development_status", {}) or {}
+          # epic_prefix = primeiro segmento da key ate o primeiro '-' (ex.: "8", "td", "24")
+          def _prefix(k):
+              return k.split("-", 1)[0] if "-" in k else k
+          # Set de épicos a considerar: no modo multi "all", todos; se epic_nums dado, só esses.
+          if multi_epic:
+              if epic_nums:
+                  num_set = set(epic_nums)
+                  def _belongs(k): return _prefix(k) in num_set
+              else:
+                  def _belongs(k): return True  # toda story não-pseudo pertence
+          else:
+              def _belongs(k): return _prefix(k) == epic_num
+          # Pseudo-chaves a excluir (epic-N e epic-N-retrospective)
+          def _is_pseudo(k): return bool(re.match(r'^epic-\w+(-retrospective)?$', k))
           for key, val in dev_status.items():
-              if not re.match(rf'^{epic_num}-', key): continue
-              if key in (epic_key, f"{epic_key}-retrospective"): continue
+              if not _belongs(key): continue
+              if _is_pseudo(key): continue
               status = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
               sp = os.path.join(repo, impl_artifacts, f"{key}.md")
               has_file = os.path.isfile(sp)
@@ -160,13 +199,19 @@ nodes:
                       h1 = re.search(r'^#\s+(.+)$', open(sp).read(1500), re.M)
                       if h1: title = h1.group(1).strip()
                   except Exception: pass
-              stories.append({"key": key, "title": title, "status": (status or "").lower(), "has_story_file": has_file, "story_path": sp if has_file else ""})
+              stories.append({"key": key, "title": title, "status": (status or "").lower(), "has_story_file": has_file, "story_path": sp if has_file else "", "epic_num": _prefix(key)})
       epics_md = os.path.join(repo, "_bmad-output/planning-artifacts/epics.md")
-      if os.path.isfile(epics_md):
+      if os.path.isfile(epics_md) and not multi_epic:
           try:
               m2 = re.search(rf'^#+\s*.*\b{re.escape(epic_key)}\b[^\n]*', open(epics_md).read(), re.M | re.I)
               if m2: epic_label = m2.group(0).lstrip('#').strip()
           except Exception: pass
+      elif multi_epic:
+          _epics_seen = set()
+          for s in stories:
+              mm = re.match(r'^(\d+)-', s['key'])
+              if mm: _epics_seen.add(mm.group(1))
+          epic_label = f"epics-all ({len(_epics_seen)} epicos)" if stories else "epics-all"
 
       # test_command
       test_command = ""
@@ -185,19 +230,32 @@ nodes:
 
       reprocess = state.get("reprocess_done", False)
       candidates = [s for s in stories if reprocess or s.get("status") != "done"]
+      # story_keys filter: subset opcional (piloto controlado / restringir escopo)
+      skf = state.get("story_keys")
+      if skf:
+          skf_set = set(skf)
+          candidates = [s for s in candidates if s["key"] in skf_set]
       missing = [s for s in candidates if not s.get("has_story_file")]
 
       # dry_run: pula a PREP inteira (prep_reconcile marca sprint-status/epic — escrita
       # destrutiva que não faz sentido em dry_run; evita também o bug do fan_in vazio).
       skip_prep = bool(state.get("dry_run")) or not candidates
+      # coleta epic_nums/epic_keys reais a partir das candidates (no modo multi "all")
+      if multi_epic and not epic_nums:
+          _nums = {s.get("epic_num") for s in candidates if s.get("epic_num")}
+          # sort: numéricos antes, depois alfabéticos (td); stable para "td"
+          epic_nums = sorted(_nums, key=lambda x: (int(x) if str(x).isdigit() else 9999, str(x)))
+          epic_keys = [f"epic-{n}" for n in epic_nums]
       print(f"Épico {epic_key} (\"{epic_label}\"): {len(stories)} stories, {len(candidates)} candidatas, {len(missing)} sem arquivo. branch={target_branch} suite={test_command or '(nenhuma)'}")
       return {
           "epic_num": epic_num, "epic_key": epic_key, "epic_label": epic_label,
+          "multi_epic": multi_epic, "epic_nums": epic_nums, "epic_keys": epic_keys,
           "communication_language": comm_lang, "document_output_language": doc_lang, "user_name": user_name,
           "test_command": test_command, "target_branch": target_branch,
           "implementation_artifacts_dir": impl_artifacts, "sprint_status_path": sprint_status_path,
           "stories": stories, "candidates": candidates, "missing_files": missing,
           "skills_dir": state.get("skills_dir") or os.path.join(repo, ".claude/skills"),
+          "story_keys_filter": state.get("story_keys") or [],
           "_skip_prep": skip_prep,
       }
     goto:
@@ -250,8 +308,8 @@ nodes:
             1. **Cheque cada arquivo esperado** (existe, não vazio, tem conteúdo de story de verdade — ACs, Dev Notes — e não um stub de uma linha):
             {% for s in state.missing_files %}   - {{ state.implementation_artifacts_dir }}/{{ s.key }}.md  (key: {{ s.key }})
             {% endfor %}
-            2. **Procure colisões:** liste os `{{ state.epic_num }}-*.md` em `{{ state.implementation_artifacts_dir }}/` e reporte em `duplicates` qualquer arquivo que NÃO está na lista acima, ou dois com conteúdo praticamente idêntico (assinatura de dois agentes tendo escrito a mesma story).
-            3. **Marque os statuses** em `{{ state.sprint_status_path }}`, só para os keys cujo arquivo passou o item 1: `development_status[<key>] = "ready-for-dev"`, e `{{ state.epic_key }}` de `backlog` para `in-progress`. Atualize `last_updated`.
+            2. **Procure colisões:** liste os arquivos `{{ state.epic_num }}-*.md`{% if state.multi_epic %} de cada um dos épicos ({{ state.epic_nums | join(', ') }}){% endif %} em `{{ state.implementation_artifacts_dir }}/` e reporte em `duplicates` qualquer arquivo que NÃO está na lista acima, ou dois com conteúdo praticamente idêntico (assinatura de dois agentes tendo escrito a mesma story).
+            3. **Marque os statuses** em `{{ state.sprint_status_path }}`, só para os keys cujo arquivo passou o item 1: `development_status[<key>] = "ready-for-dev"`{% if not state.multi_epic %}, e `{{ state.epic_key }}` de `backlog` para `in-progress`{% else %}, e CADA um dos épicos `{{ state.epic_keys | join('`, `') }}` de `backlog` para `in-progress`{% endif %}. Atualize `last_updated`.
                **Formato de `last_updated` (OBRIGATÓRIO):** a linha atual é um scalar `YYYY-MM-DD` seguido de um comentário histórico longo após `#`. Preserve EXATAMENTE esse formato — troque só a data (a de hoje, `YYYY-MM-DD` sem aspas, sem horário/ISO), e mantenha o comentário `# ...` inteiro na mesma linha. NÃO converta para ISO, NÃO adicione aspas, NÃO remova o comentário. Se um status já está no valor alvo, não reescreva a linha (escrita idempotente).
                **Edição surgical, nunca regeneração:** mude só essas linhas. Não regenere o arquivo, não remova comentários (o topo costuma ser um log histórico longo), não toque `action_items`, não altere entries de outros époc, e NUNCA rebaixe um status existente (`done` nunca volta).
             4. **Valide o arquivo depois de escrever:** ainda parseia como YAML válido (`python3 -c "import yaml; yaml.safe_load(open('{{ state.sprint_status_path }}'))"`), o número de linhas não diminuiu, e `action_items` tem o mesmo número de itens. Reporte `sprint_status_intact` baseado nessa checagem real.
@@ -415,16 +473,16 @@ nodes:
           content: |
             Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
 
-            Sua tarefa é UMA coisa: descobrir as dependências entre as stories do {{ state.epic_key }} ("{{ state.epic_label }}"). Você NÃO implementa nada e NÃO decide o que roda em paralelo — só retorna as arestas do grafo. O agrupamento em ondas é computado depois, em código, a partir do que você retorna.
+            Sua tarefa é UMA coisa: descobrir as dependências entre as stories{% if state.multi_epic %} de MÚLTIPLOS épicos ({{ state.epic_keys | join(', ') }}){% else %} do {{ state.epic_key }} ("{{ state.epic_label }}"){% endif %}. Você NÃO implementa nada e NÃO decide o que roda em paralelo — só retorna as arestas do grafo. O agrupamento em ondas é computado depois, em código, a partir do que você retorna.
 
-            Stories (use estas keys EXATAS nas arestas):
-            {% for s in state.candidates %}- {{ s.key }} — "{{ s.title }}" ({{ s.story_path }})
+            Stories (use estas keys EXATAS nas arestas — o prefixo numérico identifica o épico):
+            {% for s in state.candidates %}- {{ s.key }} — "{{ s.title }}" ({{ s.story_path }}){% if s.epic_num %} [epic {{ s.epic_num }}]{% endif %}
             {% endfor %}
 
             FONTES, em ordem de peso evidencial:
-            1. O arquivo de cada story: Dev Notes, "Task 0"/pré-condições bloqueantes, menções literais a outra story ("depends on", "after X is done", "reuses the module from Y").
-            2. A seção {{ state.epic_key }} em `_bmad-output/planning-artifacts/epics.md` — notas de ordenação obrigatória, fundações declaradas, trade-offs.
-            3. Os arquivos que cada story diz que vai tocar (File List planejada, paths citados nos ACs) e o CÓDIGO REAL nesses paths.
+            1. O arquivo de cada story: Dev Notes, "Task 0"/pré-condições bloqueantes, menções literais a outra story ("depends on", "after X is done", "reuses the module from Y"). Task 0 costuma bloquear num épico IRMÃO (ex.: "espera epic-N fechar"); isso é uma aresta cross-épico.
+            2. A seção do épico em `_bmad-output/planning-artifacts/epics.md` — notas de ordenação obrigatória, fundações declaradas, trade-offs{% if state.multi_epic %} (cheque a seção de CADA um dos épicos envolvidos){% endif %}.
+            3. Os arquivos que cada story diz que vai tocar (File List planejada, paths citados nos ACs) e o CÓDIGO REAL nesses paths.{% if state.multi_epic %} A sobreposição de ARQUIVOS entre stories de épicos diferentes é a fonte mais comum de aresta cross-épico (kind=file): duas stories de épicos distintos editando o MESMO arquivo na mesma onda produzem conflito de merge.{% endif %}
 
             Retorne DOIS tipos de aresta:
             - **kind=logic**: story `to` precisa do que `from` constrói — um módulo, um contrato, uma decisão. Implementar fora de ordem produz código incoerente.
@@ -434,7 +492,8 @@ nodes:
 
             REGRAS:
             - `evidence` deve ser concreta e verificável: citação literal da story, ou path do arquivo compartilhado. Nunca "parecem relacionadas".
-            - Não invente aresta só da NUMERAÇÃO. 10-2 vir depois de 10-1 não implica dependência; muitos épicos têm stories numeradas sequencialmente mas mutualmente independentes.
+            - Não invente aresta só da NUMERAÇÃO. 10-2 vir depois de 10-1 não implica dependência; muitos épicos têm stories numeradas sequencialmente mas mutualmente independentes.{% if state.multi_epic %} O MESMO vale cross-épico: epic-29 não depende de epic-8 só pela numeração; só crie aresta cross-épico com Task 0 bloqueante literal ou sobreposição de arquivo real.
+            - Arestas cross-épico (kind=logic via Task 0, ou kind=file via arquivo compartilhado) são ESPERADAS e desejáveis quando reais — sem elas, duas stories de épicos diferentes que bloqueiam uma à outra rodariam juntas e produziriam conflito/código incoerente.{% endif %}
             - Sem ciclos. Se A e B parecem depender um do outro, escolha a direção que reflete a ordem real de construção e explique em `analysis`.
             - Em `analysis`, diga também o que você checou e concluiu ser INDEPENDENTE — a ausência de aresta é uma asserção sua, e precisa ser deliberada.
 
@@ -525,8 +584,13 @@ nodes:
 
       # ---- Gera o grafo DOT (Command Mode) — o tea --from-dot faz topological sort + ondas nativo ----
       # execution.run NÃO existe no tea 0.9.108; o DOT é a primitiva nativa de ondas com deps.
-      import tempfile
+      # Cada story roda num git worktree isolado (branch story/<key> a partir de target_branch);
+      # o subgraph bmad-story-cycle.yaml com in_worktree=true commita no branch da worktree e
+      # NÃO toca no sprint-status (deixa pro merge serial em merge_worktrees).
+      import tempfile, subprocess
       repo = state.get("repo_path", ".")
+      repo_abs = os.path.realpath(repo)
+      target_branch = state.get("target_branch", "main")
       # binário tea absoluto (evita PATH shadowing dentro das tmux windows do DOT)
       tea_bin = os.environ.get("TEA_BIN") or "/home/fabricio/src/the_edge_agent/.venv/bin/tea"
       # subgraph_path DEVE ser absoluto: o run_waves chama `tea --from-dot` com cwd=repo_path
@@ -535,22 +599,55 @@ nodes:
       subgraph_path = state.get("subgraph_path") or os.path.join(_tea_home, "examples", "workflows", "bmad-story-cycle.yaml")
       if not os.path.isabs(subgraph_path):
           subgraph_path = os.path.join(_tea_home, subgraph_path)
-      skills_dir = state.get("skills_dir") or os.path.join(repo, ".claude/skills")
+      skills_dir = state.get("skills_dir") or os.path.join(repo_abs, ".claude/skills")
+      impl_dir = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
+      # Worktrees em /tmp (não sujam o repo). Dir base por epic_key p/ isolamento entre runs.
+      # Em dry_run NÃO cria worktrees (efeito colateral) — o DOT aponta pro repo principal.
+      wt_base = state.get("worktree_base") or os.path.join(tempfile.gettempdir(), f"tea-wt-{epic_key}")
+      worktrees = []
+      dry = bool(state.get("dry_run"))
+      if not dry:
+          os.makedirs(wt_base, exist_ok=True)
+          # Limpa worktrees/branches de runs anteriores deste epic_key
+          _old = subprocess.run(["git","worktree","list","--porcelain"], cwd=repo_abs, capture_output=True, text=True)
+          for line in _old.stdout.splitlines():
+              if line.startswith("worktree "):
+                  p = line.split(" ",1)[1]
+                  if os.path.realpath(p).startswith(os.path.realpath(wt_base)):
+                      subprocess.run(["git","worktree","remove","--force",p], cwd=repo_abs, capture_output=True)
+          for k in keys:
+              wt_path = os.path.join(wt_base, k.replace("/", "_"))
+              wt_branch = f"story/{k}"
+              subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
+              r = subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
+                                 cwd=repo_abs, capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f"worktree add falhou para {k}: {r.stderr.strip()}")
+                  raise Exception(f"worktree_create falhou para {k}: {r.stderr.strip()}")
+              worktrees.append({"key": k, "path": wt_path, "branch": wt_branch})
+          print(f"Worktrees criadas: {len(worktrees)} em {wt_base}")
+      else:
+          print("DRY_RUN: worktrees NÃO criadas (DOT aponta pro repo principal).")
+      # common: payload do subgraph. repo_path = path da worktree (git opera ali);
+      # skills_dir = repo principal (a worktree nao tem .claude/skills). Em dry_run, repo principal.
       common = {
-          "repo_path": repo, "epic_key": epic_key, "epic_num": epic_num,
           "skills_dir": skills_dir,
-          "implementation_artifacts_dir": state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts"),
+          "implementation_artifacts_dir": impl_dir,
           "sprint_status_path": state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml"),
           "communication_language": state.get("communication_language", "Português"),
           "document_output_language": state.get("document_output_language", "Português"),
           "user_name": state.get("user_name", "Fabrício"),
           "test_command": state.get("test_command", ""),
-          "target_branch": state.get("target_branch", "main"),
+          "target_branch": target_branch,
           "create_if_missing": False,  # PREP já criou tudo
           "max_review_cycles": int(state.get("max_review_cycles", 3)),
-          "in_worktree": bool(state.get("in_worktree", False)),  # DOT não cria worktree; False roda no checkout
+          "in_worktree": (not dry),  # True em run real (commita no branch da worktree)
       }
       cmap = {c["key"]: c for c in candidates}
+      wtmap = {w["key"]: w for w in worktrees}
+      # story_path relativo à worktree (impl_dir/key.md) — o subgraph resolve contra repo_path=worktree
+      def _story_rel(k):
+          return os.path.join(impl_dir, f"{k}.md")
       # IDs seguros no DOT (keys têm hífen): s<idx>; label = key (mostra no tmux/output)
       id_of = {k: f"s{i}" for i, k in enumerate(keys)}
       lines = ['digraph epic_waves {', '  rankdir=TB;', '  node [shape=box];',
@@ -558,10 +655,20 @@ nodes:
       for k in keys:
           c = cmap[k]
           payload = dict(common)
-          payload.update({"story_key": k, "title": c.get("title", k), "story_path": c.get("story_path", "")})
+          if dry:
+              wt_path, cd_prefix = repo_abs, ""
+          else:
+              wt_path, cd_prefix = wtmap[k]["path"], f"cd {wtmap[k]['path']} && "
+          payload.update({
+              "repo_path": wt_path,
+              "epic_key": f"epic-{c.get('epic_num', epic_num)}" if c.get('epic_num') else epic_key,
+              "epic_num": c.get("epic_num", epic_num),
+              "story_key": k, "title": c.get("title", k),
+              "story_path": _story_rel(k),
+          })
           j = json.dumps(payload)
-          # command: tea run subgraph --input '<json>'; aspas duplas do JSON escapadas p/ DOT (\"), backslash (\\)
-          cmd = f"{tea_bin} run {subgraph_path} --input '{j}'"
+          # command: cd worktree && tea run subgraph --input '<json>' (ou repo principal em dry_run)
+          cmd = f"{cd_prefix}{tea_bin} run {subgraph_path} --input '{j}'"
           cmd_dot = cmd.replace('\\', '\\\\').replace('"', '\\"')
           label_dot = k.replace('"', '\\"')
           lines.append(f'  {id_of[k]} [label="{label_dot}" command="{cmd_dot}"];')
@@ -588,9 +695,9 @@ nodes:
 
       if state.get("dry_run"):
           print("DRY_RUN — não executando. Plano de ondas acima; DOT em " + dot_path)
-          return {"final_status": "dry_run", "waves": [[k for k in w] for w in waves], "graph_edges": edges, "dot_path": dot_path}
+          return {"final_status": "dry_run", "waves": [[k for k in w] for w in waves], "graph_edges": edges, "dot_path": dot_path, "worktree_base": wt_base}
 
-      return {"waves": waves, "graph_edges": edges, "graph_analysis": analysis, "deps_resolved": deps, "dot_path": dot_path, "only_wave": only_wave}
+      return {"waves": waves, "graph_edges": edges, "graph_analysis": analysis, "deps_resolved": deps, "dot_path": dot_path, "only_wave": only_wave, "worktrees": worktrees, "worktree_base": wt_base}
     goto:
       - if: "state.get('final_status') == 'dry_run'"
         to: __end__
@@ -640,7 +747,59 @@ nodes:
                                     "succeeded": succeeded, "failed": failed, "all_ok": all_ok}}
     goto:
       - if: "not state.get('run_waves_results', {}).get('all_ok') and state.get('stop_on_wave_failure', True)"
-        to: summary
+        to: merge_worktrees
+      - to: merge_worktrees
+
+  # ============================================================================
+  # MERGE WORKTREES — serial, no branch alvo. Cada worktree commitou no branch
+  # story/<key>; aqui fazemos `git merge` um de cada vez (serial → sem index.lock
+  # e sem colisão no sprint-status, que nenhuma worktree tocou). Nível 1: conflito
+  # de código → abort + merge_conflicts (fail-closed, pra revisão manual).
+  # ============================================================================
+  - name: merge_worktrees
+    description: Mergea cada worktree (branch story/<key>) no branch alvo, serial; fail-closed em conflito
+    run: |
+      import os, subprocess
+      repo = os.path.realpath(state.get("repo_path", "."))
+      worktrees = state.get("worktrees", []) or []
+      merged_ok, merge_conflicts = [], []
+      if not worktrees:
+          print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
+          return {"merged_ok": [], "merge_conflicts": []}
+      # Confirma branch atual do repo principal (deve ser target_branch, limpo)
+      cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).strip(" \n")
+      dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
+      print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, {len(worktrees)} worktrees p/ merge")
+      if dirty:
+          print("AVISO: working tree do repo principal sujo — merges podem incluir mudanças soltas.")
+      for w in worktrees:
+          k, branch, path = w["key"], w["branch"], w["path"]
+          # só tenta mergear worktrees cuja story rodou com sucesso (succeeded do DOT)
+          res = state.get("run_waves_results", {}) or {}
+          succ = res.get("succeeded") or []
+          if succ and not any(k in s for s in succ):
+              print(f"  {k}: NÃO succeeded no DOT — pulando merge (worktree removida, branch mantido).")
+              subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
+              merge_conflicts.append(k)
+              continue
+          r = subprocess.run(["git","merge","--no-ff", branch, "-m", f"merge: story {k} (bmad-epic-waves)"],
+                             cwd=repo, capture_output=True, text=True)
+          if r.returncode == 0:
+              merged_ok.append(k)
+              print(f"  {k}: merged OK")
+          else:
+              # conflito — aborta, mantém o branch story/<key> p/ revisão manual
+              subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
+              conflicts = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
+              merge_conflicts.append(k)
+              print(f"  {k}: CONFLITO de merge ({conflicts or 'detalhes no stderr'}). Abortado; branch {branch} mantido p/ revisão. stderr: {r.stderr.strip()[:200]}")
+          # remove a worktree (working dir); o branch story/<key> é deletado só se merged_ok
+          subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
+          if k in merged_ok:
+              subprocess.run(["git","branch","-D", branch], cwd=repo, capture_output=True)
+      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} conflito/falha")
+      return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
+    goto:
       - to: mark_done
 
   # ============================================================================
@@ -662,14 +821,15 @@ nodes:
       # Edição textual surgical: development_status[<key>] = "done"
       with open(ss_full) as f:
           lines = f.readlines()
-      # Marca só as stories que efetivamente rodaram com sucesso no DOT
-      # (labels dos nós DOT = story_key). Se não houver lista de succeeded, cai p/ todas candidatas.
-      res = state.get("run_waves_results", {}) or {}
-      succ = res.get("succeeded") or []
+      # Marca só as stories efetivamente MERGEADAS no branch alvo (merged_ok é a fonte
+      # de verdade — não succeeded do DOT, que pode não ter conflito de merge).
+      merged_ok = state.get("merged_ok", []) or []
       keys = [c["key"] for c in state.get("candidates", [])]
-      if succ:
-          # normaliza: label do DOT pode vir com sufixo/path; casa por substring do story_key
-          keys = [k for k in keys if any(k in s for s in succ)] or keys
+      if merged_ok:
+          keys = [k for k in keys if k in merged_ok]
+      if not keys:
+          print("mark_done: nenhuma story merged_ok — nada a marcar.")
+          return {"marked_done": []}
       new_lines = []
       for ln in lines:
           m = re.match(r'^(\s*)([A-Za-z0-9_-]+):\s*(.+)$', ln)
@@ -715,15 +875,23 @@ nodes:
       ss_full = os.path.join(repo, state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml"))
       epic_num, epic_key = state.get("epic_num",""), state.get("epic_key","")
       done = total = 0
+      multi = state.get("multi_epic", False)
+      cand_keys = {c["key"] for c in state.get("candidates", [])}
       if os.path.isfile(ss_full):
           ss = yaml.safe_load(open(ss_full)) or {}
           for key, val in (ss.get("development_status", {}) or {}).items():
-              if not re.match(rf'^{epic_num}-', key): continue
-              if key in (epic_key, f"{epic_key}-retrospective"): continue
+              if multi:
+                  # no multi-épico, conta só as stories candidatas deste run
+                  if key not in cand_keys: continue
+              else:
+                  if not re.match(rf'^{epic_num}-', key): continue
+                  if key in (epic_key, f"{epic_key}-retrospective"): continue
               total += 1
               st = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
               if (st or "").lower() == "done": done += 1
-      all_done = total > 0 and done == total
+      # all_done: todas as candidatas done E sem conflito de merge pendente
+      merge_conflicts = state.get("merge_conflicts", []) or []
+      all_done = total > 0 and done == total and not merge_conflicts
       # suite
       suite_green = False
       tc = state.get("test_command", "")
@@ -747,7 +915,8 @@ nodes:
       run_retro = (state.get("run_retrospective", True)
                    and state.get("all_done", False)
                    and not state.get("only_wave")
-                   and not state.get("dry_run"))
+                   and not state.get("dry_run")
+                   and not state.get("multi_epic", False))  # retro é per-épico; multi pula
       print(f"Retrospective: {'vai rodar' if run_retro else 'pulada'}")
       return {"_run_retro": run_retro}
     goto:
@@ -842,6 +1011,8 @@ edges:
   - from: build_waves
     to: run_waves
   - from: run_waves
+    to: merge_worktrees
+  - from: merge_worktrees
     to: mark_done
   - from: mark_done
     to: verify_epic
