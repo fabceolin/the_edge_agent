@@ -718,20 +718,33 @@ nodes:
           return {"run_waves_results": {"rc": 0, "stdout": "", "succeeded": [], "all_ok": True, "skipped": True}}
       tea_bin = os.environ.get("TEA_BIN") or "/home/fabricio/src/the_edge_agent/.venv/bin/tea"
       epic_key = state.get("epic_key", "epic")
+      session_name = str(epic_key)  # sem prefixo: epic_key já é "epic-8"/"epics-all"
       max_parallel = int(state.get("dot_max_parallel", 4))
-      dot_timeout = int(state.get("dot_timeout", 10800))
+      # 86400s = 24h. Default alto: stories grandes gpt-5.6-sol/xhigh com N ciclos de
+      # review extrapolam 3h (o default antigo matou o epic-8 em 20:29, abortando antes
+      # do merge_worktrees e deixando o story-cycle órfão em tmux).
+      dot_timeout = int(state.get("dot_timeout", 86400))
       cmd = [tea_bin, "run", "--from-dot", dot_path,
              "--dot-exec", tea_bin,
              "--dot-max-parallel", str(max_parallel),
-             "--dot-session", f"epic-{epic_key}"]
+             "--dot-session", session_name]
       only_wave = state.get("only_wave")
       if only_wave:
           cmd += ["--dot-start-wave", str(only_wave)]
       if state.get("dry_run"):
           cmd += ["--dot-dry-run"]
       print("run_waves: " + " ".join(cmd))
-      proc = subprocess.run(cmd, cwd=state.get("repo_path", "."),
-                           capture_output=True, text=True, timeout=dot_timeout)
+      try:
+          proc = subprocess.run(cmd, cwd=state.get("repo_path", "."),
+                               capture_output=True, text=True, timeout=dot_timeout)
+      except subprocess.TimeoutExpired:
+          # O --from-dot não propaga SIGTERM pros nós em tmux → story-cycles órfãos.
+          # Matar a session limpa os nós pendentes antes de reportar o timeout.
+          subprocess.run(["tmux", "kill-session", "-t", session_name],
+                         capture_output=True)
+          print(f"run_waves: TIMEOUT após {dot_timeout}s — session tmux '{session_name}' morta.")
+          return {"run_waves_results": {"rc": -1, "stdout": "", "stderr": f"timeout after {dot_timeout}s",
+                                        "succeeded": [], "failed": [], "all_ok": False}}
       out = proc.stdout or ""
       err = proc.stderr or ""
       print(out[-3000:])
