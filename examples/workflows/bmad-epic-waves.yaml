@@ -516,7 +516,21 @@ nodes:
       epic_key = state.get("epic_key", "")
       keys = [c["key"] for c in candidates]
       key_set = set(keys)
-      finished_keys = [s["key"] for s in stories if s.get("status") == "done" and s["key"] not in key_set]
+      # finished_keys: TODAS as stories done no sprint-status (não só as do épico).
+      # O state.stories é filtrado por épico no discover_epic; lemos o YAML bruto aqui
+      # pra resolver dependências cross-épico (ex.: 29-2 done -> satisfeita pra 30-10).
+      import yaml as _yaml
+      finished_keys = []
+      _ss_path = state.get("sprint_status_path", "")
+      _repo = state.get("repo_path", ".")
+      _ss_full = _ss_path if os.path.isabs(_ss_path) else os.path.join(_repo, _ss_path)
+      try:
+          _dev = (_yaml.safe_load(open(_ss_full)) or {}).get("development_status", {}) or {}
+          finished_keys = [k for k, v in _dev.items()
+                          if (v if isinstance(v, str) else (v.get("status") if isinstance(v, dict) else str(v))) == "done"
+                          and k not in key_set]
+      except Exception:
+          finished_keys = [s["key"] for s in stories if s.get("status") == "done" and s["key"] not in key_set]
 
       # Parse edges do graph_output (ou usa deps override)
       deps_raw = state.get("deps") or {}
@@ -546,7 +560,11 @@ nodes:
           if fin:
               print(f'Dependência "{raw}" já done ({fin}) — satisfeita, removida do layering.')
               return None
-          raise Exception(f'dependência "{raw}" não bate com nenhuma story de {epic_key}')
+          # Dependência cross-épico não-done (não está no conjunto nem finished):
+          # descarta do layering — o Task 0 do story-cycle barrará (dev_failed) se a dep
+          # realmente faltar no disco. Não trava o orquestrador inteiro por uma dep externa.
+          print(f'Dependência "{raw}" não é do {epic_key} nem done — descartada do layering (Task 0 barrará se faltar no disco).')
+          return None
 
       deps = {k: [] for k in keys}
       for raw_k, raw_list in (deps_raw or {}).items():
