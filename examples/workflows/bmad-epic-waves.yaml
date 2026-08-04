@@ -750,10 +750,13 @@ nodes:
       print(out[-3000:])
       if err:
           print("STDERR:", err[-1500:])
-      succeeded = re.findall(r'Completed:\s+(\S+)', out)
-      failed = re.findall(r'Failed:\s+(\S+)', out)
+      # `Completed:`/`Failed:`/`Nodes:` vão pro STDERR do `tea --from-dot` (não stdout).
+      # Parser precisa combinar ambos senão succeeded=[] e all_ok=False no piloto.
+      combined = out + "\n" + err
+      succeeded = re.findall(r'Completed:\s+(\S+)', combined)
+      failed = re.findall(r'Failed:\s+(\S+)', combined)
       # "Nodes: N/M succeeded" indica sucesso total; rc==0 é requerido
-      m_nodes = re.search(r'Nodes:\s+(\d+)/(\d+)\s+succeeded', out)
+      m_nodes = re.search(r'Nodes:\s+(\d+)/(\d+)\s+succeeded', combined)
       all_ok = bool(m_nodes) and m_nodes.group(1) == m_nodes.group(2) and proc.returncode == 0
       print(f"run_waves: rc={proc.returncode} succeeded={succeeded} failed={failed} all_ok={all_ok}")
       return {"run_waves_results": {"rc": proc.returncode, "stdout": out[-6000:], "stderr": err[-2000:],
@@ -780,7 +783,7 @@ nodes:
           print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
           return {"merged_ok": [], "merge_conflicts": []}
       # Confirma branch atual do repo principal (deve ser target_branch, limpo)
-      cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).strip(" \n")
+      cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
       dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
       print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, {len(worktrees)} worktrees p/ merge")
       if dirty:
