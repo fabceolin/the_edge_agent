@@ -85,6 +85,10 @@ state_schema:
   worktree_base: str          # dir base das worktrees (default /tmp/tea-wt-<epic_key>)
   merged_ok: list             # stories mergeadas sem conflito
   merge_conflicts: list       # stories com conflito de merge (fail-closed)
+  auto_resolve_conflicts: bool  # Nível 2: LLM resolve conflitos; gate = suíte verde + sem marcadores
+  pending_resolution: list   # [{key, branch, files}] conflitos resolvíveis (auto_resolve on)
+  post_merge_head: str       # HEAD com merged_ok, antes dos merges resolvidos (pra git reset)
+  resolution_output: str     # output do resolve_conflicts (LLM)
   marked_done: list
   all_done: bool
   done_count: int
@@ -308,7 +312,7 @@ nodes:
             1. **Cheque cada arquivo esperado** (existe, não vazio, tem conteúdo de story de verdade — ACs, Dev Notes — e não um stub de uma linha):
             {% for s in state.missing_files %}   - {{ state.implementation_artifacts_dir }}/{{ s.key }}.md  (key: {{ s.key }})
             {% endfor %}
-            2. **Procure colisões:** liste os arquivos `{{ state.epic_num }}-*.md`{% if state.multi_epic %} de cada um dos épicos ({{ state.epic_nums | join(', ') }}){% endif %} em `{{ state.implementation_artifacts_dir }}/` e reporte em `duplicates` qualquer arquivo que NÃO está na lista acima, ou dois com conteúdo praticamente idêntico (assinatura de dois agentes tendo escrito a mesma story).
+            2. **Procure colisões reais ENTRE os arquivos criados nesta rodada** (a lista do item 1 acima): dois keys diferentes cujos `.md` têm conteúdo praticamente idêntico — assinatura de dois agentes irmãos tendo escrito a mesma story por acidente do fan-out. Arquivos que **já existiam** antes desta rodada (pré-existentes, não estão na lista do item 1) **NÃO são duplicates**, mesmo que não estejam nela — você está reconciliando só o que foi criado agora. Se a lista do item 1 está vazia (`missing_files` vazio), deixe `DUPLICATES:` em branco e não liste nada.
             3. **Marque os statuses** em `{{ state.sprint_status_path }}`, só para os keys cujo arquivo passou o item 1: `development_status[<key>] = "ready-for-dev"`{% if not state.multi_epic %}, e `{{ state.epic_key }}` de `backlog` para `in-progress`{% else %}, e CADA um dos épicos `{{ state.epic_keys | join('`, `') }}` de `backlog` para `in-progress`{% endif %}. Atualize `last_updated`.
                **Formato de `last_updated` (OBRIGATÓRIO):** a linha atual é um scalar `YYYY-MM-DD` seguido de um comentário histórico longo após `#`. Preserve EXATAMENTE esse formato — troque só a data (a de hoje, `YYYY-MM-DD` sem aspas, sem horário/ISO), e mantenha o comentário `# ...` inteiro na mesma linha. NÃO converta para ISO, NÃO adicione aspas, NÃO remova o comentário. Se um status já está no valor alvo, não reescreva a linha (escrita idempotente).
                **Edição surgical, nunca regeneração:** mude só essas linhas. Não regenere o arquivo, não remova comentários (o topo costuma ser um log histórico longo), não toque `action_items`, não altere entries de outros époc, e NUNCA rebaixe um status existente (`done` nunca volta).
@@ -770,27 +774,28 @@ nodes:
   # MERGE WORKTREES — serial, no branch alvo. Cada worktree commitou no branch
   # story/<key>; aqui fazemos `git merge` um de cada vez (serial → sem index.lock
   # e sem colisão no sprint-status, que nenhuma worktree tocou). Nível 1: conflito
-  # de código → abort + merge_conflicts (fail-closed, pra revisão manual).
+  # de código → abort + merge_conflicts (fail-closed, pra revisão manual). Nível 2
+  # (auto_resolve_conflicts): conflito → pending_resolution, resolve_conflicts (LLM)
+  # junta os dois lados, verify_resolution (suíte verde + sem marcadores) decide.
   # ============================================================================
   - name: merge_worktrees
-    description: Mergea cada worktree (branch story/<key>) no branch alvo, serial; fail-closed em conflito
+    description: Mergea cada worktree (branch story/<key>) no branch alvo, serial; Nível 1 fail-closed ou Nível 2 pending_resolution
     run: |
       import os, subprocess
       repo = os.path.realpath(state.get("repo_path", "."))
       worktrees = state.get("worktrees", []) or []
-      merged_ok, merge_conflicts = [], []
+      auto_resolve = bool(state.get("auto_resolve_conflicts"))
+      merged_ok, merge_conflicts, pending_resolution = [], [], []
       if not worktrees:
           print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
-          return {"merged_ok": [], "merge_conflicts": []}
-      # Confirma branch atual do repo principal (deve ser target_branch, limpo)
+          return {"merged_ok": [], "merge_conflicts": [], "pending_resolution": [], "post_merge_head": ""}
       cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
       dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, {len(worktrees)} worktrees p/ merge")
+      print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, auto_resolve={auto_resolve}, {len(worktrees)} worktrees")
       if dirty:
           print("AVISO: working tree do repo principal sujo — merges podem incluir mudanças soltas.")
       for w in worktrees:
           k, branch, path = w["key"], w["branch"], w["path"]
-          # só tenta mergear worktrees cuja story rodou com sucesso (succeeded do DOT)
           res = state.get("run_waves_results", {}) or {}
           succ = res.get("succeeded") or []
           if succ and not any(k in s for s in succ):
@@ -804,17 +809,133 @@ nodes:
               merged_ok.append(k)
               print(f"  {k}: merged OK")
           else:
-              # conflito — aborta, mantém o branch story/<key> p/ revisão manual
-              subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
+              # conflito: coleta arquivos em conflito e aborta (libera o index)
               conflicts = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
-              merge_conflicts.append(k)
-              print(f"  {k}: CONFLITO de merge ({conflicts or 'detalhes no stderr'}). Abortado; branch {branch} mantido p/ revisão. stderr: {r.stderr.strip()[:200]}")
-          # remove a worktree (working dir); o branch story/<key> é deletado só se merged_ok
+              subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
+              if auto_resolve:
+                  # Nível 2: delega a resolução pro resolve_conflicts (LLM). Mantém o branch
+                  # story/<key> pra re-mergear; remove só a worktree (working dir).
+                  files = [f for f in conflicts.splitlines() if f.strip()]
+                  pending_resolution.append({"key": k, "branch": branch, "files": files})
+                  print(f"  {k}: CONFLITO ({len(files)} arq) → pending_resolution (Nível 2). branch {branch} mantido.")
+              else:
+                  # Nível 1: fail-closed, branch mantido pra revisão manual
+                  merge_conflicts.append(k)
+                  print(f"  {k}: CONFLITO ({conflicts or 'detalhes no stderr'}). Abortado; branch {branch} mantido p/ revisão. stderr: {r.stderr.strip()[:200]}")
+          # remove a worktree (working dir) em todos os casos; o branch story/<key> é
+          # deletado só se merged_ok (ou, no Nível 2, se virar merged_ok em verify_resolution)
           subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
           if k in merged_ok:
               subprocess.run(["git","branch","-D", branch], cwd=repo, capture_output=True)
-      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} conflito/falha")
-      return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
+      # post_merge_head = HEAD com os merged_ok aplicados, SEM os pending (abortados).
+      # verify_resolution faz git reset --hard pra cá no fail-closed, preservando os merged_ok.
+      post_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
+      return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts,
+              "pending_resolution": pending_resolution, "post_merge_head": post_merge_head}
+    goto:
+      - if: "state.get('pending_resolution')"
+        to: resolve_conflicts
+      - to: mark_done
+
+  # ============================================================================
+  # RESOLVE CONFLICTS (Nível 2) — LLM re-mergea cada pending_resolution e junta os
+  # dois lados dos conflitos (preserva AMBOS, nunca remove). Só atua em arquivos
+  # listados em pending_resolution[i].files. Deixa marcadores intactos se o
+  # conflito for semanticamente incompatível (FAILED).
+  # ============================================================================
+  - name: resolve_conflicts
+    description: Re-mergea cada pending_resolution e resolve conflitos via LLM (juntar ambos os lados, nunca remover)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, no repo principal em {{ state.repo_path }} (branch alvo). Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
+
+            O bmad-epic-waves mergeou em serial N stories que chocaram em arquivos compartilhados. Você vai resolver os conflitos de merge que o git não conseguiu, **juntando** as duas versões (NÃO escolhendo um lado).
+
+            Pendentes a resolver (cada um é um branch `story/<key>` já commitado, cujo `git merge --no-ff` deu conflito):
+            {% for p in state.pending_resolution %}
+            - key: {{ p.key }}, branch: {{ p.branch }}, arquivos conflitantes:
+            {% for f in p.files %}    - {{ f }}
+            {% endfor %}{% endfor %}
+
+            Para CADA pendente, em ordem:
+            1. Rode `git merge --no-ff <branch>` (use o branch listado; vai conflitar de novo nos arquivos). NÃO use `-X ours`/`-X theirs`/`--strategy-option`.
+            2. Para cada arquivo conflitante: localize os blocos `<<<<<<< HEAD` ... `=======` ... `>>>>>>> story/<key>`. **Junte as duas versões preservando AMBOS os lados**: linhas que aparecem só num lado entram; linhas idênticas nos dois lados entram uma vez. Remova os marcadores `<<<<<<<`/`=======`/`>>>>>>>`.
+            3. **NUNCA remova conteúdo que existia em qualquer dos lados** — só junta. Se o conflito é semanticamente incompatível (mesma linha/constante com valores mutuamente exclusivos que NÃO podem coexistir), **NÃO resolva**: deixe os marcadores intactos e reporte este key como `FAILED`.
+            4. Se resolveu TODOS os arquivos do key: `git add <arquivos>` (nominais, NUNCA `git add -A`/`.`) e `git commit --no-edit` (completa o merge em andamento — NÃO use `git merge`, que dá erro fatal quando já há um MERGE_HEAD).
+            5. Reporte `<key>: RESOLVED` ou `<key>: FAILED` (uma linha por key, no final).
+
+            Restrições: NÃO rode testes, NÃO edite `{{ state.sprint_status_path }}`, NÃO toque arquivos fora da lista de conflitantes de cada key, NUNCA `git add -A`/`.`/`--all`.
+
+            Imprima ao final `RESOLUTION_DONE`.
+    output: resolution_output
+    goto:
+      - to: verify_resolution
+
+  # ============================================================================
+  # VERIFY RESOLUTION (Nível 2) — gate de segurança determinístico. Se o LLM
+  # deixou marcadores (FAILED) ou a suíte ficou vermelha, fail-closed:
+  # git reset --hard post_merge_head (preserva os merged_ok originais do
+  # merge_worktrees) + pendentes viram merge_conflicts.
+  # ============================================================================
+  - name: verify_resolution
+    description: Gate do Nível 2 — suíte verde + sem marcadores, senão fail-closed (reset --hard post_merge_head)
+    run: |
+      import os, re, subprocess
+      repo = os.path.realpath(state.get("repo_path", "."))
+      text = state.get("resolution_output", {})
+      text = text.get("content", "") if isinstance(text, dict) else (str(text) if text else "")
+      pending = state.get("pending_resolution", []) or []
+      post_merge_head = state.get("post_merge_head", "")
+      resolved, failed = [], []
+      for p in pending:
+          k = p["key"]
+          if re.search(rf'^{re.escape(k)}:\s*RESOLVED', text, re.M):
+              resolved.append(k)
+          else:
+              failed.append(k)
+      # conflitos ainda abertos (LLM não completou o merge) e marcadores restantes
+      d = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
+      chk = subprocess.run(["git","diff","--check"], cwd=repo, capture_output=True, text=True)
+      leftover_markers = chk.stdout.strip() if chk.returncode != 0 else ""
+      print(f"verify_resolution: resolved={resolved} failed={failed} conflicted_files='{d}' markers={'SIM' if leftover_markers else 'nao'}")
+      merged_ok = list(state.get("merged_ok", []) or [])
+      merge_conflicts = list(state.get("merge_conflicts", []) or [])
+      # Gate 1: sem conflitos abertos e sem marcadores restantes e nenhum FAILED
+      if d or leftover_markers or failed:
+          print("verify_resolution: GATE 1 FALHOU (marcadores/conflito restante) → fail-closed")
+          if d:
+              subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
+          if post_merge_head:
+              subprocess.run(["git","reset","--hard",post_merge_head], cwd=repo, capture_output=True)
+          merge_conflicts.extend(resolved)
+          merge_conflicts.extend(failed)
+          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
+      # Gate 2: suíte verde
+      test_cmd = state.get("test_command", "make test")
+      print(f"verify_resolution: rodando suíte '{test_cmd}'")
+      t = subprocess.run(test_cmd, shell=True, cwd=repo, capture_output=True, text=True, timeout=3600)
+      print(t.stdout[-1500:])
+      if t.returncode == 0:
+          print("verify_resolution: suíte VERDE → pendentes viram merged_ok")
+          merged_ok.extend(resolved)
+          for p in pending:
+              if p["key"] in resolved:
+                  subprocess.run(["git","branch","-D", p["branch"]], cwd=repo, capture_output=True)
+          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
+      else:
+          print(f"verify_resolution: suíte VERMELHA (rc={t.returncode}) → fail-closed")
+          print(t.stderr[-1000:])
+          if post_merge_head:
+              subprocess.run(["git","reset","--hard",post_merge_head], cwd=repo, capture_output=True)
+          merge_conflicts.extend(resolved)
+          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
     goto:
       - to: mark_done
 
@@ -1029,6 +1150,12 @@ edges:
   - from: run_waves
     to: merge_worktrees
   - from: merge_worktrees
+    to: resolve_conflicts
+  - from: merge_worktrees
+    to: mark_done
+  - from: resolve_conflicts
+    to: verify_resolution
+  - from: verify_resolution
     to: mark_done
   - from: mark_done
     to: verify_epic
