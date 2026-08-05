@@ -84,11 +84,14 @@ state_schema:
   worktrees: list             # [{key, path, branch}] criadas por build_waves
   worktree_base: str          # dir base das worktrees (default /tmp/tea-wt-<epic_key>)
   merged_ok: list             # stories mergeadas sem conflito
+  merged_tips: dict            # {story_key: commit_tip} comprovados no HEAD final
+  merged_branches: dict        # {story_key: branch} deletadas só após gate final verde
   merge_conflicts: list       # stories com conflito de merge (fail-closed)
   auto_resolve_conflicts: bool  # Nível 2: LLM resolve conflitos; gate = suíte verde + sem marcadores
   pending_resolution: list   # [{key, branch, files}] conflitos resolvíveis (auto_resolve on)
   post_merge_head: str       # HEAD com merged_ok, antes dos merges resolvidos (pra git reset)
   resolution_output: str     # output do resolve_conflicts (LLM)
+  resolution_recovery: dict   # {story_key: recovery/ref} antes de rollback fail-closed
   marked_done: list
   all_done: bool
   done_count: int
@@ -629,8 +632,17 @@ nodes:
       worktrees = []
       dry = bool(state.get("dry_run"))
       if not dry:
+          from the_edge_agent.bmad_epic_waves_git import branch_has_unmerged_commits
+          stale = []
+          for k in keys:
+              branch = f"story/{k}"
+              contributes, tip = branch_has_unmerged_commits(repo_abs, branch)
+              if contributes:
+                  stale.append(f"{branch}@{tip[:8]}")
+          if stale:
+              raise Exception("retry recusado: branches de story ainda não integradas foram preservadas: " + ", ".join(stale))
           os.makedirs(wt_base, exist_ok=True)
-          # Limpa worktrees/branches de runs anteriores deste epic_key
+          # Limpa apenas worktrees/branches vazias ou já ancestrais do target.
           _old = subprocess.run(["git","worktree","list","--porcelain"], cwd=repo_abs, capture_output=True, text=True)
           for line in _old.stdout.splitlines():
               if line.startswith("worktree "):
@@ -797,59 +809,70 @@ nodes:
   # junta os dois lados, verify_resolution (suíte verde + sem marcadores) decide.
   # ============================================================================
   - name: merge_worktrees
-    description: Mergea cada worktree (branch story/<key>) no branch alvo, serial; Nível 1 fail-closed ou Nível 2 pending_resolution
+    description: Mergea cada worktree no branch alvo com prova de commit e retenção fail-closed
     run: |
       import os, subprocess
+      from the_edge_agent.bmad_epic_waves_git import branch_has_unmerged_commits, is_ancestor
       repo = os.path.realpath(state.get("repo_path", "."))
       worktrees = state.get("worktrees", []) or []
       auto_resolve = bool(state.get("auto_resolve_conflicts"))
       merged_ok, merge_conflicts, pending_resolution = [], [], []
+      merged_tips, merged_branches = {}, {}
       if not worktrees:
           print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
-          return {"merged_ok": [], "merge_conflicts": [], "pending_resolution": [], "post_merge_head": ""}
+          return {"merged_ok": [], "merged_tips": {}, "merged_branches": {},
+                  "merge_conflicts": [], "pending_resolution": [], "post_merge_head": ""}
       cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
       dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
       print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, auto_resolve={auto_resolve}, {len(worktrees)} worktrees")
       if dirty:
-          print("AVISO: working tree do repo principal sujo — merges podem incluir mudanças soltas.")
+          keys = [w["key"] for w in worktrees]
+          print(f"merge_worktrees: FAIL-CLOSED — repo principal sujo; worktrees e branches mantidas: {keys}")
+          head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+          return {"merged_ok": [], "merged_tips": {}, "merged_branches": {},
+                  "merge_conflicts": keys, "pending_resolution": [], "post_merge_head": head}
       for w in worktrees:
           k, branch, path = w["key"], w["branch"], w["path"]
           res = state.get("run_waves_results", {}) or {}
           succ = res.get("succeeded") or []
-          if succ and not any(k in s for s in succ):
-              print(f"  {k}: NÃO succeeded no DOT — pulando merge (worktree removida, branch mantido).")
-              subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
+          if res.get("skipped") or k not in succ:
+              print(f"  {k}: NÃO comprovada como succeeded no DOT — worktree e branch mantidas.")
               merge_conflicts.append(k)
               continue
+          contributes, tip = branch_has_unmerged_commits(repo, branch)
+          if not contributes:
+              reason = "branch ausente" if not tip else "branch sem commits próprios além do HEAD alvo"
+              print(f"  {k}: NÃO integrada — {reason}; worktree e branch mantidas.")
+              merge_conflicts.append(k)
+              continue
+          pre_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
           r = subprocess.run(["git","merge","--no-ff", branch, "-m", f"merge: story {k} (bmad-epic-waves)"],
                              cwd=repo, capture_output=True, text=True)
-          if r.returncode == 0:
+          if r.returncode == 0 and is_ancestor(repo, tip):
               merged_ok.append(k)
-              print(f"  {k}: merged OK")
+              merged_tips[k] = tip
+              merged_branches[k] = branch
+              print(f"  {k}: merged OK tip={tip[:8]}; branch retida até gate final")
+              subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
+          elif r.returncode == 0:
+              reset = subprocess.run(["git","reset","--hard",pre_merge_head], cwd=repo, capture_output=True, text=True)
+              print(f"  {k}: merge zero sem ancestralidade; rollback rc={reset.returncode}, worktree/branch mantidas.")
+              merge_conflicts.append(k)
           else:
-              # conflito: coleta arquivos em conflito e aborta (libera o index)
               conflicts = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
               subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
               if auto_resolve:
-                  # Nível 2: delega a resolução pro resolve_conflicts (LLM). Mantém o branch
-                  # story/<key> pra re-mergear; remove só a worktree (working dir).
                   files = [f for f in conflicts.splitlines() if f.strip()]
-                  pending_resolution.append({"key": k, "branch": branch, "files": files})
-                  print(f"  {k}: CONFLITO ({len(files)} arq) → pending_resolution (Nível 2). branch {branch} mantido.")
+                  pending_resolution.append({"key": k, "branch": branch, "files": files, "tip": tip})
+                  print(f"  {k}: CONFLITO ({len(files)} arq) → pending_resolution; branch mantida.")
+                  subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
               else:
-                  # Nível 1: fail-closed, branch mantido pra revisão manual
                   merge_conflicts.append(k)
-                  print(f"  {k}: CONFLITO ({conflicts or 'detalhes no stderr'}). Abortado; branch {branch} mantido p/ revisão. stderr: {r.stderr.strip()[:200]}")
-          # remove a worktree (working dir) em todos os casos; o branch story/<key> é
-          # deletado só se merged_ok (ou, no Nível 2, se virar merged_ok em verify_resolution)
-          subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
-          if k in merged_ok:
-              subprocess.run(["git","branch","-D", branch], cwd=repo, capture_output=True)
-      # post_merge_head = HEAD com os merged_ok aplicados, SEM os pending (abortados).
-      # verify_resolution faz git reset --hard pra cá no fail-closed, preservando os merged_ok.
+                  print(f"  {k}: CONFLITO. Worktree/branch mantidas p/ revisão. stderr: {r.stderr.strip()[:200]}")
       post_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
-      return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts,
+      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} falha/conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
+      return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+              "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
               "pending_resolution": pending_resolution, "post_merge_head": post_merge_head}
     goto:
       - if: "state.get('pending_resolution')"
@@ -903,57 +926,81 @@ nodes:
   # merge_worktrees) + pendentes viram merge_conflicts.
   # ============================================================================
   - name: verify_resolution
-    description: Gate do Nível 2 — suíte verde + sem marcadores, senão fail-closed (reset --hard post_merge_head)
+    description: Gate Nível 2 — ancestralidade, marcadores, suíte e rollback recuperável
     run: |
       import os, re, subprocess
+      from the_edge_agent.bmad_epic_waves_git import branch_tip, preserve_resolution_head, reconcile_merged_keys
       repo = os.path.realpath(state.get("repo_path", "."))
       text = state.get("resolution_output", {})
       text = text.get("content", "") if isinstance(text, dict) else (str(text) if text else "")
       pending = state.get("pending_resolution", []) or []
+      pending_keys = [p["key"] for p in pending]
       post_merge_head = state.get("post_merge_head", "")
-      resolved, failed = [], []
-      for p in pending:
-          k = p["key"]
-          if re.search(rf'^{re.escape(k)}:\s*RESOLVED', text, re.M):
-              resolved.append(k)
-          else:
-              failed.append(k)
-      # conflitos ainda abertos (LLM não completou o merge) e marcadores restantes
+      resolved = [k for k in pending_keys if re.search(rf'^{re.escape(k)}:\s*RESOLVED', text, re.M)]
+      failed = [k for k in pending_keys if k not in resolved]
       d = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      chk = subprocess.run(["git","diff","--check"], cwd=repo, capture_output=True, text=True)
-      leftover_markers = chk.stdout.strip() if chk.returncode != 0 else ""
-      print(f"verify_resolution: resolved={resolved} failed={failed} conflicted_files='{d}' markers={'SIM' if leftover_markers else 'nao'}")
+      conflict_files = sorted({f for p in pending for f in p.get("files", [])})
+      marker_cmd = ["git","grep","-n","-E",r"^(<<<<<<< |=======|>>>>>>> )","HEAD","--",*conflict_files]
+      marker_scan = subprocess.run(marker_cmd, cwd=repo, capture_output=True, text=True) if conflict_files else None
+      committed_markers = marker_scan.stdout.strip() if marker_scan and marker_scan.returncode == 0 else ""
+      print(f"verify_resolution: resolved={resolved} failed={failed} conflicted='{d}' committed_markers={'SIM' if committed_markers else 'nao'}")
       merged_ok = list(state.get("merged_ok", []) or [])
+      merged_tips = dict(state.get("merged_tips", {}) or {})
+      merged_branches = dict(state.get("merged_branches", {}) or {})
       merge_conflicts = list(state.get("merge_conflicts", []) or [])
-      # Gate 1: sem conflitos abertos e sem marcadores restantes e nenhum FAILED
-      if d or leftover_markers or failed:
-          print("verify_resolution: GATE 1 FALHOU (marcadores/conflito restante) → fail-closed")
+
+      def fail_closed(reason):
+          before = branch_tip(repo, "HEAD")
+          recovery = preserve_resolution_head(repo, state.get("epic_key", "epic"), pending_keys)
+          needs_anchor = bool(before and post_merge_head and before != post_merge_head)
+          if needs_anchor and set(recovery) != set(pending_keys):
+              for key in pending_keys:
+                  if key not in merge_conflicts: merge_conflicts.append(key)
+              print(f"verify_resolution: CRÍTICO — refs de recuperação incompletas; reset recusado: {recovery}")
+              return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+                      "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
+                      "resolution_recovery": recovery, "rollback_ok": False}
           if d:
               subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
-          if post_merge_head:
-              subprocess.run(["git","reset","--hard",post_merge_head], cwd=repo, capture_output=True)
-          merge_conflicts.extend(resolved)
-          merge_conflicts.extend(failed)
-          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
-      # Gate 2: suíte verde
+          reset = subprocess.run(["git","reset","--hard",post_merge_head], cwd=repo, capture_output=True, text=True) if post_merge_head else None
+          after = branch_tip(repo, "HEAD")
+          rollback_ok = bool(post_merge_head and reset and reset.returncode == 0 and after == post_merge_head)
+          for key in pending_keys:
+              if key not in merge_conflicts: merge_conflicts.append(key)
+          print(f"verify_resolution: {reason} → fail-closed rollback_ok={rollback_ok}; recovery={recovery}")
+          return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+                  "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
+                  "resolution_recovery": recovery, "rollback_ok": rollback_ok}
+
+      if d or committed_markers or failed:
+          return fail_closed("GATE 1 FALHOU")
+      pending_tips = {p["key"]: p.get("tip", "") for p in pending}
+      accepted, rejected = reconcile_merged_keys(repo, resolved, pending_tips)
+      if rejected:
+          return fail_closed(f"GATE DE ANCESTRALIDADE FALHOU para {rejected}")
+      expected_head = branch_tip(repo, "HEAD")
       test_cmd = state.get("test_command", "make test")
       print(f"verify_resolution: rodando suíte '{test_cmd}'")
-      t = subprocess.run(test_cmd, shell=True, cwd=repo, capture_output=True, text=True, timeout=3600)
+      try:
+          t = subprocess.run(test_cmd, shell=True, cwd=repo, capture_output=True, text=True, timeout=float(state.get("resolution_test_timeout", 3600)))
+      except Exception as exc:
+          return fail_closed(f"suíte não concluiu: {type(exc).__name__}: {exc}")
       print(t.stdout[-1500:])
-      if t.returncode == 0:
-          print("verify_resolution: suíte VERDE → pendentes viram merged_ok")
-          merged_ok.extend(resolved)
-          for p in pending:
-              if p["key"] in resolved:
-                  subprocess.run(["git","branch","-D", p["branch"]], cwd=repo, capture_output=True)
-          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
-      else:
-          print(f"verify_resolution: suíte VERMELHA (rc={t.returncode}) → fail-closed")
+      if t.returncode != 0:
           print(t.stderr[-1000:])
-          if post_merge_head:
-              subprocess.run(["git","reset","--hard",post_merge_head], cwd=repo, capture_output=True)
-          merge_conflicts.extend(resolved)
-          return {"merged_ok": merged_ok, "merge_conflicts": merge_conflicts}
+          return fail_closed(f"suíte VERMELHA (rc={t.returncode})")
+      if branch_tip(repo, "HEAD") != expected_head:
+          return fail_closed("HEAD mudou durante a suíte")
+      accepted, rejected = reconcile_merged_keys(repo, resolved, pending_tips)
+      if rejected:
+          return fail_closed(f"ancestralidade mudou após suíte: {rejected}")
+      print("verify_resolution: suíte VERDE + ancestralidade comprovada")
+      merged_ok.extend(accepted)
+      merged_tips.update({key: pending_tips[key] for key in accepted})
+      merged_branches.update({p["key"]: p["branch"] for p in pending if p["key"] in accepted})
+      return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+              "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
+              "resolution_recovery": {}, "rollback_ok": True}
     goto:
       - to: mark_done
 
@@ -961,10 +1008,11 @@ nodes:
   # MARK DONE — serial, determinístico (porta o mergePrompt de sprint-status)
   # ============================================================================
   - name: mark_done
-    description: Marca cada story integrada como done no sprint-status e commita (git add por nome)
+    description: Marca apenas stories cuja tip comprovadamente está no HEAD final e commita por nome
     run: |
       import os, re, subprocess, yaml
       from datetime import date
+      from the_edge_agent.bmad_epic_waves_git import reconcile_merged_keys
       repo = state.get("repo_path", ".")
       ss_rel = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
       ss_full = os.path.join(repo, ss_rel)
@@ -973,51 +1021,48 @@ nodes:
       if not os.path.isfile(ss_full):
           print("sprint-status.yaml ausente — pulando mark_done")
           return {"marked_done": []}
-      # Edição textual surgical: development_status[<key>] = "done"
       with open(ss_full) as f:
           lines = f.readlines()
-      # Marca só as stories efetivamente MERGEADAS no branch alvo (merged_ok é a fonte
-      # de verdade — não succeeded do DOT, que pode não ter conflito de merge).
-      merged_ok = state.get("merged_ok", []) or []
-      keys = [c["key"] for c in state.get("candidates", [])]
-      if merged_ok:
-          keys = [k for k in keys if k in merged_ok]
+      merged_ok = list(state.get("merged_ok", []) or [])
+      merged_tips = dict(state.get("merged_tips", {}) or {})
+      accepted, rejected = reconcile_merged_keys(repo, merged_ok, merged_tips)
+      merge_conflicts = list(state.get("merge_conflicts", []) or [])
+      for key in rejected:
+          if key not in merge_conflicts:
+              merge_conflicts.append(key)
+      if rejected:
+          print(f"mark_done: removidas de merged_ok por falha de ancestralidade: {rejected}")
+      keys = [c["key"] for c in state.get("candidates", []) if c["key"] in accepted]
       if not keys:
-          print("mark_done: nenhuma story merged_ok — nada a marcar.")
-          return {"marked_done": []}
+          print("mark_done: nenhuma story integrada e comprovada — nada a marcar.")
+          return {"marked_done": [], "merged_ok": accepted, "merge_conflicts": merge_conflicts}
       new_lines = []
       for ln in lines:
           m = re.match(r'^(\s*)([A-Za-z0-9_-]+):\s*(.+)$', ln)
           if m and m.group(2) in keys:
               indent, key, rest = m.group(1), m.group(2), m.group(3)
-              # se valor é um status simples, troca por done; preserva comentário inline
               comment = ""
               if '#' in rest: comment = " " + rest[rest.index('#'):]
               new_lines.append(f'{indent}{key}: done{comment}\n')
               marked.append(key)
           else:
               new_lines.append(ln)
-      # atualiza last_updated
       out = []
       for ln in new_lines:
-          if re.match(r'^\s*last_updated:\s*.*$', ln):
-              out.append(f'last_updated: {today}\n')
-          else:
-              out.append(ln)
+          out.append(f'last_updated: {today}\n' if re.match(r'^\s*last_updated:\s*.*$', ln) else ln)
       with open(ss_full, "w") as f:
           f.writelines(out)
-      # valida YAML
-      try:
-          yaml.safe_load(open(ss_full))
-      except Exception as e:
-          print(f"⚠️ sprint-status.yaml não parseia após mark_done: {e}")
-      # commit por arquivo
+      yaml.safe_load(open(ss_full))
       subprocess.run(["git","add", ss_rel], cwd=repo, check=True)
       r = subprocess.run(["git","commit","-m", f"chore(sprint): {state.get('epic_key')} wave -> done"], cwd=repo, capture_output=True, text=True)
       if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr).lower():
-          print(f"mark_done commit falhou: {r.stderr}")
+          subprocess.run(["git","restore","--staged","--worktree",ss_rel], cwd=repo, capture_output=True)
+          for key in accepted:
+              if key not in merge_conflicts: merge_conflicts.append(key)
+          print(f"mark_done commit falhou; status revertido: {r.stderr}")
+          return {"marked_done": [], "merged_ok": [], "merge_conflicts": merge_conflicts}
       print(f"Marcadas done: {marked}")
-      return {"marked_done": marked}
+      return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
 
   # ============================================================================
   # VERIFY — determinístico + suite coverage
@@ -1044,10 +1089,7 @@ nodes:
               total += 1
               st = val if isinstance(val, str) else (val.get("status") if isinstance(val, dict) else str(val))
               if (st or "").lower() == "done": done += 1
-      # all_done: todas as candidatas done E sem conflito de merge pendente
       merge_conflicts = state.get("merge_conflicts", []) or []
-      all_done = total > 0 and done == total and not merge_conflicts
-      # suite
       suite_green = False
       tc = state.get("test_command", "")
       if tc:
@@ -1058,8 +1100,15 @@ nodes:
                   print(f"Suíte NÃO verde:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
           except Exception as e:
               print(f"Suíte não roda: {e}")
-      print(f"Verify: {done}/{total} done, suite_green={suite_green}")
-      return {"all_done": all_done, "done_count": done, "total_count": total, "suite_green": suite_green}
+      incomplete_keys = sorted(set(cand_keys) - set(state.get("marked_done", []) or []))
+      incomplete_keys = sorted(set(incomplete_keys) | set(merge_conflicts))
+      all_done = total > 0 and done == total and not incomplete_keys and suite_green
+      if all_done:
+          for branch in (state.get("merged_branches", {}) or {}).values():
+              subprocess.run(["git","branch","-D",branch], cwd=repo, capture_output=True)
+      print(f"Verify: {done}/{total} done, suite_green={suite_green}, incomplete={incomplete_keys}, all_done={all_done}")
+      return {"all_done": all_done, "done_count": done, "total_count": total,
+              "suite_green": suite_green, "incomplete_keys": incomplete_keys}
 
   # ============================================================================
   # RETRO — condicional (porta retroPrompt, com flip do epic-N)
@@ -1135,6 +1184,7 @@ nodes:
     run: |
       suite = "VERDE" if state.get("suite_green") else "NÃO verde"
       retro = "rodou" if state.get("_run_retro") else "pulada"
+      incomplete = ", ".join(state.get("incomplete_keys", []) or []) or "nenhuma"
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
       ║         BMAD EPIC-WAVES — ÉPICO CONCLUÍDO                  ║
@@ -1147,6 +1197,7 @@ nodes:
       ║ Retrospective: {retro:<48} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
+      print(f"Stories não integradas: {incomplete}")
       final = "completed" if state.get("all_done") else "incomplete"
       return {"final_status": final, "epic": state.get("epic_key")}
 
