@@ -15,6 +15,12 @@ description: |
   - O ciclo de cada story (dev+review+commit) é o subgraph bmad-story-cycle.yaml.
   - O veredito do review usa marcador FINAL_STATUS + regex (não schema JSON).
 
+  REDE DE SEGURANÇA — lock cross-run: este fluxo roda TUDO no repo principal, sem
+  isolamento. Uma invocação do bmad-epic-waves (ou outro dev-cycle) em outro épico
+  integrando no mesmo repo ao mesmo tempo produzia HEAD destacado, merge intercalado e
+  stash de irmão. O lock em `<repo>/.claude/.bmad-epic-waves.lock` é o MESMO dos dois
+  fluxos de propósito: o recurso disputado é a árvore de trabalho, não o épico.
+
   Input (--input JSON):
     arg (obrigatório): "epic-5", "5" ou 5
     repo_path (obrigatório): path absoluto do repo alvo
@@ -23,6 +29,10 @@ description: |
     reprocess_done (bool, default false): reprocessa stories já "done"
     story_keys (list, opcional): sobrescreve a descoberta (lista explícita de keys na ordem)
     skills_dir (str, opcional): default {repo_path}/.claude/skills
+    dev_provider / review_provider (str, opcional): shell_provider do bmad-story-cycle.yaml
+      (ex.: "codex_small"). Default: "codex"/"codex_review". Aqui não há classificação
+      automática de complexidade — ela pega carona no agente de grafo, que só existe no
+      epic-waves; passe à mão se quiser baixar o esforço de um épico inteiro.
 
   Uso:
     tea run examples/workflows/bmad-dev-cycle.yaml \
@@ -38,6 +48,10 @@ state_schema:
   reprocess_done: bool
   story_keys: list
   skills_dir: str
+  dev_provider: str
+  review_provider: str
+  lock_owner: str
+  lock_reason: str
   epic_label: str
   communication_language: str
   document_output_language: str
@@ -206,6 +220,40 @@ nodes:
       }
 
   # ============================================================================
+  # LOCK CROSS-RUN — tomado ANTES da primeira story, solto no summary. Ao contrário do
+  # epic-waves (onde o dev roda em worktree isolada e só a integração é serializada), aqui
+  # o dev escreve direto na árvore principal: o lock precisa cobrir o ciclo inteiro.
+  # Consequência assumida e explícita: um épico longo segura o lock por horas, e uma
+  # invocação irmã espera ou desiste com `lock_timeout` — o que é o comportamento correto,
+  # já que as duas escreveriam na mesma árvore.
+  # ============================================================================
+  - name: acquire_lock
+    description: Toma o lock do repo principal antes de mexer na árvore de trabalho
+    run: |
+      from the_edge_agent.bmad_epic_waves_git import acquire_main_repo_lock
+      if not (state.get("pending") or []):
+          print("Nada pendente — seguindo sem tomar o lock.")
+          return {"lock_owner": "", "lock_reason": "skipped"}
+      r = acquire_main_repo_lock(state.get("repo_path", "."), wait_seconds=float(state.get("lock_wait_seconds", 2400)))
+      print(f"acquire_lock: acquired={r['acquired']} reason={r['reason']}")
+      return {"lock_owner": r["owner"] if r["acquired"] else "", "lock_reason": r["reason"]}
+    goto:
+      - if: "state.get('lock_reason') not in ('acquired', 'skipped')"
+        to: abort_lock
+      - to: run_stories
+
+  - name: abort_lock
+    description: Não conseguiu o lock — condição OPERACIONAL, não falha de story
+    run: |
+      reason = state.get("lock_reason", "unknown")
+      if reason == "environment":
+          print("ABORT: path do lock inutilizável (permissão/diretório). Problema de ambiente.")
+      else:
+          print("ABORT: outra invocação segurou o lock do repo durante toda a espera. Nada foi tocado; rode de novo depois.")
+      return {"final_status": f"lock_{reason}"}
+    goto: __end__
+
+  # ============================================================================
   # RUN STORIES — sequencial via dynamic_parallel (max_concurrency=1, fail_fast)
   # ============================================================================
   - name: run_stories
@@ -235,6 +283,8 @@ nodes:
       create_if_missing: true
       max_review_cycles: "{{ state.max_review_cycles | default(3) | int }}"
       in_worktree: false
+      dev_provider: "{{ state.dev_provider | default('codex', true) }}"
+      review_provider: "{{ state.review_provider | default('codex_review', true) }}"
     output: cycle_results
     fan_in: collect_results
 
@@ -301,6 +351,8 @@ nodes:
           content: |
             Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}. Todas as stories do {{ state.epic_key }} ("{{ state.epic_label }}") estão "done" em `{{ state.sprint_status_path }}`.
 
+            ⚠️ **HIGIENE DE CREDENCIAL.** Se alguma verificação exigir credencial real (senha de banco, API key, token lido de um pod/secret), NUNCA escreva ela num arquivo e NUNCA imprima/`cat` ela na sua saída. Use só inline, no único comando que a consome, e deixe sair de escopo em seguida. Se não houver caminho assim, PARE e reporte o bloqueio — precisar verificar algo nunca é motivo para materializar um segredo.
+
             **STEP 0 — NÃO DUPLIQUE trabalho.** Antes de tudo, procure retro existente (`*{{ state.epic_key }}*retro*` em `{{ state.implementation_artifacts_dir }}/`) e confira se `development_status["{{ state.epic_key }}"]` já é "done". Se ambos existirem, **não escreva nem commita nada** — retorne ok=true dizendo que já estava fechado.
 
             Siga o espírito de `{{ state.skills_dir }}/bmad-retrospective/SKILL.md`, mas em modo YOLO/não-interativo (sem "party mode" ao vivo, sem perguntas). Comunique-se em {{ state.communication_language }}; doc em {{ state.document_output_language }}.
@@ -328,6 +380,10 @@ nodes:
   - name: summary
     description: Relatório final do épico
     run: |
+      from the_edge_agent.bmad_epic_waves_git import release_main_repo_lock
+      if state.get("lock_owner"):
+          if not release_main_repo_lock(state.get("repo_path", "."), state["lock_owner"]):
+              print("⚠️  lock não liberado: token de dono não confere mais — não removi, seria apagar o lock de um irmão vivo.")
       cs = state.get("cycle_summary", [])
       print(f"""
       ╔════════════════════════════════════════════════════════════╗
@@ -341,13 +397,13 @@ nodes:
       ╚════════════════════════════════════════════════════════════╝
       """)
       final = "completed" if state.get("all_done") else "incomplete"
-      return {"final_status": final, "epic": state.get("epic_key")}
+      return {"final_status": final, "epic": state.get("epic_key"), "lock_owner": ""}
 
 edges:
   - from: __start__
     to: discover_epic
   - from: discover_epic
-    to: run_stories
+    to: acquire_lock
   - from: run_stories
     to: verify_epic
   - from: verify_epic

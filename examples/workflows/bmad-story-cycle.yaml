@@ -10,21 +10,31 @@ description: |
   Decisões de port:
   - Schema JSON validado do Workflow tool → marcador FINAL_STATUS + regex (padrão dos YAMLs
     Codex existentes).
-  - Dois shell_providers: `codex` (dev/fix/create) e `codex_review` (review), ambos
-    gpt-5.5/xhigh. Para divergir o modelo de review, edite só o bloco codex_review.
+  - shell_providers por TIER de esforço (ver settings): `codex` (default, xhigh) e
+    `codex_trivial|small|standard|frontier`. O nó escolhe via `dev_provider`/`review_provider`,
+    que o epic-waves preenche a partir da classificação de complexidade (auto_model).
   - `in_worktree`: quando True (chamado pelo epic-waves graph mode), o finish commita no
     branch do worktree e NÃO marca sprint-status (o merge/status é externo, serializado).
     Quando False (dev-cycle sequencial), o finish commita e marca sprint-status done.
   - review/fix rodam no MESMO contexto do dev (o subgraph é uma unidade só dentro do worktree
     do graph mode). No JS eles precisavam receber `worktreePath` porque cada agent() com
     isolation abria árvore vazia nova; aqui isso não existe.
+  - **Sem review de confirmação.** O JS roda um review extra no fim porque o laço dele é
+    `review -> fix` por ciclo: ao esgotar os ciclos o ÚLTIMO fix nunca foi revisado, e o
+    veredito devolvido descreve o estado anterior à correção. Aqui a topologia é
+    `dev -> review -> fix -> review -> ...`: o laço SEMPRE termina num review, então o último
+    fix já foi julgado e um review de confirmação seria redundante e pago. O nó
+    `confirm_review` existia como port literal e era inalcançável (`last_action_was_fix`
+    nunca era escrito) — foi removido, não consertado.
 
   Input (--input JSON):
     repo_path, epic_key, epic_num, story_key, title, story_path,
     skills_dir, implementation_artifacts_dir, sprint_status_path,
     communication_language, document_output_language, user_name,
     test_command, target_branch,
-    create_if_missing (bool), max_review_cycles (int), in_worktree (bool)
+    create_if_missing (bool), max_review_cycles (int), in_worktree (bool),
+    dev_provider (str, default "codex"), review_provider (str, default "codex_review"),
+    story_tier (str, informativo: trivial|small|standard|frontier)
 
 state_schema:
   repo_path: str
@@ -44,18 +54,39 @@ state_schema:
   create_if_missing: bool
   max_review_cycles: int
   in_worktree: bool
+  dev_provider: str
+  review_provider: str
+  story_tier: str
   create_output: str
   dev_output: str
   review_output: str
   review_status: str
   review_fix_attempt: int
-  last_action_was_fix: bool
+  dev_retried: bool
+  review_retried: bool
+  verification_incomplete: bool
   finish_output: str
   final_status: str
 
 settings:
+  # TIERS DE ESFORÇO — calibragem PRÓPRIA do codex, deliberadamente diferente da do JS.
+  #
+  # O JS escolhe entre MODELOS de preços diferentes (haiku $1 / sonnet $3 / opus $5 /
+  # fable $10 por 1M de input), e por isso o tier mais alto é excepcional: custa 2x o
+  # anterior e é reservado a trabalho especialista. Aqui existe um modelo só configurado
+  # e comprovado (gpt-5.6-sol); o único eixo real é `model_reasoning_effort`, e esforço é
+  # cobrado como tokens de saída, não é apenas mais lento.
+  #
+  # Consequências da recalibragem, e elas importam:
+  # - O default histórico deste workflow é xhigh para TUDO. Com auto_model ligado, a
+  #   classificação só pode BAIXAR o custo de uma story fácil; nunca encarece nada.
+  # - `frontier` aqui NÃO é o tier excepcional do JS: é só o topo do esforço, o mesmo que
+  #   o workflow já usava por default. Por isso a escalação em falha PODE promover até ele
+  #   (no JS ela para antes de `frontier`, porque lá o salto é de preço de modelo).
+  # - Para trocar o eixo por modelo de verdade, edite os blocos abaixo: quem consome é o
+  #   nome do provider, não a forma como ele foi construído.
   shell_providers:
-    codex:
+    codex: &codex_xhigh
       command: codex
       args:
         - "--yolo"
@@ -68,7 +99,12 @@ settings:
       stdin_mode: pipe
       verbose: true
       timeout: 108000
-    codex_review:
+    # Reviewer. O JS revisa com modelo DIFERENTE do dev de propósito (revisar com o mesmo
+    # modelo que implementou tende a confirmar as próprias premissas). Com um modelo só,
+    # o que resta é garantir que o review NUNCA caia de esforço junto com o dev: uma story
+    # classificada `trivial` roda o dev em low e o review continua em xhigh.
+    codex_review: *codex_xhigh
+    codex_trivial:
       command: codex
       args:
         - "--yolo"
@@ -76,11 +112,38 @@ settings:
         - "-c"
         - "model=gpt-5.6-sol"
         - "-c"
-        - "model_reasoning_effort=xhigh"
+        - "model_reasoning_effort=low"
         - "-"
       stdin_mode: pipe
       verbose: true
       timeout: 108000
+    codex_small:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=medium"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_standard:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=high"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_frontier: *codex_xhigh
 
 nodes:
   # ============================================================================
@@ -174,7 +237,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      # Tier escolhido pelo epic-waves (auto_model). Vazio = comportamento antigo (xhigh).
+      shell_provider: "{{ state.dev_provider | default('codex', true) }}"
       timeout: 7200
       messages:
         - role: user
@@ -191,6 +255,16 @@ nodes:
             Comunique-se em {{ state.communication_language }}; escreva código/testes/docs em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
             Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
 
+            ⚠️ **HIGIENE DE CREDENCIAL.** Se verificar alguma coisa exigir uma credencial real (senha de banco, API key, token lido de um pod/secret em execução), NUNCA escreva ela num arquivo e NUNCA imprima/`cat` ela na sua própria saída. Use a credencial APENAS inline, no único comando que a consome (ex.: `PGPASSWORD=$(kubectl exec ...) psql ...`, ou uma env var passada direto pro comando que precisa dela), e deixe ela sair de escopo logo em seguida. Se o único jeito que você achar de levar a credencial até a ferramenta deixa ela parada num arquivo ou numa variável que você precisa imprimir para usar, PARE e reporte o bloqueio — precisar verificar algo nunca é motivo para materializar um segredo.
+
+            {% if state.in_worktree %}**Task 0 — confira a base deste worktree antes de qualquer coisa.** Um worktree isolado às vezes nasce da ref errada, e qualquer implementação feita em cima disso é lixo.
+            - Primeiro, `git status --porcelain`. Qualquer saída (mudança staged ou não já presente) significa que há algo inesperado nesta árvore antes de você ter tocado nela — PARE e reporte HALT, não rode os passos abaixo.
+            - Se estiver limpo, rode `git merge-base --is-ancestor {{ state.target_branch }} HEAD && echo OK || echo MISMATCH`.
+              - OK: siga, não mexa mais no branch.
+              - MISMATCH: o HEAD deste worktree não descende da ponta de `{{ state.target_branch }}`. Como o `git status` já estava limpo, este worktree não pode conter trabalho seu — autocorrija com `git reset --hard {{ state.target_branch }}`. Isso move só o ponteiro do branch descartável DESTE worktree, nunca o `{{ state.target_branch }}` em si. NÃO interprete um histórico grande e desconhecido no HEAD antigo como "trabalho a proteger": num worktree de branch errado esse histórico é garantidamente grande e estranho, e descartar a visão dele é justamente o ponto deste passo.
+              - Depois do reset, rode a checagem de ancestralidade de novo. Se não disser OK, ou se o próprio `git reset` errar, PARE e reporte HALT com a saída exata do comando. Não improvise outra recuperação (nada de fetch, cherry-pick, rebase ou recriar arquivos à mão).
+              - Diga nas notas se o reset disparou e se o HEAD parecia branch errado ou só um ponto velho do branch certo.
+            {% endif %}
             Antes de agir, carregue contexto de projeto se existir: CLAUDE.md, **/project-context.md, e docs de arquitetura referenciados pela própria story (Dev Notes) — respeite invariantes centrais documentados ali (ex.: fail-closed). Épicos com dependência sequencial rígida costumam ter uma "Task 0" bloqueante exigindo confirmar no sprint-status.yaml que a anterior está "done" e ler o CÓDIGO REAL da anterior — respeite se presente.
 
             Implemente esta story do zero ao fim seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-dev-story/SKILL.md` (leia o arquivo inteiro, inclusive o <workflow> com passos 1 a 10). Adapte para rodar sem humano:
@@ -200,14 +274,49 @@ nodes:
             - **BASELINE:** ANTES de qualquer alteração rode `{{ state.test_command }}` e registre o número exato (ex.: "873 passed, 10 skipped"). Ao final rode de novo e confirme baseline + novos = total. Reporte AMBOS os números.
             - Rode o **linter/type-checker QUE ESTE REPO CONFIGURA** nos arquivos novos/alterados (ruff/mypy, eslint/tsc, clippy, golangci-lint — descubra qual no CI e no manifesto). Se o repo não configura nenhum, diga; se configura e a ferramenta não está instalada, diga também. Nunca afirme "limpo" sem rodar de fato.
             - Nunca implemente fallback silencioso que mascare falha (viola princípio de confiabilidade documentado).
-            - Atualize a File List e o Dev Agent Record da story. Status -> "review".
+            {% if state.in_worktree %}- **Se um passo lento de verificação ainda está rodando e você percebe que está perto de esgotar tempo/turnos** (ex.: um alvo de teste que leva vários minutos contra um serviço vivo), proteja a implementação: commite AGORA o que você tem no branch deste worktree, em vez de arriscar um corte duro levar sua única cópia de trabalho correto. **Isso SOBRESCREVE a instrução "Status -> review" abaixo** — só nessa situação, deixe o Status como está (NÃO marque "review"), escreva no Dev Agent Record que a verificação ficou incompleta e por quê, e imprima `VERIFICATION_INCOMPLETE: true` no final. Não invente um número final de testes que você não mediu: reporte o baseline duas vezes e diga explicitamente que não obteve total final real. Uma story parcial, commitada e honestamente rotulada é recuperável; uma não commitada, não.
+            {% endif %}- Atualize a File List e o Dev Agent Record da story. Status -> "review"{% if state.in_worktree %} — EXCETO se o item de orçamento de tempo acima se aplicou, caso em que o Status fica como estava{% endif %}.
             - **COMMIT** (`git add <arquivo>` por nome + commit). {% if state.in_worktree %}O merge no branch de integração acontece depois, fora deste worktree.{% else %}Não faça commit ainda — isso acontece depois da revisão (o finish cuida disso).{% endif %}
 
             {% if not state.in_worktree %}NÃO faça commit de git ainda — isso acontece depois da revisão (nó finish).{% endif %}
 
             Ao final resuma: o que foi implementado, testes (baseline antes, total depois, comando + resultado real, não alegado), resultado do lint/typecheck (ou por que não rodou), e lista de arquivos alterados.
-            Imprima `DEV_DONE` ao final.
+            Imprima `DEV_DONE` ao final, e `VERIFICATION_INCOMPLETE: true` numa linha própria SE (e só se) o item de orçamento de tempo acima se aplicou.
     output: dev_output
+
+  - name: parse_dev
+    description: Detecta dev morto sem report (retry único) e captura VERIFICATION_INCOMPLETE
+    run: |
+      import re
+      out = state.get("dev_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+      stripped = (text or "").strip()
+
+      # Porta o agentRetryOnce do JS. Ele repete a chamada quando o subagente MORRE sem
+      # produzir report nenhum — não quando ele reporta um problema. "Morreu sem report"
+      # aqui é: nenhum dos marcadores que o prompt exige E texto curto demais para ser um
+      # relato. Medir só o COMPRIMENTO seria errado nos dois sentidos — um report curto e
+      # válido ("DEV_DONE\nVERIFICATION_INCOMPLETE: true") viraria retry, e um erro longo
+      # e descrito não viraria. Um HALT genuíno nunca é retentado: repetir um agente que
+      # já mexeu na árvore é coisa diferente de repetir um que nunca nasceu.
+      reported = bool(re.search(r'\b(DEV_DONE|FIX_DONE|HALT)\b', text))
+      died = not reported and len(stripped) < 200
+      if died and not state.get("dev_retried"):
+          print(f"dev_story: agente não produziu report ({len(stripped)} chars, sem marcador) — retry único.")
+          return {"dev_retried": True, "_dev_next": "retry"}
+      if died:
+          print("dev_story: retry também não produziu report — seguindo para o review, que vai julgar a árvore real.")
+
+      # Só o marcador explícito conta. Uma citação da instrução ("imprima
+      # VERIFICATION_INCOMPLETE se ...") não deve marcar a story como não verificada.
+      incomplete = bool(re.search(r'^\s*VERIFICATION_INCOMPLETE:\s*true\b', text, re.M | re.I))
+      if incomplete:
+          print("⚠️  dev reportou VERIFICATION_INCOMPLETE — a story NÃO está pronta para 'done'; o review/fix tem de terminar a verificação.")
+      return {"verification_incomplete": incomplete, "_dev_next": "review"}
+    goto:
+      - if: "state.get('_dev_next') == 'retry'"
+        to: dev_story
+      - to: code_review
 
   # ============================================================================
   # 2. REVIEW (loop dev→review→fix)
@@ -217,7 +326,9 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex_review
+      # Nunca cai de esforço junto com o dev: uma story `trivial` roda o dev em low e
+      # continua sendo revisada no topo.
+      shell_provider: "{{ state.review_provider | default('codex_review', true) }}"
       timeout: 3600
       messages:
         - role: user
@@ -225,7 +336,12 @@ nodes:
             Você é um sub-agente sem contexto prévio. Comunique-se em {{ state.communication_language }}; código/testes/docs em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
             Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
 
+            ⚠️ **HIGIENE DE CREDENCIAL.** Se verificar algo exigir credencial real (senha de banco, API key, token lido de um pod/secret), NUNCA escreva ela num arquivo e NUNCA imprima/`cat` ela na sua saída. Use apenas inline, no único comando que a consome, e deixe sair de escopo em seguida. Se o único caminho que você achar deixa o segredo parado num arquivo ou numa variável que precisa ser impressa, PARE e reporte o bloqueio.
+
             Ciclo de revisão #{{ state.review_fix_attempt | default(0) | int + 1 }}. Você é um revisor sênior ADVERSARIAL, em modo AUTÔNOMO: não há humano disponível, então VOCÊ decide o veredito. Siga o espírito de `{{ state.skills_dir }}/bmad-code-review/SKILL.md` e seus steps em `{{ state.skills_dir }}/bmad-code-review/steps/` (gather-context, review, triage).
+
+            {% if state.verification_incomplete %}⚠️ **O dev reportou VERIFICATION_INCOMPLETE=true**: ele commitou sob pressão de tempo SEM terminar a verificação (baseline/suíte final, lint). O trabalho pode estar certo, mas ninguém mediu. Terminar essa verificação é SEU trabalho neste ciclo: rode a suíte completa e o lint você mesmo e trate um resultado ausente como item bloqueante, não como detalhe.
+            {% endif %}
 
             {% if state.in_worktree %}Você está no MESMO worktree onde o dev implementou a story. {% endif %}Rode `git diff` e `git status` para ver exatamente o que mudou nesta story. Revise:
             1. Todos os Acceptance Criteria foram de fato satisfeitos (não apenas alegados)?
@@ -282,31 +398,37 @@ nodes:
               for p in changes:
                   if re.search(p, text_lower): review_status = "CHANGES_REQUESTED"; break
           if not review_status:
+              # NENHUM veredito extraível — nem marcador, nem qualquer padrão de fallback.
+              # É exatamente o caso em que o default CHANGES_REQUESTED seria inventado, e
+              # é também a assinatura do reviewer que morreu sem report. Porta o
+              # agentRetryOnce do JS: repetir é seguro porque o review é read-only.
+              # Repetir uma vez só; na segunda, o default assume e o ciclo segue.
+              if not state.get("review_retried"):
+                  print(f"code_review: nenhum veredito extraível de {len(text.strip())} chars — retry único.")
+                  return {"review_retried": True, "review_status": "RETRY"}
               review_status = "CHANGES_REQUESTED"
-              print("Sem marcador explícito — default CHANGES_REQUESTED")
+              print("Sem marcador explícito nem no retry — default CHANGES_REQUESTED")
 
       attempt = state.get("review_fix_attempt", 0) + 1
       max_cycles = state.get("max_review_cycles", 3)
-      last_was_fix = state.get("last_action_was_fix", False)
 
-      # Força parada no máximo de ciclos
+      # Ciclos esgotados. NÃO existe aqui o "review de confirmação" do JS: o laço deste
+      # subgraph é dev -> review -> fix -> review, ou seja, sempre TERMINA num review, e o
+      # último fix já foi julgado. No JS o laço é review -> fix por ciclo, e o último fix
+      # sai sem revisão — é isso que a confirmação lá conserta.
       if attempt >= max_cycles and review_status != "APPROVED":
-          if last_was_fix:
-              # Há um fix que não foi re-revisado: roda um review de confirmação (porta a lógica do JS)
-              print(f"Ciclos esgotados ({attempt}/{max_cycles}) com fix pendente — review de confirmação.")
-              return {"review_status": "NEEDS_CONFIRMATION", "review_fix_attempt": attempt}
-          print(f"Ciclos esgotados ({attempt}/{max_cycles}) sem fix pendente — finalizando.")
+          print(f"Ciclos esgotados ({attempt}/{max_cycles}) — último fix já foi revisado neste review.")
           return {"review_status": "MAX_ATTEMPTS", "review_fix_attempt": attempt}
 
       print(f"Review #{attempt}: {review_status}")
       return {"review_status": review_status, "review_fix_attempt": attempt}
     goto:
+      - if: "state.get('review_status') == 'RETRY'"
+        to: code_review
       - if: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) < state.get('max_review_cycles', 3)"
         to: fix_review
       - if: "state.get('review_status') == 'APPROVED'"
         to: finish_story
-      - if: "state.get('review_status') == 'NEEDS_CONFIRMATION'"
-        to: confirm_review
       - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS']"
         to: finish_story
       - to: finish_story
@@ -316,13 +438,17 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      # Mesmo tier do dev: uma story resgatada por um tier promovido não pode voltar ao
+      # tier fraco na hora de corrigir o que o review apontou.
+      shell_provider: "{{ state.dev_provider | default('codex', true) }}"
       timeout: 3600
       messages:
         - role: user
           content: |
             Você é um sub-agente sem contexto prévio. Comunique-se em {{ state.communication_language }}; código em {{ state.document_output_language }}. Usuário: {{ state.user_name }}.
             Story alvo: {{ state.story_key }}, arquivo {{ state.story_path }}.
+
+            ⚠️ **HIGIENE DE CREDENCIAL.** Credencial real (senha de banco, API key, token de pod/secret) nunca vai para arquivo nem para a sua saída. Só inline, no único comando que a consome. Se não der, PARE e reporte o bloqueio.
 
             Um ciclo de code review encontrou problemas (veredito abaixo). Corrija cada action item, rode os testes relevantes de novo (sem pular regressão), atualize a story (Tasks/Subtasks, File List, Dev Agent Record, Change Log) conforme `{{ state.skills_dir }}/bmad-dev-story/SKILL.md`, e {% if state.in_worktree %}commit a correção neste mesmo branch.{% else %}NÃO commit ainda (o finish cuida disso).{% endif %}
 
@@ -333,39 +459,6 @@ nodes:
 
             Resuma o que foi corrigido e quais testes confirmam a correção. Imprima `FIX_DONE` ao final.
     output: dev_output
-
-  - name: confirm_review
-    description: Review de confirmação após ciclos esgotados com fix pendente (porta a lógica do JS)
-    uses: llm.call
-    with:
-      provider: shell
-      shell_provider: codex_review
-      timeout: 3600
-      messages:
-        - role: user
-          content: |
-            Você é um sub-agente sem contexto prévio. Review de CONFIRMAÇÃO.
-            Story alvo: {{ state.story_key }}, arquivo {{ state.story_path }}.
-
-            Os ciclos de correção se esgotaram e o último fix ainda não tinha sido re-revisado. O veredito anterior descrevia o estado ANTES da correção. Rode `git diff`/`git status`, rode `{{ state.test_command }}`, e decida: APPROVED se os itens bloqueantes foram resolvidos, senão CHANGES_REQUESTED ou BLOCKED.
-
-            Imprima `FINAL_STATUS: <APPROVED|CHANGES_REQUESTED|BLOCKED>`, `ACTION_ITEMS:` (se houver), e `BLOCKING_COUNT: <n>`.
-    output: review_output
-
-  - name: check_confirm_status
-    description: Decide o fim após o review de confirmação
-    run: |
-      import re
-      out = state.get("review_output", {})
-      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
-      m = re.search(r'final_status:\s*(approved|changes_requested|blocked)', text.lower())
-      status = m.group(1).upper() if m else "CHANGES_REQUESTED"
-      print(f"Confirmação: {status}")
-      return {"review_status": status}
-    goto:
-      - if: "state.get('review_status') == 'APPROVED'"
-        to: finish_story
-      - to: finish_story
 
   # ============================================================================
   # 3. FINISH (commit + status)
@@ -383,9 +476,13 @@ nodes:
             Você é um sub-agente sem contexto prévio, no repo real em {{ state.repo_path }}{% if state.in_worktree %} (dentro do worktree isolado desta story){% endif %}. Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
             Story alvo: {{ state.story_key }} ("{{ state.title }}"), arquivo {{ state.story_path }}.
 
+            ⚠️ **HIGIENE DE CREDENCIAL.** Credencial real nunca vai para arquivo nem para a sua saída — só inline, no único comando que a consome. Se não der, PARE e reporte o bloqueio.
+
             O code review desta story já rodou e o veredito foi:
             {{ state.review_status }}
-
+            {% if state.verification_incomplete %}
+            ⚠️ **O dev reportou VERIFICATION_INCOMPLETE=true** nesta story. Se o ciclo de review/fix NÃO terminou a verificação que faltava (suíte completa e lint medidos de verdade), NÃO marque a story como "done" no passo 6: deixe o Status como está e diga isso nas notas. Marcar done por cima de uma verificação que ninguém fez é exatamente o sinal honesto que este campo existe para preservar.
+            {% endif %}
             Seu papel é FINALIZAR (commit + status), não revisar de novo. Mas não aceite o veredito no escuro — verifique antes de commitar:
             1. **Reconfira a árvore.** Rode `{{ state.test_command }}` e confirme verde. Rode `git status --porcelain` e confira a File List da story contra os arquivos modificados. Se a suíte falhar, ou aparecerem arquivos que NÃO pertencem a esta story (trabalho de outra sessão no mesmo repo), PARE: devolva committed=false e descreva o que encontrou, sem commitar.
             2. **Confira a coerência do veredito.** Se o verdict acima não for APPROVED, PARE e devolva committed=false — finalizar uma story reprovada não é sua decisão.
@@ -412,7 +509,10 @@ nodes:
           final = "incomplete"
       else:
           final = "incomplete"
-      print(f"Story {state.get('story_key')}: final_status={final} (review={status})")
+      tier = state.get("story_tier") or "-"
+      print(f"Story {state.get('story_key')}: final_status={final} (review={status}, tier={tier}, provider={state.get('dev_provider') or 'codex'})")
+      if state.get("verification_incomplete"):
+          print("⚠️  esta story passou por VERIFICATION_INCOMPLETE — confira no Dev Agent Record se a verificação foi concluída depois.")
       return {"final_status": final}
 
 edges:
@@ -423,11 +523,9 @@ edges:
   - from: resolve_created_path
     to: dev_story
   - from: dev_story
-    to: code_review
+    to: parse_dev
   - from: fix_review
     to: code_review
-  - from: confirm_review
-    to: check_confirm_status
   - from: finish_story
     to: summary
   - from: summary

@@ -14,6 +14,24 @@ description: |
   - agent(prompt,{schema}) → llm.call codex + marcadores FINAL_STATUS/EDGE/...
   - sprint-status done no merge (serial, mergePrompt) → nó run: Python (determinístico).
 
+  REDES DE SEGURANÇA (portadas do JS depois de incidentes reais em uso):
+  - **Lock cross-run** em `<repo>/.claude/.bmad-epic-waves.lock`: duas invocações DESTE
+    workflow em épicos DIFERENTES no mesmo repo disputavam a mesma árvore de trabalho
+    (HEAD destacado, merge intercalado, stash de irmão). Aqui o lock é código Python
+    determinístico (`mkdir` atômico + token de dono + heartbeat + roubo só quando
+    comprovadamente parado), não instrução de prompt.
+  - **Bloqueio cross-épico:** uma story cuja Task 0 exige story de OUTRO épico ainda não
+    done não é despachada (`blocked_external_dependency`) em vez de gastar um agente que
+    descobre o mesmo impedimento no meio da implementação. Requer `deps` NÃO fornecido.
+  - **Elegibilidade mecânica do auto-resolve:** um conflito só vira `pending_resolution`
+    se for colisão add/add pura comprovada pelos ESTÁGIOS do índice do git (1/2/3),
+    insertion-only dos dois lados, sem interseção de identificadores, sem arquivo
+    gerado/lock/sprint-status, e com suíte declarada. O resto é fail-closed direto.
+  - **DAG de migrations:** merge textualmente limpo que deixa duas folhas de migration é
+    detectado com o próprio check do framework e resolvido com o gerador dele (nunca um
+    `makemigrations` pelado).
+  - **Retry único** de dev/review que morrem sem produzir report (dentro do story-cycle).
+
   Input (--input JSON):
     arg (obrigatório): "epic-10", "10" ou 10
     repo_path (obrigatório): path absoluto do repo alvo
@@ -25,9 +43,22 @@ description: |
     stop_after_prep (bool, default false): cria as stories faltantes e para
     auto_create_stories (bool, default true)
     deps (dict, opcional): override do grafo {to: [from,...]}; pula inferência
+      ⚠️ passar deps pula TAMBÉM a detecção de bloqueio cross-épico e a classificação
+      de complexidade — as duas pegam carona na leitura que o agente de grafo já faz.
     reprocess_done (bool, default false)
     stop_on_wave_failure (bool, default true)
     skills_dir (str, opcional): default {repo_path}/.claude/skills
+    auto_model (bool, default false): OPT-IN. O agente de grafo também classifica a
+      complexidade de cada story num tier, e o dev/fix daquela story roda no esforço do
+      tier em vez do default. Calibragem PRÓPRIA do codex (ver settings do
+      bmad-story-cycle.yaml): como só existe um modelo configurado, o eixo é
+      `model_reasoning_effort` e o default histórico já é o topo (xhigh) — ou seja,
+      ligar isso só pode BARATEAR story fácil, nunca encarecer. Uma story que falha é
+      repromovida um degrau e tentada de novo.
+    model_tiers (dict, opcional): remapeia tier -> nome de shell_provider, ex.:
+      {"trivial": "codex_small"}. Os nomes têm de existir no bmad-story-cycle.yaml.
+    auto_resolve_conflicts (bool, default false): Nível 2 (LLM junta os dois lados),
+      agora restrito aos conflitos que passam na elegibilidade mecânica acima.
 
   Uso:
     tea run examples/workflows/bmad-epic-waves.yaml \
@@ -98,8 +129,25 @@ state_schema:
   total_count: int
   suite_green: bool
   suite_covers_the_epic: bool
+  suite_that_covers: str
   retro_output: str
   final_status: str
+  # ---- redes de segurança portadas do JS ----
+  lock_owner: str             # token do dono do lock cross-run (vazio = não temos o lock)
+  lock_reason: str            # acquired | lock_timeout | environment
+  external_blockers: list     # [{story, requires_key, requires_status, current_status, evidence}]
+  blocked_stories: list       # keys excluídas do despacho por dep cross-épico não satisfeita
+  auto_model: bool
+  model_tiers: dict
+  story_tiers: dict           # {story_key: tier} vindo da classificação
+  escalations: list           # [{key, from_tier, to_tier}] promoções após falha
+  run_base_head: str          # HEAD antes de qualquer merge desta run (range do épico)
+  migration_fix: dict         # resultado do check/merge de DAG de migrations
+  conflict_audit: dict        # {key: veredito mecânico} de cada conflito examinado
+  dot_payloads: dict          # {story_key: payload} p/ remontar o comando na escalação
+  tier_providers: dict        # tier -> nome de shell_provider do bmad-story-cycle
+  tea_bin: str
+  subgraph_path: str
 
 settings:
   shell_providers:
@@ -294,7 +342,46 @@ nodes:
       document_output_language: "{{ state.document_output_language }}"
       user_name: "{{ state.user_name }}"
     output: prep_create_results
-    fan_in: prep_reconcile
+    fan_in: prep_lock
+
+  # ============================================================================
+  # LOCK CROSS-RUN — tudo daqui pra frente escreve no repo PRINCIPAL sem isolamento,
+  # porque é o único lugar onde um merge ou uma edição de sprint-status PODEM cair.
+  # Dentro de uma invocação as arestas do grafo serializam isso; ENTRE invocações (uma
+  # por épico, mesmo repo) não havia nada, e o resultado real foi HEAD destacado, merge
+  # intercalado e stash deixado por um irmão.
+  #
+  # O JS expressa isso como uma lista L0-L5 injetada em cinco prompts. Aqui os passos são
+  # Python determinístico, então o lock é código: nenhum LLM vai "ajudar" trocando o
+  # `mkdir` atômico por um `mkdir -p`, que sai 0 numa pasta existente e faria todos os
+  # irmãos acreditarem que têm o lock ao mesmo tempo.
+  #
+  # A criação de stories (prep_create) fica FORA do lock de propósito, igual ao JS: são N
+  # agentes irmãos escrevendo N arquivos distintos, e o único recurso compartilhado
+  # (sprint-status) já é proibido pra eles.
+  # ============================================================================
+  - name: prep_lock
+    description: Toma o lock cross-run antes de reconciliar/commitar no repo principal
+    run: |
+      from the_edge_agent.bmad_epic_waves_git import acquire_main_repo_lock
+      r = acquire_main_repo_lock(state.get("repo_path", "."), wait_seconds=float(state.get("lock_wait_seconds", 2400)))
+      print(f"prep_lock: acquired={r['acquired']} reason={r['reason']}")
+      return {"lock_owner": r["owner"] if r["acquired"] else "", "lock_reason": r["reason"]}
+    goto:
+      - if: "not state.get('lock_owner')"
+        to: abort_lock
+      - to: prep_reconcile
+
+  - name: abort_lock
+    description: Não conseguiu o lock — condição OPERACIONAL, nunca falha da story/merge
+    run: |
+      reason = state.get("lock_reason", "unknown")
+      if reason == "environment":
+          print("ABORT: o path do lock está inutilizável (permissão/diretório). Isso é problema de ambiente, não do código sendo integrado.")
+      else:
+          print("ABORT: outra invocação deste workflow segurou o lock do repo durante toda a espera. Rode de novo quando ela terminar.")
+      return {"final_status": f"lock_{reason}"}
+    goto: __end__
 
   - name: prep_reconcile
     description: Fan-in serial — checa arquivos criados e marca sprint-status UMA vez (porta reconcilePrompt)
@@ -380,7 +467,16 @@ nodes:
     description: Commita os arquivos criados + sprint-status (git add por nome, determinístico)
     run: |
       import os, re, subprocess
+      from the_edge_agent.bmad_epic_waves_git import heartbeat_main_repo_lock, release_main_repo_lock
       repo = state.get("repo_path", ".")
+      # Último passo da PREP dentro do lock: solta em TODOS os caminhos de saída. Não
+      # soltar num caminho de erro congela toda invocação irmã atrás desta.
+      _owner = state.get("lock_owner") or ""
+      if _owner: heartbeat_main_repo_lock(repo, _owner)
+      def _unlock(payload):
+          if _owner: release_main_repo_lock(repo, _owner)
+          payload["lock_owner"] = ""
+          return payload
       impl = state.get("implementation_artifacts_dir", "_bmad-output/implementation-artifacts")
       ss = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
       missing = state.get("missing_files", [])
@@ -394,7 +490,7 @@ nodes:
           try: head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
           except Exception: head = ""
           print("Prep: nada novo para commitar.")
-          return {"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"}
+          return _unlock({"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"})
       # git add por nome (nunca -A)
       subprocess.run(["git","add"] + to_add, cwd=repo, check=True)
       staged = subprocess.check_output(["git","diff","--cached","--name-only"], cwd=repo, text=True).strip().splitlines()
@@ -405,7 +501,7 @@ nodes:
           try: head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
           except Exception: head = ""
           print("Prep: nada novo para commitar (status já marcado, escrita idempotente).")
-          return {"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"}
+          return _unlock({"prep_committed": False, "prep_head_sha": head, "_prep_next": "check_stop"})
       # Copia padrão de commit do repo (Co-Authored-By)
       try:
           prev_body = subprocess.check_output(["git","log","-1","--format=%b"], cwd=repo, text=True)
@@ -418,10 +514,10 @@ nodes:
       r = subprocess.run(["git","commit","-m", msg], cwd=repo, capture_output=True, text=True)
       if r.returncode != 0:
           print(f"prep_commit falhou: {r.stderr}")
-          return {"prep_committed": False, "_prep_next": "abort_commit_failed"}
+          return _unlock({"prep_committed": False, "_prep_next": "abort_commit_failed"})
       head = subprocess.check_output(["git","rev-parse","HEAD"], cwd=repo, text=True).strip()
       print(f"Prep commitado: {head} ({len(to_add)} arquivos)")
-      return {"prep_committed": True, "prep_head_sha": head, "_prep_next": "check_stop"}
+      return _unlock({"prep_committed": True, "prep_head_sha": head, "_prep_next": "check_stop"})
     goto:
       - if: "state.get('_prep_next') == 'abort_commit_failed'"
         to: abort_commit_failed
@@ -442,8 +538,11 @@ nodes:
   - name: abort_missing
     description: Aborta por stories faltantes após PREP
     run: |
+      from the_edge_agent.bmad_epic_waves_git import release_main_repo_lock
       print(f"ABORT: stories ainda faltando após PREP: {state.get('missing_after')}")
-      return {"final_status": "story_creation_incomplete"}
+      if state.get("lock_owner"):
+          release_main_repo_lock(state.get("repo_path", "."), state["lock_owner"])
+      return {"final_status": "story_creation_incomplete", "lock_owner": ""}
     goto: __end__
 
   - name: abort_commit_failed
@@ -504,6 +603,23 @@ nodes:
             - Sem ciclos. Se A e B parecem depender um do outro, escolha a direção que reflete a ordem real de construção e explique em `analysis`.
             - Em `analysis`, diga também o que você checou e concluiu ser INDEPENDENTE — a ausência de aresta é uma asserção sua, e precisa ser deliberada.
 
+            **DEPENDÊNCIAS CROSS-ÉPICO NÃO SATISFEITAS.** Lendo a fonte 1 (a Task 0 / seção de DEPENDENCIES de cada story), algumas stories nomeiam um pré-requisito que pertence a um épico que NÃO está nesta rodada. Não descarte isso como "fora do escopo do grafo": uma onda montada sem saber disso despacha um agente de dev que descobre o mesmo impedimento sozinho, no meio da implementação, depois de já ter sido pago — isso já aconteceu. Para cada dependência dura dessas (mesma régua de evidência de uma aresta `logic`: literal e explícita, nunca temática), leia o status ATUAL da outra story direto do `{{ state.sprint_status_path }}` (nunca assuma que está satisfeita) e imprima uma linha:
+            `EXTERNAL_BLOCKER: <story deste run> NEEDS <key da outra story> STATUS <status atual lido do disco> EVIDENCE: <citação literal da Task 0>`
+            Use a key EXATA da lista acima para `<story deste run>` — a mesma exigência das arestas. Se a outra story já está `done`, imprima assim mesmo com o status real: quem decide é o parser, não você.
+
+            {% if state.auto_model %}**CLASSIFICAÇÃO DE COMPLEXIDADE.** Você já está lendo cada story inteira e o código real nos paths que elas tocam. Aproveite e classifique o ESFORÇO DE IMPLEMENTAÇÃO de cada uma, uma linha por story:
+            `COMPLEXITY: <story> [trivial|small|standard|frontier] <justificativa numa linha>`
+
+            Classifique pelo que implementar exige DE FATO, não pela importância da story nem pelo capricho com que ela foi escrita:
+            - **trivial** — edição mecânica cuja forma já está inteiramente determinada pela story: mudar uma constante, ajustar mensagem, renomear, atualizar tabela de valores. Sem contrato novo, sem decisão de design, e os testes a tocar já existem.
+            - **small** — mudança localizada em um ou dois arquivos contra um contrato que JÁ EXISTE no código. Testes novos, mas nenhuma abstração nova e nada a decidir.
+            - **standard** — o caso comum. Vários arquivos, uma função/contrato novo que outro código vai consumir, uma decisão real sobre onde um comportamento mora, mudança transversal, reescrita de fluxo existente, ordenação que é load-bearing para correção, ou story cujas próprias Dev Notes dizem que a abordagem ainda está em aberto.
+            - **frontier** — a story mais difícil do épico: algoritmo/protocolo que precisa ser derivado e não apenas aplicado, migração cujo argumento de correção atravessa o sistema inteiro, problema que a própria story enquadra como em aberto.
+
+            ⚠️ **Na dúvida entre dois tiers, escolha o MAIS ALTO.** Os custos são assimétricos: uma story superclassificada gasta um pouco mais de raciocínio; uma subclassificada reprova no review, queima os ciclos de fix e pode deixar código sutilmente errado em que uma story seguinte se apoia. Reserve `trivial` para os casos em que você LEU o código alvo e não há nada a decidir.
+
+            **Dificuldade não é o único critério — raio de impacto conta.** Ter muitos dependentes não torna a story mais difícil de implementar, mas torna errar nela muito mais caro: as stories que consomem o contrato herdam o erro e já estão mergeadas quando alguém percebe. Então, quando uma story está na fronteira entre dois tiers E outras dependem dela, resolva a fronteira para cima. Não inverta: uma story-folha não é fácil por ser folha.
+            {% endif %}
             Imprima cada aresta numa linha: `EDGE: <from> -> <to> [kind] EVIDENCE: <evidence>`
             Ao final, uma linha `ANALYSIS: <texto>` (pode usar várias linhas começando com `ANALYSIS:`).
     output: graph_output
@@ -539,18 +655,32 @@ nodes:
       deps_raw = state.get("deps") or {}
       edges = []
       analysis = ""
+      blockers_raw, complexity_raw = [], []
+      auto_model = bool(state.get("auto_model"))
       if not deps_raw:
           out = state.get("graph_output", {})
           text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
           for line in text.splitlines():
               em = re.match(r'\s*EDGE:\s*(\S+)\s*->\s*(\S+)\s*\[(\w+)\]\s*EVIDENCE:\s*(.*)$', line)
+              bm = re.match(r'\s*EXTERNAL_BLOCKER:\s*(\S+)\s+NEEDS\s+(\S+)\s+STATUS\s+(\S+)\s*(?:EVIDENCE:\s*(.*))?$', line, re.I)
+              cm = re.match(r'\s*COMPLEXITY:\s*(\S+)\s*\[(\w+)\]\s*(.*)$', line, re.I)
               if em:
                   edges.append({"from": em.group(1), "to": em.group(2), "kind": em.group(3), "evidence": em.group(4)})
+              elif bm:
+                  blockers_raw.append({"story": bm.group(1), "requires_key": bm.group(2),
+                                       "current_status": (bm.group(3) or "").strip().lower(),
+                                       "requires_status": "done", "evidence": (bm.group(4) or "").strip()})
+              elif cm:
+                  complexity_raw.append({"story": cm.group(1), "tier": cm.group(2).strip().lower(),
+                                         "rationale": cm.group(3).strip()})
               elif line.strip().startswith("ANALYSIS:"):
                   analysis += line.split("ANALYSIS:",1)[1].strip() + " "
           # Monta deps_raw a partir das edges (to depende de from)
           for e in edges:
               deps_raw.setdefault(e["to"], []).append(e["from"])
+      else:
+          print("args.deps fornecido — isto pula TAMBÉM a detecção de bloqueio cross-épico"
+                + (" e a classificação de complexidade (todas as stories caem no provider default)." if auto_model else "."))
 
       # ---- Port do computeWaves() ----
       def resolve(raw, origin=""):
@@ -574,6 +704,85 @@ nodes:
           k = resolve(raw_k)
           if k is None: continue
           deps[k] = [d for d in (resolve(dd, k) for dd in (raw_list or [])) if d is not None]
+
+      # ---- Bloqueadores cross-épico ------------------------------------------
+      # A key vem de texto livre do agente e não é garantidamente a key completa. Resolve
+      # com a MESMA tolerância a prefixo do resolve() acima: uma forma curta que casasse
+      # com nada faria esta rede aparecer no log sem bloquear story nenhuma — pior do que
+      # não existir, porque PARECE que funcionou.
+      def resolve_story(raw):
+          if raw in key_set: return raw
+          hits = [k for k in keys if k == raw or k.startswith(raw + "-")]
+          return hits[0] if len(hits) == 1 else None
+
+      external_blockers, blocked_direct = [], set()
+      for b in blockers_raw:
+          if b["current_status"] == (b.get("requires_status") or "done"):
+              continue  # dependência cross-épico já satisfeita: não é bloqueio
+          k = resolve_story(b["story"])
+          if not k:
+              print(f'⚠️  EXTERNAL_BLOCKER cita story "{b["story"]}", que não casa com nenhuma candidata (0 ou >1 matches) — IGNORADO, confira à mão: {b["evidence"][:120]}')
+              continue
+          b = dict(b, story=k)
+          external_blockers.append(b)
+          blocked_direct.add(k)
+
+      # Fecho transitivo: quem depende de uma story bloqueada também não pode rodar. O JS
+      # só pula a bloqueada e conta com o stopOnWaveFailure para o resto; aqui, como as
+      # ondas são despachadas de uma vez pelo DOT, o dependente rodaria feliz sobre um
+      # contrato que não existe. Excluir o fecho é a versão que não depende de timing.
+      blocked_all = set(blocked_direct)
+      changed = True
+      while changed:
+          changed = False
+          for k in keys:
+              if k in blocked_all: continue
+              if any(d in blocked_all for d in deps.get(k, [])):
+                  blocked_all.add(k); changed = True
+      if external_blockers:
+          print(f"⚠️  {len(blocked_direct)} story(ies) bloqueada(s) por dependência cross-épico não satisfeita — não serão despachadas (nenhum agente de dev gasto):")
+          for b in external_blockers:
+              print(f'  {b["story"]} precisa de {b["requires_key"]} (hoje "{b["current_status"]}", precisa "{b["requires_status"]}") — {b["evidence"][:140]}')
+          cascade = sorted(blocked_all - blocked_direct)
+          if cascade:
+              print(f"  + {len(cascade)} dependente(s) adiada(s) junto: {', '.join(cascade)}")
+
+      keys = [k for k in keys if k not in blocked_all]
+      key_set = set(keys)
+      deps = {k: [d for d in deps.get(k, []) if d in key_set] for k in keys}
+      if not keys:
+          print("Nenhuma story despachável nesta rodada (todas bloqueadas ou nada pendente).")
+
+      # ---- Classificação de complexidade -> tier -> shell_provider ------------
+      DEFAULT_TIER_PROVIDERS = {"trivial": "codex_trivial", "small": "codex_small",
+                                "standard": "codex_standard", "frontier": "codex_frontier"}
+      tier_providers = dict(DEFAULT_TIER_PROVIDERS)
+      tier_providers.update(state.get("model_tiers") or {})
+      story_tiers = {}
+      if auto_model:
+          for c in complexity_raw:
+              k = resolve_story(c["story"])
+              if not k:
+                  print(f'⚠️  COMPLEXITY cita story "{c["story"]}", que não casa com nenhuma candidata — IGNORADA, cai no provider default.')
+                  continue
+              if c["tier"] not in tier_providers:
+                  print(f'⚠️  {k}: tier desconhecido "{c["tier"]}" — cai no provider default.')
+                  continue
+              if k in story_tiers:
+                  # Duas entradas para a mesma story deixariam tierByKey com a última
+                  # enquanto o log mostra as duas: a primeira vence, e a colisão aparece.
+                  print(f'⚠️  COMPLEXITY duplicada para {k} (tier "{c["tier"]}") — ignorada, mantendo "{story_tiers[k]}".')
+                  continue
+              story_tiers[k] = c["tier"]
+          if story_tiers:
+              print("Classificação de complexidade (esforço do dev por story):")
+              for c in complexity_raw:
+                  k = resolve_story(c["story"])
+                  if k and story_tiers.get(k) == c["tier"]:
+                      print(f'  {k} [{c["tier"]}] -> {tier_providers[c["tier"]]} — {c["rationale"][:120]}')
+          unclassified = [k for k in keys if k not in story_tiers]
+          if unclassified:
+              print(f"⚠️  {len(unclassified)} story(ies) sem classificação — provider default: {', '.join(unclassified)}")
 
       wave = {}
       visiting = set()
@@ -600,8 +809,8 @@ nodes:
       else:
           waves = all_waves
 
-      serial_cost = len(candidates) - len(waves)
-      print(f"Épico {epic_key}: {len(candidates)} candidatas em {len(waves)} onda(s) — {serial_cost} passo(s) salvos vs. sequencial.")
+      serial_cost = len(keys) - len(waves)
+      print(f"Épico {epic_key}: {len(keys)} despacháveis (de {len(candidates)} candidatas) em {len(waves)} onda(s) — {serial_cost} passo(s) salvos vs. sequencial.")
       for i, w in enumerate(waves):
           print(f"  Onda {i+1} ({len(w)} em paralelo): {', '.join(w)}")
       for e in edges:
@@ -684,6 +893,7 @@ nodes:
           return os.path.join(impl_dir, f"{k}.md")
       # IDs seguros no DOT (keys têm hífen): s<idx>; label = key (mostra no tmux/output)
       id_of = {k: f"s{i}" for i, k in enumerate(keys)}
+      dot_payloads = {}
       lines = ['digraph epic_waves {', '  rankdir=TB;', '  node [shape=box];',
                '  Start [label="Start", shape=ellipse];', '  End [label="End", shape=ellipse];']
       for k in keys:
@@ -693,16 +903,31 @@ nodes:
               wt_path, cd_prefix = repo_abs, ""
           else:
               wt_path, cd_prefix = wtmap[k]["path"], f"cd {wtmap[k]['path']} && "
+          tier = story_tiers.get(k)
           payload.update({
               "repo_path": wt_path,
               "epic_key": f"epic-{c.get('epic_num', epic_num)}" if c.get('epic_num') else epic_key,
               "epic_num": c.get("epic_num", epic_num),
               "story_key": k, "title": c.get("title", k),
               "story_path": _story_rel(k),
+              # Sem tier (auto_model off, ou story não classificada) = comportamento antigo:
+              # o subgraph cai no provider `codex` (xhigh).
+              "dev_provider": tier_providers.get(tier, "codex") if tier else "codex",
+              "review_provider": "codex_review",
+              "story_tier": tier or "",
           })
+          dot_payloads[k] = payload
           j = json.dumps(payload)
           # command: cd worktree && tea run subgraph --input '<json>' (ou repo principal em dry_run)
-          cmd = f"{cd_prefix}{tea_bin} run {subgraph_path} --input '{j}'"
+          #
+          # --fail-on-state: sem isto o `tea run` sai 0 mesmo quando a story termina
+          # `incomplete` (review reprovado / ciclos esgotados), o DOT reporta "Completed",
+          # e o merge_worktrees — que só exige presença em `succeeded` — integrava no
+          # branch alvo uma story que o revisor tinha rejeitado. O JS nunca mergeia sem
+          # verdict=approve; este flag é o equivalente nativo dessa invariante.
+          cmd = (f"{cd_prefix}{tea_bin} run {subgraph_path} --input '{j}'"
+                 f" --fail-on-state 'final_status=incomplete'"
+                 f" --fail-on-state 'final_status=missing_story_file'")
           cmd_dot = cmd.replace('\\', '\\\\').replace('"', '\\"')
           label_dot = k.replace('"', '\\"')
           lines.append(f'  {id_of[k]} [label="{label_dot}" command="{cmd_dot}"];')
@@ -727,11 +952,31 @@ nodes:
           f.write(dot_content)
       print(f"DOT gerado: {dot_path} ({len(keys)} nós, {sum(len(v) for v in deps.values())} arestas)")
 
+      # HEAD antes de qualquer merge desta rodada: é o que delimita o range do épico para
+      # a checagem de cobertura da suíte no verify.
+      run_base_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo_abs, capture_output=True, text=True).stdout.strip()
+
+      common_out = {
+          "graph_edges": edges, "graph_analysis": analysis,
+          "external_blockers": external_blockers, "blocked_stories": sorted(blocked_all),
+          "story_tiers": story_tiers, "run_base_head": run_base_head,
+          # A escalação por falha remonta o comando de UMA story; guardar o payload evita
+          # recalcular (e divergir de) tudo o que foi decidido aqui.
+          "dot_payloads": dot_payloads, "tea_bin": tea_bin, "subgraph_path": subgraph_path,
+          "tier_providers": tier_providers,
+      }
       if state.get("dry_run"):
           print("DRY_RUN — não executando. Plano de ondas acima; DOT em " + dot_path)
-          return {"final_status": "dry_run", "waves": [[k for k in w] for w in waves], "graph_edges": edges, "dot_path": dot_path, "worktree_base": wt_base}
+          if auto_model:
+              print("Plano de modelo por story:")
+              for k in keys:
+                  t = story_tiers.get(k)
+                  print(f"  {k}: tier={t or '(nenhum)'} provider={tier_providers.get(t, 'codex') if t else 'codex'}")
+          return dict(common_out, final_status="dry_run", waves=[[k for k in w] for w in waves],
+                      dot_path=dot_path, worktree_base=wt_base)
 
-      return {"waves": waves, "graph_edges": edges, "graph_analysis": analysis, "deps_resolved": deps, "dot_path": dot_path, "only_wave": only_wave, "worktrees": worktrees, "worktree_base": wt_base}
+      return dict(common_out, waves=waves, deps_resolved=deps, dot_path=dot_path,
+                  only_wave=only_wave, worktrees=worktrees, worktree_base=wt_base)
     goto:
       - if: "state.get('final_status') == 'dry_run'"
         to: __end__
@@ -796,9 +1041,111 @@ nodes:
       return {"run_waves_results": {"rc": proc.returncode, "stdout": out[-6000:], "stderr": err[-2000:],
                                     "succeeded": succeeded, "failed": failed, "all_ok": all_ok}}
     goto:
-      - if: "not state.get('run_waves_results', {}).get('all_ok') and state.get('stop_on_wave_failure', True)"
-        to: merge_worktrees
-      - to: merge_worktrees
+      - to: escalate_failed
+
+  # ============================================================================
+  # ESCALATE — porta a escalação de tier do JS. Uma story que o classificador colocou
+  # um degrau abaixo do que precisava falha DUAS vezes no mesmo esforço fraco (o retry
+  # do story-cycle repete com as mesmas opções) e, com stop_on_wave_failure, leva a
+  # onda junto. Aqui ela é repromovida um degrau e tentada mais uma vez.
+  #
+  # Diferença deliberada em relação ao JS: lá a escalação para antes do tier de topo,
+  # porque `frontier` é outro MODELO, com o dobro do preço. Aqui `frontier` é só o
+  # esforço máximo — o mesmo que este workflow já usava por default — então promover
+  # até ele é o comportamento antigo, não uma decisão cara.
+  # ============================================================================
+  - name: escalate_failed
+    description: Repromove um tier as stories que falharam e tenta uma vez mais (só com auto_model)
+    run: |
+      import os, json, subprocess, tempfile, re
+      from the_edge_agent.bmad_epic_waves_git import branch_tip
+
+      res = dict(state.get("run_waves_results", {}) or {})
+      worktrees = state.get("worktrees", []) or []
+      tiers = dict(state.get("story_tiers", {}) or {})
+      if not state.get("auto_model") or res.get("all_ok") or not worktrees or res.get("skipped"):
+          return {"escalations": []}
+
+      CHAIN = ["trivial", "small", "standard", "frontier"]
+      providers = state.get("tier_providers") or {}
+      payloads = state.get("dot_payloads", {}) or {}
+      succeeded = list(res.get("succeeded") or [])
+      failed = [w["key"] for w in worktrees if w["key"] not in succeeded]
+      repo = os.path.realpath(state.get("repo_path", "."))
+      target_branch = state.get("target_branch", "main")
+      wtmap = {w["key"]: w for w in worktrees}
+
+      plan = []
+      for k in failed:
+          t = tiers.get(k)
+          if t not in CHAIN or CHAIN.index(t) == len(CHAIN) - 1:
+              continue  # sem tier, ou já no topo: repetir no mesmo esforço não muda nada
+          plan.append({"key": k, "from_tier": t, "to_tier": CHAIN[CHAIN.index(t) + 1]})
+      if not plan:
+          print(f"escalate_failed: {len(failed)} falha(s), nenhuma elegível a promoção de tier.")
+          return {"escalations": []}
+
+      lines = ['digraph escalate {', '  rankdir=TB;', '  node [shape=box];',
+               '  Start [label="Start", shape=ellipse];', '  End [label="End", shape=ellipse];']
+      for i, p in enumerate(plan):
+          k = p["key"]
+          wt = wtmap[k]
+          payload = dict(payloads.get(k) or {})
+          if not payload:
+              print(f"  {k}: sem payload guardado — não dá para remontar o comando, pulando.")
+              continue
+          # Ancora a tentativa anterior antes de descartá-la. O JS ganha um worktree novo e
+          # vazio a cada chamada; aqui a árvore é reusada, então "começar limpo" significa
+          # jogar fora commits — e jogar fora sem deixar ref é destrutivo, não é higiene.
+          tip = branch_tip(repo, wt["branch"])
+          if tip:
+              ref = f"refs/heads/attempt/{re.sub(r'[^A-Za-z0-9._-]+','-',k)}/{tip[:12]}"
+              subprocess.run(["git","update-ref",ref,tip], cwd=repo, capture_output=True)
+              print(f"  {k}: tentativa anterior preservada em {ref.removeprefix('refs/heads/')}")
+          subprocess.run(["git","reset","--hard",target_branch], cwd=wt["path"], capture_output=True)
+          subprocess.run(["git","clean","-fd"], cwd=wt["path"], capture_output=True)
+          payload["dev_provider"] = providers.get(p["to_tier"], "codex")
+          payload["story_tier"] = p["to_tier"]
+          cmd = (f"cd {wt['path']} && {state.get('tea_bin')} run {state.get('subgraph_path')}"
+                 f" --input '{json.dumps(payload)}'"
+                 f" --fail-on-state 'final_status=incomplete'"
+                 f" --fail-on-state 'final_status=missing_story_file'")
+          cmd_dot = cmd.replace('\\', '\\\\').replace('"', '\\"')
+          lines.append(f'  e{i} [label="{k}" command="{cmd_dot}"];')
+          lines.append(f'  Start -> e{i};')
+          lines.append(f'  e{i} -> End;')
+          tiers[k] = p["to_tier"]
+          print(f"  {k}: falhou no tier \"{p['from_tier']}\" — promovendo para \"{p['to_tier']}\" e tentando de novo.")
+      lines.append('}')
+
+      dot_dir = os.path.join(tempfile.gettempdir(), "tea-epic-waves")
+      os.makedirs(dot_dir, exist_ok=True)
+      dot_path = os.path.join(dot_dir, f"{state.get('epic_key','epic')}-escalate.dot")
+      open(dot_path, "w").write("\n".join(lines))
+
+      session = f"{state.get('epic_key','epic')}-escalate"
+      cmd = [state.get("tea_bin"), "run", "--from-dot", dot_path,
+             "--dot-exec", state.get("tea_bin"),
+             "--dot-max-parallel", str(int(state.get("dot_max_parallel", 4))),
+             "--dot-session", session]
+      try:
+          proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True,
+                                timeout=int(state.get("dot_timeout", 86400)))
+      except subprocess.TimeoutExpired:
+          subprocess.run(["tmux","kill-session","-t",session], capture_output=True)
+          print("escalate_failed: TIMEOUT — session tmux morta.")
+          return {"escalations": plan, "story_tiers": tiers}
+      combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+      rescued = re.findall(r'Completed:\s+(\S+)', combined)
+      print(f"escalate_failed: resgatadas {rescued} (rc={proc.returncode})")
+      for k in rescued:
+          if k not in succeeded: succeeded.append(k)
+      res["succeeded"] = succeeded
+      res["failed"] = [w["key"] for w in worktrees if w["key"] not in succeeded]
+      res["all_ok"] = not res["failed"]
+      return {"run_waves_results": res, "escalations": plan, "story_tiers": tiers}
+    goto:
+      - to: integrate_lock
 
   # ============================================================================
   # MERGE WORKTREES — serial, no branch alvo. Cada worktree commitou no branch
@@ -808,16 +1155,44 @@ nodes:
   # (auto_resolve_conflicts): conflito → pending_resolution, resolve_conflicts (LLM)
   # junta os dois lados, verify_resolution (suíte verde + sem marcadores) decide.
   # ============================================================================
+  - name: integrate_lock
+    description: Toma o lock cross-run antes de merge/status/verify/retro no repo principal
+    run: |
+      from the_edge_agent.bmad_epic_waves_git import acquire_main_repo_lock
+      if state.get("lock_owner"):
+          return {}  # já temos (caminho sem PREP não passa por aqui duas vezes, mas é barato ser idempotente)
+      r = acquire_main_repo_lock(state.get("repo_path", "."), wait_seconds=float(state.get("lock_wait_seconds", 2400)))
+      print(f"integrate_lock: acquired={r['acquired']} reason={r['reason']}")
+      return {"lock_owner": r["owner"] if r["acquired"] else "", "lock_reason": r["reason"]}
+    goto:
+      - if: "not state.get('lock_owner')"
+        to: abort_lock_after_dev
+      - to: merge_worktrees
+
+  - name: abort_lock_after_dev
+    description: Sem lock DEPOIS das stories rodarem — worktrees e branches ficam intactas
+    run: |
+      keys = [w["key"] for w in (state.get("worktrees", []) or [])]
+      print("ABORT: não consegui o lock do repo principal para integrar. "
+            f"NADA foi mergeado e as branches story/* seguem intactas: {keys}. "
+            "Rode de novo quando a invocação irmã terminar — o merge é retomável.")
+      return {"final_status": f"lock_{state.get('lock_reason','unknown')}", "merge_conflicts": keys}
+    goto: __end__
+
   - name: merge_worktrees
     description: Mergea cada worktree no branch alvo com prova de commit e retenção fail-closed
     run: |
       import os, subprocess
-      from the_edge_agent.bmad_epic_waves_git import branch_has_unmerged_commits, is_ancestor
+      from the_edge_agent.bmad_epic_waves_git import (
+          branch_has_unmerged_commits, is_ancestor, classify_conflict, heartbeat_main_repo_lock,
+      )
       repo = os.path.realpath(state.get("repo_path", "."))
+      if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
       worktrees = state.get("worktrees", []) or []
       auto_resolve = bool(state.get("auto_resolve_conflicts"))
       merged_ok, merge_conflicts, pending_resolution = [], [], []
       merged_tips, merged_branches = {}, {}
+      conflict_audit = {}
       if not worktrees:
           print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
           return {"merged_ok": [], "merged_tips": {}, "merged_branches": {},
@@ -860,24 +1235,37 @@ nodes:
               merge_conflicts.append(k)
           else:
               conflicts = subprocess.run(["git","diff","--name-only","--diff-filter=U"], cwd=repo, capture_output=True, text=True).stdout.strip()
+              files = [f for f in conflicts.splitlines() if f.strip()]
+              # ELEGIBILIDADE MECÂNICA — decidida ANTES do `merge --abort`, enquanto os
+              # estágios do índice ainda existem. Nada aqui olha os marcadores no disco:
+              # sob o `merge.conflictStyle` default (2-way) eles mostram "cada lado
+              # adicionou algo" mesmo quando as duas adições colidem em silêncio (a mesma
+              # rota criada dos dois lados, dois arquivos novos de mesmo nome).
+              verdict = classify_conflict(
+                  repo, files,
+                  test_command=state.get("test_command", ""),
+                  protected_paths=[state.get("sprint_status_path", "")],
+              ) if auto_resolve else {"eligible": False, "reason": "auto_resolve_off"}
+              conflict_audit[k] = verdict
               subprocess.run(["git","merge","--abort"], cwd=repo, capture_output=True)
-              if auto_resolve:
-                  files = [f for f in conflicts.splitlines() if f.strip()]
+              if auto_resolve and verdict["eligible"]:
                   pending_resolution.append({"key": k, "branch": branch, "files": files, "tip": tip})
-                  print(f"  {k}: CONFLITO ({len(files)} arq) → pending_resolution; branch mantida.")
+                  print(f"  {k}: CONFLITO add/add puro ({len(files)} arq, {verdict['reason']}) → pending_resolution; branch mantida.")
                   subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
               else:
                   merge_conflicts.append(k)
-                  print(f"  {k}: CONFLITO. Worktree/branch mantidas p/ revisão. stderr: {r.stderr.strip()[:200]}")
+                  why = verdict["reason"] if auto_resolve else "auto_resolve_conflicts=false"
+                  print(f"  {k}: CONFLITO NÃO auto-resolvível ({why}) — decisão humana. Worktree/branch mantidas. stderr: {r.stderr.strip()[:200]}")
       post_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
       print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} falha/conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
       return {"merged_ok": merged_ok, "merged_tips": merged_tips,
               "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
-              "pending_resolution": pending_resolution, "post_merge_head": post_merge_head}
+              "pending_resolution": pending_resolution, "post_merge_head": post_merge_head,
+              "conflict_audit": conflict_audit}
     goto:
       - if: "state.get('pending_resolution')"
         to: resolve_conflicts
-      - to: mark_done
+      - to: migration_dag
 
   # ============================================================================
   # RESOLVE CONFLICTS (Nível 2) — LLM re-mergea cada pending_resolution e junta os
@@ -897,7 +1285,9 @@ nodes:
           content: |
             Você é um sub-agente sem contexto prévio, no repo principal em {{ state.repo_path }} (branch alvo). Comunique-se em {{ state.communication_language }}. Usuário: {{ state.user_name }}.
 
-            O bmad-epic-waves mergeou em serial N stories que chocaram em arquivos compartilhados. Você vai resolver os conflitos de merge que o git não conseguiu, **juntando** as duas versões (NÃO escolhendo um lado).
+            ⚠️ **HIGIENE DE CREDENCIAL.** Credencial real (senha de banco, API key, token de pod/secret) nunca vai para arquivo nem para a sua saída — só inline, no único comando que a consome. Se não der, PARE e reporte o bloqueio.
+
+            O bmad-epic-waves mergeou em serial N stories que chocaram em arquivos compartilhados. Cada conflito abaixo já passou por uma checagem MECÂNICA (estágios do índice, diffs insertion-only dos dois lados, nenhuma interseção de identificadores, nenhum arquivo gerado/lock/sprint-status) — ou seja, são colisões add/add puras. Você vai resolver o que o git não conseguiu, **juntando** as duas versões (NÃO escolhendo um lado).
 
             Pendentes a resolver (cada um é um branch `story/<key>` já commitado, cujo `git merge --no-ff` deu conflito):
             {% for p in state.pending_resolution %}
@@ -1002,7 +1392,55 @@ nodes:
               "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
               "resolution_recovery": {}, "rollback_ok": True}
     goto:
-      - to: mark_done
+      - to: migration_dag
+
+  # ============================================================================
+  # MIGRATION DAG — o merge limpo é exatamente onde esta classe de bug se esconde: duas
+  # migrations irmãs criadas a partir do MESMO pai por stories diferentes mergeiam
+  # textualmente limpas (nomes de arquivo distintos) e deixam a checagem de consistência
+  # do próprio framework quebrada. Só age quando a saída NOMEIA literalmente migrations
+  # conflitantes / múltiplas folhas: o mesmo comando falha por motivos não relacionados
+  # (drift de model, settings ruim, banco inacessível) e improvisar neles escreveria
+  # migrations que ninguém pediu.
+  # ============================================================================
+  - name: migration_dag
+    description: Detecta e resolve múltiplas folhas de migration com o gerador do próprio framework
+    run: |
+      import os, subprocess
+      from the_edge_agent.bmad_epic_waves_git import (
+          find_django_manage, check_migration_heads, merge_migration_heads, heartbeat_main_repo_lock,
+      )
+      repo = os.path.realpath(state.get("repo_path", "."))
+      if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
+      if not state.get("merged_ok"):
+          return {"migration_fix": {"ran": False, "reason": "nada mergeado nesta rodada"}}
+      manage = find_django_manage(repo)
+      if not manage:
+          return {"migration_fix": {"ran": False, "reason": "manage.py não encontrado (projeto não-Django ou fora do alcance)"}}
+      check = check_migration_heads(repo, manage)
+      if not check.get("multiple_heads"):
+          print(f"migration_dag: {manage} — sem múltiplas folhas (rc={check.get('returncode')}).")
+          return {"migration_fix": {"ran": True, "multiple_heads": False, "manage": manage}}
+      print(f"migration_dag: múltiplas folhas detectadas via {manage}:\n{check['output'][-600:]}")
+      merged = merge_migration_heads(repo, manage)
+      if not merged["ok"] or not merged["created"]:
+          print(f"migration_dag: NÃO consegui resolver automaticamente — deixando para revisão humana:\n{merged['output'][-600:]}")
+          return {"migration_fix": {"ran": True, "multiple_heads": True, "resolved": False,
+                                    "manage": manage, "output": merged["output"][-1500:]}}
+      # git add NOMINAL do que o gerador criou; nunca -A, o repo pode ter resto de outra sessão.
+      created = [c for c in merged["created"] if os.path.isfile(os.path.join(repo, c))] or []
+      add_targets = created or [os.path.dirname(manage) or "."]
+      subprocess.run(["git","add"] + add_targets, cwd=repo, capture_output=True)
+      staged = subprocess.run(["git","diff","--cached","--name-only"], cwd=repo, capture_output=True, text=True).stdout.strip()
+      if not staged:
+          print("migration_dag: gerador rodou mas nada ficou staged — nada a commitar.")
+          return {"migration_fix": {"ran": True, "multiple_heads": True, "resolved": False, "manage": manage}}
+      c = subprocess.run(["git","commit","-m","fix(migrations): merge conflicting leaf migrations"],
+                         cwd=repo, capture_output=True, text=True)
+      ok = c.returncode == 0
+      print(f"migration_dag: merge de migrations {'commitado' if ok else 'FALHOU'} ({staged.splitlines()})")
+      return {"migration_fix": {"ran": True, "multiple_heads": True, "resolved": ok,
+                                "manage": manage, "files": staged.splitlines()}}
 
   # ============================================================================
   # MARK DONE — serial, determinístico (porta o mergePrompt de sprint-status)
@@ -1012,8 +1450,9 @@ nodes:
     run: |
       import os, re, subprocess, yaml
       from datetime import date
-      from the_edge_agent.bmad_epic_waves_git import reconcile_merged_keys
+      from the_edge_agent.bmad_epic_waves_git import reconcile_merged_keys, heartbeat_main_repo_lock
       repo = state.get("repo_path", ".")
+      if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
       ss_rel = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
       ss_full = os.path.join(repo, ss_rel)
       today = date.today().isoformat()
@@ -1100,15 +1539,38 @@ nodes:
                   print(f"Suíte NÃO verde:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
           except Exception as e:
               print(f"Suíte não roda: {e}")
+
+      # A SUÍTE COBRE ESTE ÉPICO? `suite_green` sozinho é instrumento cego: num épico real
+      # a suíte declarada não coletava o diretório onde o épico inteiro morava, e o booleano
+      # saiu verde sobre uma árvore vazia. A versão checável da pergunta é: esta rodada
+      # entregou arquivos de teste que a suíte configurada NÃO coleta?
+      from the_edge_agent.bmad_epic_waves_git import suite_covers_paths
+      base = state.get("run_base_head") or ""
+      touched = []
+      if base:
+          dr = subprocess.run(["git","diff","--name-only",f"{base}..HEAD"], cwd=repo, capture_output=True, text=True)
+          touched = [f for f in dr.stdout.splitlines() if f.strip()]
+      cov = suite_covers_paths(repo, touched)
+      suite_covers = cov["covers"]
+      suite_that_covers = ""
+      if suite_covers is False:
+          suite_that_covers = f"testes entregues fora do escopo declarado ({cov['roots']}): {cov['uncovered'][:10]}"
+          print(f"⚠️  suite_green={suite_green} MAS a suíte não coleta os testes entregues — o verde não prova nada sobre este épico. {suite_that_covers}")
+      elif touched and not cov["touched_tests"]:
+          suite_that_covers = f"a rodada mexeu em {len(touched)} arquivo(s) e não entregou nenhum arquivo de teste"
+          print(f"⚠️  {suite_that_covers} — o verde da suíte não fala sobre este código.")
+
       incomplete_keys = sorted(set(cand_keys) - set(state.get("marked_done", []) or []))
       incomplete_keys = sorted(set(incomplete_keys) | set(merge_conflicts))
       all_done = total > 0 and done == total and not incomplete_keys and suite_green
       if all_done:
           for branch in (state.get("merged_branches", {}) or {}).values():
               subprocess.run(["git","branch","-D",branch], cwd=repo, capture_output=True)
-      print(f"Verify: {done}/{total} done, suite_green={suite_green}, incomplete={incomplete_keys}, all_done={all_done}")
+      print(f"Verify: {done}/{total} done, suite_green={suite_green}, cobre_o_epico={suite_covers}, incomplete={incomplete_keys}, all_done={all_done}")
       return {"all_done": all_done, "done_count": done, "total_count": total,
-              "suite_green": suite_green, "incomplete_keys": incomplete_keys}
+              "suite_green": suite_green, "incomplete_keys": incomplete_keys,
+              "suite_covers_the_epic": bool(suite_covers) if suite_covers is not None else True,
+              "suite_that_covers": suite_that_covers}
 
   # ============================================================================
   # RETRO — condicional (porta retroPrompt, com flip do epic-N)
@@ -1152,10 +1614,17 @@ nodes:
             - `git log --oneline` sobre o range do épico e `git diff --stat` p/ métricas.
             - Se houver doc de test-design/risk do épico, compare previstos vs. materializados.
 
+            ⚠️ **HIGIENE DE CREDENCIAL.** Credencial real nunca vai para arquivo nem para a sua saída — só inline, no único comando que a consome. Se não der, PARE e reporte o bloqueio.
+
             **Fatos desta run que a retro deve incorporar:**
             - Ondas executadas: {{ state.waves }}
-            - Verify: {{ state.done_count }}/{{ state.total_count }} done · suíte {{ 'VERDE' if state.suite_green else 'NÃO verde' }}
+            - Verify: {{ state.done_count }}/{{ state.total_count }} done · suíte {{ 'VERDE' if state.suite_green else 'NÃO verde' }} · **a suíte cobre o épico: {{ 'sim' if state.suite_covers_the_epic else 'NÃO' }}**{% if state.suite_that_covers %} · {{ state.suite_that_covers }}{% endif %}
             - Stories marcadas done: {{ state.marked_done }}
+            {% if state.blocked_stories %}- Stories NÃO despachadas por dependência cross-épico: {{ state.blocked_stories }}
+            {% endif %}{% if state.escalations %}- Stories repromovidas de tier após falha: {{ state.escalations }}
+            {% endif %}{% if state.migration_fix and state.migration_fix.get('multiple_heads') %}- DAG de migrations: múltiplas folhas detectadas e {{ 'resolvidas automaticamente' if state.migration_fix.get('resolved') else 'NÃO resolvidas (revisão humana)' }}.
+            {% endif %}{% if not state.suite_covers_the_epic %}- ⚠️ A suíte declarada NÃO exercita o código deste épico. Isso é material de retro por si só: nomeie a dívida de cobertura explicitamente, não deixe implícita num rodapé.
+            {% endif %}
 
             **O documento precisa ter** (adapte às seções da retro anterior):
             1. Métricas de entrega — stories, commits/SHAs, ciclos de review por story, movimento da suíte, conflitos de merge. Números.
@@ -1182,7 +1651,16 @@ nodes:
   - name: summary
     description: Relatório final do épico
     run: |
+      from the_edge_agent.bmad_epic_waves_git import release_main_repo_lock
+      # Solta o lock ANTES de imprimir: uma invocação irmã esperando não deve ficar presa
+      # atrás da formatação de um relatório.
+      if state.get("lock_owner"):
+          released = release_main_repo_lock(state.get("repo_path", "."), state["lock_owner"])
+          if not released:
+              print("⚠️  lock não liberado: o token de dono não confere mais — algo o reivindicou como parado. Não removi (seria apagar o lock de um irmão vivo).")
       suite = "VERDE" if state.get("suite_green") else "NÃO verde"
+      if state.get("suite_green") and not state.get("suite_covers_the_epic", True):
+          suite = "VERDE mas NÃO cobre o épico"
       retro = "rodou" if state.get("_run_retro") else "pulada"
       incomplete = ", ".join(state.get("incomplete_keys", []) or []) or "nenhuma"
       print(f"""
@@ -1198,33 +1676,37 @@ nodes:
       ╚════════════════════════════════════════════════════════════╝
       """)
       print(f"Stories não integradas: {incomplete}")
+      blocked = state.get("blocked_stories", []) or []
+      if blocked:
+          print(f"Bloqueadas por dependência cross-épico (nenhum agente gasto): {', '.join(blocked)}")
+          for b in state.get("external_blockers", []) or []:
+              print(f"  {b['story']} precisa de {b['requires_key']} (hoje \"{b['current_status']}\")")
+      for key, verdict in (state.get("conflict_audit", {}) or {}).items():
+          if not verdict.get("eligible"):
+              print(f"Conflito não auto-resolvível em {key}: {verdict.get('reason')}")
+      esc = state.get("escalations", []) or []
+      if esc:
+          print("Tiers repromovidos após falha: " + ", ".join(f"{e['key']} {e['from_tier']}->{e['to_tier']}" for e in esc))
+      mf = state.get("migration_fix") or {}
+      if mf.get("multiple_heads"):
+          print(f"DAG de migrations: múltiplas folhas — {'resolvidas' if mf.get('resolved') else 'NÃO resolvidas, revisão humana'}")
+      if state.get("suite_that_covers"):
+          print(f"Cobertura da suíte: {state.get('suite_that_covers')}")
       final = "completed" if state.get("all_done") else "incomplete"
-      return {"final_status": final, "epic": state.get("epic_key")}
+      return {"final_status": final, "epic": state.get("epic_key"), "lock_owner": ""}
 
+# Só os nós SEM `goto` aparecem aqui: `goto` tem precedência sobre esta seção, e declarar
+# os dois para o mesmo nó só cria aresta morta que confunde quem lê o grafo.
 edges:
   - from: __start__
     to: discover_epic
   - from: prep_create
-    to: prep_reconcile
+    to: prep_lock
   - from: prep_reconcile
     to: parse_reconcile
-  - from: prep_commit
-    to: check_stop_after_prep
-  - from: graph_infer
-    to: graph_llm
   - from: graph_llm
     to: build_waves
-  - from: build_waves
-    to: run_waves
-  - from: run_waves
-    to: merge_worktrees
-  - from: merge_worktrees
-    to: resolve_conflicts
-  - from: merge_worktrees
-    to: mark_done
-  - from: resolve_conflicts
-    to: verify_resolution
-  - from: verify_resolution
+  - from: migration_dag
     to: mark_done
   - from: mark_done
     to: verify_epic
