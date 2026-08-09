@@ -58,8 +58,8 @@ setup(
             "hypothesis==6.148.7",
             "parameterized==0.9.0",
             # Test dependencies for optional features
-            "openai==2.9.0",  # For LLM/RAG tests (mocked but module must be importable)
-            "litellm==1.82.6",  # For LiteLLM provider tests (TEA-LLM-003)
+            "openai==2.20.0",  # For LLM/RAG tests (mocked but module must be importable)
+            "litellm==1.84.0",  # For LiteLLM provider tests (TEA-LLM-003)
             "requests==2.32.5",  # For web actions tests
             "RestrictedPython==8.1",  # For code execution tests
             "duckdb==1.2.2",  # Pinned: DuckPGQ extension only available up to v1.2.2
@@ -71,16 +71,19 @@ setup(
             "janus-swi==1.5.2",  # For Prolog runtime tests (requires SWI-Prolog 9.1+)
             "nltk==3.9.4",  # For text_actions tests (sentence tokenization)
         ],
-        "rag": ["openai==2.9.0", "numpy==2.3.5"],
-        "rag-chroma": ["openai==2.9.0", "numpy==2.3.5", "chromadb==1.1.1"],
+        "rag": ["openai==2.20.0", "numpy==2.3.5"],
+        "rag-chroma": ["openai==2.20.0", "numpy==2.3.5", "chromadb==1.1.1"],
         "search": [
             "model2vec>=0.3.0",  # TEA-BUILTIN-002.4: Local embeddings (no installed version available)
             "lancedb==0.25.3",  # TEA-BUILTIN-002.5: Persistent vector store
             "pyarrow==22.0.0",  # Required by lancedb
             "numpy==2.3.5",
         ],
-        "llm": ["openai==2.9.0"],
-        "litellm": ["litellm==1.82.6"],  # TEA-LLM-003: LiteLLM multi-provider support
+        "llm": ["openai==2.20.0"],
+        "litellm": [
+            "litellm==1.84.0",
+            "openai==2.20.0",
+        ],  # TEA-LLM-003: LiteLLM multi-provider support
         "web": ["requests==2.32.5"],
         "web-ai-scrape": [
             "scrapegraph-py==1.46.0",
@@ -152,8 +155,8 @@ setup(
             "llama-cpp-python==0.3.21",
         ],
         "all": [
-            "openai==2.9.0",
-            "litellm==1.82.6",  # TEA-LLM-003: LiteLLM multi-provider support
+            "openai==2.20.0",
+            "litellm==1.84.0",  # TEA-LLM-003: LiteLLM multi-provider support
             "numpy==2.3.5",
             "chromadb==1.1.1",
             "requests==2.32.5",
