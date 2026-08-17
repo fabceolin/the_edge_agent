@@ -199,6 +199,55 @@ class TestShellProviderLlmCall(unittest.TestCase):
         assert "mistral-7b" in cmd
 
     @patch("subprocess.Popen")
+    def test_shell_provider_model_placeholder(self, mock_popen):
+        """Test that llm.call model is interpolated into shell provider args."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate.return_value = ("Model response", "")
+        mock_popen.return_value = mock_proc
+
+        self.mock_engine.shell_providers = {
+            "codex_dynamic": {
+                "command": "codex",
+                "args": ["-c", "model={model}", "-"],
+                "stdin_mode": "pipe",
+            }
+        }
+
+        result = self.llm_call(
+            state={},
+            model="luna",
+            messages=[{"role": "user", "content": "Implement this story"}],
+            provider="shell",
+            shell_provider="codex_dynamic",
+        )
+
+        assert result["content"] == "Model response"
+        cmd = mock_popen.call_args[0][0]
+        assert "model=luna" in cmd
+        assert "{model}" not in cmd
+
+    def test_shell_provider_model_placeholder_requires_model(self):
+        """Test a dynamic provider fails clearly when no model is supplied."""
+        self.mock_engine.shell_providers = {
+            "codex_dynamic": {
+                "command": "codex",
+                "args": ["-c", "model={model}", "-"],
+                "stdin_mode": "pipe",
+            }
+        }
+
+        result = self.llm_call(
+            state={},
+            messages=[{"role": "user", "content": "Implement this story"}],
+            provider="shell",
+            shell_provider="codex_dynamic",
+        )
+
+        assert result["success"] is False
+        assert "requires a model parameter" in result["error"]
+
+    @patch("subprocess.Popen")
     def test_shell_provider_unconfigured(self, mock_popen):
         """Test error when shell provider is not configured."""
         result = self.llm_call(

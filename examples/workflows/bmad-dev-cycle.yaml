@@ -19,6 +19,8 @@ description: |
     arg (obrigatório): "epic-5", "5" ou 5
     repo_path (obrigatório): path absoluto do repo alvo
     max_review_cycles (int, default 3)
+    dev_model (str, default gpt-5.6-sol): modelo para desenvolvimento e correções
+    review_model (str, default gpt-5.6-sol): modelo usado no review das stories
     run_retrospective (bool, default true)
     reprocess_done (bool, default false): reprocessa stories já "done"
     story_keys (list, opcional): sobrescreve a descoberta (lista explícita de keys na ordem)
@@ -34,6 +36,8 @@ state_schema:
   epic_num: str
   epic_key: str
   max_review_cycles: int
+  dev_model: str
+  review_model: str
   run_retrospective: bool
   reprocess_done: bool
   story_keys: list
@@ -63,7 +67,7 @@ settings:
         - "--yolo"
         - "exec"
         - "-c"
-        - "model=gpt-5.6-sol"
+        - "model={model}"
         - "-c"
         - "model_reasoning_effort=xhigh"
         - "-"
@@ -230,6 +234,8 @@ nodes:
       communication_language: "{{ state.communication_language }}"
       document_output_language: "{{ state.document_output_language }}"
       user_name: "{{ state.user_name }}"
+      dev_model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      review_model: "{{ state.review_model | default('gpt-5.6-sol') }}"
       test_command: "{{ state.test_command }}"
       target_branch: "{{ state.target_branch }}"
       create_if_missing: true
@@ -295,6 +301,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
+      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user

@@ -355,6 +355,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         shell_provider: str,
         messages: list,
         timeout: Optional[int] = None,
+        model: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -364,6 +365,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             shell_provider: Name of shell provider to use (e.g., 'claude', 'gemini')
             messages: List of message dicts with 'role' and 'content'
             timeout: Override timeout in seconds (uses provider default if None)
+            model: Optional model name used to replace the ``{model}`` argument
+                placeholder in the shell provider configuration.
             **kwargs: Additional parameters (ignored for shell provider)
 
         Returns:
@@ -408,12 +411,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         # Format messages into prompt text
         prompt_text = _format_messages_for_cli(messages)
+        model_text = str(model or config.get("model", ""))
 
-        # Build full command - replace {prompt} placeholder in args if present
+        if any("{model}" in str(a) for a in args) and not model_text:
+            return {
+                "error": f"Shell provider '{shell_provider}' requires a model parameter",
+                "success": False,
+            }
+
+        # Build full command - replace {model} and {prompt} placeholders in args
         processed_args = [
             (
-                a.replace("{prompt}", prompt_text)
-                if isinstance(a, str) and "{prompt}" in a
+                a.replace("{model}", model_text).replace("{prompt}", prompt_text)
+                if isinstance(a, str)
                 else a
             )
             for a in args
@@ -474,7 +484,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     f.write(prompt_text)
                     temp_path = f.name
                 # Replace {input_file} placeholder in args
-                file_args = [a.replace("{input_file}", temp_path) for a in args]
+                file_args = [a.replace("{input_file}", temp_path) for a in processed_args]
                 proc = subprocess.Popen(
                     [command] + file_args,
                     stdout=subprocess.PIPE,
@@ -657,6 +667,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
         shell_provider: str,
         messages: list,
         timeout: Optional[int] = None,
+        model: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -666,6 +677,8 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
             shell_provider: Name of shell provider to use
             messages: List of message dicts with 'role' and 'content'
             timeout: Override timeout in seconds
+            model: Optional model name used to replace the ``{model}`` argument
+                placeholder in the shell provider configuration.
             **kwargs: Additional parameters (ignored for shell provider)
 
         Returns:
@@ -709,12 +722,19 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
 
         # Format messages into prompt text
         prompt_text = _format_messages_for_cli(messages)
+        model_text = str(model or config.get("model", ""))
 
-        # Build full command - replace {prompt} placeholder in args if present
+        if any("{model}" in str(a) for a in args) and not model_text:
+            return {
+                "error": f"Shell provider '{shell_provider}' requires a model parameter",
+                "success": False,
+            }
+
+        # Build full command - replace {model} and {prompt} placeholders in args
         processed_args = [
             (
-                a.replace("{prompt}", prompt_text)
-                if isinstance(a, str) and "{prompt}" in a
+                a.replace("{model}", model_text).replace("{prompt}", prompt_text)
+                if isinstance(a, str)
                 else a
             )
             for a in args
@@ -755,7 +775,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     f.write(prompt_text)
                     temp_path = f.name
                 # Replace {input_file} placeholder in args
-                file_args = [a.replace("{input_file}", temp_path) for a in args]
+                file_args = [a.replace("{input_file}", temp_path) for a in processed_args]
                 proc = subprocess.Popen(
                     [command] + file_args,
                     stdout=subprocess.PIPE,
@@ -1075,6 +1095,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                 shell_provider=shell_provider,
                 messages=messages,
                 timeout=timeout,
+                model=model,
                 **kwargs,
             )
             # Mirror what the LiteLLM/OpenAI/local branches do: hand the
@@ -1711,6 +1732,7 @@ def register_actions(registry: Dict[str, Callable], engine: Any) -> None:
                     shell_provider=shell_provider,
                     messages=messages,
                     timeout=timeout,
+                    model=model,
                     **kwargs,
                 )
 
