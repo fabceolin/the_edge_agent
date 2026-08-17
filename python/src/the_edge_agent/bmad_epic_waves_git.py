@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
+from the_edge_agent import bmad_epic_waves_lock as _lock
+
 
 def _git(repo: str | Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -82,45 +84,26 @@ def preserve_resolution_head(
 # CROSS-RUN LOCK
 # ---------------------------------------------------------------------------
 # Two invocations of the epic-waves workflow can run at the same time against the
-# SAME repo — one per epic. Every step that merges, marks sprint-status or writes
-# a retro runs unisolated in the main working tree, because that is the only place
-# those writes CAN land. Within one invocation the graph edges serialize them;
-# ACROSS invocations there was nothing, and real use produced a detached HEAD, an
-# interleaved merge and a stash left behind by a sibling run.
+# SAME repo — one per epic — and so can the per-story merges of a single run,
+# which happen in one process each (see bmad_epic_waves_integrate). Every step
+# that merges, marks sprint-status or writes a retro runs unisolated in the main
+# working tree, so all of them have to pass through one queue.
 #
-# The JS original expresses this as an L0-L5 instruction list injected into five
-# prompts. Here the same steps are deterministic Python, so the lock is code: an
-# LLM cannot "helpfully" reach for `mkdir -p` (which exits 0 on an existing
-# directory and would let every sibling believe it holds the lock).
+# The queue is an exclusive flock, in bmad_epic_waves_lock. The functions below
+# keep the acquire/heartbeat/release shape the workflow nodes already use, and
+# are thin adapters over it.
 #
-# Staleness is measured from the owner file's mtime, refreshed by heartbeat(), so
-# it means "this holder stopped making progress" and not "this holder started a
-# long time ago" — without that, a slow-but-alive holder loses its own lock.
-LOCK_DIRNAME = ".bmad-epic-waves.lock"
-LOCK_PARENT = ".claude"
-# Generous on purpose: an LLM node between two heartbeats (a retro, a full suite)
-# can legitimately run for a long time and cannot heartbeat itself.
-DEFAULT_STALE_SECONDS = 5400
+# This replaces an earlier lock-directory protocol (atomic mkdir + owner token +
+# heartbeat + steal-when-provably-stale). The staleness machinery existed only
+# because a lock directory outlives the process that created it: a holder killed
+# mid-merge left the lock standing, so someone had to decide when it was safe to
+# break. flock has no such window — the kernel drops it when the fd closes, which
+# includes the process dying — and that case is not hypothetical here: run_waves
+# kills the whole tmux session on timeout, taking every story process with it.
+# Losing the steal protocol also removes its two failure modes: a slow-but-alive
+# holder judged stale, and a heartbeat someone forgets to call.
 DEFAULT_WAIT_SECONDS = 2400
-DEFAULT_POLL_SECONDS = 15
-
-
-def _lock_paths(repo: str | Path) -> tuple[Path, Path, Path]:
-    parent = Path(repo) / LOCK_PARENT
-    lock = parent / LOCK_DIRNAME
-    return parent, lock, lock / "owner"
-
-
-def _lock_age(owner_file: Path, lock_dir: Path, now: float) -> float:
-    """Seconds since the holder last proved liveness (owner mtime, else dir mtime)."""
-    for candidate in (owner_file, lock_dir):
-        try:
-            return now - candidate.stat().st_mtime
-        except OSError:
-            continue
-    # Neither exists: the lock vanished between checks. Treat as infinitely old so
-    # the caller retries acquisition instead of waiting on nothing.
-    return float("inf")
+DEFAULT_POLL_SECONDS = 2
 
 
 def acquire_main_repo_lock(
@@ -128,26 +111,47 @@ def acquire_main_repo_lock(
     owner: str | None = None,
     *,
     wait_seconds: float = DEFAULT_WAIT_SECONDS,
-    stale_seconds: float = DEFAULT_STALE_SECONDS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
-    _now: Callable[[], float] = time.time,
-    _sleep: Callable[[float], None] = time.sleep,
+    check_stash: bool = True,
 ) -> dict:
     """Take the cross-run lock on the main repo.
 
     Returns ``{"acquired": bool, "owner": str, "reason": str}``. ``reason`` is
-    ``"acquired"``, ``"lock_timeout"`` (a live sibling held it for the whole wait)
-    or ``"environment"`` (the lock path is unusable — never treat that as a held
-    lock, and never as a defect of the code being integrated).
+    ``"acquired"``, ``"lock_timeout"`` (a live sibling held it for the whole
+    wait), ``"orphan_stash"`` (someone left uncommitted work hidden — a human has
+    to look before anything merges) or ``"environment"`` (the lock path is
+    unusable). None of the failures is ever a defect of the code being integrated.
     """
     token = owner or f"{os.getpid()}-{uuid.uuid4().hex[:12]}"
-    parent, lock_dir, owner_file = _lock_paths(repo)
-    deadline = _now() + wait_seconds
-
+    if _lock.is_held(repo) and not _lock.owns(repo, token):
+        # This process already holds the lock under a different token. flock is
+        # re-entrant per process, so hold() would hand out a second owner and the
+        # first release would drop the lock under the other one's feet. The nodes
+        # guard against this with `if state.lock_owner`; saying it out loud is
+        # cheaper than trusting every future caller to remember.
+        return {
+            "acquired": False,
+            "owner": token,
+            "reason": "already_held_here",
+            "error": f"held by {_lock.read_holder(repo)}",
+        }
     try:
-        # Only the PARENT is created with parents=True/exist_ok=True. Doing that on
-        # the lock path itself is exactly the bug this design exists to avoid.
-        parent.mkdir(parents=True, exist_ok=True)
+        _lock.hold(
+            repo,
+            owner=token,
+            timeout=wait_seconds,
+            poll=poll_seconds,
+            check_stash=check_stash,
+        )
+    except _lock.IntegrationLockTimeout:
+        return {"acquired": False, "owner": token, "reason": "lock_timeout"}
+    except _lock.OrphanStashError as exc:
+        return {
+            "acquired": False,
+            "owner": token,
+            "reason": "orphan_stash",
+            "error": str(exc),
+        }
     except OSError as exc:
         return {
             "acquired": False,
@@ -155,90 +159,29 @@ def acquire_main_repo_lock(
             "reason": "environment",
             "error": str(exc),
         }
-
-    while True:
-        try:
-            os.mkdir(lock_dir)
-        except FileExistsError:
-            pass
-        except OSError as exc:
-            # ENOENT / EPERM: an environment problem, not a held lock.
-            return {
-                "acquired": False,
-                "owner": token,
-                "reason": "environment",
-                "error": str(exc),
-            }
-        else:
-            owner_file.write_text(f"{_now()} {token}\n")
-            return {
-                "acquired": True,
-                "owner": token,
-                "reason": "acquired",
-                "path": str(lock_dir),
-            }
-
-        if _lock_age(owner_file, lock_dir, _now()) > stale_seconds:
-            # Steal with an atomic rename: only one of any racing waiters wins it.
-            stolen = lock_dir.with_name(f"{LOCK_DIRNAME}.stale-{token}")
-            try:
-                lock_dir.rename(stolen)
-            except OSError:
-                pass  # lost the race; fall through and keep waiting
-            else:
-                if lock_dir.exists():
-                    # A third run already created a fresh lock while we renamed.
-                    # Renaming ours back would NEST inside it and bury the real
-                    # owner token, so drop our copy and go back to waiting.
-                    shutil.rmtree(stolen, ignore_errors=True)
-                elif _lock_age(stolen / "owner", stolen, _now()) <= stale_seconds:
-                    # It was refreshed under us: it is alive after all. The
-                    # destination is empty (checked just above), so moving it back
-                    # restores the original holder instead of nesting.
-                    try:
-                        stolen.rename(lock_dir)
-                    except OSError:
-                        shutil.rmtree(stolen, ignore_errors=True)
-                else:
-                    shutil.rmtree(stolen, ignore_errors=True)
-                    continue
-
-        if _now() + poll_seconds > deadline:
-            return {"acquired": False, "owner": token, "reason": "lock_timeout"}
-        _sleep(poll_seconds)
+    return {
+        "acquired": True,
+        "owner": token,
+        "reason": "acquired",
+        "path": str(_lock.lock_path(repo)),
+    }
 
 
-def heartbeat_main_repo_lock(
-    repo: str | Path, owner: str, *, _now: Callable[[], float] = time.time
-) -> bool:
-    """Refresh the owner file so a long but live step is not judged stale."""
-    _, _, owner_file = _lock_paths(repo)
-    try:
-        if owner not in owner_file.read_text():
-            return False
-        owner_file.write_text(f"{_now()} {owner}\n")
-        return True
-    except OSError:
-        return False
+def heartbeat_main_repo_lock(repo: str | Path, owner: str) -> bool:
+    """Confirm the lock is still ours and refresh the diagnostic stamp.
+
+    Under flock nothing can expire, so this proves ownership instead of extending
+    it — kept because the nodes call it as a liveness assertion between long
+    steps, and a False here means something is wrong enough to look at.
+    """
+    return _lock.refresh_stamp(repo, owner)
 
 
 def release_main_repo_lock(repo: str | Path, owner: str) -> bool:
-    """Release the lock, but only if we still own it.
-
-    A token mismatch means something already reclaimed this lock as stale; removing
-    it then would delete a live sibling's lock, so we refuse and report it.
-    """
-    _, lock_dir, owner_file = _lock_paths(repo)
-    try:
-        current = owner_file.read_text()
-    except OSError:
-        # No owner file: either never taken, or already reclaimed. Removing a lock
-        # we cannot prove is ours is the one thing this function must not do.
+    """Release the lock, but only if we still own it."""
+    if not _lock.owns(repo, owner):
         return False
-    if owner not in current:
-        return False
-    shutil.rmtree(lock_dir, ignore_errors=True)
-    return not lock_dir.exists()
+    return _lock.release(repo, force=True)
 
 
 # ---------------------------------------------------------------------------

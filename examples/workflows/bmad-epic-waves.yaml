@@ -61,6 +61,12 @@ description: |
       {"trivial": "codex_small"}. Os nomes têm de existir no bmad-story-cycle.yaml.
     auto_resolve_conflicts (bool, default false): Nível 2 (LLM junta os dois lados),
       agora restrito aos conflitos que passam na elegibilidade mecânica acima.
+    integrate_in_flight (bool, default true): fila de merge — cada story integra no fim
+      do próprio nó do DOT, em vez de todas em lote depois da onda; a serialização é o
+      mesmo lock cross-run (agora flock), então a fila também vale entre invocações
+    mark_status_in_flight (bool, default true): o merge de cada story já flippa o status
+    allow_orphan_stash (bool, default false): stash órfão no repo principal é fail-closed
+      na tomada do lock; ligue só depois de olhar o `git stash list`
 
   Uso:
     tea run examples/workflows/bmad-epic-waves.yaml \
@@ -122,6 +128,12 @@ state_schema:
   merged_tips: dict            # {story_key: commit_tip} comprovados no HEAD final
   merged_branches: dict        # {story_key: branch} deletadas só após gate final verde
   merge_conflicts: list       # stories com conflito de merge (fail-closed)
+  # ---- fila de merge (integração serializada por flock no repo principal) ----
+  integrate_in_flight: bool     # default true: cada story mergeia no fim do PRÓPRIO nó
+  mark_status_in_flight: bool   # default true: o merge de cada story já flippa o status dela
+  allow_orphan_stash: bool      # default false: stash órfão no repo principal é fail-closed
+  receipts_dir: str             # recibos JSON por story (prepare/merge), lidos pelo sweeper
+  tea_python: str               # python do venv do tea (default: derivado do tea_bin)
   auto_resolve_conflicts: bool  # Nível 2: LLM resolve conflitos; gate = suíte verde + sem marcadores
   pending_resolution: list   # [{key, branch, files}] conflitos resolvíveis (auto_resolve on)
   post_merge_head: str       # HEAD com merged_ok, antes dos merges resolvidos (pra git reset)
@@ -517,7 +529,7 @@ nodes:
       mco = re.search(r'(Co-Authored-By:.*)', prev_body, re.M)
       if mco: co_auth = "\n\n" + mco.group(1)
       msg = f"docs({state.get('epic_key')}): create the epic's story files\n\n{len(to_add)} stories criadas, statuses movidos para ready-for-dev.{co_auth}"
-      r = subprocess.run(["git","commit","-m", msg], cwd=repo, capture_output=True, text=True)
+      r = subprocess.run(["git","commit","--only"] + to_add + ["-m", msg], cwd=repo, capture_output=True, text=True)
       if r.returncode != 0:
           print(f"prep_commit falhou: {r.stderr}")
           return _unlock({"prep_committed": False, "_prep_next": "abort_commit_failed"})
@@ -847,6 +859,25 @@ nodes:
       wt_base = state.get("worktree_base") or os.path.join(tempfile.gettempdir(), f"tea-wt-{epic_key}")
       worktrees = []
       dry = bool(state.get("dry_run"))
+      # FILA DE MERGE (in-flight): cada nó do DOT termina com o merge da PRÓPRIA story,
+      # serializado pelo flock do repo principal (bmad_epic_waves_lock). Uma story integra
+      # assim que o review dela aprova, e o merge seguinte começa exatamente quando o
+      # anterior termina — sem esperar a onda inteira, e sem colidir com invocação irmã.
+      # integrate_in_flight=false volta ao comportamento antigo (tudo no merge_worktrees).
+      in_flight = bool(state.get("integrate_in_flight", True)) and not dry
+      # Interpretador do venv do tea (o módulo de integração vive no mesmo pacote que
+      # este nó importa). Derivado do tea_bin; state.tea_python sobrescreve.
+      import sys as _sys
+      tea_python = state.get("tea_python") or os.path.join(os.path.dirname(tea_bin), "python")
+      if not os.path.isfile(tea_python):
+          tea_python = _sys.executable
+      # Uma receita JSON por story, escrita pelos estágios prepare/merge. O sweeper
+      # (merge_worktrees) lê daqui em vez de adivinhar pelo log do tmux.
+      receipts_dir = state.get("receipts_dir") or os.path.join(tempfile.gettempdir(), "tea-epic-waves", f"receipts-{epic_key}")
+      if not dry:
+          import shutil
+          shutil.rmtree(receipts_dir, ignore_errors=True)  # receita velha é de OUTRO run
+          os.makedirs(receipts_dir, exist_ok=True)
       if not dry:
           from the_edge_agent.bmad_epic_waves_git import branch_has_unmerged_commits
           stale = []
@@ -868,14 +899,20 @@ nodes:
           for k in keys:
               wt_path = os.path.join(wt_base, k.replace("/", "_"))
               wt_branch = f"story/{k}"
-              subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
-              r = subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
-                                 cwd=repo_abs, capture_output=True, text=True)
-              if r.returncode != 0:
-                  print(f"worktree add falhou para {k}: {r.stderr.strip()}")
-                  raise Exception(f"worktree_create falhou para {k}: {r.stderr.strip()}")
+              # Com a fila, a worktree nasce no INÍCIO do nó da story (estágio prepare),
+              # a partir da ponta ATUAL do target: as stories das quais esta depende já
+              # mergearam, então o dev enxerga o código delas em vez de desenvolver
+              # sobre uma base anterior a elas.
+              if not in_flight:
+                  subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
+                  r = subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
+                                     cwd=repo_abs, capture_output=True, text=True)
+                  if r.returncode != 0:
+                      print(f"worktree add falhou para {k}: {r.stderr.strip()}")
+                      raise Exception(f"worktree_create falhou para {k}: {r.stderr.strip()}")
               worktrees.append({"key": k, "path": wt_path, "branch": wt_branch})
-          print(f"Worktrees criadas: {len(worktrees)} em {wt_base}")
+          verbo = "planejadas (criadas no nó de cada story)" if in_flight else "criadas"
+          print(f"Worktrees {verbo}: {len(worktrees)} em {wt_base}")
       else:
           print("DRY_RUN: worktrees NÃO criadas (DOT aponta pro repo principal).")
       # common: payload do subgraph. repo_path = path da worktree (git opera ali);
@@ -934,9 +971,28 @@ nodes:
           # e o merge_worktrees — que só exige presença em `succeeded` — integrava no
           # branch alvo uma story que o revisor tinha rejeitado. O JS nunca mergeia sem
           # verdict=approve; este flag é o equivalente nativo dessa invariante.
-          cmd = (f"{cd_prefix}{tea_bin} run {subgraph_path} --input '{j}'"
+          story_cmd = (f"{cd_prefix}{tea_bin} run {subgraph_path} --input '{j}'"
                  f" --fail-on-state 'final_status=incomplete'"
                  f" --fail-on-state 'final_status=missing_story_file'")
+          if in_flight:
+              # prepare && story-cycle && merge, encadeados por `&&`: o merge só roda se o
+              # ciclo saiu 0 (o --fail-on-state acima), e o rc combinado é o que o
+              # `tea --from-dot` grava no arquivo de exit code. Duas defesas para a mesma
+              # invariante do JS (nunca mergear sem verdict=approve): o flag prova pelo
+              # exit code, o `&&` prova por nem chamar o merge.
+              cli = f"{tea_python} -m the_edge_agent.bmad_epic_waves_integrate"
+              common_args = (f"--repo {repo_abs} --key {k} --branch {wtmap[k]['branch']}"
+                             f" --target {target_branch} --receipts {receipts_dir}"
+                             f" --lock-timeout {int(float(state.get('lock_wait_seconds', 2400)))}")
+              if state.get("allow_orphan_stash"):
+                  common_args += " --allow-orphan-stash"
+              prep = f"{cli} prepare {common_args} --path {wtmap[k]['path']}"
+              mrg = f"{cli} merge {common_args} --path {wtmap[k]['path']} --sprint-status {common['sprint_status_path']}"
+              if not bool(state.get("mark_status_in_flight", True)):
+                  mrg += " --no-mark-status"
+              cmd = f"cd {repo_abs} && {prep} && {story_cmd} && cd {repo_abs} && {mrg}"
+          else:
+              cmd = story_cmd
           cmd_dot = cmd.replace('\\', '\\\\').replace('"', '\\"')
           label_dot = k.replace('"', '\\"')
           lines.append(f'  {id_of[k]} [label="{label_dot}" command="{cmd_dot}"];')
@@ -985,7 +1041,8 @@ nodes:
                       dot_path=dot_path, worktree_base=wt_base)
 
       return dict(common_out, waves=waves, deps_resolved=deps, dot_path=dot_path,
-                  only_wave=only_wave, worktrees=worktrees, worktree_base=wt_base)
+                  only_wave=only_wave, worktrees=worktrees, worktree_base=wt_base,
+                  receipts_dir=receipts_dir, integrate_in_flight=in_flight)
     goto:
       - if: "state.get('final_status') == 'dry_run'"
         to: __end__
@@ -1193,8 +1250,10 @@ nodes:
     run: |
       import os, subprocess
       from the_edge_agent.bmad_epic_waves_git import (
-          branch_has_unmerged_commits, is_ancestor, classify_conflict, heartbeat_main_repo_lock,
+          branch_has_unmerged_commits, branch_tip, is_ancestor, classify_conflict,
+          heartbeat_main_repo_lock,
       )
+      from the_edge_agent.bmad_epic_waves_integrate import read_receipts
       repo = os.path.realpath(state.get("repo_path", "."))
       if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
       worktrees = state.get("worktrees", []) or []
@@ -1206,20 +1265,53 @@ nodes:
           print("merge_worktrees: nenhuma worktree — nada a mergear (dry_run ou 0 stories).")
           return {"merged_ok": [], "merged_tips": {}, "merged_branches": {},
                   "merge_conflicts": [], "pending_resolution": [], "post_merge_head": ""}
-      cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, auto_resolve={auto_resolve}, {len(worktrees)} worktrees")
-      if dirty:
-          keys = [w["key"] for w in worktrees]
-          print(f"merge_worktrees: FAIL-CLOSED — repo principal sujo; worktrees e branches mantidas: {keys}")
-          head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
-          return {"merged_ok": [], "merged_tips": {}, "merged_branches": {},
-                  "merge_conflicts": keys, "pending_resolution": [], "post_merge_head": head}
-      for w in worktrees:
+      # Receitas do merge in-flight: quem já integrou na fila não passa por aqui de novo.
+      receipts = read_receipts(state.get("receipts_dir"))
+
+      def _sweep():
+        cur = subprocess.run(["git","rev-parse","--abbrev-ref","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(["git","status","--porcelain"], cwd=repo, capture_output=True, text=True).stdout.strip()
+        print(f"merge_worktrees: repo em '{cur}', dirty={bool(dirty)}, auto_resolve={auto_resolve}, {len(worktrees)} worktrees")
+        # Passada 1 — reconhece o que a FILA já integrou. Vem antes do fail-closed de repo
+        # sujo de propósito: uma story provadamente ancestral do HEAD está integrada, e
+        # jogá-la em merge_conflicts por sujeira alheia reabriria trabalho já fechado.
+        pending_wts = []
+        for w in worktrees:
+            k, branch, path = w["key"], w["branch"], w["path"]
+            rec = (receipts.get(k) or {}).get("merge") or {}
+            tip = rec.get("tip") or branch_tip(repo, branch)
+            # Exige o RECIBO, não só ancestralidade: uma branch onde o dev não commitou
+            # nada também é trivialmente ancestral do HEAD, e aceitá-la marcaria como
+            # feita uma story que não produziu uma linha.
+            if rec.get("status") in ("merged", "already_merged", "merged_status_pending") and tip and is_ancestor(repo, tip):
+                merged_ok.append(k); merged_tips[k] = tip; merged_branches[k] = branch
+                print(f"  {k}: integrada em voo ({rec.get('status')}) tip={tip[:8]}")
+                if os.path.exists(path):
+                    subprocess.run(["git","worktree","remove","--force",path], cwd=repo, capture_output=True)
+                continue
+            pending_wts.append(w)
+        head_now = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+        if not pending_wts:
+            print(f"merge_worktrees: {len(merged_ok)} integradas em voo, nada pendente. post_merge_head={head_now[:8]}")
+            return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+                    "merged_branches": merged_branches, "merge_conflicts": [],
+                    "pending_resolution": [], "post_merge_head": head_now}
+        if dirty:
+            keys = [w["key"] for w in pending_wts]
+            print(f"merge_worktrees: FAIL-CLOSED — repo principal sujo; worktrees e branches mantidas: {keys}")
+            return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+                    "merged_branches": merged_branches, "merge_conflicts": keys,
+                    "pending_resolution": [], "post_merge_head": head_now}
+        for w in pending_wts:
           k, branch, path = w["key"], w["branch"], w["path"]
           res = state.get("run_waves_results", {}) or {}
           succ = res.get("succeeded") or []
-          if res.get("skipped") or k not in succ:
+          rec = (receipts.get(k) or {}).get("merge") or {}
+          # Um recibo de estágio "merge" só existe se o story-cycle saiu 0 (o `&&` da
+          # fila), então ele prova o ciclo tão bem quanto o "Completed:" do DOT — e
+          # sobrevive ao caso em que o nó falhou justamente NO merge (conflito).
+          cycle_ok = (k in succ) or bool(rec)
+          if res.get("skipped") or not cycle_ok:
               print(f"  {k}: NÃO comprovada como succeeded no DOT — worktree e branch mantidas.")
               merge_conflicts.append(k)
               continue
@@ -1265,12 +1357,16 @@ nodes:
                   merge_conflicts.append(k)
                   why = verdict["reason"] if auto_resolve else "auto_resolve_conflicts=false"
                   print(f"  {k}: CONFLITO NÃO auto-resolvível ({why}) — decisão humana. Worktree/branch mantidas. stderr: {r.stderr.strip()[:200]}")
-      post_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
-      print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} falha/conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
-      return {"merged_ok": merged_ok, "merged_tips": merged_tips,
-              "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
-              "pending_resolution": pending_resolution, "post_merge_head": post_merge_head,
-              "conflict_audit": conflict_audit}
+        post_merge_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+        print(f"merge_worktrees: {len(merged_ok)} merged, {len(merge_conflicts)} falha/conflito(N1), {len(pending_resolution)} pending(N2). post_merge_head={post_merge_head[:8]}")
+        return {"merged_ok": merged_ok, "merged_tips": merged_tips,
+                "merged_branches": merged_branches, "merge_conflicts": merge_conflicts,
+                "pending_resolution": pending_resolution, "post_merge_head": post_merge_head,
+                "conflict_audit": conflict_audit}
+
+      # O lock cross-run já está na mão desde o nó integrate_lock e continua até o
+      # summary — o sweeper não toma lock nenhum aqui, senão seriam duas filas.
+      return _sweep()
     goto:
       - if: "state.get('pending_resolution')"
         to: resolve_conflicts
@@ -1461,17 +1557,15 @@ nodes:
       import os, re, subprocess, yaml
       from datetime import date
       from the_edge_agent.bmad_epic_waves_git import reconcile_merged_keys, heartbeat_main_repo_lock
+      from the_edge_agent.bmad_epic_waves_integrate import mark_stories_done
       repo = state.get("repo_path", ".")
       if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
       ss_rel = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
       ss_full = os.path.join(repo, ss_rel)
       today = date.today().isoformat()
-      marked = []
       if not os.path.isfile(ss_full):
           print("sprint-status.yaml ausente — pulando mark_done")
           return {"marked_done": []}
-      with open(ss_full) as f:
-          lines = f.readlines()
       merged_ok = list(state.get("merged_ok", []) or [])
       merged_tips = dict(state.get("merged_tips", {}) or {})
       accepted, rejected = reconcile_merged_keys(repo, merged_ok, merged_tips)
@@ -1485,33 +1579,32 @@ nodes:
       if not keys:
           print("mark_done: nenhuma story integrada e comprovada — nada a marcar.")
           return {"marked_done": [], "merged_ok": accepted, "merge_conflicts": merge_conflicts}
-      new_lines = []
-      for ln in lines:
-          m = re.match(r'^(\s*)([A-Za-z0-9_-]+):\s*(.+)$', ln)
-          if m and m.group(2) in keys:
-              indent, key, rest = m.group(1), m.group(2), m.group(3)
-              comment = ""
-              if '#' in rest: comment = " " + rest[rest.index('#'):]
-              new_lines.append(f'{indent}{key}: done{comment}\n')
-              marked.append(key)
-          else:
-              new_lines.append(ln)
-      out = []
-      for ln in new_lines:
-          out.append(f'last_updated: {today}\n' if re.match(r'^\s*last_updated:\s*.*$', ln) else ln)
-      with open(ss_full, "w") as f:
-          f.writelines(out)
-      yaml.safe_load(open(ss_full))
-      subprocess.run(["git","add", ss_rel], cwd=repo, check=True)
-      r = subprocess.run(["git","commit","-m", f"chore(sprint): {state.get('epic_key')} wave -> done"], cwd=repo, capture_output=True, text=True)
-      if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr).lower():
-          subprocess.run(["git","restore","--staged","--worktree",ss_rel], cwd=repo, capture_output=True)
-          for key in accepted:
-              if key not in merge_conflicts: merge_conflicts.append(key)
-          print(f"mark_done commit falhou; status revertido: {r.stderr}")
-          return {"marked_done": [], "merged_ok": [], "merge_conflicts": merge_conflicts}
-      print(f"Marcadas done: {marked}")
-      return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+
+      def _mark():
+          # Varredura: com a fila, a maioria das keys já foi flipada no merge da própria
+          # story. O que sobra aqui é o resto (merge do sweeper, ou flip que falhou em
+          # voo). Reescrever uma key que já está "done" é no-op no texto.
+          with open(ss_full) as f:
+              lines = f.readlines()
+          out, marked = mark_stories_done(lines, keys, today)
+          if "".join(out) == "".join(lines):
+              print(f"mark_done: status já refletia a fila para {keys} — nada a commitar.")
+              return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+          with open(ss_full, "w") as f:
+              f.writelines(out)
+          yaml.safe_load(open(ss_full))
+          subprocess.run(["git","add", ss_rel], cwd=repo, check=True)
+          r = subprocess.run(["git","commit","--only", ss_rel, "-m", f"chore(sprint): {state.get('epic_key')} wave -> done"], cwd=repo, capture_output=True, text=True)
+          if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr).lower():
+              subprocess.run(["git","restore","--staged","--worktree",ss_rel], cwd=repo, capture_output=True)
+              for key in accepted:
+                  if key not in merge_conflicts: merge_conflicts.append(key)
+              print(f"mark_done commit falhou; status revertido: {r.stderr}")
+              return {"marked_done": [], "merged_ok": [], "merge_conflicts": merge_conflicts}
+          print(f"Marcadas done: {marked}")
+          return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+
+      return _mark()
 
   # ============================================================================
   # VERIFY — determinístico + suite coverage
@@ -1542,6 +1635,9 @@ nodes:
       suite_green = False
       tc = state.get("test_command", "")
       if tc:
+          # HEAD estável durante a suíte: um merge de story irmã (ou de invocação irmã)
+          # no meio da execução tornaria este verde a medição de outra árvore.
+          before_suite = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
           try:
               r = subprocess.run(tc, shell=True, cwd=repo, capture_output=True, text=True, timeout=1800)
               suite_green = r.returncode == 0
@@ -1549,6 +1645,10 @@ nodes:
                   print(f"Suíte NÃO verde:\n{r.stdout[-800:]}\n{r.stderr[-800:]}")
           except Exception as e:
               print(f"Suíte não roda: {e}")
+          after_suite = subprocess.run(["git","rev-parse","HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+          if suite_green and before_suite != after_suite:
+              print(f"Suíte verde descartada: HEAD mudou durante a execução ({before_suite[:8]} -> {after_suite[:8]}).")
+              suite_green = False
 
       # A SUÍTE COBRE ESTE ÉPICO? `suite_green` sozinho é instrumento cego: num épico real
       # a suíte declarada não coletava o diretório onde o épico inteiro morava, e o booleano

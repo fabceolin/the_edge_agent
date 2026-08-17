@@ -9,6 +9,7 @@ green suite that never collected the code it was supposed to prove.
 from __future__ import annotations
 
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -87,47 +88,98 @@ def conflicting_repo(
 # ---------------------------------------------------------------------------
 
 
+def _spawn_holder(repo: Path, token: str) -> subprocess.Popen:
+    """A holder in ANOTHER process — the only shape that really tests the queue."""
+    script = textwrap.dedent(
+        f"""
+        import time
+        from the_edge_agent.bmad_epic_waves_git import acquire_main_repo_lock
+        r = acquire_main_repo_lock({str(repo)!r}, {token!r})
+        print("held" if r["acquired"] else "failed", flush=True)
+        time.sleep(60)
+        """
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, text=True
+    )
+    assert proc.stdout.readline().strip() == "held"
+    return proc
+
+
 def test_second_run_cannot_take_a_held_lock(tmp_path: Path) -> None:
-    first = acquire_main_repo_lock(tmp_path)
+    holder = _spawn_holder(tmp_path, "sibling-run")
+    try:
+        second = acquire_main_repo_lock(tmp_path, wait_seconds=0.3, poll_seconds=0.05)
+
+        assert second["acquired"] is False
+        assert second["reason"] == "lock_timeout"
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_a_second_token_in_the_same_process_is_refused_not_granted(
+    tmp_path: Path,
+) -> None:
+    """flock is re-entrant per process; handing out a second owner would mean the
+    first release drops the lock under the second one's feet."""
+    first = acquire_main_repo_lock(tmp_path, "prep")
     assert first["acquired"] is True
 
-    second = acquire_main_repo_lock(tmp_path, wait_seconds=0, poll_seconds=1)
+    second = acquire_main_repo_lock(tmp_path, "integrate", wait_seconds=0)
 
     assert second["acquired"] is False
-    assert second["reason"] == "lock_timeout"
+    assert second["reason"] == "already_held_here"
+    assert release_main_repo_lock(tmp_path, "prep") is True
 
 
-def test_release_refuses_when_the_lock_was_reclaimed_by_someone_else(
-    tmp_path: Path,
-) -> None:
+def test_release_refuses_a_token_that_is_not_the_holder(tmp_path: Path) -> None:
     mine = acquire_main_repo_lock(tmp_path)
-    # A sibling judged us stale and took over: the owner token is no longer ours.
-    (tmp_path / ".claude/.bmad-epic-waves.lock/owner").write_text("999 someone-else\n")
-
-    assert release_main_repo_lock(tmp_path, mine["owner"]) is False
-    assert (tmp_path / ".claude/.bmad-epic-waves.lock").exists()
-
-
-def test_heartbeat_keeps_a_slow_but_live_holder_from_being_stolen(
-    tmp_path: Path,
-) -> None:
-    mine = acquire_main_repo_lock(tmp_path)
-    # Simulate the holder having acquired long ago and then proving liveness.
-    assert heartbeat_main_repo_lock(tmp_path, mine["owner"]) is True
-
-    waiter = acquire_main_repo_lock(
-        tmp_path, stale_seconds=3600, wait_seconds=0, poll_seconds=1
-    )
-
-    assert waiter["acquired"] is False
+    try:
+        assert release_main_repo_lock(tmp_path, "someone-else") is False
+        assert heartbeat_main_repo_lock(tmp_path, mine["owner"]) is True
+    finally:
+        assert release_main_repo_lock(tmp_path, mine["owner"]) is True
 
 
-def test_a_genuinely_stale_lock_is_stolen(tmp_path: Path) -> None:
-    acquire_main_repo_lock(tmp_path)
+def test_a_live_holder_is_never_displaced_however_long_it_holds(tmp_path: Path) -> None:
+    """No staleness window to age out of: the lock lasts exactly as long as the
+    process, so a slow-but-alive holder cannot lose it to a waiter."""
+    holder = _spawn_holder(tmp_path, "slow-suite")
+    try:
+        waiter = acquire_main_repo_lock(tmp_path, wait_seconds=0.3, poll_seconds=0.05)
 
-    taken = acquire_main_repo_lock(tmp_path, stale_seconds=-1, wait_seconds=0)
+        assert waiter["acquired"] is False
+        assert waiter["reason"] == "lock_timeout"
+    finally:
+        holder.kill()
+        holder.wait(timeout=10)
+
+
+def test_a_dead_holder_frees_the_queue_immediately(tmp_path: Path) -> None:
+    """What the old steal protocol existed for: run_waves kills the whole tmux
+    session on timeout, and a story process dying mid-merge used to leave a lock
+    standing until someone judged it stale."""
+    holder = _spawn_holder(tmp_path, "doomed")
+    holder.kill()
+    holder.wait(timeout=10)
+
+    taken = acquire_main_repo_lock(tmp_path, wait_seconds=5, poll_seconds=0.05)
 
     assert taken["acquired"] is True
+    assert release_main_repo_lock(tmp_path, taken["owner"]) is True
+
+
+def test_orphan_stash_blocks_the_lock_before_anything_merges(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    (repo / "base.txt").write_text("work nobody claimed\n")
+    git(repo, "stash", "push", "-m", "orphan")
+
+    blocked = acquire_main_repo_lock(repo, wait_seconds=0)
+
+    assert blocked["acquired"] is False
+    assert blocked["reason"] == "orphan_stash"
+    assert acquire_main_repo_lock(repo, wait_seconds=0, check_stash=False)["acquired"]
 
 
 def test_unusable_lock_path_is_reported_as_environment_not_as_held(
