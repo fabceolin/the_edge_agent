@@ -37,6 +37,8 @@ description: |
     repo_path (obrigatório): path absoluto do repo alvo
     only_wave (int, opcional): roda só a onda N (respeita teto de agentes)
     max_review_cycles (int, default 3)
+    dev_model (str, default gpt-5.6-sol): modelo para criação, desenvolvimento e integração
+    review_model (str, default gpt-5.6-sol): modelo usado no review das stories
     run_retrospective (bool, default true)
     flip_epic_status (bool, default true)
     dry_run (bool, default false): só computa e loga o plano de ondas, não executa
@@ -73,6 +75,8 @@ state_schema:
   epic_num: str
   epic_key: str
   max_review_cycles: int
+  dev_model: str
+  review_model: str
   run_retrospective: bool
   flip_epic_status: bool
   dry_run: bool
@@ -157,7 +161,7 @@ settings:
         - "--yolo"
         - "exec"
         - "-c"
-        - "model=gpt-5.6-sol"
+        - "model={model}"
         - "-c"
         - "model_reasoning_effort=xhigh"
         - "-"
@@ -328,19 +332,20 @@ nodes:
     item_var: mstory
     max_concurrency: 4
     fail_fast: false
-    subgraph: "./bmad-create-story.yaml"
+    subgraph: "/home/ubuntu/src/the_edge_agent/examples/workflows/bmad-create-story.yaml"
     input:
       repo_path: "{{ state.repo_path }}"
       epic_key: "{{ state.epic_key }}"
       epic_num: "{{ state.epic_num }}"
-      story_key: "{{ mstory.key }}"
-      title: "{{ mstory.title }}"
+      story_key: "{{ state.mstory.key }}"
+      title: "{{ state.mstory.title }}"
       skills_dir: "{{ state.skills_dir }}"
       implementation_artifacts_dir: "{{ state.implementation_artifacts_dir }}"
       sprint_status_path: "{{ state.sprint_status_path }}"
       communication_language: "{{ state.communication_language }}"
       document_output_language: "{{ state.document_output_language }}"
       user_name: "{{ state.user_name }}"
+      dev_model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
     output: prep_create_results
     fan_in: prep_lock
 
@@ -389,6 +394,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
+      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 1800
       messages:
         - role: user
@@ -573,6 +579,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
+      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -880,6 +887,8 @@ nodes:
           "communication_language": state.get("communication_language", "Português"),
           "document_output_language": state.get("document_output_language", "Português"),
           "user_name": state.get("user_name", "Fabrício"),
+          "dev_model": state.get("dev_model") or "gpt-5.6-sol",
+          "review_model": state.get("review_model") or "gpt-5.6-sol",
           "test_command": state.get("test_command", ""),
           "target_branch": target_branch,
           "create_if_missing": False,  # PREP já criou tudo
@@ -1279,6 +1288,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
+      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -1596,6 +1606,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
+      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
