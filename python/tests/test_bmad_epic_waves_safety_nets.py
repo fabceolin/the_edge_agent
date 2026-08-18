@@ -379,6 +379,53 @@ def graph_state(repo: Path, graph_output: str, **overrides) -> dict:
     return state
 
 
+def test_omitted_dev_model_resolves_for_every_epic_wave_llm_call() -> None:
+    spec = yaml.safe_load((WORKFLOWS / "bmad-epic-waves.yaml").read_text())
+    expected = "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+    llm_models = [
+        node["with"]["model"]
+        for node in spec["nodes"]
+        if node.get("uses") == "llm.call"
+    ]
+
+    assert llm_models
+    assert set(llm_models) == {expected}
+    prep = next(node for node in spec["nodes"] if node["name"] == "prep_create")
+    assert prep["input"]["dev_model"] == expected
+
+
+def test_graph_prompt_respects_literal_order_and_later_go_live_gates() -> None:
+    spec = yaml.safe_load((WORKFLOWS / "bmad-epic-waves.yaml").read_text())
+    graph = next(node for node in spec["nodes"] if node["name"] == "graph_llm")
+    prompt = graph["with"]["messages"][0]["content"]
+
+    assert "ordem literal de dependência ou serialização vence" in prompt
+    assert "nunca crie a aresta de arquivo oposta" in prompt
+    assert "evidência de go-live NÃO é dependência dura" in prompt
+    assert "não emita `EXTERNAL_BLOCKER`" in prompt
+
+
+def test_graph_provider_error_fails_closed_instead_of_building_zero_edges(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    state = graph_state(repo, "")
+    state["graph_output"] = {
+        "error": "Shell provider 'codex' requires a model parameter",
+        "success": False,
+    }
+
+    with pytest.raises(RuntimeError, match="refusing to build an all-parallel plan"):
+        run_node("bmad-epic-waves", "build_waves", state)
+
+
+def test_empty_graph_provider_content_fails_closed(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+
+    with pytest.raises(RuntimeError, match="returned empty content"):
+        run_node("bmad-epic-waves", "build_waves", graph_state(repo, ""))
+
+
 def test_cross_epic_blocker_skips_the_story_and_everything_downstream(
     tmp_path: Path,
 ) -> None:

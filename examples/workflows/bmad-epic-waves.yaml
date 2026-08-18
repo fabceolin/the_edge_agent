@@ -364,7 +364,7 @@ nodes:
       communication_language: "{{ state.communication_language }}"
       document_output_language: "{{ state.document_output_language }}"
       user_name: "{{ state.user_name }}"
-      dev_model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      dev_model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
     output: prep_create_results
     fan_in: prep_lock
 
@@ -413,7 +413,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
       timeout: 1800
       messages:
         - role: user
@@ -598,7 +598,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
       timeout: 3600
       messages:
         - role: user
@@ -624,6 +624,7 @@ nodes:
 
             REGRAS:
             - `evidence` deve ser concreta e verificável: citação literal da story, ou path do arquivo compartilhado. Nunca "parecem relacionadas".
+            - Uma ordem literal de dependência ou serialização vence a escolha de direção por sobreposição de arquivos. Se as duas stories tocam o mesmo arquivo e uma delas declara `A -> B`, `B after A`, predecessor/sucessor ou "last change", use somente essa direção; nunca crie a aresta de arquivo oposta.
             - Não invente aresta só da NUMERAÇÃO. 10-2 vir depois de 10-1 não implica dependência; muitos épicos têm stories numeradas sequencialmente mas mutualmente independentes.{% if state.multi_epic %} O MESMO vale cross-épico: epic-29 não depende de epic-8 só pela numeração; só crie aresta cross-épico com Task 0 bloqueante literal ou sobreposição de arquivo real.
             - Arestas cross-épico (kind=logic via Task 0, ou kind=file via arquivo compartilhado) são ESPERADAS e desejáveis quando reais — sem elas, duas stories de épicos diferentes que bloqueiam uma à outra rodariam juntas e produziriam conflito/código incoerente.{% endif %}
             - Sem ciclos. Se A e B parecem depender um do outro, escolha a direção que reflete a ordem real de construção e explique em `analysis`.
@@ -632,6 +633,7 @@ nodes:
             **DEPENDÊNCIAS CROSS-ÉPICO NÃO SATISFEITAS.** Lendo a fonte 1 (a Task 0 / seção de DEPENDENCIES de cada story), algumas stories nomeiam um pré-requisito que pertence a um épico que NÃO está nesta rodada. Não descarte isso como "fora do escopo do grafo": uma onda montada sem saber disso despacha um agente de dev que descobre o mesmo impedimento sozinho, no meio da implementação, depois de já ter sido pago — isso já aconteceu. Para cada dependência dura dessas (mesma régua de evidência de uma aresta `logic`: literal e explícita, nunca temática), leia o status ATUAL da outra story direto do `{{ state.sprint_status_path }}` (nunca assuma que está satisfeita) e imprima uma linha:
             `EXTERNAL_BLOCKER: <story deste run> NEEDS <key da outra story> STATUS <status atual lido do disco> EVIDENCE: <citação literal da Task 0>`
             Use a key EXATA da lista acima para `<story deste run>` — a mesma exigência das arestas. Se a outra story já está `done`, imprima assim mesmo com o status real: quem decide é o parser, não você.
+            Menção a código já entregue, módulo owner, contrato reutilizado, relatório atual ou evidência de go-live NÃO é dependência dura por si só. Se a story disser que a capacidade já landed, que o status externo não bloqueia implementação offline, ou que a pendência é gate posterior de operador/go-live, não emita `EXTERNAL_BLOCKER` para essa referência.
 
             {% if state.auto_model %}**CLASSIFICAÇÃO DE COMPLEXIDADE.** Você já está lendo cada story inteira e o código real nos paths que elas tocam. Aproveite e classifique o ESFORÇO DE IMPLEMENTAÇÃO de cada uma, uma linha por story:
             `COMPLEXITY: <story> [trivial|small|standard|frontier] <justificativa numa linha>`
@@ -709,7 +711,16 @@ nodes:
       auto_model = True if raw_auto_model is None else bool(raw_auto_model)
       if not deps_raw:
           out = state.get("graph_output", {})
+          if isinstance(out, dict) and (out.get("success") is False or out.get("error")):
+              raise RuntimeError(
+                  "graph_llm failed; refusing to build an all-parallel plan: "
+                  + str(out.get("error") or "unknown provider error")
+              )
           text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
+          if not text.strip():
+              raise RuntimeError(
+                  "graph_llm returned empty content; refusing to build an all-parallel plan"
+              )
           for line in text.splitlines():
               em = re.match(r'\s*EDGE:\s*(\S+)\s*->\s*(\S+)\s*\[(\w+)\]\s*EVIDENCE:\s*(.*)$', line)
               bm = re.match(r'\s*EXTERNAL_BLOCKER:\s*(\S+)\s+NEEDS\s+(\S+)\s+STATUS\s+(\S+)\s*(?:EVIDENCE:\s*(.*))?$', line, re.I)
@@ -1507,7 +1518,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
       timeout: 3600
       messages:
         - role: user
@@ -1829,7 +1840,7 @@ nodes:
     with:
       provider: shell
       shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
       timeout: 3600
       messages:
         - role: user
