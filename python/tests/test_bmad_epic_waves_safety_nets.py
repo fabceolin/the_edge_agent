@@ -492,6 +492,22 @@ def test_complexity_maps_each_story_to_its_tier_provider(tmp_path: Path) -> None
     assert result["dot_payloads"]["36-2-consumidora"]["fix_provider"] == "codex_frontier"
 
 
+def test_complexity_accepts_valid_bare_tier_from_shell_provider(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    output = (
+        "COMPLEXITY: 36-1-base frontier contrato transversal\n"
+        "RISK_FLAGS: 36-1-base [none] sem risco adicional\n"
+    )
+
+    result = run_node(
+        "bmad-epic-waves", "build_waves", graph_state(repo, output, auto_model=True)
+    )
+
+    assert result["story_tiers"] == {"36-1-base": "frontier"}
+    assert result["story_routes"] == {"36-1-base": "frontier"}
+    assert result["dot_payloads"]["36-1-base"]["dev_provider"] == "codex_frontier"
+
+
 def test_complexity_is_ignored_when_auto_model_is_off(tmp_path: Path) -> None:
     repo = init_repo(tmp_path / "repo")
     output = "COMPLEXITY: 36-1-base [trivial] qualquer coisa\n"

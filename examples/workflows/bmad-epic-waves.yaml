@@ -724,7 +724,11 @@ nodes:
           for line in text.splitlines():
               em = re.match(r'\s*EDGE:\s*(\S+)\s*->\s*(\S+)\s*\[(\w+)\]\s*EVIDENCE:\s*(.*)$', line)
               bm = re.match(r'\s*EXTERNAL_BLOCKER:\s*(\S+)\s+NEEDS\s+(\S+)\s+STATUS\s+(\S+)\s*(?:EVIDENCE:\s*(.*))?$', line, re.I)
-              cm = re.match(r'\s*COMPLEXITY:\s*(\S+)\s*\[(\w+)\]\s*(.*)$', line, re.I)
+              cm = re.match(
+                  r'\s*COMPLEXITY:\s*(\S+)\s+(?:\[(\w+)\]|(\w+))\s*(.*)$',
+                  line,
+                  re.I,
+              )
               rm = re.match(r'\s*RISK_FLAGS:\s*(\S+)\s*\[([^\]]*)\]\s*(.*)$', line, re.I)
               if em:
                   edges.append({"from": em.group(1), "to": em.group(2), "kind": em.group(3), "evidence": em.group(4)})
@@ -733,8 +737,11 @@ nodes:
                                        "current_status": (bm.group(3) or "").strip().lower(),
                                        "requires_status": "done", "evidence": (bm.group(4) or "").strip()})
               elif cm:
-                  complexity_raw.append({"story": cm.group(1), "tier": cm.group(2).strip().lower(),
-                                         "rationale": cm.group(3).strip()})
+                  complexity_raw.append({
+                      "story": cm.group(1),
+                      "tier": (cm.group(2) or cm.group(3)).strip().lower(),
+                      "rationale": cm.group(4).strip(),
+                  })
               elif rm:
                   risk_raw.append({"story": rm.group(1), "flags": rm.group(2).strip(),
                                    "rationale": rm.group(3).strip()})
