@@ -425,7 +425,9 @@ def test_complexity_maps_each_story_to_its_tier_provider(tmp_path: Path) -> None
     repo = init_repo(tmp_path / "repo")
     output = (
         "COMPLEXITY: 36-1-base [standard] contrato novo consumido por outra story\n"
+        "RISK_FLAGS: 36-1-base [none] sem risco adicional\n"
         "COMPLEXITY: 36-3-solta [trivial] troca de constante\n"
+        "RISK_FLAGS: 36-3-solta [none] sem risco adicional\n"
     )
 
     result = run_node(
@@ -433,18 +435,129 @@ def test_complexity_maps_each_story_to_its_tier_provider(tmp_path: Path) -> None
     )
 
     assert result["story_tiers"] == {"36-1-base": "standard", "36-3-solta": "trivial"}
+    assert result["story_routes"] == {"36-1-base": "standard", "36-3-solta": "trivial"}
     assert result["tier_providers"]["trivial"] == "codex_trivial"
+    assert result["dot_payloads"]["36-1-base"]["dev_provider"] == "codex_standard"
+    assert result["dot_payloads"]["36-1-base"]["fix_provider"] == "codex_high_risk"
     # A story que o classificador omitiu cai no default, e isso não é erro.
     assert "36-2-consumidora" not in result["story_tiers"]
+    assert result["dot_payloads"]["36-2-consumidora"]["dev_provider"] == "codex"
+    assert result["dot_payloads"]["36-2-consumidora"]["fix_provider"] == "codex_frontier"
 
 
 def test_complexity_is_ignored_when_auto_model_is_off(tmp_path: Path) -> None:
     repo = init_repo(tmp_path / "repo")
     output = "COMPLEXITY: 36-1-base [trivial] qualquer coisa\n"
 
-    result = run_node("bmad-epic-waves", "build_waves", graph_state(repo, output))
+    result = run_node(
+        "bmad-epic-waves",
+        "build_waves",
+        graph_state(repo, output, auto_model=False),
+    )
 
     assert result["story_tiers"] == {}
+    assert result["story_routes"] == {}
+
+
+def test_explicit_dependencies_bypass_classification_and_keep_sol_xhigh_fallback(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    result = run_node(
+        "bmad-epic-waves",
+        "build_waves",
+        graph_state(
+            repo,
+            "COMPLEXITY: 36-1-base [trivial] deve ser ignorada\n",
+            deps={"36-2-consumidora": ["36-1-base"]},
+        ),
+    )
+
+    assert result["story_tiers"] == {}
+    assert result["story_routes"] == {}
+    assert all(
+        payload["dev_provider"] == "codex"
+        for payload in result["dot_payloads"].values()
+    )
+
+
+def test_balanced_routing_is_default_and_risk_flags_only_raise_routes(
+    tmp_path: Path,
+) -> None:
+    repo = init_repo(tmp_path / "repo")
+    output = (
+        "COMPLEXITY: 36-1-base [trivial] edição curta\n"
+        "RISK_FLAGS: 36-1-base [public_contract] muda contrato público\n"
+        "COMPLEXITY: 36-2-consumidora [small] mudança localizada\n"
+        "RISK_FLAGS: 36-2-consumidora [large_context] repo muito grande\n"
+        "COMPLEXITY: 36-3-solta [standard] fluxo convencional\n"
+        "RISK_FLAGS: 36-3-solta [schema_or_migration] altera schema\n"
+    )
+
+    # auto_model omitido: a política balanceada é o novo default.
+    result = run_node("bmad-epic-waves", "build_waves", graph_state(repo, output))
+
+    assert result["story_routes"] == {
+        "36-1-base": "high_risk",
+        "36-2-consumidora": "transversal",
+        "36-3-solta": "frontier",
+    }
+    assert result["story_risk_flags"]["36-1-base"] == ["public_contract"]
+    assert result["dot_payloads"]["36-1-base"]["dev_provider"] == "codex_high_risk"
+    assert result["dot_payloads"]["36-2-consumidora"]["dev_provider"] == "codex_transversal"
+    assert result["dot_payloads"]["36-3-solta"]["dev_provider"] == "codex_frontier"
+
+
+def test_unknown_risk_flag_fails_safe_to_frontier(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    output = (
+        "COMPLEXITY: 36-1-base [trivial] edição curta\n"
+        "RISK_FLAGS: 36-1-base [quantum_contract] flag fora do contrato\n"
+    )
+
+    result = run_node("bmad-epic-waves", "build_waves", graph_state(repo, output))
+
+    assert result["story_routes"]["36-1-base"] == "frontier"
+    assert result["story_risk_flags"]["36-1-base"] == ["unknown:quantum_contract"]
+    assert result["dot_payloads"]["36-1-base"]["dev_provider"] == "codex_frontier"
+
+
+def test_missing_or_malformed_risk_line_fails_safe_to_frontier(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    output = (
+        "COMPLEXITY: 36-1-base [trivial] edição curta\n"
+        "RISK_FLAGS: 36-1-base sem-colchetes\n"
+    )
+
+    result = run_node("bmad-epic-waves", "build_waves", graph_state(repo, output))
+
+    assert result["story_routes"]["36-1-base"] == "frontier"
+    assert result["story_risk_flags"]["36-1-base"] == ["missing:risk_flags"]
+
+
+def test_story_cycle_providers_match_the_balanced_policy() -> None:
+    spec = yaml.safe_load((WORKFLOWS / "bmad-story-cycle.yaml").read_text())
+    providers = spec["settings"]["shell_providers"]
+
+    def args(name: str) -> list[str]:
+        return providers[name]["args"]
+
+    assert "model=gpt-5.6-luna" in args("codex_trivial")
+    assert "model_reasoning_effort=low" in args("codex_trivial")
+    assert "model=gpt-5.6-terra" in args("codex_small")
+    assert "model_reasoning_effort=medium" in args("codex_small")
+    assert "model=gpt-5.6-terra" in args("codex_standard")
+    assert "model_reasoning_effort=high" in args("codex_standard")
+    assert "model=gpt-5.6-terra" in args("codex_transversal")
+    assert "model_reasoning_effort=xhigh" in args("codex_transversal")
+    assert "model=gpt-5.6-sol" in args("codex_high_risk")
+    assert "model_reasoning_effort=high" in args("codex_high_risk")
+    assert "model=gpt-5.6-sol" in args("codex_frontier")
+    assert "model_reasoning_effort=xhigh" in args("codex_frontier")
+    assert "model={model}" in args("codex_review")
+    assert "model_reasoning_effort=xhigh" in args("codex_review")
+    assert "model=gpt-5.6-luna" in args("codex_finish")
+    assert "model_reasoning_effort=low" in args("codex_finish")
 
 
 def test_duplicate_complexity_entry_keeps_the_first_and_reports(tmp_path: Path) -> None:
@@ -523,6 +636,73 @@ def test_dead_reviewer_is_retried_once_instead_of_counting_as_changes_requested(
         {"review_output": {"content": ""}, "review_retried": True},
     )
     assert second["review_status"] == "CHANGES_REQUESTED"
+
+
+def test_first_changes_requested_promotes_the_fix_provider() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {
+                "content": "FINAL_STATUS: CHANGES_REQUESTED\nFIX_ESCALATION: PROMOTE"
+            },
+            "fix_provider": "codex_standard",
+            "frontier_provider": "codex_frontier",
+            "max_review_cycles": 3,
+        },
+    )
+
+    assert result["review_fix_attempt"] == 1
+    assert result["fix_escalation"] == "PROMOTE"
+    assert result["active_fix_provider"] == "codex_standard"
+
+
+def test_structural_finding_jumps_directly_to_frontier_fix() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {
+                "content": "FINAL_STATUS: CHANGES_REQUESTED\nFIX_ESCALATION: FRONTIER"
+            },
+            "fix_provider": "codex_standard",
+            "frontier_provider": "codex_frontier",
+            "max_review_cycles": 3,
+        },
+    )
+
+    assert result["fix_escalation"] == "FRONTIER"
+    assert result["active_fix_provider"] == "codex_frontier"
+
+
+def test_second_changes_requested_forces_frontier_even_without_marker() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {"content": "FINAL_STATUS: CHANGES_REQUESTED"},
+            "review_fix_attempt": 1,
+            "fix_provider": "codex_standard",
+            "frontier_provider": "codex_frontier",
+            "max_review_cycles": 3,
+        },
+    )
+
+    assert result["review_fix_attempt"] == 2
+    assert result["fix_escalation"] == "FRONTIER"
+    assert result["active_fix_provider"] == "codex_frontier"
+
+
+def test_nonapproved_review_skips_the_finish_llm() -> None:
+    spec = yaml.safe_load((WORKFLOWS / "bmad-story-cycle.yaml").read_text())
+    node = next(node for node in spec["nodes"] if node["name"] == "check_review_status")
+    blocked_route = next(
+        route
+        for route in node["goto"]
+        if "BLOCKED" in route.get("if", "") and "in_worktree" in route.get("if", "")
+    )
+
+    assert blocked_route["to"] == "summary"
 
 
 def test_exhausted_cycles_end_the_story_without_an_extra_confirmation_review() -> None:

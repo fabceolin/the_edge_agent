@@ -10,9 +10,9 @@ description: |
   Decisões de port:
   - Schema JSON validado do Workflow tool → marcador FINAL_STATUS + regex (padrão dos YAMLs
     Codex existentes).
-  - shell_providers por TIER de esforço (ver settings): `codex` (default, xhigh) e
-    `codex_trivial|small|standard|frontier`. O nó escolhe via `dev_provider`/`review_provider`,
-    que o epic-waves preenche a partir da classificação de complexidade (auto_model).
+  - shell_providers por ROTA de capacidade/risco (ver settings). O epic-waves escolhe
+    `dev_provider`, já entrega um `fix_provider` promovido, mantém `review_provider` forte
+    e usa `finish_provider` barato apenas depois da aprovação.
   - `in_worktree`: quando True (chamado pelo epic-waves graph mode), o finish commita no
     branch do worktree e NÃO marca sprint-status (o merge/status é externo, serializado).
     Quando False (dev-cycle sequencial), o finish commita e marca sprint-status done.
@@ -33,8 +33,11 @@ description: |
     communication_language, document_output_language, user_name,
     test_command, target_branch, dev_model, review_model,
     create_if_missing (bool), max_review_cycles (int), in_worktree (bool),
-    dev_provider (str, default "codex"), review_provider (str, default "codex_review"),
-    story_tier (str, informativo: trivial|small|standard|frontier)
+    dev_provider (str, default "codex"), fix_provider (str, opcional; default dev_provider),
+    frontier_provider (str, opcional; default dev_provider),
+    review_provider (str, default "codex_review"), finish_provider (str, default "codex"),
+    story_tier (str, complexidade), story_route (str, rota efetiva após riscos),
+    story_risk_flags (list)
 
 state_schema:
   repo_path: str
@@ -57,8 +60,15 @@ state_schema:
   max_review_cycles: int
   in_worktree: bool
   dev_provider: str
+  fix_provider: str
+  frontier_provider: str
   review_provider: str
+  finish_provider: str
   story_tier: str
+  story_route: str
+  story_risk_flags: list
+  active_fix_provider: str
+  fix_escalation: str
   create_output: str
   dev_output: str
   review_output: str
@@ -71,22 +81,11 @@ state_schema:
   final_status: str
 
 settings:
-  # TIERS DE ESFORÇO — calibragem PRÓPRIA do codex, deliberadamente diferente da do JS.
-  #
-  # O JS escolhe entre MODELOS de preços diferentes (haiku $1 / sonnet $3 / opus $5 /
-  # fable $10 por 1M de input), e por isso o tier mais alto é excepcional: custa 2x o
-  # anterior e é reservado a trabalho especialista. Aqui existe um modelo só configurado
-  # e comprovado (gpt-5.6-sol); o único eixo real é `model_reasoning_effort`, e esforço é
-  # cobrado como tokens de saída, não é apenas mais lento.
-  #
-  # Consequências da recalibragem, e elas importam:
-  # - O default histórico deste workflow é xhigh para TUDO. Com auto_model ligado, a
-  #   classificação só pode BAIXAR o custo de uma story fácil; nunca encarece nada.
-  # - `frontier` aqui NÃO é o tier excepcional do JS: é só o topo do esforço, o mesmo que
-  #   o workflow já usava por default. Por isso a escalação em falha PODE promover até ele
-  #   (no JS ela para antes de `frontier`, porque lá o salto é de preço de modelo).
-  # - Para trocar o eixo por modelo de verdade, edite os blocos abaixo: quem consome é o
-  #   nome do provider, não a forma como ele foi construído.
+  # POLÍTICA BALANCEADA — modelo e reasoning variam juntos por rota efetiva.
+  # `codex` continua sendo o fallback conservador e respeita dev_model; qualquer story
+  # sem classificação, com classificação inválida ou com graph bypass cai em Sol/xhigh.
+  # O review respeita review_model, mas nunca cai de xhigh. As rotas automáticas abaixo
+  # são deliberadamente fixas para que o plano seja reproduzível e auditável.
   shell_providers:
     codex: &codex_xhigh
       command: codex
@@ -101,10 +100,7 @@ settings:
       stdin_mode: pipe
       verbose: true
       timeout: 108000
-    # Reviewer. O JS revisa com modelo DIFERENTE do dev de propósito (revisar com o mesmo
-    # modelo que implementou tende a confirmar as próprias premissas). Com um modelo só,
-    # o que resta é garantir que o review NUNCA caia de esforço junto com o dev: uma story
-    # classificada `trivial` roda o dev em low e o review continua em xhigh.
+    # Reviewer forte e configurável: por default review_model=gpt-5.6-sol.
     codex_review: *codex_xhigh
     codex_trivial:
       command: codex
@@ -112,7 +108,7 @@ settings:
         - "--yolo"
         - "exec"
         - "-c"
-        - "model={model}"
+        - "model=gpt-5.6-luna"
         - "-c"
         - "model_reasoning_effort=low"
         - "-"
@@ -125,7 +121,7 @@ settings:
         - "--yolo"
         - "exec"
         - "-c"
-        - "model=gpt-5.6-sol"
+        - "model=gpt-5.6-terra"
         - "-c"
         - "model_reasoning_effort=medium"
         - "-"
@@ -138,6 +134,32 @@ settings:
         - "--yolo"
         - "exec"
         - "-c"
+        - "model=gpt-5.6-terra"
+        - "-c"
+        - "model_reasoning_effort=high"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_transversal:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-terra"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_high_risk:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
         - "model=gpt-5.6-sol"
         - "-c"
         - "model_reasoning_effort=high"
@@ -145,7 +167,34 @@ settings:
       stdin_mode: pipe
       verbose: true
       timeout: 108000
-    codex_frontier: *codex_xhigh
+    codex_frontier:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    # A finalização só é alcançada por APPROVED e continua obrigada a rerodar a suíte e
+    # recusar árvores incoerentes. O modelo barato executa o protocolo; não decide qualidade.
+    codex_finish:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-luna"
+        - "-c"
+        - "model_reasoning_effort=low"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
 
 nodes:
   # ============================================================================
@@ -240,7 +289,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      # Tier escolhido pelo epic-waves (auto_model). Vazio = comportamento antigo (xhigh).
+      # Rota efetiva escolhida pelo epic-waves. Vazio = fallback conservador xhigh.
       shell_provider: "{{ state.dev_provider | default('codex', true) }}"
       model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 7200
@@ -363,6 +412,12 @@ nodes:
             - uma linha `FINAL_STATUS: APPROVED` (ou `CHANGES_REQUESTED` ou `BLOCKED`)
             - uma seção começando com `ACTION_ITEMS:` com cada item numa linha `  [high|medium|low] (file: <path opcional>) <descrição>`
             - uma linha `BLOCKING_COUNT: <n>`
+            - uma linha `FIX_ESCALATION: NONE|PROMOTE|FRONTIER`
+
+            Use `NONE` para APPROVED/BLOCKED. Para CHANGES_REQUESTED use `PROMOTE` normalmente.
+            Use `FRONTIER` se qualquer finding high revelar requisito ausente ou tocar contrato
+            público, schema/migration, concorrência, idempotência, consistência distribuída,
+            arquitetura, segurança/auth, integridade de dados ou causa-raiz ainda desconhecida.
     output: review_output
 
   - name: check_review_status
@@ -373,6 +428,8 @@ nodes:
       out = state.get("review_output", {})
       text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
       text_lower = text.lower()
+      escalation_match = re.search(r'fix_escalation:\s*(none|promote|frontier)', text_lower)
+      requested_escalation = escalation_match.group(1).upper() if escalation_match else None
 
       # Marcador explícito primeiro (o prompt pediu FINAL_STATUS:)
       review_status = None
@@ -417,16 +474,34 @@ nodes:
       attempt = state.get("review_fix_attempt", 0) + 1
       max_cycles = state.get("max_review_cycles", 3)
 
+      # O primeiro CHANGES_REQUESTED já prova um blind spot da rota inicial: o fix nunca
+      # repete no mesmo provider fraco. Findings estruturais ou uma segunda reprovação
+      # pulam direto para Sol/xhigh. Marcador ausente usa PROMOTE (seguro e compatível).
+      fix_escalation = "NONE"
+      active_fix_provider = state.get("active_fix_provider") or ""
+      if review_status == "CHANGES_REQUESTED":
+          fix_escalation = requested_escalation if requested_escalation in ("PROMOTE", "FRONTIER") else "PROMOTE"
+          if fix_escalation == "FRONTIER" or attempt >= 2:
+              active_fix_provider = state.get("frontier_provider") or state.get("dev_provider") or "codex"
+              fix_escalation = "FRONTIER"
+          else:
+              active_fix_provider = state.get("fix_provider") or state.get("dev_provider") or "codex"
+
       # Ciclos esgotados. NÃO existe aqui o "review de confirmação" do JS: o laço deste
       # subgraph é dev -> review -> fix -> review, ou seja, sempre TERMINA num review, e o
       # último fix já foi julgado. No JS o laço é review -> fix por ciclo, e o último fix
       # sai sem revisão — é isso que a confirmação lá conserta.
       if attempt >= max_cycles and review_status != "APPROVED":
           print(f"Ciclos esgotados ({attempt}/{max_cycles}) — último fix já foi revisado neste review.")
-          return {"review_status": "MAX_ATTEMPTS", "review_fix_attempt": attempt}
+          return {"review_status": "MAX_ATTEMPTS", "review_fix_attempt": attempt,
+                  "fix_escalation": fix_escalation, "active_fix_provider": active_fix_provider}
 
-      print(f"Review #{attempt}: {review_status}")
-      return {"review_status": review_status, "review_fix_attempt": attempt}
+      if review_status == "CHANGES_REQUESTED":
+          print(f"Review #{attempt}: {review_status}; fix={active_fix_provider} ({fix_escalation})")
+      else:
+          print(f"Review #{attempt}: {review_status}")
+      return {"review_status": review_status, "review_fix_attempt": attempt,
+              "fix_escalation": fix_escalation, "active_fix_provider": active_fix_provider}
     goto:
       - if: "state.get('review_status') == 'RETRY'"
         to: code_review
@@ -434,6 +509,8 @@ nodes:
         to: fix_review
       - if: "state.get('review_status') == 'APPROVED'"
         to: finish_story
+      - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS'] and state.get('in_worktree')"
+        to: summary
       - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS']"
         to: finish_story
       - to: finish_story
@@ -443,9 +520,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      # Mesmo tier do dev: uma story resgatada por um tier promovido não pode voltar ao
-      # tier fraco na hora de corrigir o que o review apontou.
-      shell_provider: "{{ state.dev_provider | default('codex', true) }}"
+      # O primeiro review já promove; finding estrutural ou segunda reprovação usa frontier.
+      shell_provider: "{{ state.active_fix_provider | default('codex', true) }}"
       model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 3600
       messages:
@@ -474,7 +550,7 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
+      shell_provider: "{{ state.finish_provider | default('codex', true) }}"
       model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
       timeout: 1800
       messages:
@@ -504,9 +580,11 @@ nodes:
   - name: summary
     description: Sintetiza o status final da story
     run: |
+      import re
       out = state.get("finish_output", {})
       text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
-      committed = "true" in text.lower().split("committed:")[1][:10].lower() if "committed:" in text.lower() else False
+      committed_match = re.search(r'\bcommitted\s*[:=]\s*(true|false)\b', text, re.I)
+      committed = bool(committed_match and committed_match.group(1).lower() == "true")
       status = state.get("review_status", "UNKNOWN")
       if state.get("final_status") == "missing_story_file":
           final = "missing_story_file"
@@ -517,7 +595,8 @@ nodes:
       else:
           final = "incomplete"
       tier = state.get("story_tier") or "-"
-      print(f"Story {state.get('story_key')}: final_status={final} (review={status}, tier={tier}, provider={state.get('dev_provider') or 'codex'})")
+      route = state.get("story_route") or tier
+      print(f"Story {state.get('story_key')}: final_status={final} (review={status}, tier={tier}, route={route}, dev={state.get('dev_provider') or 'codex'}, last_fix={state.get('active_fix_provider') or '-'})")
       if state.get("verification_incomplete"):
           print("⚠️  esta story passou por VERIFICATION_INCOMPLETE — confira no Dev Agent Record se a verificação foi concluída depois.")
       return {"final_status": final}

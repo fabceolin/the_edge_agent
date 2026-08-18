@@ -37,7 +37,8 @@ description: |
     repo_path (obrigatório): path absoluto do repo alvo
     only_wave (int, opcional): roda só a onda N (respeita teto de agentes)
     max_review_cycles (int, default 3)
-    dev_model (str, default gpt-5.6-sol): modelo para criação, desenvolvimento e integração
+    dev_model (str, default gpt-5.6-sol): modelo de criação/orquestração e do fallback
+      conservador quando auto_model=false ou não há classificação válida
     review_model (str, default gpt-5.6-sol): modelo usado no review das stories
     run_retrospective (bool, default true)
     flip_epic_status (bool, default true)
@@ -50,15 +51,14 @@ description: |
     reprocess_done (bool, default false)
     stop_on_wave_failure (bool, default true)
     skills_dir (str, opcional): default {repo_path}/.claude/skills
-    auto_model (bool, default false): OPT-IN. O agente de grafo também classifica a
-      complexidade de cada story num tier, e o dev/fix daquela story roda no esforço do
-      tier em vez do default. Calibragem PRÓPRIA do codex (ver settings do
-      bmad-story-cycle.yaml): como só existe um modelo configurado, o eixo é
-      `model_reasoning_effort` e o default histórico já é o topo (xhigh) — ou seja,
-      ligar isso só pode BARATEAR story fácil, nunca encarecer. Uma story que falha é
-      repromovida um degrau e tentada de novo.
-    model_tiers (dict, opcional): remapeia tier -> nome de shell_provider, ex.:
-      {"trivial": "codex_small"}. Os nomes têm de existir no bmad-story-cycle.yaml.
+    auto_model (bool, default true): o agente de grafo classifica complexidade e riscos.
+      A rota balanceada é trivial=Luna/low, small=Terra/medium, standard=Terra/high e
+      frontier=Sol/xhigh. Riscos podem elevar o piso para Terra/xhigh, Sol/high ou
+      Sol/xhigh. `false` preserva o fallback conservador Sol/xhigh para todas as stories.
+    model_tiers (dict, opcional): remapeia rota efetiva -> nome de shell_provider.
+      Rotas: trivial, small, standard, transversal, high_risk, frontier.
+    fix_model_tiers (dict, opcional): remapeia rota efetiva -> provider do primeiro fix.
+      O segundo fix e findings estruturais continuam forçados a frontier/Sol-xhigh.
     auto_resolve_conflicts (bool, default false): Nível 2 (LLM junta os dois lados),
       agora restrito aos conflitos que passam na elegibilidade mecânica acima.
     integrate_in_flight (bool, default true): fila de merge — cada story integra no fim
@@ -155,13 +155,17 @@ state_schema:
   blocked_stories: list       # keys excluídas do despacho por dep cross-épico não satisfeita
   auto_model: bool
   model_tiers: dict
+  fix_model_tiers: dict
   story_tiers: dict           # {story_key: tier} vindo da classificação
+  story_risk_flags: dict      # {story_key: [flags]} vindos da classificação
+  story_routes: dict          # {story_key: rota efetiva} após aplicar pisos de risco
   escalations: list           # [{key, from_tier, to_tier}] promoções após falha
   run_base_head: str          # HEAD antes de qualquer merge desta run (range do épico)
   migration_fix: dict         # resultado do check/merge de DAG de migrations
   conflict_audit: dict        # {key: veredito mecânico} de cada conflito examinado
   dot_payloads: dict          # {story_key: payload} p/ remontar o comando na escalação
   tier_providers: dict        # tier -> nome de shell_provider do bmad-story-cycle
+  fix_tier_providers: dict    # rota -> provider promovido do primeiro fix
   tea_bin: str
   subgraph_path: str
 
@@ -318,6 +322,8 @@ nodes:
           epic_nums = sorted(_nums, key=lambda x: (int(x) if str(x).isdigit() else 9999, str(x)))
           epic_keys = [f"epic-{n}" for n in epic_nums]
       print(f"Épico {epic_key} (\"{epic_label}\"): {len(stories)} stories, {len(candidates)} candidatas, {len(missing)} sem arquivo. branch={target_branch} suite={test_command or '(nenhuma)'}")
+      raw_auto_model = state.get("auto_model")
+      auto_model = True if raw_auto_model is None else bool(raw_auto_model)
       return {
           "epic_num": epic_num, "epic_key": epic_key, "epic_label": epic_label,
           "multi_epic": multi_epic, "epic_nums": epic_nums, "epic_keys": epic_keys,
@@ -327,6 +333,7 @@ nodes:
           "stories": stories, "candidates": candidates, "missing_files": missing,
           "skills_dir": state.get("skills_dir") or os.path.join(repo, ".claude/skills"),
           "story_keys_filter": state.get("story_keys") or [],
+          "auto_model": auto_model,
           "_skip_prep": skip_prep,
       }
     goto:
@@ -638,6 +645,29 @@ nodes:
             ⚠️ **Na dúvida entre dois tiers, escolha o MAIS ALTO.** Os custos são assimétricos: uma story superclassificada gasta um pouco mais de raciocínio; uma subclassificada reprova no review, queima os ciclos de fix e pode deixar código sutilmente errado em que uma story seguinte se apoia. Reserve `trivial` para os casos em que você LEU o código alvo e não há nada a decidir.
 
             **Dificuldade não é o único critério — raio de impacto conta.** Ter muitos dependentes não torna a story mais difícil de implementar, mas torna errar nela muito mais caro: as stories que consomem o contrato herdam o erro e já estão mergeadas quando alguém percebe. Então, quando uma story está na fronteira entre dois tiers E outras dependem dela, resolva a fronteira para cima. Não inverta: uma story-folha não é fácil por ser folha.
+
+            **CLASSIFICAÇÃO DE RISCO.** Complexidade e risco são eixos separados: uma edição
+            curta de idempotência ou contrato público pode exigir uma rota mais forte. Emita
+            exatamente uma linha adicional por story:
+            `RISK_FLAGS: <story> [flag1,flag2] <justificativa numa linha>`
+
+            Use `none` quando nenhum risco existir. Use somente estas flags:
+            - `public_contract`
+            - `schema_or_migration`
+            - `concurrency`
+            - `idempotency`
+            - `distributed_consistency`
+            - `architecture`
+            - `security_or_auth`
+            - `unknown_root_cause`
+            - `weak_or_missing_tests`
+            - `high_blast_radius`
+            - `large_context`
+            - `ambiguous_requirements`
+
+            Marque apenas riscos sustentados pela story ou pelo código real. Não use número de
+            arquivos como proxy automático. Na dúvida se um risco real se aplica, marque-o:
+            risco omitido barateia a rota de forma insegura; risco extra só eleva capacidade.
             {% endif %}
             Imprima cada aresta numa linha: `EDGE: <from> -> <to> [kind] EVIDENCE: <evidence>`
             Ao final, uma linha `ANALYSIS: <texto>` (pode usar várias linhas começando com `ANALYSIS:`).
@@ -674,8 +704,9 @@ nodes:
       deps_raw = state.get("deps") or {}
       edges = []
       analysis = ""
-      blockers_raw, complexity_raw = [], []
-      auto_model = bool(state.get("auto_model"))
+      blockers_raw, complexity_raw, risk_raw = [], [], []
+      raw_auto_model = state.get("auto_model")
+      auto_model = True if raw_auto_model is None else bool(raw_auto_model)
       if not deps_raw:
           out = state.get("graph_output", {})
           text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
@@ -683,6 +714,7 @@ nodes:
               em = re.match(r'\s*EDGE:\s*(\S+)\s*->\s*(\S+)\s*\[(\w+)\]\s*EVIDENCE:\s*(.*)$', line)
               bm = re.match(r'\s*EXTERNAL_BLOCKER:\s*(\S+)\s+NEEDS\s+(\S+)\s+STATUS\s+(\S+)\s*(?:EVIDENCE:\s*(.*))?$', line, re.I)
               cm = re.match(r'\s*COMPLEXITY:\s*(\S+)\s*\[(\w+)\]\s*(.*)$', line, re.I)
+              rm = re.match(r'\s*RISK_FLAGS:\s*(\S+)\s*\[([^\]]*)\]\s*(.*)$', line, re.I)
               if em:
                   edges.append({"from": em.group(1), "to": em.group(2), "kind": em.group(3), "evidence": em.group(4)})
               elif bm:
@@ -692,6 +724,9 @@ nodes:
               elif cm:
                   complexity_raw.append({"story": cm.group(1), "tier": cm.group(2).strip().lower(),
                                          "rationale": cm.group(3).strip()})
+              elif rm:
+                  risk_raw.append({"story": rm.group(1), "flags": rm.group(2).strip(),
+                                   "rationale": rm.group(3).strip()})
               elif line.strip().startswith("ANALYSIS:"):
                   analysis += line.split("ANALYSIS:",1)[1].strip() + " "
           # Monta deps_raw a partir das edges (to depende de from)
@@ -699,7 +734,7 @@ nodes:
               deps_raw.setdefault(e["to"], []).append(e["from"])
       else:
           print("args.deps fornecido — isto pula TAMBÉM a detecção de bloqueio cross-épico"
-                + (" e a classificação de complexidade (todas as stories caem no provider default)." if auto_model else "."))
+                + (" e as classificações de complexidade/risco (todas as stories caem no provider conservador Sol/xhigh)." if auto_model else "."))
 
       # ---- Port do computeWaves() ----
       def resolve(raw, origin=""):
@@ -772,20 +807,57 @@ nodes:
       if not keys:
           print("Nenhuma story despachável nesta rodada (todas bloqueadas ou nada pendente).")
 
-      # ---- Classificação de complexidade -> tier -> shell_provider ------------
-      DEFAULT_TIER_PROVIDERS = {"trivial": "codex_trivial", "small": "codex_small",
-                                "standard": "codex_standard", "frontier": "codex_frontier"}
+      # ---- Complexidade + riscos -> rota efetiva -> providers -----------------
+      ROUTE_ORDER = ["trivial", "small", "standard", "transversal", "high_risk", "frontier"]
+      BASE_TIERS = {"trivial", "small", "standard", "frontier"}
+      DEFAULT_TIER_PROVIDERS = {
+          "trivial": "codex_trivial", "small": "codex_small",
+          "standard": "codex_standard", "transversal": "codex_transversal",
+          "high_risk": "codex_high_risk", "frontier": "codex_frontier",
+      }
+      DEFAULT_FIX_PROVIDERS = {
+          "trivial": "codex_small",       # Luna/low -> Terra/medium
+          "small": "codex_standard",     # Terra/medium -> Terra/high
+          "standard": "codex_high_risk", # Terra/high -> Sol/high
+          "transversal": "codex_frontier",
+          "high_risk": "codex_frontier",
+          "frontier": "codex_frontier",
+      }
+      ROUTE_LABELS = {
+          "trivial": "gpt-5.6-luna/low", "small": "gpt-5.6-terra/medium",
+          "standard": "gpt-5.6-terra/high", "transversal": "gpt-5.6-terra/xhigh",
+          "high_risk": "gpt-5.6-sol/high", "frontier": "gpt-5.6-sol/xhigh",
+      }
+      ALLOWED_RISKS = {
+          "public_contract", "schema_or_migration", "concurrency", "idempotency",
+          "distributed_consistency", "architecture", "security_or_auth",
+          "unknown_root_cause", "weak_or_missing_tests", "high_blast_radius",
+          "large_context", "ambiguous_requirements",
+      }
+      RISK_FLOORS = {
+          "large_context": "transversal",
+          "public_contract": "high_risk", "weak_or_missing_tests": "high_risk",
+          "high_blast_radius": "high_risk", "ambiguous_requirements": "high_risk",
+          "schema_or_migration": "frontier", "concurrency": "frontier",
+          "idempotency": "frontier", "distributed_consistency": "frontier",
+          "architecture": "frontier", "security_or_auth": "frontier",
+          "unknown_root_cause": "frontier",
+      }
       tier_providers = dict(DEFAULT_TIER_PROVIDERS)
       tier_providers.update(state.get("model_tiers") or {})
+      fix_tier_providers = dict(DEFAULT_FIX_PROVIDERS)
+      fix_tier_providers.update(state.get("fix_model_tiers") or {})
       story_tiers = {}
+      story_risk_flags = {}
+      story_routes = {}
       if auto_model:
           for c in complexity_raw:
               k = resolve_story(c["story"])
               if not k:
-                  print(f'⚠️  COMPLEXITY cita story "{c["story"]}", que não casa com nenhuma candidata — IGNORADA, cai no provider default.')
+                  print(f'⚠️  COMPLEXITY cita story "{c["story"]}", que não casa com nenhuma candidata — IGNORADA, cai no provider conservador.')
                   continue
-              if c["tier"] not in tier_providers:
-                  print(f'⚠️  {k}: tier desconhecido "{c["tier"]}" — cai no provider default.')
+              if c["tier"] not in BASE_TIERS:
+                  print(f'⚠️  {k}: tier desconhecido "{c["tier"]}" — cai no provider conservador.')
                   continue
               if k in story_tiers:
                   # Duas entradas para a mesma story deixariam tierByKey com a última
@@ -793,15 +865,56 @@ nodes:
                   print(f'⚠️  COMPLEXITY duplicada para {k} (tier "{c["tier"]}") — ignorada, mantendo "{story_tiers[k]}".')
                   continue
               story_tiers[k] = c["tier"]
+          for r in risk_raw:
+              k = resolve_story(r["story"])
+              if not k:
+                  print(f'⚠️  RISK_FLAGS cita story "{r["story"]}" sem match único — IGNORADA.')
+                  continue
+              if k in story_risk_flags:
+                  print(f"⚠️  RISK_FLAGS duplicada para {k} — ignorada; a primeira vence.")
+                  continue
+              raw_flags = [f.strip().lower() for f in re.split(r'[,\s]+', r["flags"]) if f.strip()]
+              raw_flags = [] if raw_flags == ["none"] else [f for f in raw_flags if f != "none"]
+              normalized = []
+              for flag in raw_flags:
+                  if flag in ALLOWED_RISKS:
+                      normalized.append(flag)
+                  else:
+                      normalized.append(f"unknown:{flag}")
+                      print(f'⚠️  {k}: risk flag desconhecida "{flag}" — rota elevada para frontier.')
+              story_risk_flags[k] = normalized
+
+          for k, tier in story_tiers.items():
+              if k not in story_risk_flags:
+                  story_risk_flags[k] = ["missing:risk_flags"]
+                  print(f"⚠️  {k}: RISK_FLAGS ausente ou malformada — rota elevada para frontier.")
+              flags = story_risk_flags[k]
+              floor = tier
+              for flag in flags:
+                  candidate = "frontier" if flag.startswith(("unknown:", "missing:")) else RISK_FLOORS.get(flag, tier)
+                  if ROUTE_ORDER.index(candidate) > ROUTE_ORDER.index(floor):
+                      floor = candidate
+              story_routes[k] = floor
+
           if story_tiers:
-              print("Classificação de complexidade (esforço do dev por story):")
+              print("Plano balanceado de capacidade por story:")
+              rationale_by_key = {}
               for c in complexity_raw:
-                  k = resolve_story(c["story"])
-                  if k and story_tiers.get(k) == c["tier"]:
-                      print(f'  {k} [{c["tier"]}] -> {tier_providers[c["tier"]]} — {c["rationale"][:120]}')
+                  rk = resolve_story(c["story"])
+                  if rk and rk not in rationale_by_key:
+                      rationale_by_key[rk] = c["rationale"]
+              for k in keys:
+                  if k not in story_tiers:
+                      continue
+                  tier, route = story_tiers[k], story_routes[k]
+                  flags = story_risk_flags.get(k) or []
+                  promoted = f"; risco elevou {tier}->{route}" if route != tier else ""
+                  print(f"  {k}: tier={tier} risks={flags or ['none']} route={route} "
+                        f"({ROUTE_LABELS[route]}) dev={tier_providers[route]} "
+                        f"fix={fix_tier_providers[route]}{promoted} — {rationale_by_key.get(k, '')[:100]}")
           unclassified = [k for k in keys if k not in story_tiers]
           if unclassified:
-              print(f"⚠️  {len(unclassified)} story(ies) sem classificação — provider default: {', '.join(unclassified)}")
+              print(f"⚠️  {len(unclassified)} story(ies) sem classificação — provider conservador Sol/xhigh: {', '.join(unclassified)}")
 
       wave = {}
       visiting = set()
@@ -950,17 +1063,23 @@ nodes:
           else:
               wt_path, cd_prefix = wtmap[k]["path"], f"cd {wtmap[k]['path']} && "
           tier = story_tiers.get(k)
+          route = story_routes.get(k)
           payload.update({
               "repo_path": wt_path,
               "epic_key": f"epic-{c.get('epic_num', epic_num)}" if c.get('epic_num') else epic_key,
               "epic_num": c.get("epic_num", epic_num),
               "story_key": k, "title": c.get("title", k),
               "story_path": _story_rel(k),
-              # Sem tier (auto_model off, ou story não classificada) = comportamento antigo:
-              # o subgraph cai no provider `codex` (xhigh).
-              "dev_provider": tier_providers.get(tier, "codex") if tier else "codex",
+              # Sem rota (auto_model off, graph bypass ou classificação ausente) cai no
+              # provider conservador configurável `codex` (default Sol/xhigh).
+              "dev_provider": tier_providers.get(route, "codex") if route else "codex",
+              "fix_provider": fix_tier_providers.get(route, "codex_frontier") if route else "codex_frontier",
+              "frontier_provider": "codex_frontier",
               "review_provider": "codex_review",
+              "finish_provider": "codex_finish",
               "story_tier": tier or "",
+              "story_route": route or "",
+              "story_risk_flags": story_risk_flags.get(k) or [],
           })
           dot_payloads[k] = payload
           j = json.dumps(payload)
@@ -1024,11 +1143,12 @@ nodes:
       common_out = {
           "graph_edges": edges, "graph_analysis": analysis,
           "external_blockers": external_blockers, "blocked_stories": sorted(blocked_all),
-          "story_tiers": story_tiers, "run_base_head": run_base_head,
+          "story_tiers": story_tiers, "story_risk_flags": story_risk_flags,
+          "story_routes": story_routes, "run_base_head": run_base_head,
           # A escalação por falha remonta o comando de UMA story; guardar o payload evita
           # recalcular (e divergir de) tudo o que foi decidido aqui.
           "dot_payloads": dot_payloads, "tea_bin": tea_bin, "subgraph_path": subgraph_path,
-          "tier_providers": tier_providers,
+          "tier_providers": tier_providers, "fix_tier_providers": fix_tier_providers,
       }
       if state.get("dry_run"):
           print("DRY_RUN — não executando. Plano de ondas acima; DOT em " + dot_path)
@@ -1036,7 +1156,12 @@ nodes:
               print("Plano de modelo por story:")
               for k in keys:
                   t = story_tiers.get(k)
-                  print(f"  {k}: tier={t or '(nenhum)'} provider={tier_providers.get(t, 'codex') if t else 'codex'}")
+                  r = story_routes.get(k)
+                  print(f"  {k}: tier={t or '(nenhum)'} risks={story_risk_flags.get(k) or ['none']} "
+                        f"route={r or 'conservative'} model={ROUTE_LABELS.get(r, 'gpt-5.6-sol/xhigh')} "
+                        f"dev={tier_providers.get(r, 'codex') if r else 'codex'} "
+                        f"fix={fix_tier_providers.get(r, 'codex_frontier') if r else 'codex_frontier'} "
+                        "review=codex_review finish=codex_finish")
           return dict(common_out, final_status="dry_run", waves=[[k for k in w] for w in waves],
                       dot_path=dot_path, worktree_base=wt_base)
 
@@ -1110,30 +1235,27 @@ nodes:
       - to: escalate_failed
 
   # ============================================================================
-  # ESCALATE — porta a escalação de tier do JS. Uma story que o classificador colocou
-  # um degrau abaixo do que precisava falha DUAS vezes no mesmo esforço fraco (o retry
-  # do story-cycle repete com as mesmas opções) e, com stop_on_wave_failure, leva a
-  # onda junto. Aqui ela é repromovida um degrau e tentada mais uma vez.
-  #
-  # Diferença deliberada em relação ao JS: lá a escalação para antes do tier de topo,
-  # porque `frontier` é outro MODELO, com o dobro do preço. Aqui `frontier` é só o
-  # esforço máximo — o mesmo que este workflow já usava por default — então promover
-  # até ele é o comportamento antigo, não uma decisão cara.
+  # ESCALATE — se o ciclo inteiro falhar apesar dos fixes promovidos, repete a story uma
+  # vez na próxima ROTA efetiva. A cadeia é monotônica em capacidade/risco e nunca rebaixa
+  # uma story que já recebeu piso de risco.
   # ============================================================================
   - name: escalate_failed
-    description: Repromove um tier as stories que falharam e tenta uma vez mais (só com auto_model)
+    description: Promove uma rota as stories que falharam e tenta uma vez mais (só com auto_model)
     run: |
       import os, json, subprocess, tempfile, re
       from the_edge_agent.bmad_epic_waves_git import branch_tip
 
       res = dict(state.get("run_waves_results", {}) or {})
       worktrees = state.get("worktrees", []) or []
-      tiers = dict(state.get("story_tiers", {}) or {})
-      if not state.get("auto_model") or res.get("all_ok") or not worktrees or res.get("skipped"):
+      routes = dict(state.get("story_routes", {}) or {})
+      raw_auto_model = state.get("auto_model")
+      auto_model = True if raw_auto_model is None else bool(raw_auto_model)
+      if not auto_model or res.get("all_ok") or not worktrees or res.get("skipped"):
           return {"escalations": []}
 
-      CHAIN = ["trivial", "small", "standard", "frontier"]
+      CHAIN = ["trivial", "small", "standard", "transversal", "high_risk", "frontier"]
       providers = state.get("tier_providers") or {}
+      fix_providers = state.get("fix_tier_providers") or {}
       payloads = state.get("dot_payloads", {}) or {}
       succeeded = list(res.get("succeeded") or [])
       failed = [w["key"] for w in worktrees if w["key"] not in succeeded]
@@ -1143,7 +1265,7 @@ nodes:
 
       plan = []
       for k in failed:
-          t = tiers.get(k)
+          t = routes.get(k)
           if t not in CHAIN or CHAIN.index(t) == len(CHAIN) - 1:
               continue  # sem tier, ou já no topo: repetir no mesmo esforço não muda nada
           plan.append({"key": k, "from_tier": t, "to_tier": CHAIN[CHAIN.index(t) + 1]})
@@ -1171,7 +1293,8 @@ nodes:
           subprocess.run(["git","reset","--hard",target_branch], cwd=wt["path"], capture_output=True)
           subprocess.run(["git","clean","-fd"], cwd=wt["path"], capture_output=True)
           payload["dev_provider"] = providers.get(p["to_tier"], "codex")
-          payload["story_tier"] = p["to_tier"]
+          payload["fix_provider"] = fix_providers.get(p["to_tier"], "codex_frontier")
+          payload["story_route"] = p["to_tier"]
           cmd = (f"cd {wt['path']} && {state.get('tea_bin')} run {state.get('subgraph_path')}"
                  f" --input '{json.dumps(payload)}'"
                  f" --fail-on-state 'final_status=incomplete'"
@@ -1180,8 +1303,8 @@ nodes:
           lines.append(f'  e{i} [label="{k}" command="{cmd_dot}"];')
           lines.append(f'  Start -> e{i};')
           lines.append(f'  e{i} -> End;')
-          tiers[k] = p["to_tier"]
-          print(f"  {k}: falhou no tier \"{p['from_tier']}\" — promovendo para \"{p['to_tier']}\" e tentando de novo.")
+          routes[k] = p["to_tier"]
+          print(f"  {k}: falhou na rota \"{p['from_tier']}\" — promovendo para \"{p['to_tier']}\" e tentando de novo.")
       lines.append('}')
 
       dot_dir = os.path.join(tempfile.gettempdir(), "tea-epic-waves")
@@ -1200,7 +1323,7 @@ nodes:
       except subprocess.TimeoutExpired:
           subprocess.run(["tmux","kill-session","-t",session], capture_output=True)
           print("escalate_failed: TIMEOUT — session tmux morta.")
-          return {"escalations": plan, "story_tiers": tiers}
+          return {"escalations": plan, "story_routes": routes}
       combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
       rescued = re.findall(r'Completed:\s+(\S+)', combined)
       print(f"escalate_failed: resgatadas {rescued} (rc={proc.returncode})")
@@ -1209,7 +1332,7 @@ nodes:
       res["succeeded"] = succeeded
       res["failed"] = [w["key"] for w in worktrees if w["key"] not in succeeded]
       res["all_ok"] = not res["failed"]
-      return {"run_waves_results": res, "escalations": plan, "story_tiers": tiers}
+      return {"run_waves_results": res, "escalations": plan, "story_routes": routes}
     goto:
       - to: integrate_lock
 

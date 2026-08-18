@@ -74,8 +74,11 @@ Useful controls:
 - `only_wave`: run one numbered wave after inspecting the plan.
 - `stop_after_prep`: create missing story files and stop before implementation.
 - `auto_create_stories`: disable only when every candidate story file already exists.
-- `dev_model`: model used for story creation, development, fixes, integration, and retrospective; default is `gpt-5.6-sol`.
-- `review_model`: model used for adversarial review and review confirmation; default is `gpt-5.6-sol`.
+- `auto_model`: defaults to `true`; classifies complexity plus risk and applies the balanced routing policy below. Set `false` for the conservative single-model path.
+- `dev_model`: model used by story creation, graph/orchestration and the conservative fallback; default is `gpt-5.6-sol`. Classified story routes use their explicit policy models.
+- `review_model`: model used for adversarial review; default is `gpt-5.6-sol` and effort remains `xhigh`.
+- `model_tiers`: optional mapping from an effective route to a named shell provider in `bmad-story-cycle.yaml`.
+- `fix_model_tiers`: optional mapping from an effective route to the provider used by the first promoted fix.
 - `dot_max_parallel`: maximum number of stories concurrently executed within each dependency wave; default is `4`.
 - `max_review_cycles`: review limit per story; default is 3.
 - `run_retrospective`: write the retrospective after a complete single-epic run; default is true.
@@ -84,17 +87,35 @@ Useful controls:
 - `reprocess_done`: normally false; enable only for intentional reprocessing.
 - `story_keys`: restrict a controlled pilot to named stories when supported by the workflow.
 
-For a lower-cost development run while preserving a stronger review, pass separate models:
+Default balanced routing preserves a stronger reviewer:
+
+| Effective route | Development | First normal fix |
+|---|---|---|
+| `trivial` | GPT-5.6 Luna / low | Terra / medium |
+| `small` | GPT-5.6 Terra / medium | Terra / high |
+| `standard` | GPT-5.6 Terra / high | Sol / high |
+| `transversal` | GPT-5.6 Terra / xhigh | Sol / xhigh |
+| `high_risk` | GPT-5.6 Sol / high | Sol / xhigh |
+| `frontier` | GPT-5.6 Sol / xhigh | Sol / xhigh |
+
+The reviewer remains `review_model`/xhigh (Sol/xhigh by default). A structural finding or a second
+`CHANGES_REQUESTED` forces the fix to Sol/xhigh. Non-approved stories skip the finish LLM; approved
+stories use Luna/low to execute the existing test/commit/status protocol. Missing classifications,
+explicit `deps`, malformed risk flags, and `auto_model:false` fail safe to the conservative
+`dev_model`/xhigh route.
+
+To force the former single-model behavior:
 
 ```bash
 TEA_BIN=/home/ubuntu/src/the_edge_agent/.venv/bin/tea \
 TEA_SHELL_VERBOSE=1 \
 /home/ubuntu/src/the_edge_agent/.venv/bin/tea run -vvv \
   /home/ubuntu/src/the_edge_agent/examples/workflows/bmad-epic-waves.yaml \
-  --input '{"arg":"all","repo_path":"/home/ubuntu/src/licityeasy","dev_model":"luna","review_model":"gpt-5.6-sol","dot_max_parallel":4}'
+  --input '{"arg":"all","repo_path":"/home/ubuntu/src/licityeasy","auto_model":false,"dev_model":"gpt-5.6-sol","review_model":"gpt-5.6-sol","dot_max_parallel":4}'
 ```
 
-The model names are forwarded to the shell CLI as its `model` configuration. The default remains unchanged when either field is omitted.
+Inspect the dry-plan model lines before execution: they include base tier, risk flags, effective
+route, concrete model/effort label, development provider, and promoted fix provider.
 
 ## Execution protocol
 
