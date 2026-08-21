@@ -1,0 +1,694 @@
+name: bmad-light-version
+description: |
+  BMad-Lite / Test-Anchored Development para uma única story.
+
+  O workflow mantém a entrada por épico, mas expande somente a próxima story
+  pendente. Não cria PRD, plan, tasks ou test-plan intermediários. Ele coleta
+  contexto por busca determinística, roteia semanticamente a story entre Luna,
+  Terra e Sol com esforço apropriado, chama um único agente para implementar a story, executa
+  a suíte declarada e permite no máximo um reparo usando apenas diff + falhas
+  relevantes. Ao final grava um handoff YAML compacto.
+
+  Input:
+    arg: story key, caminho para story .md ou epic-N (default: próxima story)
+    repo_path: repositório alvo (default: diretório atual)
+    story_path: caminho explícito opcional para a story
+    test_command: comando de teste opcional
+    max_repairs: máximo de reparos guiados por falha (default: 1)
+    auto_route: roteia semanticamente (default: true)
+    model: override explícito; desliga o auto_route quando informado
+    frontier_threshold: mantido para compatibilidade; não decide a rota semântica
+    dry_run: classifica, mostra o contexto e não implementa (default: false)
+
+  Exemplos:
+    tea run examples/workflows/bmad-epic-waves-lite.yaml \
+      --input '{"arg":"epic-10","repo_path":"/path/to/repo"}'
+    tea run examples/workflows/bmad-epic-waves-lite.yaml \
+      --input '{"story_path":"_bmad-output/implementation-artifacts/10-1.md","dry_run":true}'
+
+state_schema:
+  arg: str
+  repo_path: str
+  story_path: str
+  story_key: str
+  story_status: str
+  story_content: str
+  context: str
+  test_command: str
+  max_repairs: int
+  repair_count: int
+  model: str
+  light_model: str
+  frontier_model: str
+  auto_route: bool
+  frontier_threshold: int
+  risk_score: int
+  risk_flags: list
+  model_route: str
+  reasoning_effort: str
+  routing_reason: str
+  implementation_prompt: str
+  classification_output: str
+  status_path: str
+  status_update: str
+  dry_run: bool
+  agent_output: str
+  test_output: str
+  tests_passed: bool
+  handoff_path: str
+  final_status: str
+
+initial_state:
+  max_repairs: 1
+  repair_count: 0
+  model: ""
+  light_model: gpt-5.6-luna
+  frontier_model: gpt-5.6-sol
+  auto_route: true
+  frontier_threshold: 4
+  dry_run: false
+  tests_passed: false
+
+settings:
+  shell_providers:
+    codex_router:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-luna"
+        - "-c"
+        - "model_reasoning_effort=medium"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_luna_low:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-luna"
+        - "-c"
+        - "model_reasoning_effort=low"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_terra_medium:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-terra"
+        - "-c"
+        - "model_reasoning_effort=medium"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_terra_high:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-terra"
+        - "-c"
+        - "model_reasoning_effort=high"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_sol_high:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=high"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex_sol_xhigh:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    codex:
+      command: codex
+      args:
+        - "--yolo"
+        - "exec"
+        - "-c"
+        - "model=gpt-5.6-sol"
+        - "-c"
+        - "model_reasoning_effort=xhigh"
+        - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+
+nodes:
+  - name: discover_story
+    description: Resolve a single story and load only its bounded source file.
+    run: |
+      import glob
+      import os
+      import re
+      import subprocess
+      import yaml
+
+      repo = os.path.abspath(state.get("repo_path") or ".")
+      if not os.path.isdir(repo):
+          return {"final_status": "error_repo_not_found", "repo_path": repo}
+      os.chdir(repo)
+
+      def read_yaml(path, default=None):
+          try:
+              with open(path, encoding="utf-8") as fh:
+                  return yaml.safe_load(fh) or default
+          except Exception:
+              return default
+
+      config = read_yaml("_bmad/bmm/config.yaml", {}) or {}
+      impl = config.get("implementation_artifacts", "_bmad-output/implementation-artifacts")
+      impl = str(impl).replace("{project-root}", "").lstrip("/") or "_bmad-output/implementation-artifacts"
+      status_path = os.path.join(repo, impl, "sprint-status.yaml")
+      arg = str(state.get("arg") or "").strip()
+      explicit = state.get("story_path") or (arg if arg.endswith(".md") else "")
+
+      def resolve_path(candidate):
+          if not candidate:
+              return ""
+          candidates = [candidate]
+          if not os.path.isabs(candidate):
+              candidates += [os.path.join(repo, candidate), os.path.join(impl, candidate)]
+          for item in candidates:
+              if os.path.isfile(item):
+                  return os.path.abspath(item)
+          return ""
+
+      story_path = resolve_path(explicit)
+      status = ""
+      story_key = ""
+
+      if story_path:
+          story_key = os.path.splitext(os.path.basename(story_path))[0]
+      else:
+          requested = re.sub(r"^epic-", "", arg.lower())
+          requested_num = re.match(r"\d+", requested)
+          requested_story = arg
+          if os.path.isfile(os.path.join(repo, impl, requested_story + ".md")):
+              story_path = os.path.abspath(os.path.join(repo, impl, requested_story + ".md"))
+              story_key = requested_story
+          else:
+              ss = read_yaml(status_path, {}) or {}
+              entries = ss.get("development_status", {}) or {}
+              candidates = []
+              for key, value in entries.items():
+                  if str(key).startswith("epic-"):
+                      continue
+                  value_status = value if isinstance(value, str) else (value or {}).get("status", "")
+                  value_status = str(value_status).lower()
+                  prefix = str(key).split("-", 1)[0]
+                  belongs = not requested_num or prefix == requested_num.group(0)
+                  pending = value_status not in {"done", "completed", "closed", "review", "in-progress"}
+                  candidate_path = os.path.join(repo, impl, str(key) + ".md")
+                  if belongs and pending and os.path.isfile(candidate_path):
+                      candidates.append((str(key), value_status, candidate_path))
+              if candidates:
+                  story_key, status, story_path = sorted(candidates)[0]
+
+      if not story_path or not os.path.isfile(story_path):
+          return {"repo_path": repo, "final_status": "error_story_not_found"}
+
+      try:
+          with open(story_path, encoding="utf-8") as fh:
+              content = fh.read(16000)
+      except Exception as exc:
+          return {"repo_path": repo, "story_path": story_path, "final_status": f"error_story_read:{exc}"}
+
+      if not status and os.path.isfile(status_path):
+          ss = read_yaml(status_path, {}) or {}
+          raw = (ss.get("development_status", {}) or {}).get(story_key, "")
+          status = raw if isinstance(raw, str) else (raw or {}).get("status", "")
+
+      command = state.get("test_command") or ""
+      if not command:
+          if os.path.isfile("pyproject.toml") or os.path.isdir("tests"):
+              command = "python -m pytest -q"
+          elif os.path.isfile("Cargo.toml"):
+              command = "cargo test"
+          elif os.path.isfile("package.json"):
+              command = "npm test -- --runInBand"
+          else:
+              command = ""
+
+      def run_git(*args):
+          try:
+              return subprocess.run(["git", *args], cwd=repo, text=True, capture_output=True, timeout=20).stdout.strip()
+          except Exception:
+              return ""
+
+      git_status = run_git("status", "--short")
+      diff_stat = run_git("diff", "--stat")
+      recent = run_git("log", "-1", "--oneline")
+      risk_text = (content + " " + story_key + " " + os.path.relpath(story_path, repo)).lower()
+      risk_rules = {
+          "security": ("auth", "security", "permission", "rbac", "credential", "secret", "crypto"),
+          "sensitive_data": ("pii", "personal data", "private data", "payment"),
+          "migration": ("migration", "migrate", "schema change", "backfill", "destructive"),
+          "public_interface": ("public api", "breaking change", "backward compatibility", "contract", "webhook"),
+          "distributed_scope": ("cross-service", "microservice", "multiple services", "event bus"),
+          "operational_risk": ("production", "rollback", "irreversible", "compliance", "regulated"),
+      }
+      risk_flags = [name for name, words in risk_rules.items() if any(word in risk_text for word in words)]
+      # A single high-consequence category is enough to require frontier review.
+      risk_score = min(10, sum(4 if name in {"security", "sensitive_data", "migration"} else 1 for name in risk_flags))
+      scope_lines = [line for line in content.splitlines() if "scope" in line.lower() or "files" in line.lower()]
+      if len(scope_lines) >= 4:
+          risk_score = min(10, risk_score + 1)
+          risk_flags.append("broad_scope")
+      explicit_model = str(state.get("model") or "").strip()
+      auto_route = bool(state.get("auto_route", True)) and not explicit_model
+      threshold = int(state.get("frontier_threshold", 4))
+      if auto_route:
+          model_route = "sol_xhigh" if risk_score >= threshold else "terra_medium"
+          selected_model = state.get("frontier_model", "gpt-5.6-sol") if model_route == "sol_xhigh" else "gpt-5.6-terra"
+          routing_reason = f"risk_score={risk_score}; threshold={threshold}; flags={','.join(risk_flags) or 'none'}"
+      else:
+          model_route = "manual"
+          selected_model = explicit_model or state.get("frontier_model", "gpt-5.6-sol")
+          routing_reason = "explicit model override"
+      context = f"""STORY_KEY: {story_key}
+      STORY_STATUS: {status or 'unknown'}
+      STORY_PATH: {os.path.relpath(story_path, repo)}
+      TEST_COMMAND: {command or 'not detected; inspect project conventions'}
+      MODEL_ROUTE: {model_route} ({selected_model})
+      ROUTING_REASON: {routing_reason}
+
+      STORY (bounded to 16k chars):
+      {content}
+
+      DETERMINISTIC REPOSITORY CONTEXT:
+      git status:
+      {git_status or '(clean)'}
+      git diff --stat:
+      {diff_stat or '(empty)'}
+      latest commit: {recent or '(unavailable)'}
+      """
+      return {
+          "repo_path": repo,
+          "story_path": story_path,
+          "story_key": story_key,
+          "story_status": str(status or ""),
+          "status_path": status_path,
+          "story_content": content,
+          "test_command": command,
+          "context": context,
+          "max_repairs": int(state.get("max_repairs", 1)),
+          # When auto-routing is enabled, leave model empty so the graph must
+          # pass through the semantic classifier. The heuristic above is only
+          # a conservative preview/fallback for manual routing modes.
+          "model": explicit_model if not auto_route else "",
+          "light_model": state.get("light_model", "gpt-5.6-luna"),
+          "frontier_model": state.get("frontier_model", "gpt-5.6-sol"),
+          "auto_route": auto_route,
+          "frontier_threshold": threshold,
+          "risk_score": risk_score,
+          "risk_flags": risk_flags,
+          "model_route": model_route,
+          "routing_reason": routing_reason,
+      }
+
+  - name: classify_story
+    description: Use a lightweight LLM to judge semantic story complexity.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_router
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            Classify the implementation complexity and risk of exactly one BMad story.
+            This is routing only: do not edit files, run tests, or produce a plan.
+
+            Evaluate semantic complexity, not keyword count. Consider:
+            - ambiguity and number of plausible interpretations;
+            - scope radius and number of modules/services affected;
+            - public contracts and backward compatibility;
+            - data migrations, reversibility, and operational blast radius;
+            - security, auth, permissions, PII, payments, or compliance;
+            - difficulty of expressing confidence with focused deterministic tests.
+
+            Choose exactly one tier:
+            - `trivial`: Luna/low; mechanical, local, obvious change
+            - `small`: Terra/medium; localized implementation with a clear contract
+            - `standard`: Terra/high; conventional engineering across meaningful scope
+            - `frontier`: Sol/xhigh; architecture, high consequence, broad ambiguity,
+              migrations, security, concurrency, or distributed consistency
+            Be conservative: uncertainty about a high-consequence area means
+            `frontier`.
+
+            Return ONLY valid JSON, with this exact shape:
+            {"tier":"trivial|small|standard|frontier","score":0,"reasons":["..."],"risk_flags":["..."],"test_depth":"unit|integration|contract|broader"}
+
+            STORY KEY: {{ state.story_key }}
+            STORY CONTENT:
+            {{ state.story_content }}
+    output: classification_output
+
+  - name: parse_classification
+    description: Validate the semantic decision and fail closed to frontier.
+    run: |
+      import json
+      import re
+
+      raw = state.get("classification_output", "")
+      if isinstance(raw, dict):
+          raw = raw.get("content", raw)
+      raw = str(raw or "")
+      match = re.search(r"\{.*\}", raw, re.S)
+      decision = None
+      if match:
+          try:
+              candidate = json.loads(match.group(0))
+              if candidate.get("tier") in {"trivial", "small", "standard", "frontier"}:
+                  tier_map = {
+                      "trivial": ("luna_low", "low", "gpt-5.6-luna"),
+                      "small": ("terra_medium", "medium", "gpt-5.6-terra"),
+                      "standard": ("terra_high", "high", "gpt-5.6-terra"),
+                      "frontier": ("sol_xhigh", "xhigh", "gpt-5.6-sol"),
+                  }
+                  route, effort, selected_model = tier_map[candidate["tier"]]
+                  score = max(0, min(10, int(candidate.get("score", 0))))
+                  reasons = candidate.get("reasons", [])
+                  if not isinstance(reasons, list):
+                      reasons = [str(reasons)]
+                  decision = {
+                      "model_route": route,
+                      "reasoning_effort": effort,
+                      "risk_score": score,
+                      "risk_flags": [str(item) for item in (candidate.get("risk_flags", []) or [])[:5]],
+                      "routing_reason": "semantic LLM classification: " + "; ".join(str(item) for item in reasons[:3]),
+                      "model": selected_model,
+                  }
+          except (ValueError, TypeError, AttributeError):
+              decision = None
+      if decision is None:
+          decision = {
+              "model_route": "sol_xhigh",
+              "reasoning_effort": "xhigh",
+              "risk_score": 10,
+              "risk_flags": ["invalid_classifier_output"],
+              "routing_reason": "classifier output invalid; fail-closed to frontier",
+          }
+      selected = decision.get("model") or (
+          state.get("frontier_model", "gpt-5.6-sol")
+          if decision["model_route"] == "sol_xhigh"
+          else ("gpt-5.6-luna" if decision["model_route"] == "luna_low" else "gpt-5.6-terra")
+      )
+      context = state.get("context", "")
+      context = re.sub(r"MODEL_ROUTE:.*", f"MODEL_ROUTE: {decision['model_route']} ({selected})", context)
+      context = re.sub(r"ROUTING_REASON:.*", f"ROUTING_REASON: {decision['routing_reason']}", context)
+      return {**decision, "model": selected, "context": context}
+
+  - name: route_dry_run
+    description: Stop after semantic routing when requested.
+    run: |
+      if state.get("dry_run"):
+          print(state.get("context", ""))
+          return {"final_status": "dry_run"}
+      return {"final_status": "ready"}
+    goto:
+      - if: "state.get('dry_run', false)"
+        to: write_handoff
+      - if: "state.get('final_status') in ['error_repo_not_found', 'error_story_not_found']"
+        to: write_handoff
+      - to: prepare_implementation_prompt
+
+  - name: prepare_implementation_prompt
+    description: Build one bounded implementation prompt shared by both model tiers.
+    run: |
+      prompt = f"""Implement exactly one BMad story in the repository below.
+
+      WORKING DIRECTORY: {state.get('repo_path')}
+      MODEL ROUTE: {state.get('model_route')} / {state.get('model')} / effort={state.get('reasoning_effort', 'xhigh')}
+      RISK: {state.get('risk_score')} ({state.get('routing_reason')})
+
+      TOKEN-EFFICIENT OPERATING RULES:
+      - Read the story and only files needed to implement it.
+      - Use rg/LSP/git to locate symbols before broad file reads.
+      - Do not create PRD, architecture, plan, tasks, test-plan, or other
+        intermediate documentation.
+      - Treat acceptance examples and executable tests as the contract.
+      - Convert Given/When/Then acceptance criteria into focused executable
+        examples when the story does not already have adequate tests.
+      - Stay inside the story's scope; do not refactor unrelated code.
+      - Add or adjust focused tests before the smallest implementation.
+      - Run the declared test command when one exists.
+      - Check the final diff against acceptance criteria and definition of
+        done before declaring completion.
+      - Do not reset, checkout, clean, or overwrite unrelated user changes.
+      - Do not ask questions; choose the safest local interpretation.
+
+      CONTEXT:
+      {state.get('context', '')}
+
+      When finished, print exactly one final marker:
+      LITE_COMPLETED if implementation and focused tests are complete;
+      LITE_BLOCKED if a concrete blocker prevents completion.
+      End with at most 8 lines summarizing files, tests, and remaining risk."""
+      return {"implementation_prompt": prompt}
+    goto:
+      - if: "state.get('dry_run', false)"
+        to: write_handoff
+      - if: "state['model_route'] == 'luna_low'"
+        to: implement_luna
+      - if: "state['model_route'] == 'terra_medium'"
+        to: implement_terra_medium
+      - if: "state['model_route'] == 'terra_high'"
+        to: implement_terra_high
+      - to: implement_sol
+
+  - name: implement_luna
+    description: Implement trivial work with GPT-5.6 Luna low effort.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_luna_low
+      timeout: 108000
+      messages:
+        - role: user
+          content: "{{ state.implementation_prompt }}"
+    output: agent_output
+
+  - name: implement_terra_medium
+    description: Implement small work with GPT-5.6 Terra medium effort.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_terra_medium
+      timeout: 108000
+      messages:
+        - role: user
+          content: "{{ state.implementation_prompt }}"
+    output: agent_output
+
+  - name: implement_terra_high
+    description: Implement standard work with GPT-5.6 Terra high effort.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_terra_high
+      timeout: 108000
+      messages:
+        - role: user
+          content: "{{ state.implementation_prompt }}"
+    output: agent_output
+
+  - name: implement_sol
+    description: Implement frontier work with GPT-5.6 Sol xhigh effort.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex_sol_xhigh
+      timeout: 108000
+      messages:
+        - role: user
+          content: "{{ state.implementation_prompt }}"
+    output: agent_output
+
+  - name: run_focused_tests
+    description: Run tests without another LLM call and keep only a bounded tail.
+    run: |
+      import os
+      import subprocess
+
+      command = state.get("test_command") or ""
+      if not command:
+          return {"test_output": "No test command detected.", "tests_passed": True}
+      try:
+          proc = subprocess.run(command, shell=True, cwd=state.get("repo_path") or ".", text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+          output = proc.stdout or ""
+          return {"test_output": output[-12000:], "tests_passed": proc.returncode == 0}
+      except Exception as exc:
+          return {"test_output": f"test runner error: {exc}", "tests_passed": False}
+
+  - name: prepare_repair
+    description: Build a delta-only repair prompt from the test result.
+    run: |
+      import subprocess
+      repo = state.get("repo_path") or "."
+      try:
+          diff = subprocess.run(["git", "diff", "--", "."], cwd=repo, text=True,
+                                capture_output=True, timeout=30).stdout[-16000:]
+      except Exception:
+          diff = "(diff unavailable)"
+      return {
+          "repair_count": int(state.get("repair_count", 0)) + 1,
+          "repair_context": f"""Repair only the focused test failure below.
+      Do not re-plan the story or inspect unrelated areas.
+
+      TEST FAILURE (bounded tail):
+      {state.get('test_output', '')[-12000:]}
+
+      CURRENT DIFF (bounded tail):
+      {diff}
+
+      Add/adjust the smallest behavioral test if needed, apply the smallest fix,
+      run {state.get('test_command') or 'the focused test suite'}, and finish with
+      LITE_COMPLETED or LITE_BLOCKED plus at most 6 summary lines."""
+      }
+
+  - name: repair_story
+    description: Perform at most one focused repair call.
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: codex
+      timeout: 108000
+      messages:
+        - role: user
+          content: |
+            Work in {{ state.repo_path }}.
+            {{ state.repair_context }}
+    output: repair_output
+
+  - name: update_story_status
+    description: Update the BMad story status after the final test gate.
+    run: |
+      import os
+      import yaml
+
+      if state.get("dry_run"):
+          return {"status_update": "skipped:dry_run"}
+      path = state.get("status_path") or ""
+      key = state.get("story_key") or ""
+      if not path or not os.path.isfile(path):
+          return {"status_update": "skipped:sprint-status-not-found"}
+      try:
+          with open(path, encoding="utf-8") as fh:
+              document = yaml.safe_load(fh) or {}
+          statuses = document.setdefault("development_status", {})
+          if key not in statuses:
+              return {"status_update": f"skipped:story-not-in-status:{key}"}
+          new_status = "done" if state.get("tests_passed") else "in-progress"
+          current = statuses[key]
+          if isinstance(current, dict):
+              current["status"] = new_status
+          else:
+              statuses[key] = new_status
+          with open(path, "w", encoding="utf-8") as fh:
+              yaml.safe_dump(document, fh, sort_keys=False, allow_unicode=True)
+          return {"status_update": f"updated:{key}:{new_status}"}
+      except Exception as exc:
+          return {"status_update": f"error:{type(exc).__name__}:{exc}"}
+
+  - name: write_handoff
+    description: Persist a compact, structured handoff instead of a new spec.
+    run: |
+      import os
+      import re
+      import subprocess
+      import yaml
+
+      repo = state.get("repo_path") or "."
+      key = state.get("story_key") or "unknown-story"
+      if state.get("dry_run"):
+          return {"handoff_path": "", "final_status": "dry_run"}
+      out_dir = os.path.join(repo, "_bmad-output", "implementation-artifacts")
+      os.makedirs(out_dir, exist_ok=True)
+      try:
+          changed = subprocess.run(["git", "status", "--short"], cwd=repo, text=True,
+                                   capture_output=True, timeout=20).stdout.strip().splitlines()
+      except Exception:
+          changed = []
+      status = "passed" if state.get("tests_passed") else (state.get("final_status") or "incomplete")
+      handoff = {
+          "story": key,
+          "status": status,
+          "decisions": [],
+          "files_changed": [line[3:] for line in changed[:30] if len(line) > 3],
+          "tests_passing": bool(state.get("tests_passed")),
+          "tests_failing": [] if state.get("tests_passed") else [state.get("test_output", "")[-2000:] or "unknown"],
+          "repair_count": int(state.get("repair_count", 0)),
+          "next_step": "review diff and merge" if state.get("tests_passed") else "inspect focused failure",
+      }
+      path = os.path.join(out_dir, f"{key}.state.yaml")
+      with open(path, "w", encoding="utf-8") as fh:
+          yaml.safe_dump(handoff, fh, sort_keys=False, allow_unicode=True)
+      return {"handoff_path": path, "final_status": status}
+
+edges:
+  - from: __start__
+    to: discover_story
+  - from: discover_story
+    to: classify_story
+    condition: "{{ state.get('final_status') not in ['error_repo_not_found', 'error_story_not_found'] and state.get('auto_route', True) and not state.get('model') }}"
+  - from: discover_story
+    to: route_dry_run
+    condition: "{{ state.get('final_status') in ['error_repo_not_found', 'error_story_not_found'] or not state.get('auto_route', True) or state.get('model') }}"
+  - from: classify_story
+    to: parse_classification
+  - from: parse_classification
+    to: route_dry_run
+  - from: implement_luna
+    to: run_focused_tests
+  - from: implement_terra_medium
+    to: run_focused_tests
+  - from: implement_terra_high
+    to: run_focused_tests
+  - from: implement_sol
+    to: run_focused_tests
+  - from: run_focused_tests
+    to: prepare_repair
+    condition: "{{ not state.get('tests_passed') and state.get('repair_count', 0) < state.get('max_repairs', 1) }}"
+  - from: run_focused_tests
+    to: update_story_status
+    condition: "{{ state.get('tests_passed') or state.get('repair_count', 0) >= state.get('max_repairs', 1) }}"
+  - from: prepare_repair
+    to: repair_story
+  - from: repair_story
+    to: run_focused_tests
+  - from: update_story_status
+    to: write_handoff
+  - from: write_handoff
+    to: __end__

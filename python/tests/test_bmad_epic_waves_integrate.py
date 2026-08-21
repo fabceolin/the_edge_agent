@@ -332,7 +332,7 @@ def test_prepare_cuts_the_worktree_from_the_dependency_that_just_merged(tmp_path
     assert (wt / "alpha.py").read_text() == "alpha\n"
 
 
-def test_prepare_refuses_to_recycle_a_branch_that_never_integrated(tmp_path: Path) -> None:
+def test_prepare_reattaches_a_preserved_branch_that_never_integrated(tmp_path: Path) -> None:
     repo = init_repo(tmp_path / "repo")
     tip = story_branch(repo, "1-1-alpha", "alpha.py", "alpha\n")
     git(repo, "worktree", "remove", "--force", str(repo.parent / "wt-1-1-alpha"))
@@ -340,8 +340,23 @@ def test_prepare_refuses_to_recycle_a_branch_that_never_integrated(tmp_path: Pat
     receipt = prepare_worktree(str(repo), "1-1-alpha", "story/1-1-alpha",
                                str(tmp_path / "wt"), "main", str(tmp_path / "receipts"))
 
-    assert receipt["status"] == "branch_not_integrated"
+    assert receipt["status"] == "resumed"
+    assert receipt["reused"] is True
     assert git(repo, "rev-parse", "--verify", "story/1-1-alpha") == tip
+    assert (tmp_path / "wt").exists()
+
+
+def test_prepare_refuses_a_preserved_worktree_with_uncommitted_files(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    story_branch(repo, "1-1-alpha", "alpha.py", "alpha\n")
+    wt = repo.parent / "wt-1-1-alpha"
+    (wt / "uncommitted.txt").write_text("keep me\n")
+
+    receipt = prepare_worktree(str(repo), "1-1-alpha", "story/1-1-alpha",
+                               str(wt), "main", str(tmp_path / "receipts"))
+
+    assert receipt["status"] == "branch_not_integrated"
+    assert (wt / "uncommitted.txt").read_text() == "keep me\n"
 
 
 # ---------------------------------------------------------------------------

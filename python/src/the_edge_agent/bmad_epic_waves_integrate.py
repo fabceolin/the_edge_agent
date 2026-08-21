@@ -47,7 +47,7 @@ EXIT_REFUSED = 1
 EXIT_LOCK_TIMEOUT = 3
 EXIT_ORPHAN_STASH = 4
 
-OK_STATUSES = frozenset({"merged", "already_merged", "merged_status_pending", "prepared"})
+OK_STATUSES = frozenset({"merged", "already_merged", "merged_status_pending", "prepared", "resumed"})
 
 
 def _git(repo: str | Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -175,14 +175,40 @@ def prepare_worktree(
 
     contributes, tip = branch_has_unmerged_commits(repo, branch)
     if contributes:
-        receipt.update(
-            status="branch_not_integrated",
-            tip=tip,
-            notes=(
-                f"{branch}@{tip[:8]} carries commits that never landed on {target}; "
-                "recreating the worktree would throw them away"
-            ),
-        )
+        # A killed/restarted epic-waves run must resume the exact checkout that
+        # owns the unintegrated branch. Never reset it here: its commits are the
+        # recovery unit. A dirty tree is deliberately refused because uncommitted
+        # files have no safe ownership or replay semantics.
+        listed = _git(repo, "worktree", "list", "--porcelain").stdout.splitlines()
+        registered_path = None
+        current_path = None
+        for line in listed:
+            if line.startswith("worktree "):
+                current_path = line.split(" ", 1)[1]
+            elif line == f"branch refs/heads/{branch}" and current_path:
+                registered_path = current_path
+                break
+        if registered_path and os.path.realpath(registered_path) == os.path.realpath(path):
+            dirty = _out(path, "status", "--porcelain")
+            if dirty:
+                receipt.update(
+                    status="branch_not_integrated",
+                    tip=tip,
+                    notes=f"{branch}@{tip[:8]} is resumable but its worktree is dirty; refusing to discard uncommitted files",
+                )
+            else:
+                receipt.update(status="resumed", tip=tip, reused=True, base=_out(repo, "rev-parse", target), notes="preserved story worktree reused")
+            write_receipt(receipts_dir, receipt)
+            return receipt
+        if registered_path:
+            receipt.update(status="branch_not_integrated", tip=tip, notes=f"{branch}@{tip[:8]} is checked out at another worktree: {registered_path}")
+        else:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            add = _git(repo, "worktree", "add", path, branch)
+            if add.returncode == 0:
+                receipt.update(status="resumed", tip=tip, reused=True, base=_out(repo, "rev-parse", target), notes="preserved branch reattached to worktree")
+            else:
+                receipt.update(status="branch_not_integrated", tip=tip, notes=f"{branch}@{tip[:8]} could not be reattached: {add.stderr.strip()}")
         write_receipt(receipts_dir, receipt)
         return receipt
 

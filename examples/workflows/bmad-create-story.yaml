@@ -10,7 +10,7 @@ description: |
   Input (--input JSON):
     repo_path, epic_key, epic_num, story_key, title,
     skills_dir, implementation_artifacts_dir, sprint_status_path,
-    communication_language, document_output_language, user_name, dev_model
+    communication_language, document_output_language, user_name, dev_model, dev_harness
 
   Uso:
     tea run examples/workflows/bmad-create-story.yaml \
@@ -29,6 +29,7 @@ state_schema:
   document_output_language: str
   user_name: str
   dev_model: str
+  dev_harness: str
   create_output: str
   created: bool
   story_path: str
@@ -49,6 +50,11 @@ settings:
       stdin_mode: pipe
       verbose: true
       timeout: 108000
+    claude:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "{model}", "--effort", "max", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
 
 nodes:
   - name: create_story
@@ -56,8 +62,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 108000
       messages:
         - role: user

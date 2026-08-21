@@ -381,7 +381,7 @@ def graph_state(repo: Path, graph_output: str, **overrides) -> dict:
 
 def test_omitted_dev_model_resolves_for_every_epic_wave_llm_call() -> None:
     spec = yaml.safe_load((WORKFLOWS / "bmad-epic-waves.yaml").read_text())
-    expected = "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+    expected = "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
     llm_models = [
         node["with"]["model"]
         for node in spec["nodes"]
@@ -392,6 +392,17 @@ def test_omitted_dev_model_resolves_for_every_epic_wave_llm_call() -> None:
     assert set(llm_models) == {expected}
     prep = next(node for node in spec["nodes"] if node["name"] == "prep_create")
     assert prep["input"]["dev_model"] == expected
+
+
+def test_review_harness_exposes_codex_default_and_claude_provider() -> None:
+    epic = yaml.safe_load((WORKFLOWS / "bmad-epic-waves.yaml").read_text())
+    cycle = yaml.safe_load((WORKFLOWS / "bmad-story-cycle.yaml").read_text())
+
+    assert epic["state_schema"]["review_harness"] == "str"
+    assert cycle["settings"]["shell_providers"]["claude_review"]["command"] == "claude"
+    review = next(node for node in cycle["nodes"] if node["name"] == "code_review")
+    assert "claude_review" in review["with"]["shell_provider"]
+    assert "--model" in cycle["settings"]["shell_providers"]["claude_review"]["args"]
 
 
 def test_graph_prompt_respects_literal_order_and_later_go_live_gates() -> None:

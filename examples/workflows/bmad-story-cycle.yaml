@@ -35,7 +35,10 @@ description: |
     create_if_missing (bool), max_review_cycles (int), in_worktree (bool),
     dev_provider (str, default "codex"), fix_provider (str, opcional; default dev_provider),
     frontier_provider (str, opcional; default dev_provider),
-    review_provider (str, default "codex_review"), finish_provider (str, default "codex"),
+    dev_harness (str, default "codex", supported: "codex" or "claude"),
+    review_harness (str, default "claude", supported: "codex" or "claude"),
+    review_provider (str, optional override; default is derived from review_harness),
+    finish_provider (str, default "codex"),
     story_tier (str, complexidade), story_route (str, rota efetiva após riscos),
     story_risk_flags (list)
 
@@ -55,7 +58,9 @@ state_schema:
   test_command: str
   target_branch: str
   dev_model: str
+  dev_harness: str
   review_model: str
+  review_harness: str
   create_if_missing: bool
   max_review_cycles: int
   in_worktree: bool
@@ -102,6 +107,73 @@ settings:
       timeout: 108000
     # Reviewer forte e configurável: por default review_model=gpt-5.6-sol.
     codex_review: *codex_xhigh
+    # Claude Code reviewer. The model is passed through to Claude Code's --model flag;
+    # use the account/model alias that exposes the desired Opus context window.
+    claude_review:
+      command: claude
+      args:
+        - "-p"
+        - "{prompt}"
+        - "--dangerously-skip-permissions"
+        - "--no-session-persistence"
+        - "--model"
+        - "{model}"
+        - "--effort"
+        - "max"
+        - "--autocompact"
+        - "1M"
+      verbose: true
+      timeout: 108000
+    claude:
+      command: claude
+      args:
+        - "-p"
+        - "{prompt}"
+        - "--dangerously-skip-permissions"
+        - "--no-session-persistence"
+        - "--model"
+        - "{model}"
+        - "--effort"
+        - "max"
+        - "--autocompact"
+        - "1M"
+      verbose: true
+      timeout: 108000
+    claude_trivial:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-sonnet-5", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_small:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-sonnet-5", "--effort", "medium", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_standard:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-opus-5", "--effort", "high", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_transversal:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-opus-5", "--effort", "xhigh", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_high_risk:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-opus-5", "--effort", "high", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_frontier:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-fable-5", "--effort", "xhigh", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
+    claude_finish:
+      command: claude
+      args: ["-p", "{prompt}", "--dangerously-skip-permissions", "--no-session-persistence", "--model", "claude-sonnet-5", "--effort", "low", "--autocompact", "1M"]
+      verbose: true
+      timeout: 108000
     codex_trivial:
       command: codex
       args:
@@ -238,8 +310,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 108000
       messages:
         - role: user
@@ -290,8 +362,8 @@ nodes:
     with:
       provider: shell
       # Rota efetiva escolhida pelo epic-waves. Vazio = fallback conservador xhigh.
-      shell_provider: "{{ state.dev_provider | default('codex', true) }}"
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ state.dev_provider | default('claude' if state.dev_harness == 'claude' else 'codex', true) }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 7200
       messages:
         - role: user
@@ -375,14 +447,14 @@ nodes:
   # 2. REVIEW (loop dev→review→fix)
   # ============================================================================
   - name: code_review
-    description: Review adversarial autônomo (codex_review), imprime FINAL_STATUS + ACTION_ITEMS
+    description: Review adversarial autônomo (Claude Code por default), imprime FINAL_STATUS + ACTION_ITEMS
     uses: llm.call
     with:
       provider: shell
       # Nunca cai de esforço junto com o dev: uma story `trivial` roda o dev em low e
       # continua sendo revisada no topo.
-      shell_provider: "{{ state.review_provider | default('codex_review', true) }}"
-      model: "{{ state.review_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ state.review_provider | default('claude_review' if state.review_harness != 'codex' else 'codex_review', true) }}"
+      model: "{{ state.review_model | default('claude-opus-5' if state.review_harness != 'codex' else 'gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -521,8 +593,8 @@ nodes:
     with:
       provider: shell
       # O primeiro review já promove; finding estrutural ou segunda reprovação usa frontier.
-      shell_provider: "{{ state.active_fix_provider | default('codex', true) }}"
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ state.active_fix_provider | default('claude' if state.dev_harness == 'claude' else 'codex', true) }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -550,8 +622,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: "{{ state.finish_provider | default('codex', true) }}"
-      model: "{{ state.dev_model | default('gpt-5.6-sol') }}"
+      shell_provider: "{{ state.finish_provider | default('claude_finish' if state.dev_harness == 'claude' else 'codex', true) }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 1800
       messages:
         - role: user

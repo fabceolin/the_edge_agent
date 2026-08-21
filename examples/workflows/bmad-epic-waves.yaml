@@ -37,9 +37,14 @@ description: |
     repo_path (obrigatório): path absoluto do repo alvo
     only_wave (int, opcional): roda só a onda N (respeita teto de agentes)
     max_review_cycles (int, default 3)
-    dev_model (str, default gpt-5.6-sol): modelo de criação/orquestração e do fallback
-      conservador quando auto_model=false ou não há classificação válida
-    review_model (str, default gpt-5.6-sol): modelo usado no review das stories
+    dev_model (str, default gpt-5.6-sol / claude-opus-5): modelo de criação/orquestração
+      e do fallback conservador quando auto_model=false ou não há classificação válida
+    dev_harness (str, default codex): harness de criação/dev/fix/finish e agentes de
+      orquestração (codex ou claude). Com claude, auto_model usa a tabela sonnet/opus/fable
+      equivalente à do bmad-epic-waves.js.
+    review_model (str, default claude-opus-5): modelo usado no review das stories
+    review_harness (str, default claude): harness do review (codex ou claude). Passe
+      explicitamente `review_harness:codex` para voltar ao modo totalmente Codex.
     run_retrospective (bool, default true)
     flip_epic_status (bool, default true)
     dry_run (bool, default false): só computa e loga o plano de ondas, não executa
@@ -52,9 +57,10 @@ description: |
     stop_on_wave_failure (bool, default true)
     skills_dir (str, opcional): default {repo_path}/.claude/skills
     auto_model (bool, default true): o agente de grafo classifica complexidade e riscos.
-      A rota balanceada é trivial=Luna/low, small=Terra/medium, standard=Terra/high e
-      frontier=Sol/xhigh. Riscos podem elevar o piso para Terra/xhigh, Sol/high ou
-      Sol/xhigh. `false` preserva o fallback conservador Sol/xhigh para todas as stories.
+      No Codex, a rota balanceada é trivial=Luna/low, small=Terra/medium,
+      standard=Terra/high e frontier=Sol/xhigh. No Claude, usa sonnet/medium,
+      opus/high e fable/xhigh conforme a mesma rota. Riscos podem elevar o piso.
+      `false` preserva o fallback conservador do harness escolhido.
     model_tiers (dict, opcional): remapeia rota efetiva -> nome de shell_provider.
       Rotas: trivial, small, standard, transversal, high_risk, frontier.
     fix_model_tiers (dict, opcional): remapeia rota efetiva -> provider do primeiro fix.
@@ -64,6 +70,9 @@ description: |
     integrate_in_flight (bool, default true): fila de merge — cada story integra no fim
       do próprio nó do DOT, em vez de todas em lote depois da onda; a serialização é o
       mesmo lock cross-run (agora flock), então a fila também vale entre invocações
+    reuse_preserved_worktrees (bool, default true): retoma a worktree/branch
+      `story/<key>` preservada por uma execução interrompida; não descarta commits
+      pendentes e recusa a retomada se a árvore estiver suja ou em outro caminho
     mark_status_in_flight (bool, default true): o merge de cada story já flippa o status
     allow_orphan_stash (bool, default false): stash órfão no repo principal é fail-closed
       na tomada do lock; ligue só depois de olhar o `git stash list`
@@ -82,7 +91,10 @@ state_schema:
   epic_key: str
   max_review_cycles: int
   dev_model: str
+  dev_harness: str
   review_model: str
+  review_harness: str
+  review_provider: str       # override avançado; normalmente use review_harness
   run_retrospective: bool
   flip_epic_status: bool
   dry_run: bool
@@ -131,6 +143,7 @@ state_schema:
   # ---- fila de merge (integração serializada por flock no repo principal) ----
   integrate_in_flight: bool     # default true: cada story mergeia no fim do PRÓPRIO nó
   mark_status_in_flight: bool   # default true: o merge de cada story já flippa o status dela
+  reuse_preserved_worktrees: bool  # default true: retoma branches/worktrees pendentes
   allow_orphan_stash: bool      # default false: stash órfão no repo principal é fail-closed
   receipts_dir: str             # recibos JSON por story (prepare/merge), lidos pelo sweeper
   tea_python: str               # python do venv do tea (default: derivado do tea_bin)
@@ -181,6 +194,22 @@ settings:
         - "-c"
         - "model_reasoning_effort=xhigh"
         - "-"
+      stdin_mode: pipe
+      verbose: true
+      timeout: 108000
+    claude:
+      command: claude
+      args:
+        - "-p"
+        - "{prompt}"
+        - "--dangerously-skip-permissions"
+        - "--no-session-persistence"
+        - "--model"
+        - "{model}"
+        - "--effort"
+        - "max"
+        - "--autocompact"
+        - "1M"
       stdin_mode: pipe
       verbose: true
       timeout: 108000
@@ -364,7 +393,8 @@ nodes:
       communication_language: "{{ state.communication_language }}"
       document_output_language: "{{ state.document_output_language }}"
       user_name: "{{ state.user_name }}"
-      dev_model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+      dev_model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
+      dev_harness: "{{ state.dev_harness | default('codex', true) }}"
     output: prep_create_results
     fan_in: prep_lock
 
@@ -412,8 +442,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 1800
       messages:
         - role: user
@@ -597,8 +627,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -826,20 +856,33 @@ nodes:
           print("Nenhuma story despachável nesta rodada (todas bloqueadas ou nada pendente).")
 
       # ---- Complexidade + riscos -> rota efetiva -> providers -----------------
+      dev_harness = str(state.get("dev_harness") or "codex").strip().lower()
+      if dev_harness not in {"codex", "claude"}:
+          raise ValueError(f"dev_harness inválido: {dev_harness!r}; use 'codex' ou 'claude'")
       ROUTE_ORDER = ["trivial", "small", "standard", "transversal", "high_risk", "frontier"]
       BASE_TIERS = {"trivial", "small", "standard", "frontier"}
-      DEFAULT_TIER_PROVIDERS = {
+      CODEX_TIER_PROVIDERS = {
           "trivial": "codex_trivial", "small": "codex_small",
           "standard": "codex_standard", "transversal": "codex_transversal",
           "high_risk": "codex_high_risk", "frontier": "codex_frontier",
       }
-      DEFAULT_FIX_PROVIDERS = {
+      CLAUDE_TIER_PROVIDERS = {
+          "trivial": "claude_trivial", "small": "claude_small",
+          "standard": "claude_standard", "transversal": "claude_transversal",
+          "high_risk": "claude_high_risk", "frontier": "claude_frontier",
+      }
+      CODEX_FIX_PROVIDERS = {
           "trivial": "codex_small",       # Luna/low -> Terra/medium
           "small": "codex_standard",     # Terra/medium -> Terra/high
           "standard": "codex_high_risk", # Terra/high -> Sol/high
           "transversal": "codex_frontier",
           "high_risk": "codex_frontier",
           "frontier": "codex_frontier",
+      }
+      CLAUDE_FIX_PROVIDERS = {
+          "trivial": "claude_small", "small": "claude_standard",
+          "standard": "claude_high_risk", "transversal": "claude_frontier",
+          "high_risk": "claude_frontier", "frontier": "claude_frontier",
       }
       ROUTE_LABELS = {
           "trivial": "gpt-5.6-luna/low", "small": "gpt-5.6-terra/medium",
@@ -861,9 +904,9 @@ nodes:
           "architecture": "frontier", "security_or_auth": "frontier",
           "unknown_root_cause": "frontier",
       }
-      tier_providers = dict(DEFAULT_TIER_PROVIDERS)
+      tier_providers = dict(CLAUDE_TIER_PROVIDERS if dev_harness == "claude" else CODEX_TIER_PROVIDERS)
       tier_providers.update(state.get("model_tiers") or {})
-      fix_tier_providers = dict(DEFAULT_FIX_PROVIDERS)
+      fix_tier_providers = dict(CLAUDE_FIX_PROVIDERS if dev_harness == "claude" else CODEX_FIX_PROVIDERS)
       fix_tier_providers.update(state.get("fix_model_tiers") or {})
       story_tiers = {}
       story_risk_flags = {}
@@ -1011,43 +1054,76 @@ nodes:
           os.makedirs(receipts_dir, exist_ok=True)
       if not dry:
           from the_edge_agent.bmad_epic_waves_git import branch_has_unmerged_commits
-          stale = []
-          for k in keys:
-              branch = f"story/{k}"
-              contributes, tip = branch_has_unmerged_commits(repo_abs, branch)
-              if contributes:
-                  stale.append(f"{branch}@{tip[:8]}")
-          if stale:
-              raise Exception("retry recusado: branches de story ainda não integradas foram preservadas: " + ", ".join(stale))
           os.makedirs(wt_base, exist_ok=True)
-          # Limpa apenas worktrees/branches vazias ou já ancestrais do target.
+          reuse_preserved = bool(state.get("reuse_preserved_worktrees", True))
+          # Não limpe worktrees pendentes antes de decidir se elas são retomáveis.
+          # O mapa vem do git, não do estado do processo anterior, porque uma nova
+          # invocação começa com state novo.
           _old = subprocess.run(["git","worktree","list","--porcelain"], cwd=repo_abs, capture_output=True, text=True)
+          registered = {}
+          _wt = None
           for line in _old.stdout.splitlines():
               if line.startswith("worktree "):
-                  p = line.split(" ",1)[1]
-                  if os.path.realpath(p).startswith(os.path.realpath(wt_base)):
-                      subprocess.run(["git","worktree","remove","--force",p], cwd=repo_abs, capture_output=True)
+                  _wt = line.split(" ", 1)[1]
+              elif line.startswith("branch refs/heads/") and _wt:
+                  registered[line.removeprefix("branch refs/heads/")] = _wt
+          planned = []
           for k in keys:
               wt_path = os.path.join(wt_base, k.replace("/", "_"))
               wt_branch = f"story/{k}"
+              contributes, tip = branch_has_unmerged_commits(repo_abs, wt_branch)
+              existing_path = registered.get(wt_branch)
+              reused = False
+              if contributes and reuse_preserved:
+                  # O caminho precisa ser o da worktree esperada: executar uma story
+                  # em outro checkout poderia misturar duas tentativas concorrentes.
+                  if existing_path and os.path.realpath(existing_path) != os.path.realpath(wt_path):
+                      raise Exception(f"retomada recusada para {k}: {wt_branch}@{tip[:8]} está em outra worktree: {existing_path}")
+                  if existing_path and os.path.exists(existing_path):
+                      dirty = subprocess.run(["git", "status", "--porcelain"], cwd=existing_path, capture_output=True, text=True).stdout.strip()
+                      if dirty:
+                          raise Exception(f"retomada recusada para {k}: worktree preservada está suja; commits podem ser retomados, arquivos não commitados não serão descartados: {existing_path}")
+                      reused = True
+                  elif existing_path is None:
+                      # A branch sobreviveu, mas o processo perdeu o registro da
+                      # worktree. Reanexa a branch sem recriá-la nem perder commits.
+                      r = subprocess.run(["git", "worktree", "add", wt_path, wt_branch], cwd=repo_abs, capture_output=True, text=True)
+                      if r.returncode != 0:
+                          raise Exception(f"reattach da worktree falhou para {k}: {r.stderr.strip()}")
+                      reused = True
+              elif contributes and not reuse_preserved:
+                  raise Exception(f"retry recusado: {wt_branch}@{tip[:8]} ainda não integrada e reuse_preserved_worktrees=false")
               # Com a fila, a worktree nasce no INÍCIO do nó da story (estágio prepare),
               # a partir da ponta ATUAL do target: as stories das quais esta depende já
               # mergearam, então o dev enxerga o código delas em vez de desenvolver
               # sobre uma base anterior a elas.
               if not in_flight:
-                  subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
-                  r = subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
+                  if not reused:
+                      if existing_path:
+                          subprocess.run(["git","worktree","remove","--force",existing_path], cwd=repo_abs, capture_output=True)
+                      subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
+                  r = None if reused else subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
                                      cwd=repo_abs, capture_output=True, text=True)
-                  if r.returncode != 0:
+                  if r is not None and r.returncode != 0:
                       print(f"worktree add falhou para {k}: {r.stderr.strip()}")
                       raise Exception(f"worktree_create falhou para {k}: {r.stderr.strip()}")
-              worktrees.append({"key": k, "path": wt_path, "branch": wt_branch})
-          verbo = "planejadas (criadas no nó de cada story)" if in_flight else "criadas"
-          print(f"Worktrees {verbo}: {len(worktrees)} em {wt_base}")
+              worktrees.append({"key": k, "path": wt_path, "branch": wt_branch, "reused": reused})
+              planned.append(f"{k}{' (retomada)' if reused else ''}")
+          verbo = "planejadas (criadas/retomadas no nó de cada story)" if in_flight else "criadas/retomadas"
+          print(f"Worktrees {verbo}: {', '.join(planned)} em {wt_base}")
       else:
           print("DRY_RUN: worktrees NÃO criadas (DOT aponta pro repo principal).")
       # common: payload do subgraph. repo_path = path da worktree (git opera ali);
       # skills_dir = repo principal (a worktree nao tem .claude/skills). Em dry_run, repo principal.
+      review_harness = str(state.get("review_harness") or "claude").strip().lower()
+      if review_harness not in {"codex", "claude"}:
+          raise ValueError(f"review_harness inválido: {review_harness!r}; use 'codex' ou 'claude'")
+      review_provider = state.get("review_provider") or (
+          "claude_review" if review_harness == "claude" else "codex_review"
+      )
+      review_model = state.get("review_model") or (
+          "claude-opus-5" if review_harness == "claude" else "gpt-5.6-sol"
+      )
       common = {
           "skills_dir": skills_dir,
           "implementation_artifacts_dir": impl_dir,
@@ -1055,8 +1131,10 @@ nodes:
           "communication_language": state.get("communication_language", "Português"),
           "document_output_language": state.get("document_output_language", "Português"),
           "user_name": state.get("user_name", "Fabrício"),
-          "dev_model": state.get("dev_model") or "gpt-5.6-sol",
-          "review_model": state.get("review_model") or "gpt-5.6-sol",
+          "dev_model": state.get("dev_model") or ("claude-opus-5" if dev_harness == "claude" else "gpt-5.6-sol"),
+          "dev_harness": dev_harness,
+          "review_model": review_model,
+          "review_harness": review_harness,
           "test_command": state.get("test_command", ""),
           "target_branch": target_branch,
           "create_if_missing": False,  # PREP já criou tudo
@@ -1090,11 +1168,11 @@ nodes:
               "story_path": _story_rel(k),
               # Sem rota (auto_model off, graph bypass ou classificação ausente) cai no
               # provider conservador configurável `codex` (default Sol/xhigh).
-              "dev_provider": tier_providers.get(route, "codex") if route else "codex",
-              "fix_provider": fix_tier_providers.get(route, "codex_frontier") if route else "codex_frontier",
-              "frontier_provider": "codex_frontier",
-              "review_provider": "codex_review",
-              "finish_provider": "codex_finish",
+              "dev_provider": tier_providers.get(route, "claude" if dev_harness == "claude" else "codex") if route else ("claude" if dev_harness == "claude" else "codex"),
+              "fix_provider": fix_tier_providers.get(route, "claude_frontier" if dev_harness == "claude" else "codex_frontier") if route else ("claude_frontier" if dev_harness == "claude" else "codex_frontier"),
+              "frontier_provider": "claude_frontier" if dev_harness == "claude" else "codex_frontier",
+              "review_provider": review_provider,
+              "finish_provider": "claude_finish" if dev_harness == "claude" else "codex_finish",
               "story_tier": tier or "",
               "story_route": route or "",
               "story_risk_flags": story_risk_flags.get(k) or [],
@@ -1177,9 +1255,9 @@ nodes:
                   r = story_routes.get(k)
                   print(f"  {k}: tier={t or '(nenhum)'} risks={story_risk_flags.get(k) or ['none']} "
                         f"route={r or 'conservative'} model={ROUTE_LABELS.get(r, 'gpt-5.6-sol/xhigh')} "
-                        f"dev={tier_providers.get(r, 'codex') if r else 'codex'} "
-                        f"fix={fix_tier_providers.get(r, 'codex_frontier') if r else 'codex_frontier'} "
-                        "review=codex_review finish=codex_finish")
+                        f"dev={tier_providers.get(r, 'claude' if dev_harness == 'claude' else 'codex') if r else ('claude' if dev_harness == 'claude' else 'codex')} "
+                        f"fix={fix_tier_providers.get(r, 'claude_frontier' if dev_harness == 'claude' else 'codex_frontier') if r else ('claude_frontier' if dev_harness == 'claude' else 'codex_frontier')} "
+                        f"review={review_provider} finish=codex_finish")
           return dict(common_out, final_status="dry_run", waves=[[k for k in w] for w in waves],
                       dot_path=dot_path, worktree_base=wt_base)
 
@@ -1524,8 +1602,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
@@ -1846,8 +1924,8 @@ nodes:
     uses: llm.call
     with:
       provider: shell
-      shell_provider: codex
-      model: "{{ state.dev_model | default('gpt-5.6-sol', true) }}"
+      shell_provider: "{{ 'claude' if state.dev_harness == 'claude' else 'codex' }}"
+      model: "{{ state.dev_model or ('claude-opus-5' if state.dev_harness == 'claude' else 'gpt-5.6-sol') }}"
       timeout: 3600
       messages:
         - role: user
