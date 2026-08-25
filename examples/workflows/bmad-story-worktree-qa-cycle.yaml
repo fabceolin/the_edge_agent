@@ -1,0 +1,505 @@
+# BMad Story — QA Cycle dentro de worktree isolado
+#
+# Variante do bmad-story-v6-full-with-qa-cycle.yaml desenhada para rodar sob
+# `scripts/bmad-story-worktree.sh`, que já criou um git worktree próprio e roda
+# o TEA com cwd = worktree. Três diferenças que importam:
+#
+#   1. BASELINE DE TESTES DETERMINÍSTICO. O original confia no relato do agente
+#      ("873 passed"). Aqui a suíte é medida por subprocess ANTES e DEPOIS, e a
+#      comparação é feita em código. Isso só é confiável porque o worktree é
+#      isolado — no mesmo working tree, uma sessão paralela adicionando testes
+#      corrompe o número (aconteceu em 3 de 5 stories do Epic 4 deste projeto).
+#
+#   2. COMMIT. O full-with-qa-cycle termina em sprint_status/summary e nunca
+#      commita — o que é incompatível com o merge por branch que o wrapper faz.
+#
+#   3. NÃO TOCA sprint-status.yaml. Se cada story da onda editasse a mesma
+#      região do arquivo, o merge conflitaria de forma garantida. A marcação é
+#      feita pelo wrapper, serializada sob flock.
+#
+# Detecção de veredito: por MARCADOR EXPLÍCITO (FINAL_STATUS: ...), não pelos
+# ~20 regexes heurísticos do original. Um regex a mais que casa por engano
+# aprova uma story reprovada — falha cara e silenciosa.
+#
+# USO (normalmente via wrapper, não direto):
+#   tea-python run examples/workflows/bmad-story-worktree-qa-cycle.yaml \
+#     --input '{"arg": "_bmad-output/implementation-artifacts/10-1-foo.md"}'
+
+name: bmad-story-worktree-qa-cycle
+description: Ciclo BMad dev+QA+review+commit para UMA story, dentro de worktree isolado
+
+state_schema:
+  arg: str
+  story_path: str
+  story_key: str
+  # Baseline de testes (medido, não relatado)
+  test_cmd: str
+  baseline_passed: int
+  baseline_ok: bool
+  final_passed: int
+  tests_ok: bool
+  test_report: str
+  # Fases
+  atdd_output: str
+  dev_output: str
+  trace_output: str
+  review_output: str
+  review_status: str
+  review_fix_attempt: int
+  max_review_fixes: int
+  commit_output: str
+  committed: bool
+  # Resultado
+  status: str
+  summary_text: str
+
+initial_state:
+  review_fix_attempt: 0
+  max_review_fixes: 3
+  committed: false
+
+nodes:
+  # ==========================================================================
+  # 0. Resolver story e medir baseline REAL da suíte
+  # ==========================================================================
+  - name: resolve_story
+    description: Resolve o path da story e valida que ela existe
+    run: |
+      import os, glob
+
+      arg = (state.get("arg") or "").strip()
+      story_path = None
+
+      if arg and os.path.isfile(arg):
+          story_path = arg
+      elif arg:
+          # Aceita também uma key solta; exige match único (mesma disciplina do wrapper)
+          impl = "_bmad-output/implementation-artifacts"
+          matches = sorted(glob.glob(os.path.join(impl, f"*{arg}*.md")))
+          if len(matches) == 1:
+              story_path = matches[0]
+          elif len(matches) > 1:
+              raise ValueError(
+                  f"label ambíguo '{arg}': casa com {len(matches)} arquivos: {matches}"
+              )
+
+      if not story_path:
+          raise ValueError(f"story não encontrada para arg={arg!r} (cwd={os.getcwd()})")
+
+      story_key = os.path.basename(story_path).replace(".md", "")
+      print(f"story_path={story_path}")
+      print(f"story_key={story_key}")
+      return {"story_path": story_path, "story_key": story_key}
+
+  - name: preflight_baseline
+    description: Mede a suíte ANTES de qualquer alteração (número real, não relatado)
+    run: |
+      import os, re, subprocess
+
+      test_cmd = os.environ.get("BMAD_TEST_CMD", "python3 -m pytest -q")
+      print(f"baseline: {test_cmd}")
+
+      try:
+          proc = subprocess.run(
+              test_cmd, shell=True, capture_output=True, text=True, timeout=3600
+          )
+          out = (proc.stdout or "") + (proc.stderr or "")
+      except subprocess.TimeoutExpired:
+          return {"test_cmd": test_cmd, "baseline_passed": -1, "baseline_ok": False,
+                  "test_report": "baseline: TIMEOUT"}
+
+      m = re.search(r"(\d+)\s+passed", out)
+      passed = int(m.group(1)) if m else -1
+      failed = bool(re.search(r"(\d+)\s+failed", out))
+
+      tail = out[-1500:]
+      print(tail)
+
+      # Baseline vermelho = a árvore já estava quebrada antes desta story.
+      # Seguir daqui produziria um "sem regressão" sem significado.
+      ok = passed >= 0 and not failed
+      return {
+          "test_cmd": test_cmd,
+          "baseline_passed": passed,
+          "baseline_ok": ok,
+          "test_report": f"baseline: {passed} passed (ok={ok})",
+      }
+
+  - name: baseline_failed
+    description: Aborta cedo se a árvore já estava vermelha
+    run: |
+      return {
+          "status": "BASELINE_RED",
+          "summary_text": (
+              f"ABORTADO: baseline da suíte não está verde "
+              f"({state.get('baseline_passed')} passed). "
+              f"Não faz sentido medir regressão a partir de uma árvore quebrada."
+          ),
+      }
+
+  # ==========================================================================
+  # 1. ATDD — testes de aceitação em red phase
+  # ==========================================================================
+  - name: tea_atdd
+    description: Gera testes de aceitação (red phase) a partir dos ACs
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você trabalha no worktree isolado em: {{ state.story_path }}
+            (o cwd deste processo JÁ é a árvore correta — não navegue para fora dela).
+
+            Gere os testes de aceitação em RED PHASE para a story {{ state.story_key }},
+            seguindo a skill bmad-testarch-atdd se ela existir neste repo.
+
+            REGRAS:
+            - Os testes devem FALHAR agora (a implementação ainda não existe).
+            - Cubra os Acceptance Criteria literais da story, um a um.
+            - Não implemente a funcionalidade nesta etapa.
+            - Não faça commit.
+
+            Ao terminar imprima: ATDD_COMPLETED
+    output: atdd_output
+
+  # ==========================================================================
+  # 2. Dev
+  # ==========================================================================
+  - name: dev_story
+    description: Implementa a story (green phase)
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 7200
+      messages:
+        - role: user
+          content: |
+            Você é um sub-agente sem contexto prévio, trabalhando no worktree
+            isolado cujo cwd já está correto. Story: {{ state.story_path }}
+
+            Implemente a story de ponta a ponta seguindo a skill bmad-dev-story
+            deste repo (leia o SKILL.md inteiro antes de agir).
+
+            CONTEXTO DE BASELINE (medido por este workflow, não por você):
+            a suíte estava em {{ state.baseline_passed }} passed antes de você começar.
+
+            REGRAS:
+            - Carregue CLAUDE.md e qualquer project-context.md / Dev Notes da story
+              antes de agir, e respeite os invariantes documentados ali.
+            - Red-green-refactor de verdade: teste que falha primeiro.
+            - NUNCA implemente fallback silencioso que mascare falha.
+            - NÃO edite sprint-status.yaml — a marcação de status é feita fora
+              deste workflow, de forma serializada. Editar aqui causa conflito
+              de merge garantido com as outras stories da mesma onda.
+            - NÃO faça commit — o commit acontece num passo posterior.
+            - Atualize a File List e o Dev Agent Record da story.
+
+            Se houver um bloqueio genuíno (dependência real ausente, decisão
+            arquitetural não coberta pela story), pare e explique começando com
+            "HALT:".
+
+            Ao terminar imprima: DEV_STORY_COMPLETED
+    output: dev_output
+
+  # ==========================================================================
+  # 3. Verificação determinística da suíte (o número, medido por nós)
+  # ==========================================================================
+  - name: verify_tests
+    description: Roda a suíte de novo e compara com o baseline — em código
+    run: |
+      import re, subprocess
+
+      test_cmd = state.get("test_cmd") or "python3 -m pytest -q"
+      baseline = state.get("baseline_passed", -1)
+
+      try:
+          proc = subprocess.run(
+              test_cmd, shell=True, capture_output=True, text=True, timeout=3600
+          )
+          out = (proc.stdout or "") + (proc.stderr or "")
+      except subprocess.TimeoutExpired:
+          return {"final_passed": -1, "tests_ok": False,
+                  "test_report": "final: TIMEOUT"}
+
+      m = re.search(r"(\d+)\s+passed", out)
+      final = int(m.group(1)) if m else -1
+      fail_m = re.search(r"(\d+)\s+failed", out)
+      failed = int(fail_m.group(1)) if fail_m else 0
+
+      print(out[-2000:])
+
+      # Regressão = suíte vermelha OU o total caiu abaixo do baseline.
+      # Testes novos podem (e devem) elevar o total; nunca reduzi-lo.
+      ok = failed == 0 and final >= baseline and final >= 0
+      report = (
+          f"baseline={baseline} passed · final={final} passed · "
+          f"{failed} failed · regressao={'NAO' if ok else 'SIM'}"
+      )
+      print(report)
+      return {"final_passed": final, "tests_ok": ok, "test_report": report}
+
+  - name: tests_failed
+    description: Suíte vermelha ou regressão — não segue para review nem commit
+    run: |
+      return {
+          "status": "TESTS_FAILED",
+          "summary_text": f"ABORTADO na verificação de testes: {state.get('test_report')}",
+      }
+
+  # ==========================================================================
+  # 4. Rastreabilidade pós-dev (evidência real de cobertura dos ACs)
+  # ==========================================================================
+  - name: post_dev_trace
+    description: Rastreia ACs contra os testes que existem de fato
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            Story: {{ state.story_path }}
+
+            Produza a matriz de rastreabilidade AC -> teste usando a skill
+            bmad-testarch-trace se existir neste repo. Baseie-se nos testes que
+            EXISTEM no worktree agora (rode-os você mesmo), não no que a story
+            afirma ter feito.
+
+            Resultado da suíte medido por este workflow: {{ state.test_report }}
+
+            Ao terminar imprima: TRACE_COMPLETED
+    output: trace_output
+
+  # ==========================================================================
+  # 5. Code review adversarial
+  # ==========================================================================
+  - name: code_review
+    description: Revisão adversarial autônoma
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 3600
+      messages:
+        - role: user
+          content: |
+            Você é um revisor sênior ADVERSARIAL, sem contexto prévio, no worktree
+            isolado desta story (cwd já correto). Story: {{ state.story_path }}
+
+            Ciclo de revisão #{{ state.review_fix_attempt }}.
+            Siga o espírito da skill bmad-code-review deste repo, mas em modo
+            AUTÔNOMO: não há humano disponível, VOCÊ decide o veredito.
+
+            Rode `git diff {{ state.story_key }}` equivalente — na prática,
+            `git diff $(git merge-base HEAD @{u} 2>/dev/null || git rev-parse HEAD~1)..HEAD`
+            e `git status` — para ver exatamente o que mudou.
+
+            VERIFIQUE:
+            1. Cada Acceptance Criteria foi de fato satisfeito (não apenas alegado)?
+            2. Existe fallback silencioso que mascare falha?
+            3. Os testes exigidos pela story existem e exercitam o comportamento
+               real (não só o dublê)? Rode-os você mesmo.
+            4. Regressão em comportamento pré-existente?
+            5. Riscos de segurança introduzidos pela mudança.
+
+            Números da suíte, medidos por este workflow (não pelo dev):
+            {{ state.test_report }}
+
+            Ao final, imprima EXATAMENTE uma destas linhas, sozinha:
+              FINAL_STATUS: APPROVED
+              FINAL_STATUS: CHANGES_REQUESTED
+              FINAL_STATUS: BLOCKED
+
+            Use APPROVED apenas se não houver nenhum item bloqueante. Antes da
+            linha de status, liste os action items concretos (arquivo + descrição).
+    output: review_output
+
+  - name: check_review
+    description: Lê o veredito por marcador explícito (sem heurística de regex)
+    run: |
+      import re
+
+      out = state.get("review_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else str(out or "")
+
+      attempt = state.get("review_fix_attempt", 0)
+      max_fixes = state.get("max_review_fixes", 3)
+
+      m = re.search(r"FINAL_STATUS:\s*(APPROVED|CHANGES_REQUESTED|BLOCKED)", text)
+      if not m:
+          # Ausência de marcador NÃO é aprovação. Default seguro: pedir mudança.
+          print("AVISO: revisor não emitiu FINAL_STATUS — tratando como CHANGES_REQUESTED")
+          status = "CHANGES_REQUESTED"
+      else:
+          status = m.group(1)
+
+      if status == "CHANGES_REQUESTED" and attempt >= max_fixes:
+          print(f"limite de {max_fixes} ciclos de correção atingido")
+          status = "MAX_ATTEMPTS_REACHED"
+
+      print(f"review_status={status}")
+      return {"review_status": status}
+
+  - name: dev_fix_review
+    description: Corrige os action items do review
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 5400
+      messages:
+        - role: user
+          content: |
+            O code review desta story pediu mudanças. Story: {{ state.story_path }}
+
+            Saída do revisor:
+            {{ state.review_output }}
+
+            Corrija cada action item, rode os testes de novo (sem pular regressão)
+            e atualize a story (Tasks/Subtasks, File List, Dev Agent Record,
+            Change Log). NÃO edite sprint-status.yaml. NÃO faça commit.
+
+            Ao terminar imprima: FIX_COMPLETED
+    output: dev_output
+
+  - name: increment_fix_attempt
+    run: |
+      return {"review_fix_attempt": state.get("review_fix_attempt", 0) + 1}
+
+  - name: review_blocked
+    description: Review reprovou definitivamente — sem commit
+    run: |
+      return {
+          "status": state.get("review_status", "BLOCKED"),
+          "summary_text": (
+              f"Story {state.get('story_key')} NÃO aprovada "
+              f"({state.get('review_status')}) após "
+              f"{state.get('review_fix_attempt', 0)} ciclo(s). "
+              f"Nada foi commitado; o branch fica para inspeção humana."
+          ),
+      }
+
+  # ==========================================================================
+  # 6. Commit (no branch do worktree — o merge é do wrapper)
+  # ==========================================================================
+  - name: commit_story
+    description: Commita a story no branch isolado
+    uses: llm.call
+    with:
+      provider: shell
+      shell_provider: claude
+      timeout: 1800
+      messages:
+        - role: user
+          content: |
+            A story {{ state.story_key }} foi aprovada no code review desta mesma
+            execução, e a suíte foi verificada por este workflow (não por um
+            agente): {{ state.test_report }}
+
+            Seu papel é APENAS commitar, no branch atual deste worktree isolado.
+
+            REGRAS INEGOCIÁVEIS:
+            - NUNCA `git add -A` nem `git add .`. Adicione arquivo por arquivo,
+              nominalmente, a partir da File List da story.
+            - NÃO adicione sprint-status.yaml — a marcação de status é feita
+              fora deste workflow, de forma serializada.
+            - Antes de escrever a mensagem, rode `git log --oneline -5` e
+              `git log -1 --format=%b` para reproduzir o padrão REAL deste repo,
+              inclusive a linha de Co-Authored-By como ela aparece lá.
+            - Assunto: feat(story-{{ state.story_key }}): <título curto da story>
+            - No corpo, registre os números de teste verificados
+              ({{ state.test_report }}) e o que a story entrega — não o processo.
+            - Use heredoc. Nunca edite commits anteriores.
+
+            Depois de commitar, atualize o Status da story para "done" no arquivo
+            da story e faça um segundo commit só desse arquivo, se ele ainda não
+            estiver incluído.
+
+            Ao terminar imprima: COMMIT_COMPLETED seguido de `git rev-parse HEAD`.
+    output: commit_output
+
+  - name: summary
+    description: Sumário final
+    run: |
+      out = state.get("commit_output", {})
+      text = out.get("content", "") if isinstance(out, dict) else str(out or "")
+      committed = "COMMIT_COMPLETED" in text
+
+      story = state.get("story_key", "?")
+      report = state.get("test_report", "n/a")
+      status = "DONE" if committed else "COMMIT_FAILED"
+
+      summary = (
+          f"Story {story}: {status}\n"
+          f"  testes: {report}\n"
+          f"  review: {state.get('review_status')} "
+          f"após {state.get('review_fix_attempt', 0)} ciclo(s) de correção"
+      )
+      print(summary)
+      return {"committed": committed, "status": status, "summary_text": summary}
+
+edges:
+  - from: __start__
+    to: resolve_story
+  - from: resolve_story
+    to: preflight_baseline
+
+  # Baseline vermelho aborta antes de qualquer trabalho
+  - from: preflight_baseline
+    to: baseline_failed
+    when: "state.get('baseline_ok') != True"
+  - from: preflight_baseline
+    to: tea_atdd
+    when: "state.get('baseline_ok') == True"
+  - from: baseline_failed
+    to: __end__
+
+  # Dev
+  - from: tea_atdd
+    to: dev_story
+  - from: dev_story
+    to: verify_tests
+
+  # Gate determinístico de testes
+  - from: verify_tests
+    to: tests_failed
+    when: "state.get('tests_ok') != True"
+  - from: verify_tests
+    to: post_dev_trace
+    when: "state.get('tests_ok') == True"
+  - from: tests_failed
+    to: __end__
+
+  # Review
+  - from: post_dev_trace
+    to: code_review
+  - from: code_review
+    to: check_review
+
+  - from: check_review
+    to: commit_story
+    when: "state.get('review_status') == 'APPROVED'"
+  - from: check_review
+    to: dev_fix_review
+    when: "state.get('review_status') == 'CHANGES_REQUESTED'"
+  - from: check_review
+    to: review_blocked
+    when: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS_REACHED']"
+
+  # Loop de correção: re-verifica a suíte antes de revisar de novo
+  - from: dev_fix_review
+    to: increment_fix_attempt
+  - from: increment_fix_attempt
+    to: verify_tests
+
+  - from: review_blocked
+    to: __end__
+  - from: commit_story
+    to: summary
+  - from: summary
+    to: __end__

@@ -1,0 +1,30 @@
+flowchart TD
+    N(["nó do DOT: story-key<br/>cd worktree && ..."]) --> PREP["prepare<br/>bmad_epic_waves_integrate<br/>valida worktree/branch, flock"]
+    PREP -->|"&&"| CYC
+
+    subgraph CYC["bmad-story-cycle.yaml — in_worktree=true"]
+        ESF{"ensure_story_file"}
+        ESF -->|"sem arquivo e create_if_missing=false"| MSF(["missing_story_file"]):::abort
+        ESF -->|"criar"| CS["create_story"] --> RCP["resolve_created_path"] --> DEV
+        ESF -->|"existe"| DEV
+
+        DEV["dev_story<br/>provider pela rota da story:<br/>trivial/small/standard/frontier"]
+        DEV --> PD{"parse_dev<br/>FINAL_STATUS,<br/>VERIFICATION_INCOMPLETE"}
+        PD -->|"morreu sem report: retry único"| DEV
+        PD --> CR["code_review<br/>review adversarial,<br/>nunca cai de esforço junto com o dev"]
+
+        CR --> CRS{"check_review_status"}
+        CRS -->|"RETRY"| CR
+        CRS -->|"CHANGES_REQUESTED e<br/>attempt < max_review_cycles"| FR["fix_review<br/>fix_provider promovido;<br/>2º fix vai a frontier"]
+        FR --> CR
+        CRS -->|"APPROVED"| FS["finish_story<br/>reconfere suíte + File List,<br/>commit nominal no branch,<br/>NÃO toca sprint-status"]
+        CRS -->|"BLOCKED / MAX_ATTEMPTS<br/>in_worktree"| SM
+        FS --> SM["summary<br/>completed | incomplete"]
+    end
+
+    CYC -->|"--fail-on-state final_status=incomplete<br/>--fail-on-state missing_story_file"| RC{"exit code"}
+    RC -->|"≠ 0: o && corta"| NOMERGE(["nada de merge<br/>branch story/key preservada"]):::abort
+    RC -->|"0"| MRG["merge no branch alvo<br/>+ marca sprint-status<br/>serializado pelo mesmo lock"]
+    MRG --> OK(["story integrada"])
+
+    classDef abort fill:#fdecea,stroke:#c0392b,color:#7b241c
