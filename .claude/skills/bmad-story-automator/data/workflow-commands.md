@@ -33,8 +33,8 @@ Every generated prompt must include:
 ```bash
 tmux send-keys -t "SESSION" 'claude --dangerously-skip-permissions "Execute the BMAD dev-story workflow for story STORY_ID.
 
-READ this skill first: .claude/skills/bmad-dev-story/SKILL.md
-READ this workflow file next: .claude/skills/bmad-dev-story/workflow.md
+READ this skill first: <installed-skill-root>/bmad-dev-story/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-dev-story/workflow.md
 Story file: _bmad-output/implementation-artifacts/STORY_PREFIX-*.md
 Implement all tasks marked [ ]. Run tests. Update checkboxes."' Enter
 ```
@@ -48,10 +48,10 @@ Implement all tasks marked [ ]. Run tests. Update checkboxes."' Enter
 ```bash
 tmux send-keys -t "SESSION" 'claude --dangerously-skip-permissions "Execute the story-automator review workflow for story STORY_ID.
 
-READ this skill first: .claude/skills/bmad-story-automator-review/SKILL.md
-READ this workflow file next: .claude/skills/bmad-story-automator-review/workflow.yaml
-Then read: .claude/skills/bmad-story-automator-review/instructions.xml
-Validate with: .claude/skills/bmad-story-automator-review/checklist.md
+READ this skill first: <installed-skill-root>/bmad-story-automator-review/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-story-automator-review/workflow.yaml
+Then read: <installed-skill-root>/bmad-story-automator-review/instructions.xml
+Validate with: <installed-skill-root>/bmad-story-automator-review/checklist.md
 Story file: _bmad-output/implementation-artifacts/STORY_PREFIX-*.md
 Review implementation, find issues, fix them automatically. auto-fix all issues without prompting"' Enter
 ```
@@ -65,11 +65,11 @@ Review implementation, find issues, fix them automatically. auto-fix all issues 
 ```bash
 tmux send-keys -t "SESSION" 'claude --dangerously-skip-permissions "Execute the BMAD create-story workflow for story STORY_ID.
 
-READ this skill first: .claude/skills/bmad-create-story/SKILL.md
-READ this workflow file next: .claude/skills/bmad-create-story/workflow.md
-Then read: .claude/skills/bmad-create-story/discover-inputs.md
-Use template: .claude/skills/bmad-create-story/template.md
-Validate with: .claude/skills/bmad-create-story/checklist.md
+READ this skill first: <installed-skill-root>/bmad-create-story/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-create-story/workflow.md
+Then read: <installed-skill-root>/bmad-create-story/discover-inputs.md
+Use template: <installed-skill-root>/bmad-create-story/template.md
+Validate with: <installed-skill-root>/bmad-create-story/checklist.md
 Create story file at: _bmad-output/implementation-artifacts/STORY_PREFIX-*.md
 Story ID: STORY_ID
 
@@ -85,14 +85,14 @@ Story ID: STORY_ID
 ```bash
 tmux send-keys -t "SESSION" 'claude --dangerously-skip-permissions "Execute the BMAD qa-generate-e2e-tests workflow for story STORY_ID.
 
-READ this skill first: .claude/skills/bmad-qa-generate-e2e-tests/SKILL.md
-READ this workflow file next: .claude/skills/bmad-qa-generate-e2e-tests/workflow.md
-Validate with: .claude/skills/bmad-qa-generate-e2e-tests/checklist.md
+READ this skill first: <installed-skill-root>/bmad-qa-generate-e2e-tests/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-qa-generate-e2e-tests/workflow.md
+Validate with: <installed-skill-root>/bmad-qa-generate-e2e-tests/checklist.md
 Story file: _bmad-output/implementation-artifacts/STORY_PREFIX-*.md
 Auto-apply all discovered gaps in tests."' Enter
 ```
 
-If `.claude/skills/bmad-qa-generate-e2e-tests` is missing, story-automator install still succeeds, but the orchestrator should run with `Skip Automate = true`.
+If `bmad-qa-generate-e2e-tests` is missing from the installed skill root, story-automator install still succeeds, but the orchestrator should run with `Skip Automate = true`.
 
 ---
 
@@ -101,8 +101,8 @@ If `.claude/skills/bmad-qa-generate-e2e-tests` is missing, story-automator insta
 ```bash
 tmux send-keys -t "SESSION" 'claude --dangerously-skip-permissions "Execute the BMAD retrospective workflow for epic EPIC_ID.
 
-READ this skill first: .claude/skills/bmad-retrospective/SKILL.md
-READ this workflow file next: .claude/skills/bmad-retrospective/workflow.md
+READ this skill first: <installed-skill-root>/bmad-retrospective/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-retrospective/workflow.md
 Run the retrospective in #YOLO mode and assume the user will NOT provide input."' Enter
 ```
 

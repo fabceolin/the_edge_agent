@@ -45,7 +45,7 @@ This ensures retrospective runs at the right time in multi-epic scenarios, not a
 
 ### Retrospective Rules
 
-- **MUST use Claude**: Retrospectives DO NOT support Codex - always Claude agent
+- **Use configured retro agent**: Retrospectives inherit the configured primary agent unless `agentConfig` overrides `retro`
 - **YOLO Mode**: Fully automated, no user input expected
 - **Never Escalate**: If retrospective fails for ANY reason, safely skip (log warning, continue)
 - **Non-Blocking**: Retrospective completion does not block next story or epic

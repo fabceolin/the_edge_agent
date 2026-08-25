@@ -11,8 +11,8 @@ Use this prompt when spawning the retrospective session:
 ```
 Execute the BMAD retrospective workflow for epic {epic_number}.
 
-READ this skill first: .claude/skills/bmad-retrospective/SKILL.md
-READ this workflow file next: .claude/skills/bmad-retrospective/workflow.md
+READ this skill first: <installed-skill-root>/bmad-retrospective/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-retrospective/workflow.md
 
 Run the retrospective in #YOLO mode.
 Assume the user will NOT provide any input to the retrospective directly.

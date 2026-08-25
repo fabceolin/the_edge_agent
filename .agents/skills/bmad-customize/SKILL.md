@@ -31,7 +31,7 @@ Load `_bmad/config.toml` and `_bmad/config.user.toml` from `{project-root}` for 
 ## Step 2: Discovery
 
 ```
-python3 {skill-root}/scripts/list_customizable_skills.py --project-root {project-root}
+uv run {skill-root}/scripts/list_customizable_skills.py --project-root {project-root}
 ```
 
 Use `--extra-root <path>` (repeatable) if the user has skills installed in additional locations.
@@ -48,7 +48,7 @@ If a team or user override already exists, read it first and summarize what's al
 
 **Cross-cutting intent — walk both surfaces with the user:**
 - Every workflow a given agent runs → agent surface (e.g. `bmad-agent-pm.toml` with `persistent_facts`, `principles`).
-- One workflow only → workflow surface (e.g. `bmad-create-prd.toml` with `activation_steps_prepend`).
+- One workflow only → workflow surface (e.g. `bmad-prd.toml` with `activation_steps_prepend`).
 - Several specific workflows → multiple workflow overrides in sequence, not an agent override.
 
 **Single-surface heuristic:**
@@ -87,7 +87,7 @@ Default by character (policy → team, personal → user), confirm before writin
 3. Write. Create `{project-root}/_bmad/custom/` if needed.
 4. Verify:
    ```
-   python3 {project-root}/_bmad/scripts/resolve_customization.py --skill <install-path> --key <agent-or-workflow>
+   uv run {project-root}/_bmad/scripts/resolve_customization.py --skill <install-path> --key <agent-or-workflow>
    ```
    Show the merged output, point out the changed fields.
 

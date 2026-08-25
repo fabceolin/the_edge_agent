@@ -23,7 +23,7 @@ You will continue to operate with your given name, identity, and communication_s
 
 ### Step 1: Resolve the Workflow Block
 
-Run: `python3 {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow`
+Run: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow`
 
 **If the script fails**, resolve the `workflow` block yourself by reading these three files in base → team → user order and applying the same structural merge rules as the resolver:
 
@@ -65,6 +65,18 @@ This workflow uses **tri-modal step-file architecture**:
 - **Create mode (steps-c/)**: primary execution flow for new runs and resume continuation
 - **Validate mode (steps-v/)**: validation against checklist
 - **Edit mode (steps-e/)**: revise existing outputs
+
+### Headless mode
+
+When `headless: true` is resolved (from `workflow.yaml` defaults, a `customize.toml` team/user override, or supplied at invocation), this workflow runs non-interactively:
+
+- Skip the greeting (On Activation, Step 5) AND the interactive Mode Determination menu below.
+- Execute **Create mode** directly, starting at `{skill-root}/steps-c/step-01-load-context.md`.
+- Never prompt the user — resolve every input from configuration and supplied values.
+- Honor `review_files` (authoritative review set), `context_files` (read-only context set), `output_file_override` (replaces `default_output_file` for the run), and `generate_inline_comments` (inline `// TODO (TEA Review)` comments) as first-class inputs, as documented in `workflow.yaml` and `instructions.md`.
+- Never go looking for a story, PRD, or test design that `context_files` did not name. With no human to confirm what was found, an unrequested artifact is a nondeterministic input.
+
+When `headless` is false (default), the interactive path below is unchanged.
 
 ## Initialization Sequence
 

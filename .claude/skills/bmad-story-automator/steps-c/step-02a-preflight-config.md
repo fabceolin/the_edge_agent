@@ -78,7 +78,6 @@ agent_config_json='{
   "low": {"create":{"primary":"...","fallback":"..."},"dev":{...},"auto":{...},"review":{...}},
   "medium": {"create":{...},"dev":{...},"auto":{...},"review":{...}},
   "high": {"create":{...},"dev":{...},"auto":{...},"review":{...}},
-  "retro": {"primary":"claude","fallback":false},
   "auto": {"skip": $skip_automate}
 }'
 ```

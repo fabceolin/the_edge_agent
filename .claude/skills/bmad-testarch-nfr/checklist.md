@@ -1,11 +1,11 @@
-# Non-Functional Requirements Assessment - Validation Checklist
+# NFR Evidence Audit - Validation Checklist
 
 **Workflow:** `testarch-nfr`
-**Purpose:** Ensure comprehensive and evidence-based NFR assessment with actionable recommendations
+**Purpose:** Ensure comprehensive evidence-based NFR audit with actionable recommendations
 
 ---
 
-Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI workflows.
+Note: `nfr-assess` is the NFR Evidence Audit. It evaluates existing implementation evidence; it does not run tests or CI workflows. Use `test-design` to plan NFR thresholds and evidence before implementation.
 
 ## Prerequisites Validation
 
@@ -37,7 +37,6 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 - [ ] Response time threshold defined or marked as UNKNOWN
 - [ ] Throughput threshold defined or marked as UNKNOWN
 - [ ] Resource usage thresholds defined or marked as UNKNOWN
-- [ ] Scalability requirements defined or marked as UNKNOWN
 
 ### Security
 
@@ -58,9 +57,10 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 ### Maintainability
 
 - [ ] Test coverage threshold defined or marked as UNKNOWN
-- [ ] Code quality threshold defined or marked as UNKNOWN
-- [ ] Technical debt threshold defined or marked as UNKNOWN
-- [ ] Documentation completeness threshold defined or marked as UNKNOWN
+- [ ] Code duplication threshold defined or marked as UNKNOWN
+- [ ] Dependency vulnerability threshold defined or marked as UNKNOWN
+- [ ] Structured logging requirement defined or marked as UNKNOWN
+- [ ] Error tracking requirement defined or marked as UNKNOWN
 
 ### Custom NFR Categories (if applicable)
 
@@ -101,23 +101,21 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 
 ### Maintainability Evidence
 
-- [ ] Code coverage reports collected (Istanbul, NYC, c8, JaCoCo)
-- [ ] Static analysis results collected (ESLint, SonarQube, CodeClimate)
-- [ ] Technical debt metrics collected
-- [ ] Documentation audit results collected
-- [ ] Test review report collected (from test-review workflow, if available)
-- [ ] Git metrics collected (code churn, commit frequency, etc.)
+- [ ] CI coverage report collected
+- [ ] Code duplication report collected (jscpd)
+- [ ] Dependency vulnerability scan collected (npm audit)
+- [ ] Structured logging validated from a structured log sample, documented schema, or automated format assertion
+- [ ] Error tracking configuration validated (Sentry/monitoring integration)
 
 ---
 
-## NFR Assessment with Deterministic Rules
+## NFR Evidence Audit with Deterministic Rules
 
 ### Performance Assessment
 
 - [ ] Response time assessed against threshold
 - [ ] Throughput assessed against threshold
 - [ ] Resource usage assessed against threshold
-- [ ] Scalability assessed against requirements
 - [ ] Status classified (PASS/CONCERNS/FAIL) with justification
 - [ ] Evidence source documented (file path, metric name)
 
@@ -145,14 +143,14 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 ### Maintainability Assessment
 
 - [ ] Test coverage assessed against threshold
-- [ ] Code quality assessed against threshold
-- [ ] Technical debt assessed against threshold
-- [ ] Documentation completeness assessed against threshold
-- [ ] Test quality assessed (from test-review, if available)
+- [ ] Code duplication assessed against threshold
+- [ ] Dependency vulnerability scan assessed against threshold
+- [ ] Structured logging assessed
+- [ ] Error tracking assessed
 - [ ] Status classified (PASS/CONCERNS/FAIL) with justification
-- [ ] Evidence source documented (file path, coverage report)
+- [ ] Evidence source documented (file path, report)
 
-### Custom NFR Assessment (if applicable)
+### Custom NFR Evidence Audit (if applicable)
 
 - [ ] Custom NFR 1 assessed against threshold with justification
 - [ ] Custom NFR 2 assessed against threshold with justification
@@ -219,13 +217,13 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 - [ ] Circuit breakers suggested for reliability
 - [ ] Rate limiting suggested for performance
 - [ ] Validation gates suggested for security
-- [ ] Smoke tests suggested for maintainability
+- [ ] Coverage/duplication gates suggested for maintainability
 
 ---
 
 ## Deliverables Generated
 
-### NFR Assessment Report
+### NFR Evidence Audit Report
 
 - [ ] File created at `{test_artifacts}/nfr-assessment.md`
 - [ ] Template from `nfr-report-template.md` used
@@ -257,8 +255,8 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 
 ### Updated Story File (if enabled and requested)
 
-- [ ] "NFR Assessment" section added to story markdown
-- [ ] Link to NFR assessment report included
+- [ ] "NFR Evidence Audit" section added to story markdown
+- [ ] Link to NFR evidence audit report included
 - [ ] Overall status and critical issues included
 - [ ] Gate status included
 
@@ -358,7 +356,7 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 
 ## Documentation and Communication
 
-- [ ] NFR assessment report is readable and well-formatted
+- [ ] NFR evidence audit report is readable and well-formatted
 - [ ] Tables render correctly in markdown
 - [ ] Code blocks have proper syntax highlighting
 - [ ] Links are valid and accessible
@@ -377,7 +375,7 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 - [ ] Quick wins identified for all CONCERNS/FAIL
 - [ ] Recommended actions are specific and actionable
 - [ ] Evidence gaps documented with owners and deadlines
-- [ ] NFR assessment report generated and saved
+- [ ] NFR evidence audit report generated and saved
 - [ ] Gate YAML snippet generated (if enabled)
 - [ ] Evidence checklist generated (if enabled)
 - [ ] Workflow completed successfully
@@ -386,7 +384,7 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 
 ## Sign-Off
 
-**NFR Assessment Status:**
+**NFR Evidence Audit Status:**
 
 - [ ] ✅ PASS - All NFRs meet requirements, ready for release
 - [ ] ⚠️ CONCERNS - Some NFRs have concerns, address before next release
@@ -394,9 +392,9 @@ Note: `nfr-assess` evaluates existing evidence; it does not run tests or CI work
 
 **Next Actions:**
 
-- If PASS ✅: Proceed to `*gate` workflow or release
-- If CONCERNS ⚠️: Address HIGH/CRITICAL issues, re-run `*nfr-assess`
-- If FAIL ❌: Resolve FAIL status NFRs, re-run `*nfr-assess`
+- If PASS ✅: Run `/bmad-testarch-trace` Phase 2 for the release gate decision, or release
+- If CONCERNS ⚠️: Address HIGH/CRITICAL issues, re-run `/bmad-testarch-nfr`
+- If FAIL ❌: Resolve FAIL status NFRs, re-run `/bmad-testarch-nfr`
 
 **Critical Issues:** {COUNT}
 **High Priority Issues:** {COUNT}

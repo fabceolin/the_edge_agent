@@ -6,9 +6,9 @@
 
 ## Child Session Handling (Session 19 Fix)
 
-**CRITICAL:** The stop hook is installed at the PROJECT level. When the orchestrator spawns T-Mux sessions (create-story, dev-story, code-review), those child Claude instances:
+**CRITICAL:** The stop hook is installed at the PROJECT level. When the orchestrator spawns T-Mux sessions (create-story, dev-story, code-review), those child agent instances:
 1. Run in the same project directory
-2. Read the same `.claude/settings.json`
+2. Read the same project-level hook configuration
 3. Have the same stop hook configured
 4. See the same marker file
 
@@ -35,9 +35,11 @@ The `-e STORY_AUTOMATOR_CHILD=true` flag exports the environment variable to the
 
 ---
 
-## Internal Claude Calls (Session 20 Fix)
+## Internal Nested Agent Calls (Session 20 Fix)
 
-**CRITICAL:** Scripts that internally call `claude` (like `story-automator tmux-status-check` using Haiku for wait estimation) MUST prefix the call with the environment variable:
+### Claude
+
+**CRITICAL:** Scripts that internally call `claude` (like `story-automator tmux-status-check` using Haiku for wait estimation) while an orchestration marker is active MUST prefix the call with the environment variable.
 
 ```bash
 # WRONG - will hang when stop hook blocks the claude exit
@@ -48,6 +50,10 @@ RESULT=$(STORY_AUTOMATOR_CHILD=true claude -p --model haiku "..." 2>/dev/null)
 ```
 
 **Why:** Even non-interactive `claude -p` calls trigger the stop hook when they exit. Without the env var, the hook sees the marker file and blocks, causing the script to hang indefinitely.
+
+### Codex
+
+For Codex, apply the same `STORY_AUTOMATOR_CHILD=true` convention to any future internal non-interactive Codex calls that run inside an active story-automator project.
 
 ---
 
@@ -63,21 +69,23 @@ RESULT=$(STORY_AUTOMATOR_CHILD=true claude -p --model haiku "..." 2>/dev/null)
 - ALWAYS wait for ACTUAL user input (typed response)
 - Stop hook messages are about STOPPING behavior only
 
-**Why this happens:** The stop hook fires when Claude pauses, not just when explicitly stopping. During menu waits, it may fire repeatedly. Ignore these messages when waiting for user input.
+**Why this happens:** The stop hook fires when the agent pauses, not just when explicitly stopping. During menu waits, it may fire repeatedly. Ignore these messages when waiting for user input.
 
 ---
 
 ## Manual Override
 
 If the orchestrator gets stuck, users can:
-1. Remove the marker file: `rm .claude/.story-automator-active` (from project root)
-2. Stop Claude normally
+1. Remove the marker file from the project root using the installed story-automator helper: `orchestrator-helper marker remove`
+2. Stop the active agent normally
 3. Resume later with the continue flow
 
 **For multi-project cleanup:**
 ```bash
 # Remove marker for current project only
-rm -f .claude/.story-automator-active
+helper="<installed-skill-root>/bmad-story-automator/scripts/story-automator"
+[ -x "$helper" ] || { echo "story-automator helper not found: $helper" >&2; exit 1; }
+"$helper" orchestrator-helper marker remove
 
 # Clean up project-scoped state files (optional)
 PROJECT_HASH=$(echo -n "$PWD" | md5sum | cut -c1-8)
@@ -91,9 +99,9 @@ rm -f /tmp/sa-${PROJECT_HASH}-output-*
 
 | Issue | Check |
 |-------|-------|
-| Hook not running | Valid JSON in settings? Script executable? Session restarted? |
-| "no such file" | BMAD installed? Path correct? `ls -la .claude/skills/bmad-story-automator/scripts/` |
+| Hook not running | Valid hook config? For Codex, is `[features].hooks = true` set and is the project trusted? Script executable? Session restarted? |
+| "no such file" | BMAD installed? Path correct in the active runtime skills tree? Check each installed root, for example `.claude/skills`, `.agents/skills`, or `.codex/skills`. |
 | Premature stops | Marker exists? `storiesRemaining > 0`? v2 fix applied? |
 | Child sessions blocked | `STORY_AUTOMATOR_CHILD=true` set? Check spawn command. |
-| Script hangs | Internal claude calls missing env var? See Session 20 Fix. |
+| Script hangs | Internal agent calls missing env var? See Session 20 Fix. |
 | Hook fires during menus | Normal behavior - ignore messages, wait for real input. |

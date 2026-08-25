@@ -96,11 +96,11 @@ done
 2. **Add explicit step markers** - Tell Codex to output "STEP 1 COMPLETE", "STEP 2 COMPLETE" etc.
 3. **Verify after session** - Check story file Status field, not just sprint-status
 
-**Recommended agent configuration for reliability:**
+**Recommended agent configuration for deterministic reliability:**
 ```yaml
 agentConfig:
-  defaultPrimary: "claude"
-  defaultFallback: "codex"
+  defaultPrimary: "auto"
+  defaultFallback: false  # Disable global fallback; opt in per task
   perTask:
     # create-story: Either agent works well
     create:
@@ -108,6 +108,7 @@ agentConfig:
     # dev-story: Either agent works, Codex may be faster for simple tasks
     dev:
       primary: "codex"
+      fallback: "claude"
     # code-review: Claude recommended - more reliable at following workflow
     review:
       primary: "claude"

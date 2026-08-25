@@ -22,8 +22,9 @@ Code-review uses **deterministic agent selection** from the agents file, same as
 resolve_agent_for_task "review" "$state_file" "{story_id}"
 review_agent="$primary_agent"
 review_fallback="$fallback_agent"
+review_primary_model="$primary_model"   # raw model ID (or empty); bound to review_agent
 
-echo "Code review using: primary=$review_agent, fallback=$review_fallback"
+echo "Code review using: primary=$review_agent, fallback=$review_fallback, model=${review_primary_model:-<cli default>}"
 ```
 
 **Per-task override example in state document:**
@@ -48,15 +49,24 @@ agentConfig:
 ### 1. Spawn Review Session
 
 ```bash
-scripts="$(printf "%s" "{project_root}/.claude/skills/bmad-story-automator/scripts/story-automator")"
+scripts="$(printf "%s" "{project_root}/<installed-skill-root>/bmad-story-automator/scripts/story-automator")"
 [ -n "$scripts" ] || { echo "story-automator helper not found" >&2; exit 1; }
 
 # ⚠️ CRITICAL: --command is REQUIRED - without it, no command runs → never_active failure!
 # Spawn with story-automator tmux-wrapper (handles naming, state cleanup, env vars)
+# Reviews don't alternate agents the way create/dev/auto do — `review_agent`
+# stays bound to the primary for every cycle — so the configured review
+# model applies whenever it's set. `"$review_primary_model"` is always
+# quoted so bracketed IDs like `claude-opus-4-7[1m]` survive shell expansion.
+if [ -n "$review_primary_model" ]; then
+  review_built_cmd=$("$scripts" tmux-wrapper build-cmd review {story_id} --agent "$review_agent" --model "$review_primary_model" --state-file "$state_file")
+else
+  review_built_cmd=$("$scripts" tmux-wrapper build-cmd review {story_id} --agent "$review_agent" --state-file "$state_file")
+fi
 session_name=$("$scripts" tmux-wrapper spawn review {epic} {story_id} \
   --agent "$review_agent" \
   --cycle $reviewCycle \
-  --command "$("$scripts" tmux-wrapper build-cmd review {story_id} --agent "$review_agent" --state-file "$state_file")")
+  --command "$review_built_cmd")
 ```
 
 ### 2. Monitor Session with Verification (v2.2)

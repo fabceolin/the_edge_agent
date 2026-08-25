@@ -7,8 +7,8 @@
 From state document (v3.0.0):
 ```yaml
 agentConfig:
-  defaultPrimary: "claude"
-  defaultFallback: "codex"
+  defaultPrimary: "auto"
+  defaultFallback: false
   perTask:
     dev:
       primary: "codex"
@@ -124,7 +124,7 @@ Check if code-review actually completed:
 
 ## Backwards Compatibility
 
-- If `agentConfig` is missing, default to Claude-only (no fallback)
+- If `agentConfig` is missing, the primary agent resolves from the active runtime provider and fallback is disabled
 - If `aiCommand` is set (legacy), use it directly with the generated natural language prompt
 - New orchestrations should use `agentConfig` instead of `aiCommand`
 - Agents file is authoritative when present

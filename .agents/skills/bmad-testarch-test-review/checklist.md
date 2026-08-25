@@ -141,11 +141,37 @@ Coverage criteria are intentionally excluded from this checklist.
 
 #### Network-First (if `check_network_first: true`)
 
-- [ ] page.route() before page.goto() validated
-- [ ] Race conditions detected (route after navigate)
-- [ ] Network wait patterns checked (`interceptNetworkCall` preferred over ad hoc `waitForResponse`)
+- [ ] Interception registered before navigation validated (M1)
+- [ ] Race conditions detected (interception after navigate)
+- [ ] Network wait patterns checked (`interceptNetworkCall` when `tea_use_playwright_utils` is true, `page.route` when it is false)
 - [ ] Status assigned (PASS/WARN/FAIL)
 - [ ] Violations recorded with recommended fixes
+
+#### Playwright Utils Adoption (if `tea_use_playwright_utils` is true and the package is installed)
+
+Rows M9 and L9. Gate closes and reports `PASS (n/a)` when the flag is false, when `@seontechnologies/playwright-utils` is not a project dependency, or when the file is not a JS/TS Playwright spec.
+
+- [ ] `playwright_utils_installed` recorded from `package.json` and carried in `subagentContext`
+- [ ] `playwrightUtils` convention measured in the step-02 baseline, with adoption ratio and observed form
+- [ ] M9 evaluated per file against the REQUIRED substitutions in `playwright-utils-mandate.md`
+- [ ] Lines carrying `// playwright-utils deviation: <reason>` excluded from M9
+- [ ] `page.route` on third-party scripts, analytics, fonts, or images excluded from M9
+- [ ] RECOMMENDED utilities (`auth-session`, `network-recorder`, `webhook`, `burn-in`) not deducted
+- [ ] L9 scored against the `playwrightUtils` convention baseline, not against an absolute standard
+- [ ] Each finding names the exact substitution, not a generic suggestion
+- [ ] Flag-on-but-package-missing reported once as a recommendation, never as per-file deductions
+
+#### Pact.js Utils Adoption (if `tea_use_pactjs_utils` is true and the package is installed)
+
+Row M10. Gate closes and reports `PASS (n/a)` when the flag is false, when `@seontechnologies/pactjs-utils` is not a project dependency, or when the file is not a JS/TS Pact artifact.
+
+- [ ] `pactjs_utils_installed` recorded from `package.json` and carried in `subagentContext`
+- [ ] M10 evaluated per file against the REQUIRED substitutions in `pactjs-utils-mandate.md`
+- [ ] Lines carrying `// pactjs-utils deviation: <reason>` excluded from M10
+- [ ] `MatchersV3` used directly not treated as a violation
+- [ ] RECOMMENDED items (`zodToPactMatchers`, the `pact-consumer-di.md` injection) not deducted
+- [ ] Determinism and FFI rows (H6, H7, H8, L4) scored independently and reported ahead of M10
+- [ ] Each finding names the exact substitution, not a generic suggestion
 
 #### Assertions (if `check_assertions: true`)
 
@@ -158,9 +184,9 @@ Coverage criteria are intentionally excluded from this checklist.
 #### Test Length (if `check_test_length: true`)
 
 - [ ] File line count calculated
-- [ ] Threshold comparison (≤300 lines ideal)
+- [ ] Threshold comparison (≤1000 lines ideal)
 - [ ] Status assigned (PASS/WARN/FAIL)
-- [ ] Splitting recommendations generated (if >300 lines)
+- [ ] Splitting recommendations generated (if >1000 lines)
 
 #### Test Duration (if `check_test_duration: true`)
 
@@ -210,10 +236,10 @@ Coverage criteria are intentionally excluded from this checklist.
 **Quality Grade:**
 
 - [ ] Grade assigned based on score:
-  - 90-100: A+ (Excellent)
-  - 80-89: A (Good)
-  - 70-79: B (Acceptable)
-  - 60-69: C (Needs Improvement)
+  - 90-100: A (Excellent)
+  - 80-89: B (Good)
+  - 70-79: C (Acceptable)
+  - 60-69: D (Needs Improvement)
   - <60: F (Critical Issues)
 
 ---
@@ -266,7 +292,7 @@ Coverage criteria are intentionally excluded from this checklist.
 
 ### Step 6: Optional Outputs Generation
 
-**Inline Comments** (if `generate_inline_comments: true`):
+**Inline Comments** (apply only when `generate_inline_comments` resolves `true`; the default `false` skips these items — the run is report-only):
 
 - [ ] Inline comments generated at violation locations
 - [ ] Comment format: `// TODO (TEA Review): [Issue] - See test-review-{filename}.md`
@@ -334,7 +360,12 @@ Coverage criteria are intentionally excluded from this checklist.
 - [ ] Issue explanations are understandable
 - [ ] Recommended fixes are implementable
 - [ ] Code examples are correct and runnable
-- [ ] Recommendation (Approve/Request changes) is clear
+- [ ] Recommendation (Approve / Approve with Comments / Request Changes / Block) is clear
+- [ ] Recommendation matches what `step-03f` §3b **computes** from the violation counts, and was not chosen by judgment
+- [ ] Every violation carries its `criteria-registry.md` row, and every severity matches that row
+- [ ] Each Convention criterion states its adoption count, and an `absent` or `unknown` convention deducted nothing
+- [ ] Every `✅ PASS (n/a)` row says why its gate was closed
+- [ ] Any changed test artifact excluded from the review set appears under `## Excluded From Review Set`
 
 ---
 
@@ -363,10 +394,10 @@ Coverage criteria are intentionally excluded from this checklist.
 
 ### Context Awareness
 
-- [ ] Review considers project context (some patterns may be justified)
-- [ ] Violations with justification comments noted as acceptable
+- [ ] Context used to discover requirement mismatches and clarify impact
+- [ ] Every rubric violation remains cataloged at its rubric-defined severity
 - [ ] Edge cases acknowledged
-- [ ] Recommendations are pragmatic, not dogmatic
+- [ ] Context does not change severity, deductions, or the score
 
 ---
 
@@ -417,12 +448,12 @@ Coverage criteria are intentionally excluded from this checklist.
 - [ ] Framework-specific violations detected (e.g., Cypress anti-patterns)
 - [ ] Knowledge fragments applied appropriately for framework
 
-### Justified Violations
+### Context and Risk Acceptance
 
-- [ ] Violations with justification comments in code noted as acceptable
-- [ ] Justifications evaluated for legitimacy
-- [ ] Report acknowledges justified patterns
-- [ ] Score not penalized for justified violations
+- [ ] Justification comments captured as context without exempting violations
+- [ ] Claims that conflict with the rubric reported as findings
+- [ ] Formal risk acceptance routed to trace or the release gate
+- [ ] Context Waivers Applied remains 0 and every violation affects the score
 
 ---
 
@@ -470,6 +501,6 @@ Record any issues, observations, or important context during workflow execution:
 - **Review Scope**: [single file, directory, full suite]
 - **Quality Score**: [0-100 score, letter grade]
 - **Critical Issues**: [Count of P0/P1 violations]
-- **Recommendation**: [Approve / Approve with comments / Request changes / Block]
-- **Special Considerations**: [Legacy code, justified patterns, edge cases]
+- **Recommendation**: [Approve / Approve with Comments / Request Changes / Block]
+- **Special Considerations**: [Legacy code, context constraints, edge cases]
 - **Follow-up Actions**: [Re-review after fixes, pair programming, etc.]

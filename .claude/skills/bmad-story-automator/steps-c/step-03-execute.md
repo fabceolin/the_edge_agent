@@ -128,9 +128,18 @@ If multiple logs exist, run one grep/regex pass across all log files and forward
 
 ```bash
 # Retry loop: see {retryStrategy}
+# Resolve agent/model. Pass `--model` only when the current attempt is on
+# the primary agent (model is bound to the primary). `"$primary_model"` is
+# always quoted so bracketed IDs like `claude-opus-4-7[1m]` survive shell.
+resolve_agent_for_task "create" "$state_file" "{story_id}"
+if should_apply_primary_model "$current_agent"; then
+  built_cmd=$("$scripts" tmux-wrapper build-cmd create {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+else
+  built_cmd=$("$scripts" tmux-wrapper build-cmd create {story_id} --agent "$current_agent" --state-file "$state_file")
+fi
 session=$("$scripts" tmux-wrapper spawn create {epic} {story_id} \
   --agent "$current_agent" \
-  --command "$("$scripts" tmux-wrapper build-cmd create {story_id} --agent "$current_agent" --state-file "$state_file")")
+  --command "$built_cmd")
 result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 "$scripts" tmux-wrapper kill "$session"
 validation=$("$scripts" orchestrator-helper verify-step create {story_id} --state-file "$state_file")
@@ -152,9 +161,15 @@ validation=$("$scripts" orchestrator-helper verify-step create {story_id} --stat
 
 ```bash
 # Retry loop with agent alternation: see {retryStrategy}
+resolve_agent_for_task "dev" "$state_file" "{story_id}"
+if should_apply_primary_model "$current_agent"; then
+  built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+else
+  built_cmd=$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --state-file "$state_file")
+fi
 session=$("$scripts" tmux-wrapper spawn dev {epic} {story_id} \
   --agent "$current_agent" \
-  --command "$("$scripts" tmux-wrapper build-cmd dev {story_id} --agent "$current_agent" --state-file "$state_file")")
+  --command "$built_cmd")
 result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 "$scripts" tmux-wrapper kill "$session"
 ```

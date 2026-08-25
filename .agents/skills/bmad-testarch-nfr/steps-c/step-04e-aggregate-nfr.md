@@ -1,15 +1,15 @@
 ---
 name: 'step-04e-aggregate-nfr'
-description: 'Aggregate NFR domain assessments into executive summary'
+description: 'Aggregate NFR domain evidence audits into executive summary'
 nextStepFile: '{skill-root}/steps-c/step-05-generate-report.md'
 outputFile: '{test_artifacts}/nfr-assessment.md'
 ---
 
-# Step 4E: Aggregate NFR Assessment Results
+# Step 4E: Aggregate NFR Evidence Audit Results
 
 ## STEP GOAL
 
-Read outputs from 4 parallel NFR subagents, calculate overall risk level, aggregate compliance status, and identify cross-domain risks.
+Read outputs from 4 parallel NFR evidence audit subagents, calculate overall risk level, aggregate compliance status, and identify cross-domain risks.
 
 ---
 
@@ -28,12 +28,42 @@ Read outputs from 4 parallel NFR subagents, calculate overall risk level, aggreg
 ### 1. Read All Subagent Outputs
 
 ```javascript
-const domains = ['security', 'performance', 'reliability', 'scalability'];
+const domains = ['security', 'performance', 'reliability', 'maintainability'];
 const assessments = {};
 
 domains.forEach((domain) => {
   const outputPath = `/tmp/tea-nfr-${domain}-{{timestamp}}.json`;
   assessments[domain] = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+});
+```
+
+---
+
+### 1a. Enforce the Undefined-Threshold Default
+
+Step 2 (Define Thresholds) marks a category **UNKNOWN** when no threshold was
+found in any source, and states the plan to report **CONCERNS** for it (see
+`{skill-root}/steps-c/nfr-status-definitions.md`). This is where that plan is
+checked, not just stated: a worker cannot silently report PASS for a domain
+whose threshold was never established.
+
+```javascript
+const domainThresholdKnown = (domain) => {
+  const threshold = subagentContext.nfr_thresholds?.[domain];
+  return threshold !== undefined && threshold !== 'UNKNOWN';
+};
+
+domains.forEach((domain) => {
+  if (domainThresholdKnown(domain)) return;
+  assessments[domain].findings.forEach((finding) => {
+    if (finding.status === 'PASS') {
+      finding.status = 'CONCERNS';
+      finding.description = `${finding.description} (downgraded from PASS: threshold was UNKNOWN at Step 2; an unmeasured target cannot pass).`;
+    }
+  });
+  Object.entries(assessments[domain].compliance || {}).forEach(([standard, status]) => {
+    if (status === 'PASS') assessments[domain].compliance[standard] = 'CONCERNS';
+  });
 });
 ```
 
@@ -77,7 +107,7 @@ domains.forEach((domain) => {
 const complianceSummary = {};
 Object.entries(allCompliance).forEach(([standard, statuses]) => {
   const hasFail = statuses.some((s) => s.status === 'FAIL');
-  const hasPartial = statuses.some((s) => s.status === 'PARTIAL' || s.status === 'CONCERN');
+  const hasPartial = statuses.some((s) => s.status === 'PARTIAL' || s.status === 'CONCERNS');
 
   complianceSummary[standard] = hasFail ? 'FAIL' : hasPartial ? 'PARTIAL' : 'PASS';
 });
@@ -92,13 +122,13 @@ Object.entries(allCompliance).forEach(([standard, statuses]) => {
 ```javascript
 const crossDomainRisks = [];
 
-// Example: Performance + Scalability issue
-const perfConcerns = assessments.performance.findings.filter((f) => f.status !== 'PASS');
-const scaleConcerns = assessments.scalability.findings.filter((f) => f.status !== 'PASS');
-if (perfConcerns.length > 0 && scaleConcerns.length > 0) {
+// Example: Reliability + Maintainability issue
+const reliabilityFindingConcerns = assessments.reliability.findings.filter((f) => f.status !== 'PASS');
+const maintainabilityConcerns = assessments.maintainability.findings.filter((f) => f.status !== 'PASS');
+if (reliabilityFindingConcerns.length > 0 && maintainabilityConcerns.length > 0) {
   crossDomainRisks.push({
-    domains: ['performance', 'scalability'],
-    description: 'Performance issues may worsen under scale',
+    domains: ['reliability', 'maintainability'],
+    description: 'Low test coverage or missing observability may hide reliability regressions',
     impact: 'HIGH',
   });
 }
@@ -170,7 +200,7 @@ const executiveSummary = {
     security: assessments.security.risk_level,
     performance: assessments.performance.risk_level,
     reliability: assessments.reliability.risk_level,
-    scalability: assessments.scalability.risk_level,
+    maintainability: assessments.maintainability.risk_level,
   },
 
   subagent_execution: subagentExecutionLabel,
@@ -186,7 +216,7 @@ fs.writeFileSync('/tmp/tea-nfr-summary-{{timestamp}}.json', JSON.stringify(execu
 ### 7. Display Summary to User
 
 ```
-✅ NFR Assessment Complete ({subagentExecutionLabel})
+✅ NFR Evidence Audit Complete ({subagentExecutionLabel})
 
 🎯 Overall Risk Level: {overallRisk}
 
@@ -194,7 +224,7 @@ fs.writeFileSync('/tmp/tea-nfr-summary-{{timestamp}}.json', JSON.stringify(execu
 - Security:      {security_risk}
 - Performance:   {performance_risk}
 - Reliability:   {reliability_risk}
-- Scalability:   {scalability_risk}
+- Maintainability: {maintainability_risk}
 
 ✅ Compliance Summary:
 {list standards with PASS/PARTIAL/FAIL}

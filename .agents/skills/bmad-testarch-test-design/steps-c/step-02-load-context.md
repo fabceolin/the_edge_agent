@@ -3,7 +3,7 @@ name: 'step-02-load-context'
 description: 'Load documents, configuration, and knowledge fragments for the chosen mode'
 nextStepFile: '{skill-root}/steps-c/step-03-risk-and-testability.md'
 knowledgeIndex: './resources/tea-index.csv'
-outputFile: '{test_artifacts}/test-design-progress.md'
+outputFile: '{test_artifacts}/test-design-progress-{run_key}.md'
 ---
 
 # Step 2: Load Context & Knowledge Base
@@ -52,9 +52,11 @@ From `{config_source}`:
 
 If `test_stack_type` is `"auto"` or not configured, infer `{detected_stack}` by scanning `{project-root}`:
 
+- **Mobile indicators**: `.maestro/` or `maestro/` flow directory, `app.json`/`app.config.*` declaring expo or react-native, `Podfile`, `android/app/build.gradle`, `*.xcodeproj`, `pubspec.yaml`
 - **Frontend indicators**: `playwright.config.*`, `cypress.config.*`, `package.json` with react/vue/angular
 - **Backend indicators**: `pyproject.toml`, `pom.xml`/`build.gradle`, `go.mod`, `*.csproj`, `Gemfile`, `Cargo.toml`
-- **Both present** → `fullstack`; only frontend → `frontend`; only backend → `backend`
+- **Check mobile first** → `mobile`. A React Native or Expo project carries `package.json` with react and misdetects as `frontend` otherwise. When both mobile and backend indicators are present, preserve backend manifests and context alongside mobile context rather than discarding backend information.
+- **Both frontend and backend present** → `fullstack`; only frontend → `frontend`; only backend → `backend`
 - Explicit `test_stack_type` overrides auto-detection
 
 ---
@@ -75,8 +77,11 @@ Extract:
 - Tech stack & dependencies
 - Integration points
 - NFRs (performance, security, reliability, compliance)
+- NFR thresholds and missing threshold questions
 
 ### Epic-Level Mode (Phase 4)
+
+Load documents for the epic identified by the `epic_num` resolved in step 1. Do not widen the scope to other epics and do not re-derive `epic_num`.
 
 Load:
 
@@ -132,21 +137,25 @@ Load fragments based on their `tier` classification in `tea-index.csv`:
 
 ### Playwright Utils Loading Profiles
 
-**If `tea_use_playwright_utils` is enabled**, select the appropriate loading profile:
+**If `tea_use_playwright_utils` is enabled**, load `playwright-utils-mandate.md` FIRST, before any profile below. Every code example this workflow puts into a design document is a pattern a developer will copy, so the examples follow the mandate: `apiRequest` rather than the raw `request` fixture, `interceptNetworkCall` rather than `page.route`, `test` imported from the project's merged fixtures with `expect` still from `@playwright/test`.
+
+Then select the appropriate loading profile:
 
 - **API-only profile** (when `{detected_stack}` is `backend` or no `page.goto`/`page.locator` found in test files):
-  Load: `overview`, `api-request`, `auth-session`, `recurse` (~1,800 lines)
+  Load: `playwright-utils-mandate`, `overview`, `api-request`, `auth-session`, `recurse` (~2,100 lines)
 
 - **Full UI+API profile** (when `{detected_stack}` is `frontend`/`fullstack` or browser tests detected):
-  Load: all Playwright Utils core fragments (~4,500 lines)
+  Load: `playwright-utils-mandate` plus all Playwright Utils core fragments (~4,800 lines)
 
 **Detection**: Scan `{test_dir}` for files containing `page.goto` or `page.locator`. If none found, use API-only profile.
 
 ### Pact.js Utils Loading
 
-**If `tea_use_pactjs_utils` is enabled** (and `{detected_stack}` is `backend` or `fullstack`, or microservices indicators detected):
+**If `tea_use_pactjs_utils` is enabled** and contract testing is relevant. Relevance is not a stack question: the consumer side of a contract is most often a `frontend`, and gating on `backend`/`fullstack` alone skips exactly the case Pact exists for. Load when `{detected_stack}` is `backend` or `fullstack`, **or** when Pact artifacts are present on any stack (a `pact/` or `tests/contract/` directory, `.pacttest.ts` files, `@pact-foundation/pact` in `package.json`, `PACT_BROKER_*` in the environment), **or** when microservices indicators are detected:
 
-Load: `pactjs-utils-overview.md`, `pactjs-utils-consumer-helpers.md`, `pactjs-utils-provider-verifier.md`, `pactjs-utils-request-filter.md`
+Load `pactjs-utils-mandate.md` FIRST. Every Pact code example this workflow puts into a design document is a pattern a developer will copy, so the examples follow the mandate: `createProviderState` rather than a hand-cast `.given()`, `buildVerifierOptions` rather than a literal options object. The mandate also carries the relevance gate: the flag defaults to `true` and never means "add contract tests to this project".
+
+Then load: `pactjs-utils-overview.md`, `pactjs-utils-consumer-helpers.md`, `pactjs-utils-provider-verifier.md`, `pactjs-utils-request-filter.md`, `pactjs-utils-zod-to-pact.md`
 
 **If `tea_use_pactjs_utils` is disabled** but contract testing is relevant:
 
@@ -158,6 +167,8 @@ Load: `contract-testing.md`
 
 Load: `pact-mcp.md` — enables agent to use SmartBear MCP "Fetch Provider States" and "Matrix" tools to understand existing contract landscape during test design.
 
+**`tea_pact_mcp` defaults to `"mcp"`, and Pact artifacts are gated on relevance, not on this flag.** Follow `pact-mcp.md` § _When the Tools Are Not Reachable_: the probe is a tool-list check and never a broker call, its result is recorded once per run as `pact_mcp_reachable`, and the fallback order is provider source, then an OpenAPI spec, then `confidence-gate.md`. Report the outcome once and continue; never block, never retry, never present inferred provider states as broker data.
+
 ## 4. Load Knowledge Base Fragments
 
 Use `{knowledgeIndex}` to select and load only relevant fragments.
@@ -165,6 +176,7 @@ Use `{knowledgeIndex}` to select and load only relevant fragments.
 ### System-Level Mode (Required)
 
 - `adr-quality-readiness-checklist.md`
+- `nfr-criteria.md`
 - `test-levels-framework.md`
 - `risk-governance.md`
 - `test-quality.md`
@@ -175,6 +187,11 @@ Use `{knowledgeIndex}` to select and load only relevant fragments.
 - `probability-impact.md`
 - `test-levels-framework.md`
 - `test-priorities-matrix.md`
+
+**Epic-Level NFR Loading:**
+
+- Load `nfr-criteria.md` when the epic/story includes security, performance, reliability, scalability, compliance, maintainability, or operational requirements.
+- Use prior system-level NFR planning from `test-design-architecture.md` or `test-design-qa.md` if present.
 
 **Playwright CLI (if `tea_browser_automation` is "cli" or "auto"):**
 
@@ -212,6 +229,8 @@ Summarize what was loaded and confirm with the user if anything is missing.
 
   ```yaml
   ---
+  runScope: '{run_scope}'
+  runKey: '{run_key}'
   workflowStatus: 'in-progress'
   totalSteps: 5
   stepsCompleted: ['step-02-load-context']
@@ -224,6 +243,7 @@ Summarize what was loaded and confirm with the user if anything is missing.
   Then write this step's output below the frontmatter.
 
 - **If `{outputFile}` already exists**, update:
+  - Leave `runScope` and `runKey` exactly as step 1 wrote them
   - Set `workflowStatus: 'in-progress'`
   - Set `totalSteps: 5`
   - Add `'step-02-load-context'` to `stepsCompleted` array (only if not already present)

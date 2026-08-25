@@ -128,14 +128,23 @@ fi
 2. Log: `- **[{timestamp}]** Epic {epic_number}: ALL STORIES DONE - triggering retrospective`
 
 ```bash
-# CRITICAL: Use build-cmd to get full YOLO prompt with doc verification
-cmd=$("{scriptsDir}" tmux-wrapper build-cmd retro {epic_number} --agent "claude")
-session=$("{scriptsDir}" tmux-wrapper spawn retro "" {epic_number} --agent "claude" --command "$cmd")
+# CRITICAL: Use build-cmd to get full YOLO prompt with doc verification.
+# Pass `"$retro_model"` quoted so bracketed IDs like `claude-opus-4-7[1m]`
+# survive shell expansion intact.
+retro_selection=$("{scriptsDir}" orchestrator-helper retro-agent --state-file "{outputFile}")
+retro_agent=$(echo "$retro_selection" | jq -r '.primary')
+retro_model=$(echo "$retro_selection" | jq -r '.model // ""')
+if [ -n "$retro_model" ]; then
+    cmd=$("{scriptsDir}" tmux-wrapper build-cmd retro {epic_number} --agent "$retro_agent" --model "$retro_model")
+else
+    cmd=$("{scriptsDir}" tmux-wrapper build-cmd retro {epic_number} --agent "$retro_agent")
+fi
+session=$("{scriptsDir}" tmux-wrapper spawn retro "" {epic_number} --agent "$retro_agent" --command "$cmd")
 
 # Monitor with safe failure (never escalate on retro failure)
 retro_timeout=60
 [ "$story_count" -gt 10 ] && retro_timeout=90
-result=$("{scriptsDir}" monitor-session "$session" --json --agent "claude" --timeout "$retro_timeout")
+result=$("{scriptsDir}" monitor-session "$session" --json --agent "$retro_agent" --timeout "$retro_timeout")
 "{scriptsDir}" tmux-wrapper kill "$session"
 
 retro_status=$(echo "$result" | jq -r '.final_state')
@@ -163,7 +172,7 @@ retrospectives:
 
 **IMPORTANT RULES:**
 - **ALL stories must be done**: Retrospective only triggers when every story in the epic shows "done" in sprint status
-- **Use `build-cmd retro` with Claude**: Retrospectives do not support Codex
+- **Use configured retro agent**: Resolve retrospective agent from `agentConfig` before spawn
 - **Never escalate; non-blocking**: If retrospective fails for any reason, log warning and continue
 
 **END FOR EACH**

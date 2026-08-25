@@ -50,7 +50,7 @@
 ### STOP (Genuinely Unrecoverable)
 
 1. Update state document status to `STOPPED`
-2. Delete marker: `rm "{project_root}/.claude/.story-automator-active"`
+2. Delete marker using the installed helper: `orchestrator-helper marker remove`
 3. Log WHY you stopped (be specific)
 4. Exit cleanly
 

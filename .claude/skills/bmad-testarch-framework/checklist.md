@@ -123,6 +123,16 @@ Before starting the workflow:
 - [ ] Type definitions added (if TypeScript)
 - [ ] Users can extend with additional scripts as needed
 
+### Step 12: Write-Time Enforcement Hook
+
+- [ ] `.claude/hooks/tea-enforce.cjs` copied byte for byte from the workflow resource (or the section skipped, with the platform named, on an agent without tool hooks)
+- [ ] `.tea/enforce-config.json` written with globs for the **detected** stacks only, never a Playwright default
+- [ ] `pactConfigGlobs` populated only when a pact vitest config exists
+- [ ] `excludeGlobs` covers the k6 script paths when k6 is present
+- [ ] `hookSha256` set to the sha256 of the copied hook, so a locally edited copy announces itself
+- [ ] All three hooks registered in `.claude/settings.json` (`--pre`, `--post`, `--stop`), merged into any existing file rather than overwriting it
+- [ ] `tests/README.md` explains where the rules come from and how to disable one
+
 ---
 
 ## Output Validation
@@ -180,8 +190,23 @@ Before starting the workflow:
 - [ ] Tests follow Given-When-Then structure
 - [ ] No hard-coded waits or sleeps
 
+### Playwright Utils Scaffold (when `tea_use_playwright_utils` enabled)
+
+Per `playwright-utils-mandate.md`. Skip for Maestro, Cypress, and non-Playwright backend stacks.
+
+- [ ] `@seontechnologies/playwright-utils` installed and present in `package.json` devDependencies
+- [ ] `{test_dir}/support/merged-fixtures.ts` created, composing with `mergeTests` and re-exporting `expect` and `log`
+- [ ] `{test_dir}/support/auth-fixture.ts` created from `setAuthProvider` + `createAuthFixtures()`, implementing all six `AuthProvider` members, with any unknown `manageAuthToken` or cookie name left as a marked TODO and reported
+- [ ] `authStorageInit()` / `configureAuthSession()` wired into `global-setup.ts`, token storage directory gitignored
+- [ ] `network-error-monitor` included in the merge for browser suites
+- [ ] Sample API test uses `apiRequest`, not the raw `request` fixture
+- [ ] Sample UI test declares `interceptNetworkCall` before `page.goto` (frontend/fullstack)
+- [ ] Every sample imports `test` from the merged fixtures, never from `@playwright/test`
+- [ ] Package name is `@seontechnologies/playwright-utils` everywhere (never `@playwright-utils/*`)
+
 ### Knowledge Base Alignment
 
+- [ ] Scaffold matches `playwright-utils-mandate.md` (when `tea_use_playwright_utils` enabled)
 - [ ] Fixture pattern matches `fixture-architecture.md`
 - [ ] Data factories match `data-factories.md`
 - [ ] Network handling matches `network-first.md`

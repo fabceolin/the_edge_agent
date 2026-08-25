@@ -11,7 +11,7 @@ lastUpdated: ""
 createdAt: ""
 
 # Configuration
-aiCommand: "claude --dangerously-skip-permissions"  # Deprecated: use agentConfig
+aiCommand: ""  # Deprecated: use agentConfig
 overrides:
   skipAutomate: false
   maxParallel: 1
@@ -25,8 +25,8 @@ legacyPolicy: false
 
 # Agent Configuration (v3.0.0)
 agentConfig:
-  defaultPrimary: "claude"    # Default agent: claude | codex
-  defaultFallback: "codex"    # Default fallback: claude | codex | false (disabled)
+  defaultPrimary: "auto"      # auto resolves to the active runtime provider: claude | codex
+  defaultFallback: false      # Default fallback: claude | codex | false (disabled)
   # Per-task overrides (optional)
   # perTask:
   #   create:

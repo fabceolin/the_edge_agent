@@ -53,6 +53,7 @@ To resolve agents for a specific story/task:
 selection=$("$scripts" orchestrator-helper agents-resolve --state-file "$state_file" --story "{story_id}" --task "{task}")
 primary=$(echo "$selection" | jq -r '.primary')
 fallback=$(echo "$selection" | jq -r '.fallback')
+model=$(echo "$selection" | jq -r '.model // ""')   # "" when no override; pass to build-cmd as `--model <id>` when non-empty
 ```
 
 Direct agents-file resolution is also supported when you already know the generated agents plan path:
@@ -60,6 +61,7 @@ Direct agents-file resolution is also supported when you already know the genera
 selection=$("$scripts" orchestrator-helper agents-resolve --agents-file "$agents_file" --story "{story_id}" --task "{task}")
 primary=$(echo "$selection" | jq -r '.primary')
 fallback=$(echo "$selection" | jq -r '.fallback')
+model=$(echo "$selection" | jq -r '.model // ""')
 ```
 
 ## Step Types
@@ -70,22 +72,30 @@ fallback=$(echo "$selection" | jq -r '.fallback')
 | `dev` | Implement story tasks | Claude, Codex |
 | `auto` | Test automation | Claude, Codex |
 | `review` | Code review with auto-fix | Claude, Codex |
-| `retro` | Retrospective (YOLO mode) | **Claude ONLY** |
+| `retro` | Retrospective (YOLO mode) | Claude, Codex |
 
 ## Retrospective Commands (v1.5.0)
 
 **CRITICAL:** Retrospectives use a special step type that:
-- Always uses Claude (Codex not supported)
+- Resolves the retro agent from `agentConfig`
 - Returns full YOLO mode prompt with doc verification instructions
 - Uses epic_number instead of story_id
 
 ```bash
-# For retro, "story_id" parameter is actually the epic_number
-cmd=$("$scripts" tmux-wrapper build-cmd retro {epic_number} --agent "claude")
-session=$("$scripts" tmux-wrapper spawn retro "" {epic_number} --agent "claude" --command "$cmd")
+# For retro, "story_id" parameter is actually the epic_number.
+# Always pass "$retro_model" quoted so bracketed IDs survive shell expansion.
+retro_selection=$("$scripts" orchestrator-helper retro-agent --state-file "{state_file}")
+retro_agent=$(echo "$retro_selection" | jq -r '.primary')
+retro_model=$(echo "$retro_selection" | jq -r '.model // ""')
+if [ -n "$retro_model" ]; then
+    cmd=$("$scripts" tmux-wrapper build-cmd retro {epic_number} --agent "$retro_agent" --model "$retro_model")
+else
+    cmd=$("$scripts" tmux-wrapper build-cmd retro {epic_number} --agent "$retro_agent")
+fi
+session=$("$scripts" tmux-wrapper spawn retro "" {epic_number} --agent "$retro_agent" --command "$cmd")
 
 # Monitor (retrospectives never block, failures just logged)
-result=$("$scripts" monitor-session "$session" --json --agent "claude")
+result=$("$scripts" monitor-session "$session" --json --agent "$retro_agent")
 "$scripts" tmux-wrapper kill "$session"
 ```
 

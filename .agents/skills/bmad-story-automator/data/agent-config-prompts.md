@@ -51,7 +51,7 @@ Your stories by complexity:
 | Low | claude | claude | claude | claude | Claude handles simple tasks well |
 | Medium | codex | codex | codex | codex | Codex for moderate complexity (Claude fallback) |
 | High | codex | codex | codex | codex | Codex for complex work (Claude fallback) |
-| Retro | claude | - | - | - | Retrospectives always use Claude |
+| Retro | inherits default | - | - | - | Retrospectives follow the configured primary agent unless overridden |
 
 **Options:**
 1. **[S]uggested** - Apply complexity-based defaults above
@@ -85,7 +85,7 @@ Your stories by complexity:
 | Low | claude | claude | claude | Claude handles simple tasks well |
 | Medium | codex | codex | codex | Codex for moderate complexity (Claude fallback) |
 | High | codex | codex | codex | Codex for complex work (Claude fallback) |
-| Retro | claude | - | - | Retrospectives always use Claude |
+| Retro | inherits default | - | - | Retrospectives follow the configured primary agent unless overridden |
 
 **Options:**
 1. **[S]uggested** - Apply complexity-based defaults above
@@ -181,19 +181,29 @@ Enter agent config:
 ```
 **Custom Agent Configuration**
 
-Define agents per complexity level and/or per task.
+Define agents per complexity level and/or per task. The optional third value
+selects a specific model ID for that task (passed via `--model` to the CLI).
 
-**Per-Complexity Format:** `complexity.task: primary, fallback`
+**Per-Complexity Format:** `complexity.task: primary, fallback[, model]`
 - `low.dev: claude, false` → Claude for low-complexity dev, no fallback
 - `medium.create: codex, claude` → Codex for medium-complexity create
-- `high.review: claude, false` → Claude for high-complexity review
+- `high.review: claude, false, claude-sonnet-4-6` → Sonnet 4.6 review on high-complexity
 
-**Per-Task Format (applies to all complexities):** `task: primary, fallback`
-- `review: claude, false` → Claude for ALL reviews
-- `dev: codex, claude` → Codex for ALL dev
+**Per-Task Format (applies to all complexities):** `task: primary, fallback[, model]`
+- `review: claude, false, claude-sonnet-4-6` → Sonnet 4.6 for ALL reviews
+- `dev: claude, false, claude-opus-4-7[1m]` → Opus 4.7 (1M context) for ALL dev
+- `dev: codex, claude, gpt-5.5` → Codex/gpt-5.5 for dev, Claude fallback
+
+**Default model (applies to every task unless overridden):** `defaultModel: <id>`
+- `defaultModel: claude-opus-4-7[1m]`
 
 **Complexity levels:** low, medium, high
 **Tasks:** create, dev, auto, review
+**Model IDs:** alias (`opus`, `sonnet`, `gpt-5.5`) or full ID
+(`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-opus-4-7[1m]`, `gpt-5.3-codex`).
+Leave model empty (or pass `auto` / `default` / `false` / `none` / `null`) to use the CLI's built-in default. All of these sentinels are treated as unset and omitted from the persisted state.
+
+A per-task `model: <sentinel>` is the explicit opt-out: it clears any inherited `defaultModel` for that task, so the spawned CLI runs without `--model`. Omit the `model` key entirely if you want the task to inherit `defaultModel`.
 
 Enter overrides (comma-separated):
 ```

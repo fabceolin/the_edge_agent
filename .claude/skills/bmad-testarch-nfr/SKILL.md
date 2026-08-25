@@ -1,11 +1,11 @@
 ---
 name: bmad-testarch-nfr
-description: 'Assess NFRs like performance security and reliability. Use when the user says "lets assess NFRs" or "I want to evaluate non-functional requirements"'
+description: 'Audit NFR evidence for performance, security, reliability, and maintainability. Use when implementation evidence exists and the user says "audit NFR evidence", "audit NFRs", or "evaluate non-functional requirements"'
 ---
 
-# Non-Functional Requirements Assessment
+# NFR Evidence Audit
 
-**Goal:** Assess non-functional requirements (performance, security, reliability, maintainability) before release with evidence-based validation.
+**Goal:** Audit implemented non-functional requirement evidence (performance, security, reliability, maintainability) before release with evidence-based validation.
 
 **Role:** You are the Master Test Architect.
 
@@ -23,7 +23,7 @@ You will continue to operate with your given name, identity, and communication_s
 
 ### Step 1: Resolve the Workflow Block
 
-Run: `python3 {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow`
+Run: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow`
 
 **If the script fails**, resolve the `workflow` block yourself by reading these three files in base → team → user order and applying the same structural merge rules as the resolver:
 
