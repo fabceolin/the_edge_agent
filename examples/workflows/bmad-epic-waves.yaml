@@ -68,7 +68,9 @@ description: |
     test_design (str, default auto): gate de test-design. `auto` decide o esforço de
       desenho de teste por story a partir da MESMA classificação que escolhe o modelo
       (tier + risk flags), em skip/minimal/targeted/full; `off` desliga; `force` põe
-      piso `targeted` em todas. Story sem classificação cai em `targeted` (fail-closed).
+      piso `targeted` em todas. Story sem classificação cai em `targeted` (fail-closed),
+      mas se NENHUMA story tiver classificação o gate fica inerte, para não mudar o
+      comportamento de quem não pediu (`force` sobrepõe).
       O nível vai no payload da story (`story_test_level`): o dev desenha os cenários
       antes de implementar e o review confere a cobertura contra eles.
     test_design_floors (dict, opcional): remapeia risk_flag -> nível mínimo de test-design.
@@ -1020,8 +1022,16 @@ nodes:
       # Roda fora do `if auto_model` de propósito: sem classificação o gate ainda
       # tem de emitir veredito, e o veredito seguro não é "pula".
       story_test_levels = {}
+      # Sem classificação NENHUMA (auto_model=false, deps fornecido, ou o agente
+      # não devolveu nada) não há sinal, e exigir plano de todas mudaria o
+      # comportamento de uma invocação que não pediu isso. `force` sobrepõe.
+      has_classification = bool(story_tiers)
       if test_design_mode == "off":
           print("test_design=off — nenhuma story recebe plano de teste dirigido.")
+      elif not has_classification and test_design_mode != "force":
+          print("Gate de test-design inerte: nenhuma classificação disponível "
+                "(auto_model=false, deps fornecido ou resultado vazio). "
+                "Passe test_design:force para exigir plano mesmo assim.")
       else:
           for k in keys:
               tier = story_tiers.get(k)
