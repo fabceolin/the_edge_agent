@@ -72,6 +72,7 @@ state_schema:
   story_tier: str
   story_route: str
   story_risk_flags: list
+  story_test_level: str
   active_fix_provider: str
   fix_escalation: str
   create_output: str
@@ -392,7 +393,9 @@ nodes:
             {% endif %}
             Antes de agir, carregue contexto de projeto se existir: CLAUDE.md, **/project-context.md, e docs de arquitetura referenciados pela própria story (Dev Notes) — respeite invariantes centrais documentados ali (ex.: fail-closed). Épicos com dependência sequencial rígida costumam ter uma "Task 0" bloqueante exigindo confirmar no sprint-status.yaml que a anterior está "done" e ler o CÓDIGO REAL da anterior — respeite se presente.
 
-            Implemente esta story do zero ao fim seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-dev-story/SKILL.md` (leia o arquivo inteiro, inclusive o <workflow> com passos 1 a 10). Adapte para rodar sem humano:
+            {% if state.story_test_level and state.story_test_level not in ['skip', ''] %}**DESENHE OS TESTES ANTES DE IMPLEMENTAR (nível `{{ state.story_test_level }}`).** O gate de test-design classificou esta story{% if state.story_risk_flags %} pelos riscos: {{ state.story_risk_flags | join(', ') }}{% endif %}. Antes da primeira linha de implementação, escreva na story, em "Test Design", a lista de cenários que você vai cobrir, cada um com o nível (unit / integração / e2e). Derive-os dos ACs **e dos riscos acima**, não só dos ACs: o risco é justamente o que o AC não enuncia. Inclua os cenários NEGATIVOS (entrada inválida, falha do colaborador, estado concorrente) que o risco implica.{% if state.story_test_level == 'full' %} Nível `full`: o oráculo tem de ser fixado antes, então cubra explicitamente falha, retry/replay quando houver idempotência ou concorrência, e compatibilidade retroativa quando houver contrato público ou migração.{% endif %} Depois use essa lista como checklist do red-green-refactor: cada cenário vira teste, ou ganha na própria story uma justificativa escrita de por que não virou. Não escreva a lista depois de implementar — o valor dela é ser um oráculo independente da sua implementação.
+
+            {% endif %}Implemente esta story do zero ao fim seguindo EXATAMENTE `{{ state.skills_dir }}/bmad-dev-story/SKILL.md` (leia o arquivo inteiro, inclusive o <workflow> com passos 1 a 10). Adapte para rodar sem humano:
             - Ignore `python3 _bmad/scripts/resolve_customization.py` se falhar; use defaults de `_bmad/bmm/config.yaml`.
             - Nunca pare por "milestone"/"sessão" — só pare com todos os ACs/tasks completos (Status -> "review") ou num HALT genuíno (dependência real ausente, decisão arquitetural não coberta). Se acontecer, comece o resumo com "HALT:".
             - Red-green-refactor de verdade: teste que falha primeiro, implementação mínima, depois suíte completa (não pule regressão).
@@ -478,6 +481,8 @@ nodes:
             6. Riscos de segurança óbvios introduzidos por esta mudança.
             {% if state.in_worktree %}7. **Específico do modo paralelo:** esta story tocou `{{ state.sprint_status_path }}`? Se tocou, é actionItem "high" — viola o isolamento e conflita no merge com as outras stories da onda.{% endif %}
 
+            {% if state.story_test_level and state.story_test_level not in ['skip', ''] %}8. **Cobertura contra o plano de teste (nível `{{ state.story_test_level }}`{% if state.story_risk_flags %}, riscos: {{ state.story_risk_flags | join(', ') }}{% endif %}).** Leia a seção "Test Design" da story. Cada cenário listado ali virou teste de verdade, ou tem justificativa escrita? Cenário do plano sem teste e sem justificativa é actionItem "high". Se a seção NÃO existe, o dev pulou o passo: não trate como detalhe de processo — enumere você mesmo os cenários que os riscos acima exigiam e reporte como "high" os que ficaram sem cobertura. Suíte verde sobre cobertura que ninguém desenhou não é aprovação.
+            {% endif %}
             verdict="approve" apenas se não houver nenhum item "high" pendente.
 
             Ao final, imprima EXATAMENTE:

@@ -65,6 +65,13 @@ description: |
       Rotas: trivial, small, standard, transversal, high_risk, frontier.
     fix_model_tiers (dict, opcional): remapeia rota efetiva -> provider do primeiro fix.
       O segundo fix e findings estruturais continuam forçados a frontier/Sol-xhigh.
+    test_design (str, default auto): gate de test-design. `auto` decide o esforço de
+      desenho de teste por story a partir da MESMA classificação que escolhe o modelo
+      (tier + risk flags), em skip/minimal/targeted/full; `off` desliga; `force` põe
+      piso `targeted` em todas. Story sem classificação cai em `targeted` (fail-closed).
+      O nível vai no payload da story (`story_test_level`): o dev desenha os cenários
+      antes de implementar e o review confere a cobertura contra eles.
+    test_design_floors (dict, opcional): remapeia risk_flag -> nível mínimo de test-design.
     auto_resolve_conflicts (bool, default false): Nível 2 (LLM junta os dois lados),
       agora restrito aos conflitos que passam na elegibilidade mecânica acima.
     integrate_in_flight (bool, default true): fila de merge — cada story integra no fim
@@ -172,6 +179,10 @@ state_schema:
   story_tiers: dict           # {story_key: tier} vindo da classificação
   story_risk_flags: dict      # {story_key: [flags]} vindos da classificação
   story_routes: dict          # {story_key: rota efetiva} após aplicar pisos de risco
+  test_design: str            # auto (default) | off | force — modo do gate de test-design
+  test_design_floors: dict    # override {risk_flag: nível} dos pisos de test-design
+  story_test_levels: dict     # {story_key: skip|minimal|targeted|full} decidido pelo gate
+  epic_test_design_level: str # maior nível entre as stories despachadas
   escalations: list           # [{key, from_tier, to_tier}] promoções após falha
   run_base_head: str          # HEAD antes de qualquer merge desta run (range do épico)
   migration_fix: dict         # resultado do check/merge de DAG de migrations
@@ -904,6 +915,34 @@ nodes:
           "architecture": "frontier", "security_or_auth": "frontier",
           "unknown_root_cause": "frontier",
       }
+      # ---- Gate de test-design -------------------------------------------
+      # SEGUNDA função de decisão sobre o MESMO vetor (tier + risk flags) que
+      # escolhe o modelo. Deliberadamente NÃO derivada de `story_routes`: as duas
+      # perguntas não são a mesma. `large_context` exige mais contexto do modelo e
+      # não muda nada no desenho dos testes; `weak_or_missing_tests` é o caso mais
+      # forte de test-design e só chega a `high_risk` como risco de implementação.
+      # Derivar uma da outra erraria nos dois sentidos.
+      TEST_LEVEL_ORDER = ["skip", "minimal", "targeted", "full"]
+      TIER_TEST_BASE = {
+          "trivial": "skip", "small": "minimal",
+          "standard": "targeted", "frontier": "full",
+      }
+      # Piso de esforço de DESENHO de teste por flag. `targeted` = cenários extras
+      # dirigidos ao risco; `full` = o oráculo tem de ser fixado antes de implementar.
+      TEST_DESIGN_FLOORS = {
+          "large_context": "minimal",
+          "public_contract": "targeted", "schema_or_migration": "targeted",
+          "security_or_auth": "targeted", "high_blast_radius": "targeted",
+          "architecture": "targeted",
+          "weak_or_missing_tests": "full", "ambiguous_requirements": "full",
+          "unknown_root_cause": "full", "concurrency": "full",
+          "idempotency": "full", "distributed_consistency": "full",
+      }
+      test_design_floors = dict(TEST_DESIGN_FLOORS)
+      test_design_floors.update(state.get("test_design_floors") or {})
+      test_design_mode = str(state.get("test_design") or "auto").strip().lower()
+      if test_design_mode not in {"auto", "off", "force"}:
+          raise ValueError(f"test_design inválido: {test_design_mode!r}; use 'auto', 'off' ou 'force'")
       tier_providers = dict(CLAUDE_TIER_PROVIDERS if dev_harness == "claude" else CODEX_TIER_PROVIDERS)
       tier_providers.update(state.get("model_tiers") or {})
       fix_tier_providers = dict(CLAUDE_FIX_PROVIDERS if dev_harness == "claude" else CODEX_FIX_PROVIDERS)
@@ -976,6 +1015,44 @@ nodes:
           unclassified = [k for k in keys if k not in story_tiers]
           if unclassified:
               print(f"⚠️  {len(unclassified)} story(ies) sem classificação — provider conservador Sol/xhigh: {', '.join(unclassified)}")
+
+      # ---- Gate de test-design: decide o esforço de desenho de teste POR STORY.
+      # Roda fora do `if auto_model` de propósito: sem classificação o gate ainda
+      # tem de emitir veredito, e o veredito seguro não é "pula".
+      story_test_levels = {}
+      if test_design_mode == "off":
+          print("test_design=off — nenhuma story recebe plano de teste dirigido.")
+      else:
+          for k in keys:
+              tier = story_tiers.get(k)
+              flags = story_risk_flags.get(k)
+              if not tier:
+                  # Mesmo viés assimétrico das arestas do grafo: um plano de teste a
+                  # mais custa um pouco do tempo do dev; um plano de teste a menos
+                  # custa uma story que passa no review com a cobertura errada.
+                  level, why = "targeted", "sem classificação (fail-closed)"
+              else:
+                  level = TIER_TEST_BASE.get(tier, "targeted")
+                  why = f"base do tier {tier}"
+                  for flag in (flags or []):
+                      cand = ("full" if flag.startswith(("unknown:", "missing:"))
+                              else test_design_floors.get(flag))
+                      if cand and TEST_LEVEL_ORDER.index(cand) > TEST_LEVEL_ORDER.index(level):
+                          level, why = cand, f"piso de {flag}"
+              if test_design_mode == "force" and TEST_LEVEL_ORDER.index(level) < TEST_LEVEL_ORDER.index("targeted"):
+                  level, why = "targeted", "test_design=force"
+              story_test_levels[k] = level
+              if level != "skip":
+                  print(f"  test-design {k}: {level} ({why})")
+          _by_level = {}
+          for k, lv in story_test_levels.items():
+              _by_level.setdefault(lv, []).append(k)
+          resumo = ", ".join(f"{lv}={len(_by_level[lv])}" for lv in TEST_LEVEL_ORDER if lv in _by_level)
+          print(f"Gate de test-design: {resumo or 'nada a desenhar'}.")
+      epic_test_design_level = "skip"
+      for lv in story_test_levels.values():
+          if TEST_LEVEL_ORDER.index(lv) > TEST_LEVEL_ORDER.index(epic_test_design_level):
+              epic_test_design_level = lv
 
       wave = {}
       visiting = set()
@@ -1176,6 +1253,7 @@ nodes:
               "story_tier": tier or "",
               "story_route": route or "",
               "story_risk_flags": story_risk_flags.get(k) or [],
+              "story_test_level": story_test_levels.get(k, ""),
           })
           dot_payloads[k] = payload
           j = json.dumps(payload)
@@ -1240,7 +1318,9 @@ nodes:
           "graph_edges": edges, "graph_analysis": analysis,
           "external_blockers": external_blockers, "blocked_stories": sorted(blocked_all),
           "story_tiers": story_tiers, "story_risk_flags": story_risk_flags,
-          "story_routes": story_routes, "run_base_head": run_base_head,
+          "story_routes": story_routes, "story_test_levels": story_test_levels,
+          "epic_test_design_level": epic_test_design_level,
+          "run_base_head": run_base_head,
           # A escalação por falha remonta o comando de UMA story; guardar o payload evita
           # recalcular (e divergir de) tudo o que foi decidido aqui.
           "dot_payloads": dot_payloads, "tea_bin": tea_bin, "subgraph_path": subgraph_path,
@@ -1257,7 +1337,8 @@ nodes:
                         f"route={r or 'conservative'} model={ROUTE_LABELS.get(r, 'gpt-5.6-sol/xhigh')} "
                         f"dev={tier_providers.get(r, 'claude' if dev_harness == 'claude' else 'codex') if r else ('claude' if dev_harness == 'claude' else 'codex')} "
                         f"fix={fix_tier_providers.get(r, 'claude_frontier' if dev_harness == 'claude' else 'codex_frontier') if r else ('claude_frontier' if dev_harness == 'claude' else 'codex_frontier')} "
-                        f"review={review_provider} finish=codex_finish")
+                        f"review={review_provider} finish=codex_finish "
+                        f"test={story_test_levels.get(k, 'skip')}")
           return dict(common_out, final_status="dry_run", waves=[[k for k in w] for w in waves],
                       dot_path=dot_path, worktree_base=wt_base)
 
