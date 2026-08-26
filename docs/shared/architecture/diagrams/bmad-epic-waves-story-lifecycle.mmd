@@ -19,22 +19,28 @@ flowchart TD
     P1C --> C0
 
     subgraph P2["2 · STORY-CYCLE — dentro da worktree isolada"]
+        IP["init_policy<br/>max_review_cycles + review_handoff<br/>0 ou 1 ciclo ⇒ handoff manual"]
+        IP --> C0
         C0{"ensure_story_file<br/>o .md da story existe?"}
         C0 -->|"não, create_if_missing=false"| CX["missing_story_file"]:::abort
         C0 -->|"sim"| DEV
         DEV["dev_story<br/>implementa e roda a suíte;<br/>modelo pela rota da story<br/>trivial · small · standard · frontier"]
         DEV --> PD{"parse_dev<br/>saiu report FINAL_STATUS?"}
         PD -->|"morreu sem report"| RT["retry único"] --> DEV
+        PD -->|"max_review_cycles = 0<br/>review automático desligado"| FS
         PD -->|"ok, marca VERIFICATION_INCOMPLETE<br/>se o dev não terminou a verificação"| CR
         CR["code_review<br/>review adversarial, sempre no topo<br/>de esforço, independente da rota"]
         CR --> RS{"veredito"}
         RS -->|"RETRY"| CR
         RS -->|"CHANGES_REQUESTED<br/>e tentativa < max_review_cycles"| FX["fix_review<br/>1º fix: provider promovido<br/>2º fix ou finding estrutural: frontier"]
-        FX --> CR
-        RS -->|"BLOCKED · MAX_ATTEMPTS"| SM
+        RS -->|"ciclos esgotados e handoff manual:<br/>UM fix final, sem re-review"| FX
+        FX --> PF{"post_fix"}
+        PF -->|"fix normal"| CR
+        PF -->|"fix final"| FS
+        RS -->|"BLOCKED sempre;<br/>MAX_ATTEMPTS com handoff=block"| SM
         RS -->|"APPROVED"| FS
-        FS["finish_story<br/>reconfere a suíte e a File List,<br/>commit NOMINAL no branch story/key,<br/>Status da story → done<br/>NÃO toca o sprint-status"]
-        FS --> SM["summary<br/>completed | incomplete"]
+        FS["finish_story<br/>reconfere a suíte e a File List,<br/>commit NOMINAL no branch story/key,<br/>Status da story → done (ou review,<br/>sem aprovação) · NÃO toca o sprint-status"]
+        FS --> SM["summary<br/>completed | manual_review | incomplete"]
     end
 
     SM --> G{"gate de integração<br/>tea run --fail-on-state<br/>final_status=incomplete"}
@@ -56,7 +62,7 @@ flowchart TD
         M2 -->|"limpo"| M3{"prova de ancestralidade<br/>o tip ficou alcançável?"}
         M3 -->|"não"| MR["reset --hard pre_head<br/>no_ancestry"]:::abort
         M3 -->|"sim"| MOK["merged<br/>escreve o recibo"]
-        MOK --> MS["sprint-status[key] = done<br/>+ commit do status<br/>falhou? merged_status_pending"]
+        MOK --> MS["sprint-status[key] = done<br/>(= review se manual_review:<br/>integrada, mas ninguém aprovou)<br/>falhou? merged_status_pending"]
         MS --> MW["remove a worktree"]
     end
 
@@ -65,8 +71,10 @@ flowchart TD
     SW --> MG["migration_dag<br/>duas folhas de migration<br/>criadas por stories irmãs"]
     MG --> V["verify_epic<br/>tudo done + suíte verde<br/>e a suíte cobre este épico"]
     V --> DONE([story done<br/>e integrada no branch alvo])
+    V --> HUM([story em review<br/>integrada, aguardando o SEU veredito;<br/>o épico não fecha nem roda a retro]):::pending
 
     classDef abort fill:#fdecea,stroke:#c0392b,color:#7b241c
+    classDef pending fill:#fef5e7,stroke:#b9770e,color:#7e5109
     style P1 fill:#f7f7fb,stroke:#9aa3b2
     style P2 fill:#eef6fd,stroke:#1f6fb2
     style P3 fill:#f4f1fb,stroke:#7b5cb8

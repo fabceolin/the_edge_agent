@@ -19,6 +19,14 @@ description: |
   - review/fix rodam no MESMO contexto do dev (o subgraph é uma unidade só dentro do worktree
     do graph mode). No JS eles precisavam receber `worktreePath` porque cada agent() com
     isolation abria árvore vazia nova; aqui isso não existe.
+  - **Ciclos de review reduzidos + handoff manual.** `max_review_cycles=0` desliga o review
+    automático (dev -> finish); `=1` roda UM review e, se reprovar, aplica UM fix final que
+    não é re-revisado. Nos dois casos o veredito fica para o humano, então `review_handoff`
+    nasce `manual`: a story COMMITA e integra normalmente, mas sai com
+    `final_status=manual_review` (nunca `completed`) e status `review` — não `done`. Com
+    `>=2` o default segue `block` (fail-closed: sem APPROVED não commita, não mergeia).
+    `BLOCKED` é fail-closed nos DOIS modos — reviewer que declara blocker crítico não
+    entrega árvore para merge.
   - **Sem review de confirmação.** O JS roda um review extra no fim porque o laço dele é
     `review -> fix` por ciclo: ao esgotar os ciclos o ÚLTIMO fix nunca foi revisado, e o
     veredito devolvido descreve o estado anterior à correção. Aqui a topologia é
@@ -33,6 +41,8 @@ description: |
     communication_language, document_output_language, user_name,
     test_command, target_branch, dev_model, review_model,
     create_if_missing (bool), max_review_cycles (int), in_worktree (bool),
+    review_handoff (str, "block"|"manual"; default derivado de max_review_cycles),
+    receipts_dir (str, opcional): onde gravar o recibo JSON do desfecho da story,
     dev_provider (str, default "codex"), fix_provider (str, opcional; default dev_provider),
     frontier_provider (str, opcional; default dev_provider),
     dev_harness (str, default "codex", supported: "codex" or "claude"),
@@ -63,6 +73,8 @@ state_schema:
   review_harness: str
   create_if_missing: bool
   max_review_cycles: int
+  review_handoff: str
+  receipts_dir: str
   in_worktree: bool
   dev_provider: str
   fix_provider: str
@@ -80,6 +92,7 @@ state_schema:
   review_output: str
   review_status: str
   review_fix_attempt: int
+  final_fix_done: bool
   dev_retried: bool
   review_retried: bool
   verification_incomplete: bool
@@ -271,7 +284,39 @@ settings:
 
 nodes:
   # ============================================================================
-  # 0. GARANTIR ARQUIVO DE STORY
+  # 0. POLÍTICA DE REVIEW
+  # ============================================================================
+  - name: init_policy
+    description: Normaliza max_review_cycles e review_handoff antes de qualquer agente nascer
+    run: |
+      raw = state.get("max_review_cycles", 3)
+      try:
+          cycles = max(0, int(raw))
+      except (TypeError, ValueError):
+          raise ValueError(f"max_review_cycles inválido: {raw!r} (esperado inteiro >= 0)")
+
+      handoff = str(state.get("review_handoff") or "").strip().lower()
+      if handoff and handoff not in ("block", "manual"):
+          raise ValueError(f"review_handoff inválido: {handoff!r}; use 'block' ou 'manual'")
+      if not handoff:
+          # 0 e 1 só existem para quem vai fechar o review na mão. Bloquear o merge de uma
+          # story que NUNCA foi revisada (0) — ou que teve um round só (1) — deixaria o
+          # branch órfão na worktree e não sobraria nada integrado para revisar depois.
+          # Por isso o handoff nasce manual aí. De 2 ciclos para cima o default continua
+          # `block`: quem pediu o ciclo completo pediu justamente o fail-closed.
+          handoff = "manual" if cycles <= 1 else "block"
+
+      if cycles == 0:
+          print(f"Review automático DESLIGADO (max_review_cycles=0, handoff={handoff}): dev -> finish, veredito com o humano.")
+      elif handoff == "manual":
+          print(f"Review: {cycles} ciclo(s) e handoff={handoff} — o que não fechar sai como manual_review (status 'review', não 'done').")
+      else:
+          print(f"Review: até {cycles} ciclo(s), handoff=block (sem APPROVED não commita).")
+      return {"max_review_cycles": cycles, "review_handoff": handoff}
+    goto: ensure_story_file
+
+  # ============================================================================
+  # 0.1 GARANTIR ARQUIVO DE STORY
   # ============================================================================
   - name: ensure_story_file
     description: Decide se pula criação, cria a story, ou aborta por arquivo ausente
@@ -440,10 +485,16 @@ nodes:
       incomplete = bool(re.search(r'^\s*VERIFICATION_INCOMPLETE:\s*true\b', text, re.M | re.I))
       if incomplete:
           print("⚠️  dev reportou VERIFICATION_INCOMPLETE — a story NÃO está pronta para 'done'; o review/fix tem de terminar a verificação.")
+      if int(state.get("max_review_cycles", 3)) <= 0:
+          print("Review automático desligado — indo direto para o finish. A story sai marcada para review humano.")
+          return {"verification_incomplete": incomplete, "_dev_next": "skip_review",
+                  "review_status": "SKIPPED"}
       return {"verification_incomplete": incomplete, "_dev_next": "review"}
     goto:
       - if: "state.get('_dev_next') == 'retry'"
         to: dev_story
+      - if: "state.get('_dev_next') == 'skip_review'"
+        to: finish_story
       - to: code_review
 
   # ============================================================================
@@ -568,7 +619,20 @@ nodes:
       # subgraph é dev -> review -> fix -> review, ou seja, sempre TERMINA num review, e o
       # último fix já foi julgado. No JS o laço é review -> fix por ciclo, e o último fix
       # sai sem revisão — é isso que a confirmação lá conserta.
+      manual = state.get("review_handoff") == "manual"
       if attempt >= max_cycles and review_status != "APPROVED":
+          if manual and review_status == "BLOCKED":
+              # Handoff manual entrega árvore para merge; blocker crítico é a única coisa
+              # que ele NÃO entrega. "Reviso depois" pressupõe algo revisável integrado.
+              print(f"Ciclos esgotados ({attempt}/{max_cycles}) com BLOCKED — fail-closed mesmo com handoff manual.")
+              return {"review_status": "BLOCKED", "review_fix_attempt": attempt}
+          if manual and review_status == "CHANGES_REQUESTED" and not state.get("final_fix_done"):
+              # Último round do modo manual: review -> fix -> entrega. O fix final não é
+              # re-revisado de propósito (é o que o humano vai fazer), mas entregar com os
+              # action items ainda abertos seria jogar fora o único review que rodou.
+              print(f"Ciclos esgotados ({attempt}/{max_cycles}) com handoff manual — aplicando o fix final e entregando para review humano.")
+              return {"review_status": "FINAL_FIX", "review_fix_attempt": attempt,
+                      "fix_escalation": fix_escalation, "active_fix_provider": active_fix_provider}
           print(f"Ciclos esgotados ({attempt}/{max_cycles}) — último fix já foi revisado neste review.")
           return {"review_status": "MAX_ATTEMPTS", "review_fix_attempt": attempt,
                   "fix_escalation": fix_escalation, "active_fix_provider": active_fix_provider}
@@ -582,14 +646,16 @@ nodes:
     goto:
       - if: "state.get('review_status') == 'RETRY'"
         to: code_review
+      - if: "state.get('review_status') == 'FINAL_FIX'"
+        to: fix_review
       - if: "state.get('review_status') == 'CHANGES_REQUESTED' and state.get('review_fix_attempt', 0) < state.get('max_review_cycles', 3)"
         to: fix_review
       - if: "state.get('review_status') == 'APPROVED'"
         to: finish_story
-      - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS'] and state.get('in_worktree')"
+      - if: "state.get('review_status') == 'BLOCKED' and state.get('in_worktree')"
         to: summary
-      - if: "state.get('review_status') in ['BLOCKED', 'MAX_ATTEMPTS']"
-        to: finish_story
+      - if: "state.get('review_status') == 'MAX_ATTEMPTS' and state.get('in_worktree') and state.get('review_handoff') != 'manual'"
+        to: summary
       - to: finish_story
 
   - name: fix_review
@@ -619,6 +685,18 @@ nodes:
             Resuma o que foi corrigido e quais testes confirmam a correção. Imprima `FIX_DONE` ao final.
     output: dev_output
 
+  - name: post_fix
+    description: Decide se o fix volta ao review ou fecha a story para review humano
+    run: |
+      if state.get("review_status") == "FINAL_FIX":
+          print("Fix final aplicado SEM re-review (handoff manual) — a story segue para o finish marcada como pendente de review humano.")
+          return {"final_fix_done": True, "review_status": "MANUAL_PENDING"}
+      return {}
+    goto:
+      - if: "state.get('review_status') == 'MANUAL_PENDING'"
+        to: finish_story
+      - to: code_review
+
   # ============================================================================
   # 3. FINISH (commit + status)
   # ============================================================================
@@ -638,18 +716,18 @@ nodes:
 
             ⚠️ **HIGIENE DE CREDENCIAL.** Credencial real nunca vai para arquivo nem para a sua saída — só inline, no único comando que a consome. Se não der, PARE e reporte o bloqueio.
 
-            O code review desta story já rodou e o veredito foi:
-            {{ state.review_status }}
+            {% if state.review_status == 'SKIPPED' %}Esta story rodou com o review automático DESLIGADO (`max_review_cycles=0`): não existe veredito, e o review é humano, depois.{% else %}O code review desta story já rodou e o veredito foi:
+            {{ state.review_status }}{% endif %}
             {% if state.verification_incomplete %}
             ⚠️ **O dev reportou VERIFICATION_INCOMPLETE=true** nesta story. Se o ciclo de review/fix NÃO terminou a verificação que faltava (suíte completa e lint medidos de verdade), NÃO marque a story como "done" no passo 6: deixe o Status como está e diga isso nas notas. Marcar done por cima de uma verificação que ninguém fez é exatamente o sinal honesto que este campo existe para preservar.
             {% endif %}
             Seu papel é FINALIZAR (commit + status), não revisar de novo. Mas não aceite o veredito no escuro — verifique antes de commitar:
             1. **Reconfira a árvore.** Rode `{{ state.test_command }}` e confirme verde. Rode `git status --porcelain` e confira a File List da story contra os arquivos modificados. Se a suíte falhar, ou aparecerem arquivos que NÃO pertencem a esta story (trabalho de outra sessão no mesmo repo), PARE: devolva committed=false e descreva o que encontrou, sem commitar.
-            2. **Confira a coerência do veredito.** Se o verdict acima não for APPROVED, PARE e devolva committed=false — finalizar uma story reprovada não é sua decisão.
+            {% if state.review_handoff == 'manual' and state.review_status != 'APPROVED' %}2. **Handoff manual de review.** Esta story roda com `review_handoff=manual` e o veredito acima NÃO é APPROVED — isso é ESPERADO, não é falha: {% if state.review_status == 'SKIPPED' %}nenhum review automático rodou{% else %}os ciclos automáticos acabaram antes de fechar tudo{% endif %} e quem fecha o review é o humano, depois. Commite mesmo assim (a checagem 1 continua valendo: suíte verde e File List coerente), e registre no Dev Agent Record, sob um cabeçalho `## Pendente de review humano`, o que ficou em aberto (action items não resolvidos, verificações não feitas). NÃO invente aprovação.{% else %}2. **Confira a coerência do veredito.** Se o verdict acima não for APPROVED, PARE e devolva committed=false — finalizar uma story reprovada não é sua decisão.{% endif %}
             3. Commite APENAS os arquivos individuais da File List (código, testes, docs, story file{% if not state.in_worktree %}, sprint-status.yaml{% endif %}) — jamais `git add -A`/`.`. {% if not state.in_worktree %}ATENÇÃO, este repo tem sessões concorrentes: `git add` nominal seguido de `git commit` leva o ÍNDICE INTEIRO. Rode `git diff --cached --name-only` ANTES de commitar; se aparecer arquivo que não é seu, use `git commit --only <arquivo1> <arquivo2>`. Confira com `git show --stat HEAD` depois.{% endif %}
             4. Mensagem: rode `git log --oneline -5` e `git log -1 --format=%b` para reproduzir o padrão REAL deste repo (inclusive a linha Co-Authored-By exata). Assunto: `feat(story-{{ state.story_key }}): Story {{ state.epic_num }}.{{ state.story_key.split('-')[1] if '-' in state.story_key else '' }}: <título curto>`. Use heredoc.
-            {% if not state.in_worktree %}5. Atualize `{{ state.sprint_status_path }}`: `development_status["{{ state.story_key }}"] = "done"` e `last_updated` para hoje, preservando comentários/definições. Commit só esse arquivo (`git add <path>`){% else %}5. **NÃO edite `{{ state.sprint_status_path }}`** — a marcação de status é externa e serializada (fora deste worktree). Só commit os arquivos da story no branch do worktree.{% endif %}
-            6. Atualize a story file: Status -> "done".
+            {% if not state.in_worktree %}5. Atualize `{{ state.sprint_status_path }}`: `development_status["{{ state.story_key }}"] = "{% if state.review_handoff == 'manual' and state.review_status != 'APPROVED' %}review{% else %}done{% endif %}"` e `last_updated` para hoje, preservando comentários/definições. Commit só esse arquivo (`git add <path>`){% else %}5. **NÃO edite `{{ state.sprint_status_path }}`** — a marcação de status é externa e serializada (fora deste worktree). Só commit os arquivos da story no branch do worktree.{% endif %}
+            6. Atualize a story file: Status -> "{% if state.review_handoff == 'manual' and state.review_status != 'APPROVED' %}review{% else %}done{% endif %}".
 
             Retorne committed=true/false, o SHA (`git rev-parse HEAD`), se sprint-status foi atualizado (false se in_worktree), e notas. Imprima `FINISH_DONE` ao final.
     output: finish_output
@@ -663,12 +741,16 @@ nodes:
       committed_match = re.search(r'\bcommitted\s*[:=]\s*(true|false)\b', text, re.I)
       committed = bool(committed_match and committed_match.group(1).lower() == "true")
       status = state.get("review_status", "UNKNOWN")
+      manual = state.get("review_handoff") == "manual"
       if state.get("final_status") == "missing_story_file":
           final = "missing_story_file"
       elif status == "APPROVED" and committed:
           final = "completed"
-      elif status in ("BLOCKED", "MAX_ATTEMPTS"):
-          final = "incomplete"
+      elif manual and committed and status in ("SKIPPED", "MANUAL_PENDING", "MAX_ATTEMPTS", "CHANGES_REQUESTED"):
+          # Terceiro desfecho, entre completed e incomplete: o código ESTÁ commitado e é
+          # integrável (por isso não é `incomplete`, que o --fail-on-state do epic-waves
+          # usa para barrar o merge), mas ninguém aprovou (por isso não é `completed`).
+          final = "manual_review"
       else:
           final = "incomplete"
       tier = state.get("story_tier") or "-"
@@ -676,11 +758,30 @@ nodes:
       print(f"Story {state.get('story_key')}: final_status={final} (review={status}, tier={tier}, route={route}, dev={state.get('dev_provider') or 'codex'}, last_fix={state.get('active_fix_provider') or '-'})")
       if state.get("verification_incomplete"):
           print("⚠️  esta story passou por VERIFICATION_INCOMPLETE — confira no Dev Agent Record se a verificação foi concluída depois.")
+      if final == "manual_review":
+          motivo = ("nenhum review automático rodou (max_review_cycles=0)" if status == "SKIPPED"
+                    else f"os {state.get('max_review_cycles')} ciclo(s) automáticos não fecharam o review")
+          print(f"MANUAL_REVIEW_PENDING: {state.get('story_key')} — {motivo}. Código integrável, veredito com o humano.")
+
+      # Recibo: é por ele que o merge sabe marcar `review` em vez de `done` no
+      # sprint-status, e que o relatório do épico consegue listar o que ficou pendente.
+      receipts_dir = state.get("receipts_dir")
+      if receipts_dir:
+          try:
+              from the_edge_agent.bmad_epic_waves_integrate import write_receipt
+              write_receipt(receipts_dir, {
+                  "key": state.get("story_key"), "stage": "story", "status": final,
+                  "final_status": final, "review_status": status, "committed": committed,
+                  "review_handoff": state.get("review_handoff") or "block",
+                  "max_review_cycles": state.get("max_review_cycles"),
+              })
+          except Exception as exc:
+              print(f"aviso: recibo da story não gravado ({exc}) — o merge vai marcar 'done' pelo caminho normal.")
       return {"final_status": final}
 
 edges:
   - from: __start__
-    to: ensure_story_file
+    to: init_policy
   - from: create_story
     to: resolve_created_path
   - from: resolve_created_path
@@ -688,7 +789,7 @@ edges:
   - from: dev_story
     to: parse_dev
   - from: fix_review
-    to: code_review
+    to: post_fix
   - from: finish_story
     to: summary
   - from: summary

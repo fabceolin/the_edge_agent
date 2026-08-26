@@ -80,7 +80,11 @@ Useful controls:
 - `model_tiers`: optional mapping from an effective route to a named shell provider in `bmad-story-cycle.yaml`.
 - `fix_model_tiers`: optional mapping from an effective route to the provider used by the first promoted fix.
 - `dot_max_parallel`: maximum number of stories concurrently executed within each dependency wave; default is `4`.
-- `max_review_cycles`: review limit per story; default is 3.
+- `max_review_cycles`: automatic review cycles per story; default is 3. `0` turns the automatic review off (dev goes straight to finish); `1` runs a single review plus one final, un-reviewed fix. Use these when you intend to review the stories yourself afterwards.
+- `review_handoff`: what happens to a story that ends without an `APPROVED` verdict. Defaults to `manual` when `max_review_cycles <= 1` and to `block` otherwise.
+  - `block` is the historical fail-closed path: no commit, no merge, the worktree stays intact for you to finish by hand.
+  - `manual` commits the story and merges it through the normal queue, but records `final_status=manual_review`: sprint-status gets `review` instead of `done`, the final report lists the pending stories, and the epic neither closes nor triggers the retrospective until you review them and flip the status to `done` yourself.
+  - A `BLOCKED` verdict (reviewer declaring a critical blocker) stays fail-closed in both modes.
 - `run_retrospective`: write the retrospective after a complete single-epic run; default is true.
 - `flip_epic_status`: allow the workflow to mark the epic and retrospective done; default is true.
 - `stop_on_wave_failure`: keep true unless the user explicitly asks to continue after a failed wave.

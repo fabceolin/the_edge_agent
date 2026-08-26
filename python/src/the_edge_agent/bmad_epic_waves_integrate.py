@@ -102,12 +102,22 @@ def read_receipt(receipts_dir: str | Path | None, key: str, stage: str) -> dict:
 # --------------------------------------------------------------------------
 
 
-def mark_stories_done(lines: Sequence[str], keys: Iterable[str], today: str) -> tuple[list[str], list[str]]:
-    """Flip ``key: <status>`` to ``key: done`` for the given keys.
+def mark_stories_done(
+    lines: Sequence[str],
+    keys: Iterable[str],
+    today: str,
+    status: str = "done",
+) -> tuple[list[str], list[str]]:
+    """Flip ``key: <old status>`` to ``key: <status>`` for the given keys.
 
     Line-oriented on purpose (same as the sweeper it is shared with): rewriting
     the file through a YAML dumper would drop the comments and the key order
     that make ``sprint-status.yaml`` readable in review.
+
+    ``status`` is ``done`` for the normal path and ``review`` for a story that
+    merged under a manual review handoff (``review_handoff=manual``): the code
+    landed, but no reviewer ever approved it, and writing ``done`` there would
+    make the sprint board claim an approval nobody gave.
     """
     wanted = set(keys)
     marked: list[str] = []
@@ -117,7 +127,7 @@ def mark_stories_done(lines: Sequence[str], keys: Iterable[str], today: str) -> 
         if match and match.group(2) in wanted:
             indent, key, rest = match.group(1), match.group(2), match.group(3)
             comment = " " + rest[rest.index("#"):] if "#" in rest else ""
-            out.append(f"{indent}{key}: done{comment}\n")
+            out.append(f"{indent}{key}: {status}{comment}\n")
             marked.append(key)
         elif re.match(r"^\s*last_updated:\s*.*$", line):
             out.append(f"last_updated: {today}\n")
@@ -126,7 +136,7 @@ def mark_stories_done(lines: Sequence[str], keys: Iterable[str], today: str) -> 
     return out, marked
 
 
-def _commit_status(repo: str, sprint_status_rel: str, key: str) -> tuple[bool, str]:
+def _commit_status(repo: str, sprint_status_rel: str, key: str, status: str = "done") -> tuple[bool, str]:
     add = _git(repo, "add", sprint_status_rel)
     if add.returncode != 0:
         return False, add.stderr.strip()
@@ -139,13 +149,13 @@ def _commit_status(repo: str, sprint_status_rel: str, key: str) -> tuple[bool, s
         "--only",
         sprint_status_rel,
         "-m",
-        f"chore(sprint): {key} -> done (bmad-epic-waves)",
+        f"chore(sprint): {key} -> {status} (bmad-epic-waves)",
     )
     if commit.returncode == 0:
         return True, ""
     blob = (commit.stdout + commit.stderr).lower()
     if "nothing to commit" in blob or "no changes added" in blob:
-        return True, "nothing to commit (already done)"
+        return True, f"nothing to commit (already {status})"
     _git(repo, "restore", "--staged", "--worktree", sprint_status_rel)
     return False, (commit.stderr or commit.stdout).strip()
 
@@ -241,6 +251,7 @@ def integrate_story(
     receipts_dir: str | None = None,
     base: str | None = None,
     prior_merged_tip: str | None = None,
+    story_status: str = "done",
 ) -> dict:
     """Merge one story branch into the target branch, with proof.
 
@@ -253,6 +264,10 @@ def integrate_story(
     answers the same question from the other side — an earlier receipt saying
     this exact tip already landed.  With neither, the empty reading wins: a
     story wrongly marked done costs more than a retry wrongly refused.
+
+    ``story_status`` is what the sprint-status line becomes after a successful
+    merge — ``review`` instead of ``done`` when the story-cycle handed the
+    verdict back to a human (see ``story_sprint_status``).
     """
     receipt: dict = {"key": key, "stage": "merge", "branch": branch, "target": target}
     if base:
@@ -338,9 +353,9 @@ def integrate_story(
     receipt.update(status="merged", tip=tip, pre_head=pre_head, head=_out(repo, "rev-parse", "HEAD"))
 
     if mark_status and sprint_status_rel:
-        ok, notes = _mark_one(repo, sprint_status_rel, key)
+        ok, notes = _mark_one(repo, sprint_status_rel, key, story_status)
         if ok:
-            receipt["sprint_status"] = "done"
+            receipt["sprint_status"] = story_status
             receipt["head"] = _out(repo, "rev-parse", "HEAD")
         else:
             # The code IS integrated; only the bookkeeping failed.  Downgrading
@@ -353,13 +368,13 @@ def integrate_story(
     return receipt
 
 
-def _mark_one(repo: str, sprint_status_rel: str, key: str) -> tuple[bool, str]:
+def _mark_one(repo: str, sprint_status_rel: str, key: str, status: str = "done") -> tuple[bool, str]:
     full = os.path.join(repo, sprint_status_rel)
     if not os.path.isfile(full):
         return False, f"{sprint_status_rel} not found"
     with open(full) as handle:
         lines = handle.readlines()
-    new_lines, marked = mark_stories_done(lines, [key], date.today().isoformat())
+    new_lines, marked = mark_stories_done(lines, [key], date.today().isoformat(), status)
     if not marked:
         # Nothing written on purpose: bumping last_updated for a key that is not
         # even in the file would leave a diff with no story behind it.
@@ -373,7 +388,19 @@ def _mark_one(repo: str, sprint_status_rel: str, key: str) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - any parse failure must roll back
         _git(repo, "restore", "--staged", "--worktree", sprint_status_rel)
         return False, f"sprint-status became invalid YAML ({exc}); reverted"
-    return _commit_status(repo, sprint_status_rel, key)
+    return _commit_status(repo, sprint_status_rel, key, status)
+
+
+def story_sprint_status(receipts_dir: str | None, key: str) -> str:
+    """``review`` when the story-cycle finished under a manual review handoff.
+
+    The story-cycle writes a ``story`` receipt carrying its own ``final_status``.
+    ``manual_review`` means committed and integrable, but never approved — the
+    human still owes it a review, so the sprint board must say ``review``.
+    Anything else (including no receipt at all, which is the pre-handoff shape)
+    keeps the historical ``done``.
+    """
+    return "review" if read_receipt(receipts_dir, key, "story").get("final_status") == "manual_review" else "done"
 
 
 def _cleanup_worktree(repo: str, worktree_path: str | None) -> None:
@@ -414,6 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
     merge.add_argument("--sprint-status", default=None, help="sprint-status.yaml, relative to the repo")
     merge.add_argument("--base", default=None, help="commit the branch was cut from (default: the prepare receipt)")
     merge.add_argument("--no-mark-status", action="store_true", help="merge only, leave status to the sweeper")
+    merge.add_argument(
+        "--status",
+        default=None,
+        help="sprint-status value to write (default: 'review' when the story receipt says manual_review, else 'done')",
+    )
 
     return parser
 
@@ -444,6 +476,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.key,
                     args.branch,
                     args.target,
+                    story_status=args.status or story_sprint_status(args.receipts, args.key),
                     sprint_status_rel=args.sprint_status,
                     mark_status=not args.no_mark_status,
                     worktree_path=args.path,

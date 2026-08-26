@@ -36,7 +36,18 @@ description: |
     arg (obrigatório): "epic-10", "10" ou 10
     repo_path (obrigatório): path absoluto do repo alvo
     only_wave (int, opcional): roda só a onda N (respeita teto de agentes)
-    max_review_cycles (int, default 3)
+    max_review_cycles (int, default 3): ciclos de review AUTOMÁTICO por story.
+      `0` desliga o review (dev -> finish); `1` roda um review e, se reprovar, um único
+      fix final que não é re-revisado. Ver `review_handoff`.
+    review_handoff (str, "block"|"manual"; default: manual quando max_review_cycles<=1,
+      block acima disso): o que fazer com a story que termina sem APPROVED.
+      `block` = comportamento histórico, fail-closed — não commita, não mergeia, a
+      worktree fica intacta para você resolver na mão.
+      `manual` = a story COMMITA e entra na fila de merge normalmente, mas sai como
+      `final_status=manual_review`: o sprint-status recebe `review` (não `done`), o
+      relatório final lista a pendência e o épico não fecha nem dispara retrospective
+      até você revisar. É o modo de "eu faço os ciclos de review manualmente depois".
+      `BLOCKED` (blocker crítico declarado pelo reviewer) é fail-closed nos dois modos.
     dev_model (str, default gpt-5.6-sol / claude-opus-5): modelo de criação/orquestração
       e do fallback conservador quando auto_model=false ou não há classificação válida
     dev_harness (str, default codex): harness de criação/dev/fix/finish e agentes de
@@ -99,6 +110,7 @@ state_schema:
   epic_num: str
   epic_key: str
   max_review_cycles: int
+  review_handoff: str
   dev_model: str
   dev_harness: str
   review_model: str
@@ -154,7 +166,8 @@ state_schema:
   mark_status_in_flight: bool   # default true: o merge de cada story já flippa o status dela
   reuse_preserved_worktrees: bool  # default true: retoma branches/worktrees pendentes
   allow_orphan_stash: bool      # default false: stash órfão no repo principal é fail-closed
-  receipts_dir: str             # recibos JSON por story (prepare/merge), lidos pelo sweeper
+  receipts_dir: str             # recibos JSON por story (prepare/merge/story), lidos pelo sweeper
+  review_cycles: int            # max_review_cycles já normalizado (>= 0)
   tea_python: str               # python do venv do tea (default: derivado do tea_bin)
   auto_resolve_conflicts: bool  # Nível 2: LLM resolve conflitos; gate = suíte verde + sem marcadores
   pending_resolution: list   # [{key, branch, files}] conflitos resolvíveis (auto_resolve on)
@@ -162,6 +175,7 @@ state_schema:
   resolution_output: str     # output do resolve_conflicts (LLM)
   resolution_recovery: dict   # {story_key: recovery/ref} antes de rollback fail-closed
   marked_done: list
+  marked_review: list           # integradas mas SEM aprovação: pendentes de review humano
   all_done: bool
   done_count: int
   total_count: int
@@ -1211,6 +1225,23 @@ nodes:
       review_model = state.get("review_model") or (
           "claude-opus-5" if review_harness == "claude" else "gpt-5.6-sol"
       )
+      # Ciclos de review + política de handoff. A normalização real (incluindo o default
+      # derivado) mora no story-cycle, que é quem roda o ciclo; aqui só validamos cedo,
+      # para não descobrir um valor inválido depois de N worktrees criadas, e para o
+      # relatório do épico saber com que política a rodada foi executada.
+      try:
+          review_cycles = max(0, int(state.get("max_review_cycles", 3)))
+      except (TypeError, ValueError):
+          raise ValueError(f"max_review_cycles inválido: {state.get('max_review_cycles')!r} (esperado inteiro >= 0)")
+      review_handoff = str(state.get("review_handoff") or "").strip().lower()
+      if review_handoff and review_handoff not in {"block", "manual"}:
+          raise ValueError(f"review_handoff inválido: {review_handoff!r}; use 'block' ou 'manual'")
+      if not review_handoff:
+          review_handoff = "manual" if review_cycles <= 1 else "block"
+      if review_handoff == "manual":
+          print(f"Review: {review_cycles} ciclo(s) automáticos, handoff=manual — story sem APPROVED integra "
+                f"mesmo assim e sai marcada 'review' no sprint-status (o épico NÃO fecha até você revisar).")
+
       common = {
           "skills_dir": skills_dir,
           "implementation_artifacts_dir": impl_dir,
@@ -1225,7 +1256,11 @@ nodes:
           "test_command": state.get("test_command", ""),
           "target_branch": target_branch,
           "create_if_missing": False,  # PREP já criou tudo
-          "max_review_cycles": int(state.get("max_review_cycles", 3)),
+          "max_review_cycles": review_cycles,
+          "review_handoff": review_handoff,
+          # O recibo do desfecho da story é o que faz o merge marcar `review` em vez de
+          # `done` e o relatório listar o que ficou pendente de review humano.
+          "receipts_dir": receipts_dir,
           "in_worktree": (not dry),  # True em run real (commita no branch da worktree)
       }
       cmap = {c["key"]: c for c in candidates}
@@ -1325,6 +1360,7 @@ nodes:
       run_base_head = subprocess.run(["git","rev-parse","HEAD"], cwd=repo_abs, capture_output=True, text=True).stdout.strip()
 
       common_out = {
+          "review_cycles": review_cycles, "review_handoff": review_handoff,
           "graph_edges": edges, "graph_analysis": analysis,
           "external_blockers": external_blockers, "blocked_stories": sorted(blocked_all),
           "story_tiers": story_tiers, "story_risk_flags": story_risk_flags,
@@ -1867,7 +1903,7 @@ nodes:
       import os, re, subprocess, yaml
       from datetime import date
       from the_edge_agent.bmad_epic_waves_git import reconcile_merged_keys, heartbeat_main_repo_lock
-      from the_edge_agent.bmad_epic_waves_integrate import mark_stories_done
+      from the_edge_agent.bmad_epic_waves_integrate import mark_stories_done, story_sprint_status
       repo = state.get("repo_path", ".")
       if state.get("lock_owner"): heartbeat_main_repo_lock(repo, state["lock_owner"])
       ss_rel = state.get("sprint_status_path", "_bmad-output/implementation-artifacts/sprint-status.yaml")
@@ -1875,7 +1911,7 @@ nodes:
       today = date.today().isoformat()
       if not os.path.isfile(ss_full):
           print("sprint-status.yaml ausente — pulando mark_done")
-          return {"marked_done": []}
+          return {"marked_done": [], "marked_review": []}
       merged_ok = list(state.get("merged_ok", []) or [])
       merged_tips = dict(state.get("merged_tips", {}) or {})
       accepted, rejected = reconcile_merged_keys(repo, merged_ok, merged_tips)
@@ -1888,7 +1924,16 @@ nodes:
       keys = [c["key"] for c in state.get("candidates", []) if c["key"] in accepted]
       if not keys:
           print("mark_done: nenhuma story integrada e comprovada — nada a marcar.")
-          return {"marked_done": [], "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+          return {"marked_done": [], "marked_review": [], "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+
+      # Story que integrou sem APPROVED (review_handoff=manual) vira `review`, não `done`:
+      # o código está no branch alvo, mas ninguém aprovou, e escrever `done` faria o board
+      # afirmar uma aprovação que não existe — é o que o verify usa para NÃO fechar o épico.
+      receipts_dir = state.get("receipts_dir")
+      review_keys = [k for k in keys if story_sprint_status(receipts_dir, k) == "review"]
+      done_keys = [k for k in keys if k not in review_keys]
+      if review_keys:
+          print(f"mark_done: pendentes de review humano (status 'review'): {review_keys}")
 
       def _mark():
           # Varredura: com a fila, a maioria das keys já foi flipada no merge da própria
@@ -1896,23 +1941,31 @@ nodes:
           # voo). Reescrever uma key que já está "done" é no-op no texto.
           with open(ss_full) as f:
               lines = f.readlines()
-          out, marked = mark_stories_done(lines, keys, today)
+          out, marked = mark_stories_done(lines, done_keys, today) if done_keys else (list(lines), [])
+          marked_review = []
+          if review_keys:
+              out, marked_review = mark_stories_done(out, review_keys, today, "review")
           if "".join(out) == "".join(lines):
               print(f"mark_done: status já refletia a fila para {keys} — nada a commitar.")
-              return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+              return {"marked_done": marked, "marked_review": marked_review,
+                      "merged_ok": accepted, "merge_conflicts": merge_conflicts}
           with open(ss_full, "w") as f:
               f.writelines(out)
           yaml.safe_load(open(ss_full))
           subprocess.run(["git","add", ss_rel], cwd=repo, check=True)
-          r = subprocess.run(["git","commit","--only", ss_rel, "-m", f"chore(sprint): {state.get('epic_key')} wave -> done"], cwd=repo, capture_output=True, text=True)
+          msg = f"chore(sprint): {state.get('epic_key')} wave -> done"
+          if marked_review:
+              msg += f" ({len(marked_review)} em review)" if marked else f" ({len(marked_review)} -> review)"
+          r = subprocess.run(["git","commit","--only", ss_rel, "-m", msg], cwd=repo, capture_output=True, text=True)
           if r.returncode != 0 and "nothing to commit" not in (r.stdout + r.stderr).lower():
               subprocess.run(["git","restore","--staged","--worktree",ss_rel], cwd=repo, capture_output=True)
               for key in accepted:
                   if key not in merge_conflicts: merge_conflicts.append(key)
               print(f"mark_done commit falhou; status revertido: {r.stderr}")
-              return {"marked_done": [], "merged_ok": [], "merge_conflicts": merge_conflicts}
-          print(f"Marcadas done: {marked}")
-          return {"marked_done": marked, "merged_ok": accepted, "merge_conflicts": merge_conflicts}
+              return {"marked_done": [], "marked_review": [], "merged_ok": [], "merge_conflicts": merge_conflicts}
+          print(f"Marcadas done: {marked}" + (f" | marcadas review (pendente humano): {marked_review}" if marked_review else ""))
+          return {"marked_done": marked, "marked_review": marked_review,
+                  "merged_ok": accepted, "merge_conflicts": merge_conflicts}
 
       return _mark()
 
@@ -1980,15 +2033,23 @@ nodes:
           suite_that_covers = f"a rodada mexeu em {len(touched)} arquivo(s) e não entregou nenhum arquivo de teste"
           print(f"⚠️  {suite_that_covers} — o verde da suíte não fala sobre este código.")
 
-      incomplete_keys = sorted(set(cand_keys) - set(state.get("marked_done", []) or []))
+      # Story em review humano INTEGROU: não entra em "não integradas". Mas também não
+      # conta como done, então `all_done` fica False de propósito — o épico não fecha (nem
+      # dispara retrospective) enquanto houver review pendente.
+      pending_review = sorted(set(state.get("marked_review", []) or []) & set(cand_keys))
+      integrated = set(state.get("marked_done", []) or []) | set(pending_review)
+      incomplete_keys = sorted(set(cand_keys) - integrated)
       incomplete_keys = sorted(set(incomplete_keys) | set(merge_conflicts))
       all_done = total > 0 and done == total and not incomplete_keys and suite_green
+      if pending_review:
+          print(f"⚠️  {len(pending_review)} story(ies) integradas SEM aprovação, aguardando seu review: {pending_review}")
       if all_done:
           for branch in (state.get("merged_branches", {}) or {}).values():
               subprocess.run(["git","branch","-D",branch], cwd=repo, capture_output=True)
-      print(f"Verify: {done}/{total} done, suite_green={suite_green}, cobre_o_epico={suite_covers}, incomplete={incomplete_keys}, all_done={all_done}")
+      print(f"Verify: {done}/{total} done, suite_green={suite_green}, cobre_o_epico={suite_covers}, incomplete={incomplete_keys}, pending_review={pending_review}, all_done={all_done}")
       return {"all_done": all_done, "done_count": done, "total_count": total,
               "suite_green": suite_green, "incomplete_keys": incomplete_keys,
+              "marked_review": pending_review,
               "suite_covers_the_epic": bool(suite_covers) if suite_covers is not None else True,
               "suite_that_covers": suite_that_covers}
 
@@ -2097,6 +2158,13 @@ nodes:
       ╚════════════════════════════════════════════════════════════╝
       """)
       print(f"Stories não integradas: {incomplete}")
+      pending_review = state.get("marked_review", []) or []
+      if pending_review:
+          print(f"Pendentes do SEU review ({state.get('review_handoff','manual')}, "
+                f"{state.get('review_cycles', state.get('max_review_cycles', 3))} ciclo(s) automáticos): "
+                f"{', '.join(pending_review)}")
+          print("  Integradas no branch alvo e marcadas 'review' no sprint-status. "
+                "Feche o review na mão e flippe para 'done' — só então o épico fecha e a retrospective roda.")
       blocked = state.get("blocked_stories", []) or []
       if blocked:
           print(f"Bloqueadas por dependência cross-épico (nenhum agente gasto): {', '.join(blocked)}")

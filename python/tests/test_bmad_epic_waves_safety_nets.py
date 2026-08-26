@@ -791,3 +791,268 @@ def test_exhausted_cycles_end_the_story_without_an_extra_confirmation_review() -
     )
 
     assert result["review_status"] == "MAX_ATTEMPTS"
+
+
+# --------------------------------------------------------------------------
+# ciclos de review reduzidos (0/1) + handoff manual
+# --------------------------------------------------------------------------
+
+
+def goto_of(workflow: str, node_name: str) -> list[dict]:
+    spec = yaml.safe_load((WORKFLOWS / f"{workflow}.yaml").read_text())
+    return next(node for node in spec["nodes"] if node["name"] == node_name)["goto"]
+
+
+@pytest.mark.parametrize(
+    ("cycles", "handoff"),
+    [(0, "manual"), (1, "manual"), (2, "block"), (3, "block")],
+)
+def test_reduced_cycles_default_to_manual_handoff_and_full_cycles_stay_fail_closed(
+    cycles: int, handoff: str
+) -> None:
+    result = run_node("bmad-story-cycle", "init_policy", {"max_review_cycles": cycles})
+
+    assert result == {"max_review_cycles": cycles, "review_handoff": handoff}
+
+
+def test_explicit_handoff_wins_over_the_derived_default() -> None:
+    assert (
+        run_node(
+            "bmad-story-cycle",
+            "init_policy",
+            {"max_review_cycles": 0, "review_handoff": "block"},
+        )["review_handoff"]
+        == "block"
+    )
+    assert (
+        run_node(
+            "bmad-story-cycle",
+            "init_policy",
+            {"max_review_cycles": 3, "review_handoff": "manual"},
+        )["review_handoff"]
+        == "manual"
+    )
+
+
+@pytest.mark.parametrize("bad", ["skip", "MANUAL-ish", "1"])
+def test_invalid_handoff_is_refused_before_any_agent_is_spawned(bad: str) -> None:
+    with pytest.raises(ValueError):
+        run_node("bmad-story-cycle", "init_policy", {"review_handoff": bad})
+
+
+def test_negative_cycles_are_clamped_instead_of_looping_forever() -> None:
+    assert run_node("bmad-story-cycle", "init_policy", {"max_review_cycles": -2})[
+        "max_review_cycles"
+    ] == 0
+
+
+def test_zero_cycles_skip_the_review_llm_entirely() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "parse_dev",
+        {"dev_output": {"content": "DEV_DONE"}, "max_review_cycles": 0},
+    )
+
+    assert result["_dev_next"] == "skip_review"
+    assert result["review_status"] == "SKIPPED"
+    route = next(r for r in goto_of("bmad-story-cycle", "parse_dev") if "skip_review" in r.get("if", ""))
+    assert route["to"] == "finish_story"
+
+
+def test_one_cycle_applies_a_final_fix_and_never_reviews_again() -> None:
+    verdict = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {"content": "FINAL_STATUS: CHANGES_REQUESTED"},
+            "max_review_cycles": 1,
+            "review_handoff": "manual",
+            "fix_provider": "codex_standard",
+            "frontier_provider": "codex_frontier",
+        },
+    )
+
+    assert verdict["review_status"] == "FINAL_FIX"
+    assert verdict["active_fix_provider"] == "codex_standard"
+    assert next(
+        r for r in goto_of("bmad-story-cycle", "check_review_status") if "FINAL_FIX" in r.get("if", "")
+    )["to"] == "fix_review"
+
+    # ... e o fix final sai do laço em vez de voltar para o code_review.
+    after_fix = run_node("bmad-story-cycle", "post_fix", dict(verdict))
+    assert after_fix == {"final_fix_done": True, "review_status": "MANUAL_PENDING"}
+    assert next(
+        r for r in goto_of("bmad-story-cycle", "post_fix") if "MANUAL_PENDING" in r.get("if", "")
+    )["to"] == "finish_story"
+
+
+def test_the_final_fix_is_applied_only_once() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {"content": "FINAL_STATUS: CHANGES_REQUESTED"},
+            "max_review_cycles": 1,
+            "review_handoff": "manual",
+            "final_fix_done": True,
+        },
+    )
+
+    assert result["review_status"] == "MAX_ATTEMPTS"
+
+
+def test_blocked_is_fail_closed_even_under_a_manual_handoff() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "check_review_status",
+        {
+            "review_output": {"content": "FINAL_STATUS: BLOCKED"},
+            "max_review_cycles": 1,
+            "review_handoff": "manual",
+        },
+    )
+
+    assert result["review_status"] == "BLOCKED"
+    route = next(
+        r
+        for r in goto_of("bmad-story-cycle", "check_review_status")
+        if "BLOCKED" in r.get("if", "") and "in_worktree" in r.get("if", "")
+    )
+    assert route["to"] == "summary"  # nunca chega ao finish: não commita, não mergeia
+
+
+def test_manual_review_is_integrable_but_never_reported_as_completed() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "summary",
+        {
+            "story_key": "36-1-base",
+            "finish_output": {"content": "committed=true\nFINISH_DONE"},
+            "review_status": "MANUAL_PENDING",
+            "review_handoff": "manual",
+            "max_review_cycles": 1,
+        },
+    )
+
+    # Nem `completed` (ninguém aprovou) nem `incomplete` (o --fail-on-state do epic-waves
+    # barraria o merge de um código que ESTÁ commitado e integrável).
+    assert result["final_status"] == "manual_review"
+
+
+def test_a_manual_story_that_did_not_commit_stays_incomplete() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "summary",
+        {
+            "story_key": "36-1-base",
+            "finish_output": {"content": "committed=false"},
+            "review_status": "MANUAL_PENDING",
+            "review_handoff": "manual",
+        },
+    )
+
+    assert result["final_status"] == "incomplete"
+
+
+def test_block_handoff_never_produces_a_manual_review_status() -> None:
+    result = run_node(
+        "bmad-story-cycle",
+        "summary",
+        {
+            "story_key": "36-1-base",
+            "finish_output": {"content": "committed=true"},
+            "review_status": "MAX_ATTEMPTS",
+            "review_handoff": "block",
+        },
+    )
+
+    assert result["final_status"] == "incomplete"
+
+
+def test_story_summary_writes_the_receipt_the_merge_reads(tmp_path: Path) -> None:
+    from the_edge_agent.bmad_epic_waves_integrate import story_sprint_status
+
+    receipts = tmp_path / "receipts"
+    run_node(
+        "bmad-story-cycle",
+        "summary",
+        {
+            "story_key": "36-1-base",
+            "finish_output": {"content": "committed=true"},
+            "review_status": "SKIPPED",
+            "review_handoff": "manual",
+            "max_review_cycles": 0,
+            "receipts_dir": str(receipts),
+        },
+    )
+
+    assert story_sprint_status(str(receipts), "36-1-base") == "review"
+    assert story_sprint_status(str(receipts), "36-2-outra") == "done"
+    assert story_sprint_status(None, "36-1-base") == "done"
+
+
+def test_merge_marks_review_instead_of_done_for_a_story_nobody_approved() -> None:
+    from the_edge_agent.bmad_epic_waves_integrate import mark_stories_done
+
+    lines = ["development_status:\n", "  36-1-base: in-progress  # comentário\n", "last_updated: 1999-01-01\n"]
+
+    out, marked = mark_stories_done(lines, ["36-1-base"], "2026-08-26", "review")
+
+    assert marked == ["36-1-base"]
+    assert out[1] == "  36-1-base: review # comentário\n"
+    assert out[2] == "last_updated: 2026-08-26\n"
+
+
+def test_epic_waves_passes_the_review_policy_down_to_every_story(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+
+    result = run_node(
+        "bmad-epic-waves",
+        "build_waves",
+        graph_state(repo, "DEPS: none", max_review_cycles=0),
+    )
+
+    assert result["review_handoff"] == "manual"
+    assert result["review_cycles"] == 0
+    for payload in result["dot_payloads"].values():
+        assert payload["max_review_cycles"] == 0
+        assert payload["review_handoff"] == "manual"
+        assert payload["receipts_dir"]
+
+
+def test_epic_waves_refuses_an_invalid_review_handoff(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+
+    with pytest.raises(ValueError):
+        run_node(
+            "bmad-epic-waves",
+            "build_waves",
+            graph_state(repo, "DEPS: none", review_handoff="sometimes"),
+        )
+
+
+def test_stories_pending_human_review_are_not_reported_as_unintegrated(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "repo")
+    status = repo / "_bmad-output" / "implementation-artifacts"
+    status.mkdir(parents=True)
+    (status / "sprint-status.yaml").write_text(
+        "development_status:\n  36-1-base: review\n  36-3-solta: done\n"
+    )
+
+    result = run_node(
+        "bmad-epic-waves",
+        "verify_epic",
+        {
+            "repo_path": str(repo),
+            "epic_num": "36",
+            "epic_key": "epic-36",
+            "candidates": [{"key": "36-1-base"}, {"key": "36-3-solta"}],
+            "marked_done": ["36-3-solta"],
+            "marked_review": ["36-1-base"],
+            "test_command": "",
+        },
+    )
+
+    assert result["incomplete_keys"] == []          # integrada: não é uma story perdida
+    assert result["marked_review"] == ["36-1-base"]
+    assert result["all_done"] is False              # ...mas o épico não fecha sem o review

@@ -499,3 +499,46 @@ def test_mark_done_is_a_no_op_when_the_queue_already_flipped_the_status(tmp_path
     assert result["marked_done"] == ["1-1-alpha"]
     assert git(repo, "rev-parse", "HEAD") == head_after_queue  # no empty commit
     assert git(repo, "status", "--porcelain") == ""
+
+
+def test_merge_marks_review_when_the_story_ended_without_an_approval(tmp_path: Path) -> None:
+    """`review_handoff=manual`: the code lands, the sprint board says `review`.
+
+    Writing `done` here would make the board claim an approval nobody gave —
+    and it is exactly that `review` line that keeps the epic (and its
+    retrospective) open until the human closes the review.
+    """
+    from the_edge_agent.bmad_epic_waves_integrate import write_receipt
+
+    repo = init_repo(tmp_path / "repo")
+    tip = story_branch(repo, "1-1-alpha", "alpha.py", "alpha\n")
+    receipts = tmp_path / "receipts"
+    write_receipt(receipts, {"key": "1-1-alpha", "stage": "story", "final_status": "manual_review"})
+
+    result = integrate_cli(
+        repo, "merge", "--key", "1-1-alpha", "--branch", "story/1-1-alpha",
+        "--target", "main", "--sprint-status", SPRINT_STATUS, "--receipts", str(receipts),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert git(repo, "merge-base", "--is-ancestor", tip, "HEAD") == ""
+    status = yaml.safe_load((repo / SPRINT_STATUS).read_text())["development_status"]
+    assert status["1-1-alpha"] == "review"
+    assert read_receipt(receipts, "1-1-alpha", "merge")["sprint_status"] == "review"
+
+
+def test_an_approved_story_still_merges_as_done(tmp_path: Path) -> None:
+    from the_edge_agent.bmad_epic_waves_integrate import write_receipt
+
+    repo = init_repo(tmp_path / "repo")
+    story_branch(repo, "1-1-alpha", "alpha.py", "alpha\n")
+    receipts = tmp_path / "receipts"
+    write_receipt(receipts, {"key": "1-1-alpha", "stage": "story", "final_status": "completed"})
+
+    result = integrate_cli(
+        repo, "merge", "--key", "1-1-alpha", "--branch", "story/1-1-alpha",
+        "--target", "main", "--sprint-status", SPRINT_STATUS, "--receipts", str(receipts),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert yaml.safe_load((repo / SPRINT_STATUS).read_text())["development_status"]["1-1-alpha"] == "done"

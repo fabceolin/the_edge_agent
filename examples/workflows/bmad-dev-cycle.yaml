@@ -24,7 +24,11 @@ description: |
   Input (--input JSON):
     arg (obrigatório): "epic-5", "5" ou 5
     repo_path (obrigatório): path absoluto do repo alvo
-    max_review_cycles (int, default 3)
+    max_review_cycles (int, default 3): `0` desliga o review automático, `1` roda um
+      review + um fix final. Ver `review_handoff`.
+    review_handoff (str, "block"|"manual"; default manual quando max_review_cycles<=1):
+      `manual` deixa a story commitar e ficar com status `review` (não `done`) para você
+      fechar o review na mão; `block` é o fail-closed histórico.
     dev_model (str, default gpt-5.6-sol): modelo para desenvolvimento e correções
     review_model (str, default gpt-5.6-sol): modelo usado no review das stories
     run_retrospective (bool, default true)
@@ -46,6 +50,7 @@ state_schema:
   epic_num: str
   epic_key: str
   max_review_cycles: int
+  review_handoff: str
   dev_model: str
   review_model: str
   run_retrospective: bool
@@ -67,6 +72,7 @@ state_schema:
   stories: list
   pending: list
   cycle_results: list
+  manual_review_stories: list  # integradas sem aprovação (review_handoff=manual)
   all_done: bool
   done_count: int
   total_count: int
@@ -288,6 +294,7 @@ nodes:
       target_branch: "{{ state.target_branch }}"
       create_if_missing: true
       max_review_cycles: "{{ state.max_review_cycles | default(3) | int }}"
+      review_handoff: "{{ state.review_handoff | default('', true) }}"
       in_worktree: false
       dev_provider: "{{ state.dev_provider | default('codex', true) }}"
       review_provider: "{{ state.review_provider | default('codex_review', true) }}"
@@ -303,8 +310,13 @@ nodes:
           s = r.get("state", {}) if isinstance(r, dict) else {}
           agg.append({"story": s.get("story_key"), "final_status": s.get("final_status", "unknown")})
       ok = sum(1 for a in agg if a["final_status"] == "completed")
+      pending = [a["story"] for a in agg if a["final_status"] == "manual_review"]
       print(f"Stories concluídas: {ok}/{len(agg)}")
-      return {"cycle_summary": agg, "cycle_ok_count": ok}
+      if pending:
+          # Commitadas e com status `review` no sprint-status: NÃO contam como concluídas
+          # (ninguém aprovou), e por isso o verify não vai fechar o épico.
+          print(f"Pendentes do SEU review: {', '.join(pending)}")
+      return {"cycle_summary": agg, "cycle_ok_count": ok, "manual_review_stories": pending}
 
   # ============================================================================
   # VERIFY — determinístico (relê sprint-status do disco)
@@ -403,6 +415,10 @@ nodes:
       ║ Retrospective: {'rodou' if state.get('_run_retro') else 'pulada':<48} ║
       ╚════════════════════════════════════════════════════════════╝
       """)
+      pending = state.get("manual_review_stories", []) or []
+      if pending:
+          print(f"Pendentes do SEU review (status 'review' no sprint-status): {', '.join(pending)}")
+          print("  Feche o review na mão e flippe para 'done' — só então o épico fecha e a retrospective roda.")
       final = "completed" if state.get("all_done") else "incomplete"
       return {"final_status": final, "epic": state.get("epic_key"), "lock_owner": ""}
 
