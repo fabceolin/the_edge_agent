@@ -7,9 +7,9 @@ and stop-on-failure behavior.
 
 import os
 import re
-import json
 import tempfile
 import unittest
+from itertools import count
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -19,6 +19,7 @@ from the_edge_agent.cli import (
     app,
     parse_fail_on_state,
     check_fail_on_state,
+    failed_dot_predecessors,
 )
 
 
@@ -334,6 +335,294 @@ class TestStopOnFailure(unittest.TestCase):
         output = f"Skipped phases: {phases_str}"
 
         self.assertIn("Skipped phases: 2, 3, 4", output)
+
+    def test_dependency_outcomes_use_dot_ids_and_propagate_transitively(self):
+        predecessors = {
+            "child": ["failed-root"],
+            "fan-in": ["child", "healthy-root"],
+        }
+        outcomes = {
+            "failed-root": "failed",
+            "healthy-root": "succeeded",
+        }
+
+        self.assertEqual(
+            failed_dot_predecessors("child", predecessors, outcomes),
+            ["failed-root"],
+        )
+        outcomes["child"] = "blocked"
+        self.assertEqual(
+            failed_dot_predecessors("fan-in", predecessors, outcomes),
+            ["child"],
+        )
+
+    def test_resume_skips_are_not_dependency_failures(self):
+        self.assertEqual(
+            failed_dot_predecessors(
+                "child",
+                {"child": ["prior"]},
+                {"prior": "resume-skipped"},
+            ),
+            [],
+        )
+
+    def test_missing_and_unknown_predecessor_outcomes_fail_closed(self):
+        predecessors = {"child": ["missing", "unknown"]}
+
+        self.assertEqual(
+            failed_dot_predecessors(
+                "child", predecessors, {"unknown": "future-outcome"}
+            ),
+            ["missing", "unknown"],
+        )
+
+    def test_cli_blocks_descendant_for_missing_or_unknown_outcome_state(self):
+        original = failed_dot_predecessors
+        for injected in (None, "future-outcome"):
+            with self.subTest(injected=injected):
+                def corrupt_then_check(node_id, predecessors, outcomes):
+                    if node_id == "child":
+                        if injected is None:
+                            outcomes.pop("root", None)
+                        else:
+                            outcomes["root"] = injected
+                    return original(node_id, predecessors, outcomes)
+
+                with patch(
+                    "the_edge_agent.cli.failed_dot_predecessors",
+                    side_effect=corrupt_then_check,
+                ):
+                    result = self._run_dot(
+                        """
+                        digraph corrupted_outcome {
+                            root [label="root" shape=box command="true"];
+                            child [label="child" shape=box command="true"];
+                            root -> child;
+                        }
+                        """,
+                        "--dot-dependency-safe-continue",
+                    )
+
+                self.assertEqual(result.exit_code, 1, result.output)
+                self.assertIn("Dependency-blocked: child [id=child]", result.output)
+                self.assertNotIn("Starting: child", result.output)
+
+    def _run_dot(self, dot: str, *options: str):
+        with tempfile.NamedTemporaryFile(suffix=".dot", mode="w", delete=False) as f:
+            f.write(dot)
+            dot_path = f.name
+
+        def fake_run(command, *args, **kwargs):
+            if isinstance(command, list) and command[:2] == ["tmux", "send-keys"]:
+                shell_command = command[4]
+                exit_path = re.search(r">\s+(/tmp/tea_dot_exit_\S+); exit$", shell_command)
+                self.assertIsNotNone(exit_path)
+                exit_code = "1" if shell_command.startswith("false;") else "0"
+                Path(exit_path.group(1)).write_text(exit_code)
+                return MagicMock(returncode=0)
+            if isinstance(command, str) and "tmux list-windows" in command:
+                return MagicMock(returncode=1)
+            return MagicMock(returncode=0)
+
+        try:
+            with patch("subprocess.run", side_effect=fake_run), patch("time.sleep"):
+                return runner.invoke(
+                    app,
+                    ["run", "--from-dot", dot_path, *options],
+                )
+        finally:
+            os.unlink(dot_path)
+
+    def test_timeout_is_failed_and_dependency_blocks_child(self):
+        with tempfile.NamedTemporaryFile(suffix=".dot", mode="w", delete=False) as file:
+            file.write(
+                """
+                digraph timeout {
+                    origin [label="origin" shape=box command="sleep 10"];
+                    child [label="child" shape=box command="true"];
+                    origin -> child;
+                }
+                """
+            )
+            dot_path = file.name
+        clock = count()
+
+        def fake_run(command, *args, **kwargs):
+            if isinstance(command, str) and "tmux list-windows" in command:
+                return MagicMock(returncode=0)
+            return MagicMock(returncode=0)
+
+        try:
+            with (
+                patch("subprocess.run", side_effect=fake_run),
+                patch("time.sleep"),
+                patch("time.time", side_effect=lambda: float(next(clock))),
+            ):
+                result = runner.invoke(
+                    app,
+                    [
+                        "run",
+                        "--from-dot",
+                        dot_path,
+                        "--dot-dependency-safe-continue",
+                        "--dot-node-timeout",
+                        "0.001",
+                    ],
+                )
+        finally:
+            os.unlink(dot_path)
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Failed: origin (Timeout)", result.output)
+        self.assertIn("Dependency-blocked: child [id=child]", result.output)
+        self.assertNotIn("Starting: child", result.output)
+
+    def test_continuation_runs_only_independent_successful_paths(self):
+        result = self._run_dot(
+            """
+            digraph safe_continue {
+                failed [label="failed" shape=box command="false"];
+                healthy [label="healthy" shape=box command="true"];
+                blocked [label="blocked" shape=box command="true"];
+                independent [label="independent" shape=box command="true"];
+                fan_in [label="fan-in" shape=box command="true"];
+                leaf [label="leaf" shape=box command="true"];
+                failed -> blocked;
+                healthy -> independent;
+                blocked -> fan_in;
+                independent -> fan_in;
+                independent -> leaf;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+        )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Starting: failed", result.output)
+        self.assertIn("Starting: healthy", result.output)
+        self.assertIn("Starting: independent", result.output)
+        self.assertIn("Starting: leaf", result.output)
+        self.assertNotIn("Starting: blocked", result.output)
+        self.assertNotIn("Starting: fan-in", result.output)
+        self.assertIn("Dependency-blocked nodes:", result.output)
+        self.assertIn("failed", result.output)
+
+    def test_default_remains_fail_fast_after_the_failed_phase(self):
+        result = self._run_dot(
+            """
+            digraph fail_fast {
+                failed [label="failed" shape=box command="false"];
+                healthy [label="healthy" shape=box command="true"];
+                child [label="child" shape=box command="true"];
+                healthy -> child;
+            }
+            """
+        )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Starting: failed", result.output)
+        self.assertIn("Starting: healthy", result.output)
+        self.assertNotIn("Starting: child", result.output)
+        self.assertIn("Skipped phases: 2", result.output)
+
+    def test_start_wave_skips_do_not_block_resumed_descendants(self):
+        result = self._run_dot(
+            """
+            digraph resumed {
+                prior [label="prior" shape=box command="false"];
+                child [label="child" shape=box command="true"];
+                prior -> child;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+            "--dot-start-wave",
+            "2",
+        )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertNotIn("Starting: prior", result.output)
+        self.assertIn("Starting: child", result.output)
+        self.assertNotIn("Dependency-blocked:", result.output)
+
+    def test_missing_command_is_an_originating_failure_and_blocks_its_child(self):
+        result = self._run_dot(
+            """
+            digraph missing_command {
+                origin [label="origin" shape=box];
+                child [label="child" shape=box command="true"];
+                origin -> child;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+        )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Failed: origin (No command)", result.output)
+        self.assertIn("Dependency-blocked: child [id=child]", result.output)
+        self.assertNotIn("Starting: child", result.output)
+
+    def test_duplicate_display_labels_do_not_mix_dot_id_outcomes(self):
+        result = self._run_dot(
+            """
+            digraph duplicate_labels {
+                failed_id [label="same" shape=box command="false"];
+                healthy_id [label="same" shape=box command="true"];
+                blocked [label="blocked-child" shape=box command="true"];
+                healthy [label="healthy-child" shape=box command="true"];
+                failed_id -> blocked;
+                healthy_id -> healthy;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+        )
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("Dependency-blocked: blocked-child [id=blocked]", result.output)
+        self.assertNotIn("Starting: blocked-child", result.output)
+        self.assertIn("Starting: healthy-child", result.output)
+
+    def test_start_step_marks_prior_parallel_node_as_resume_skipped(self):
+        result = self._run_dot(
+            """
+            digraph resumed_step {
+                prior [label="prior" shape=box command="false"];
+                current [label="current" shape=box command="true"];
+                child [label="child" shape=box command="true"];
+                prior -> child;
+                current -> child;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+            "--dot-start-step",
+            "2",
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("Starting: prior", result.output)
+        self.assertIn("Starting: current", result.output)
+        self.assertIn("Starting: child", result.output)
+
+    def test_start_from_marks_earlier_nodes_as_resume_skipped(self):
+        result = self._run_dot(
+            """
+            digraph resumed_label {
+                prior [label="prior" shape=box command="false"];
+                current [label="current" shape=box command="true"];
+                child [label="child" shape=box command="true"];
+                prior -> child;
+                current -> child;
+            }
+            """,
+            "--dot-dependency-safe-continue",
+            "--dot-start-from",
+            "current",
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Resolved --dot-start-from 'current'", result.output)
+        self.assertNotIn("Starting: prior", result.output)
+        self.assertIn("Starting: current", result.output)
+        self.assertIn("Starting: child", result.output)
 
 
 # =============================================================================

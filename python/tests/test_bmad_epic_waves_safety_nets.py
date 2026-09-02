@@ -53,6 +53,183 @@ def run_node(workflow: str, name: str, state: dict):
     return namespace["node"](state)
 
 
+@pytest.mark.parametrize(
+    ("policy", "expects_continue_flag"),
+    [(None, False), (True, False), (False, True)],
+)
+def test_run_waves_forwards_only_the_opt_in_continue_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: bool | None, expects_continue_flag: bool
+) -> None:
+    dot_path = tmp_path / "waves.dot"
+    dot_path.write_text("digraph waves { story [shape=box command=\"true\"]; }\n")
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="", stderr="Completed: story\nNodes: 1/1 succeeded\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    state = {
+        "dot_path": str(dot_path),
+        "tea_bin": "tea",
+        "repo_path": str(tmp_path),
+    }
+    if policy is not None:
+        state["stop_on_wave_failure"] = policy
+
+    result = run_node("bmad-epic-waves", "run_waves", state)
+
+    assert result["run_waves_results"]["all_ok"] is True
+    assert ("--dot-dependency-safe-continue" in calls[0]) is expects_continue_flag
+    assert "--no-dot-stop-on-failure" not in calls[0]
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "Failed: A\nNodes: 1/1 succeeded\n",
+        "Dependency-blocked: B [id=s1] (unsafe predecessors: A=failed)\n"
+        "Nodes: 1/1 succeeded\n",
+        "Failed: A (Timeout)\n"
+        "Dependency-blocked: B [id=s1] (unsafe predecessors: A=failed)\n"
+        "Nodes: 1/1 succeeded\n",
+    ],
+)
+def test_run_waves_all_ok_rejects_inconsistent_failure_or_blocked_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stderr: str,
+) -> None:
+    dot_path = tmp_path / "waves.dot"
+    dot_path.write_text('digraph waves { story [shape=box command="true"]; }\n')
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="Completed: story\n", stderr=stderr
+        ),
+    )
+
+    result = run_node(
+        "bmad-epic-waves",
+        "run_waves",
+        {
+            "dot_path": str(dot_path),
+            "tea_bin": "tea",
+            "repo_path": str(tmp_path),
+            "stop_on_wave_failure": False,
+        },
+    )["run_waves_results"]
+
+    assert result["all_ok"] is False
+
+
+def test_dependency_blocked_story_is_never_promoted_as_an_independent_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dot_path = tmp_path / "waves.dot"
+    dot_path.write_text("digraph waves {}\n")
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if isinstance(command, list) and "--from-dot" in command:
+            invoked_dot = Path(command[command.index("--from-dot") + 1])
+            if invoked_dot == dot_path:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="",
+                    stderr=(
+                        "Completed: C\n"
+                        "Failed: A\n"
+                        "Dependency-blocked: B [id=s1] (unsafe predecessors: A=failed)\n"
+                        "Nodes: 1/2 succeeded, 1 skipped\n"
+                    ),
+                )
+            return subprocess.CompletedProcess(
+                command, 0, stdout="", stderr="Completed: A\nNodes: 1/1 succeeded\n"
+            )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "the_edge_agent.bmad_epic_waves_git.branch_tip", lambda *_args: None
+    )
+    wave_state = {
+        "dot_path": str(dot_path),
+        "tea_bin": "tea",
+        "repo_path": str(tmp_path),
+        "stop_on_wave_failure": False,
+    }
+    wave_result = run_node("bmad-epic-waves", "run_waves", wave_state)
+    parsed = wave_result["run_waves_results"]
+
+    assert parsed["rc"] == 1
+    assert parsed["failed"] == ["A"]
+    assert parsed["dependency_blocked"] == ["B"]
+    assert parsed["dependency_blocked_ids"] == ["s1"]
+
+    worktrees = []
+    for key in ("A", "B", "C"):
+        path = tmp_path / key
+        path.mkdir()
+        worktrees.append({"key": key, "path": str(path), "branch": f"story/{key}"})
+    escalation = run_node(
+        "bmad-epic-waves",
+        "escalate_failed",
+        {
+            "run_waves_results": parsed,
+            "worktrees": worktrees,
+            "story_routes": {"A": "small", "B": "small", "C": "small"},
+            "dot_payloads": {key: {"story": key} for key in ("A", "B", "C")},
+            "tier_providers": {"standard": "codex"},
+            "fix_tier_providers": {"standard": "codex_frontier"},
+            "auto_model": True,
+            "repo_path": str(tmp_path),
+            "target_branch": "main",
+            "tea_bin": "tea",
+            "subgraph_path": "story.yaml",
+            "epic_key": "epic-test",
+        },
+    )
+
+    assert [item["key"] for item in escalation["escalations"]] == ["A"]
+    assert escalation["run_waves_results"]["rc"] == 1
+    assert escalation["run_waves_results"]["all_ok"] is False
+    escalation_call = [
+        command
+        for command in commands
+        if isinstance(command, list)
+        and "--from-dot" in command
+        and Path(command[command.index("--from-dot") + 1]) != dot_path
+    ][0]
+    escalation_dot = Path(escalation_call[escalation_call.index("--from-dot") + 1])
+    assert 'label="A"' in escalation_dot.read_text()
+    assert 'label="B"' not in escalation_dot.read_text()
+
+
+def test_discover_preserves_an_explicit_caller_test_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "Makefile").write_text("test:\n\tpytest -q\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = run_node(
+        "bmad-epic-waves",
+        "discover_epic",
+        {
+            "arg": "epic-78",
+            "repo_path": str(tmp_path),
+            "test_command": "python /tmp/baseline_gate.py check",
+        },
+    )
+
+    assert result["test_command"] == "python /tmp/baseline_gate.py check"
+
+
 def conflicting_repo(
     tmp_path: Path, ours: str, theirs: str, filename: str = "shared.py"
 ) -> Path:

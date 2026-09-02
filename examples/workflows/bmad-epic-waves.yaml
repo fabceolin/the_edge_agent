@@ -345,19 +345,20 @@ nodes:
           epic_label = f"epics-all ({len(_epics_seen)} epicos)" if stories else "epics-all"
 
       # test_command
-      test_command = ""
-      for tf in ["Makefile","pyproject.toml","package.json","Cargo.toml"]:
-          p = os.path.join(repo, tf)
-          if not os.path.isfile(p): continue
-          try:
-              if tf == "Makefile" and re.search(r'^test:', open(p).read(), re.M): test_command = "make test"
-              elif tf == "pyproject.toml" and re.search(r'pytest', open(p).read(), re.I): test_command = "pytest -q"
-              elif tf == "package.json":
-                  import json as _j; pkg = _j.load(open(p))
-                  if "test" in (pkg.get("scripts") or {}): test_command = "npm test"
-              elif tf == "Cargo.toml": test_command = "cargo test"
-          except Exception: pass
-          if test_command: break
+      test_command = str(state.get("test_command") or "").strip()
+      if not test_command:
+          for tf in ["Makefile","pyproject.toml","package.json","Cargo.toml"]:
+              p = os.path.join(repo, tf)
+              if not os.path.isfile(p): continue
+              try:
+                  if tf == "Makefile" and re.search(r'^test:', open(p).read(), re.M): test_command = "make test"
+                  elif tf == "pyproject.toml" and re.search(r'pytest', open(p).read(), re.I): test_command = "pytest -q"
+                  elif tf == "package.json":
+                      import json as _j; pkg = _j.load(open(p))
+                      if "test" in (pkg.get("scripts") or {}): test_command = "npm test"
+                  elif tf == "Cargo.toml": test_command = "cargo test"
+              except Exception: pass
+              if test_command: break
 
       reprocess = state.get("reprocess_done", False)
       candidates = [s for s in stories if reprocess or s.get("status") != "done"]
@@ -1421,6 +1422,10 @@ nodes:
              "--dot-exec", tea_bin,
              "--dot-max-parallel", str(max_parallel),
              "--dot-session", session_name]
+      if state.get("stop_on_wave_failure", True) is False:
+          # Capability flag: an older CLI rejects this option instead of silently
+          # falling back to legacy unsafe no-stop continuation.
+          cmd += ["--dot-dependency-safe-continue"]
       only_wave = state.get("only_wave")
       if only_wave:
           cmd += ["--dot-start-wave", str(only_wave)]
@@ -1437,7 +1442,9 @@ nodes:
                          capture_output=True)
           print(f"run_waves: TIMEOUT após {dot_timeout}s — session tmux '{session_name}' morta.")
           return {"run_waves_results": {"rc": -1, "stdout": "", "stderr": f"timeout after {dot_timeout}s",
-                                        "succeeded": [], "failed": [], "all_ok": False}}
+                                        "succeeded": [], "failed": [],
+                                        "dependency_blocked_ids": [],
+                                        "dependency_blocked": [], "all_ok": False}}
       out = proc.stdout or ""
       err = proc.stderr or ""
       print(out[-3000:])
@@ -1448,12 +1455,20 @@ nodes:
       combined = out + "\n" + err
       succeeded = re.findall(r'Completed:\s+(\S+)', combined)
       failed = re.findall(r'Failed:\s+(\S+)', combined)
+      blocked_pairs = re.findall(r'Dependency-blocked:\s+(.+?)\s+\[id=([^\]]+)\]', combined)
+      dependency_blocked = [label.strip() for label, _ in blocked_pairs]
+      dependency_blocked_ids = [node_id.strip() for _, node_id in blocked_pairs]
       # "Nodes: N/M succeeded" indica sucesso total; rc==0 é requerido
       m_nodes = re.search(r'Nodes:\s+(\d+)/(\d+)\s+succeeded', combined)
-      all_ok = bool(m_nodes) and m_nodes.group(1) == m_nodes.group(2) and proc.returncode == 0
-      print(f"run_waves: rc={proc.returncode} succeeded={succeeded} failed={failed} all_ok={all_ok}")
+      all_ok = (bool(m_nodes) and m_nodes.group(1) == m_nodes.group(2)
+                and proc.returncode == 0 and not failed and not dependency_blocked)
+      print(f"run_waves: rc={proc.returncode} succeeded={succeeded} failed={failed} "
+            f"dependency_blocked={dependency_blocked} all_ok={all_ok}")
       return {"run_waves_results": {"rc": proc.returncode, "stdout": out[-6000:], "stderr": err[-2000:],
-                                    "succeeded": succeeded, "failed": failed, "all_ok": all_ok}}
+                                    "succeeded": succeeded, "failed": failed,
+                                    "dependency_blocked_ids": dependency_blocked_ids,
+                                    "dependency_blocked": dependency_blocked,
+                                    "all_ok": all_ok}}
     goto:
       - to: escalate_failed
 
@@ -1481,7 +1496,15 @@ nodes:
       fix_providers = state.get("fix_tier_providers") or {}
       payloads = state.get("dot_payloads", {}) or {}
       succeeded = list(res.get("succeeded") or [])
-      failed = [w["key"] for w in worktrees if w["key"] not in succeeded]
+      dependency_blocked = set(res.get("dependency_blocked") or [])
+      # Only an explicit originating failure is eligible for a retry.  Deriving
+      # failures from "not succeeded" would turn dependency-pruned stories into
+      # independent roots and violate the graph on the retry path.
+      reported_failed = set(res.get("failed") or [])
+      failed = [
+          w["key"] for w in worktrees
+          if w["key"] in reported_failed and w["key"] not in dependency_blocked
+      ]
       repo = os.path.realpath(state.get("repo_path", "."))
       target_branch = state.get("target_branch", "main")
       wtmap = {w["key"]: w for w in worktrees}
@@ -1553,8 +1576,14 @@ nodes:
       for k in rescued:
           if k not in succeeded: succeeded.append(k)
       res["succeeded"] = succeeded
-      res["failed"] = [w["key"] for w in worktrees if w["key"] not in succeeded]
-      res["all_ok"] = not res["failed"]
+      res["failed"] = [k for k in failed if k not in succeeded]
+      # Retrying an origin cannot prove the dependency-blocked descendants that
+      # were never dispatched.  Keep the originating DOT result nonzero/red.
+      res["all_ok"] = (
+          res.get("rc") == 0
+          and not res["failed"]
+          and not res.get("dependency_blocked")
+      )
       return {"run_waves_results": res, "escalations": plan, "story_routes": routes}
     goto:
       - to: integrate_lock
