@@ -1150,6 +1150,8 @@ nodes:
       # Uma receita JSON por story, escrita pelos estágios prepare/merge. O sweeper
       # (merge_worktrees) lê daqui em vez de adivinhar pelo log do tmux.
       receipts_dir = state.get("receipts_dir") or os.path.join(tempfile.gettempdir(), "tea-epic-waves", f"receipts-{epic_key}")
+      # Every stage changes cwd; resolve a configured relative directory once.
+      receipts_dir = os.path.realpath(os.path.join(repo_abs, receipts_dir))
       if not dry:
           import shutil
           shutil.rmtree(receipts_dir, ignore_errors=True)  # receita velha é de OUTRO run
@@ -1199,17 +1201,20 @@ nodes:
               # a partir da ponta ATUAL do target: as stories das quais esta depende já
               # mergearam, então o dev enxerga o código delas em vez de desenvolver
               # sobre uma base anterior a elas.
+              base_sha = None
               if not in_flight:
+                  from the_edge_agent.bmad_story_commit_evidence import canonical_commit
+                  base_sha = canonical_commit(repo_abs, target_branch)
                   if not reused:
                       if existing_path:
                           subprocess.run(["git","worktree","remove","--force",existing_path], cwd=repo_abs, capture_output=True)
                       subprocess.run(["git","branch","-D", wt_branch], cwd=repo_abs, capture_output=True)
-                  r = None if reused else subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, target_branch],
+                  r = None if reused else subprocess.run(["git","worktree","add","-b", wt_branch, wt_path, base_sha],
                                      cwd=repo_abs, capture_output=True, text=True)
                   if r is not None and r.returncode != 0:
                       print(f"worktree add falhou para {k}: {r.stderr.strip()}")
                       raise Exception(f"worktree_create falhou para {k}: {r.stderr.strip()}")
-              worktrees.append({"key": k, "path": wt_path, "branch": wt_branch, "reused": reused})
+              worktrees.append({"key": k, "path": wt_path, "branch": wt_branch, "reused": reused, "base_sha": base_sha})
               planned.append(f"{k}{' (retomada)' if reused else ''}")
           verbo = "planejadas (criadas/retomadas no nó de cada story)" if in_flight else "criadas/retomadas"
           print(f"Worktrees {verbo}: {', '.join(planned)} em {wt_base}")
@@ -1301,6 +1306,8 @@ nodes:
               "story_risk_flags": story_risk_flags.get(k) or [],
               "story_test_level": story_test_levels.get(k, ""),
           })
+          if not dry and not in_flight:
+              payload["base_sha"] = wtmap[k]["base_sha"]
           dot_payloads[k] = payload
           j = json.dumps(payload)
           # command: cd worktree && tea run subgraph --input '<json>' (ou repo principal em dry_run)
@@ -1536,8 +1543,33 @@ nodes:
               ref = f"refs/heads/attempt/{re.sub(r'[^A-Za-z0-9._-]+','-',k)}/{tip[:12]}"
               subprocess.run(["git","update-ref",ref,tip], cwd=repo, capture_output=True)
               print(f"  {k}: tentativa anterior preservada em {ref.removeprefix('refs/heads/')}")
-          subprocess.run(["git","reset","--hard",target_branch], cwd=wt["path"], capture_output=True)
-          subprocess.run(["git","clean","-fd"], cwd=wt["path"], capture_output=True)
+          subprocess.run(["git","reset","--hard",target_branch], cwd=wt["path"], capture_output=True, check=True)
+          subprocess.run(["git","clean","-fd"], cwd=wt["path"], capture_output=True, check=True)
+          # O reset existente inicia outra tentativa: commits herdados do target
+          # não são contribuição desta story. Congele a nova base antes dos agentes.
+          from the_edge_agent.bmad_story_commit_evidence import canonical_commit
+          from the_edge_agent.bmad_epic_waves_integrate import write_receipt
+          payload["base_sha"] = canonical_commit(wt["path"], "HEAD")
+          write_receipt(payload.get("receipts_dir"), {
+              "key": k, "stage": "prepare", "status": "prepared",
+              "path": wt["path"], "branch": wt["branch"], "target": target_branch,
+              "base": payload["base_sha"],
+          })
+          # Prior attempt outcomes cannot authorize this retry in the sweeper.
+          # Keep them as audit records outside read_receipts' top-level scan.
+          if payload.get("receipts_dir"):
+              from pathlib import Path
+              receipt_root = Path(payload["receipts_dir"])
+              safe_key = re.sub(r"[^A-Za-z0-9._-]+", "-", k)
+              previous = [receipt_root / f"{safe_key}.{stage}.json" for stage in ("story", "merge")]
+              if any(p.exists() for p in previous):
+                  archive_root = receipt_root / "previous-attempts"
+                  archive_root.mkdir(parents=True, exist_ok=True)
+                  archive = Path(tempfile.mkdtemp(prefix=f"{safe_key}-", dir=archive_root))
+                  for receipt_path in previous:
+                      if receipt_path.exists():
+                          receipt_path.rename(archive / receipt_path.name)
+          payloads[k] = payload
           payload["dev_provider"] = providers.get(p["to_tier"], "codex")
           payload["fix_provider"] = fix_providers.get(p["to_tier"], "codex_frontier")
           payload["story_route"] = p["to_tier"]

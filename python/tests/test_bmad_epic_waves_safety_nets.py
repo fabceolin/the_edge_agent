@@ -135,6 +135,8 @@ def test_dependency_blocked_story_is_never_promoted_as_an_independent_retry(
 
     def fake_run(command, **kwargs):
         commands.append(command)
+        if command[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(command, 0, stdout="a" * 40, stderr="")
         if isinstance(command, list) and "--from-dot" in command:
             invoked_dot = Path(command[command.index("--from-dot") + 1])
             if invoked_dot == dot_path:
@@ -989,7 +991,8 @@ def test_reduced_cycles_default_to_manual_handoff_and_full_cycles_stay_fail_clos
 ) -> None:
     result = run_node("bmad-story-cycle", "init_policy", {"max_review_cycles": cycles})
 
-    assert result == {"max_review_cycles": cycles, "review_handoff": handoff}
+    assert result["max_review_cycles"] == cycles
+    assert result["review_handoff"] == handoff
 
 
 def test_explicit_handoff_wins_over_the_derived_default() -> None:
@@ -1098,11 +1101,21 @@ def test_blocked_is_fail_closed_even_under_a_manual_handoff() -> None:
     assert route["to"] == "summary"  # nunca chega ao finish: não commita, não mergeia
 
 
-def test_manual_review_is_integrable_but_never_reported_as_completed() -> None:
+def committed_story_state(tmp_path: Path) -> dict:
+    repo = init_repo(tmp_path / "repo")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "implementation.py").write_text("implemented = True\n")
+    git(repo, "add", "implementation.py")
+    git(repo, "commit", "-m", "implementation")
+    return {"repo_path": str(repo), "base_sha": base}
+
+
+def test_manual_review_is_integrable_but_never_reported_as_completed(tmp_path: Path) -> None:
     result = run_node(
         "bmad-story-cycle",
         "summary",
         {
+            **committed_story_state(tmp_path),
             "story_key": "36-1-base",
             "finish_output": {"content": "committed=true\nFINISH_DONE"},
             "review_status": "MANUAL_PENDING",
@@ -1116,11 +1129,12 @@ def test_manual_review_is_integrable_but_never_reported_as_completed() -> None:
     assert result["final_status"] == "manual_review"
 
 
-def test_a_manual_story_that_did_not_commit_stays_incomplete() -> None:
+def test_a_manual_story_that_did_not_commit_stays_incomplete(tmp_path: Path) -> None:
     result = run_node(
         "bmad-story-cycle",
         "summary",
         {
+            **committed_story_state(tmp_path),
             "story_key": "36-1-base",
             "finish_output": {"content": "committed=false"},
             "review_status": "MANUAL_PENDING",
@@ -1131,11 +1145,12 @@ def test_a_manual_story_that_did_not_commit_stays_incomplete() -> None:
     assert result["final_status"] == "incomplete"
 
 
-def test_block_handoff_never_produces_a_manual_review_status() -> None:
+def test_block_handoff_never_produces_a_manual_review_status(tmp_path: Path) -> None:
     result = run_node(
         "bmad-story-cycle",
         "summary",
         {
+            **committed_story_state(tmp_path),
             "story_key": "36-1-base",
             "finish_output": {"content": "committed=true"},
             "review_status": "MAX_ATTEMPTS",
@@ -1154,6 +1169,7 @@ def test_story_summary_writes_the_receipt_the_merge_reads(tmp_path: Path) -> Non
         "bmad-story-cycle",
         "summary",
         {
+            **committed_story_state(tmp_path),
             "story_key": "36-1-base",
             "finish_output": {"content": "committed=true"},
             "review_status": "SKIPPED",
@@ -1233,3 +1249,137 @@ def test_stories_pending_human_review_are_not_reported_as_unintegrated(tmp_path:
     assert result["incomplete_keys"] == []          # integrada: não é uma story perdida
     assert result["marked_review"] == ["36-1-base"]
     assert result["all_done"] is False              # ...mas o épico não fecha sem o review
+
+
+@pytest.mark.parametrize("in_flight", [True, False])
+def test_generated_story_commands_use_the_correct_frozen_base_source(tmp_path, in_flight):
+    import json
+    from the_edge_agent.bmad_epic_waves_integrate import prepare_worktree
+
+    repo = init_repo(tmp_path / "repo")
+    base = git(repo, "rev-parse", "HEAD")
+    state = graph_state(repo, "DEPS: none", dry_run=False, integrate_in_flight=in_flight,
+                        worktree_base=str(tmp_path / "worktrees"),
+                        receipts_dir=str(tmp_path / "receipts"), max_review_cycles=0)
+    result = run_node("bmad-epic-waves", "build_waves", state)
+    assert len(result["dot_payloads"]) == 3
+    dot = Path(result["dot_path"]).read_text()
+    for key, payload in result["dot_payloads"].items():
+        assert payload["review_handoff"] == "manual"
+        assert "final_status=incomplete" in dot
+        if in_flight:
+            assert "base_sha" not in payload
+            assert f"--key {key}" in dot
+            assert " prepare " in dot and " merge " in dot
+        else:
+            assert payload["base_sha"] == base
+            assert git(Path(payload["repo_path"]), "rev-parse", "HEAD") == base
+            assert " prepare " not in dot
+    # A sibling advances the target after planning; only in-flight preparation
+    # should observe it. Non-in-flight payloads retain their original frozen SHA.
+    (repo / "sibling.py").write_text("sibling = True\n")
+    git(repo, "add", "sibling.py")
+    git(repo, "commit", "-m", "sibling")
+    advanced = git(repo, "rev-parse", "HEAD")
+    key, payload = next(iter(result["dot_payloads"].items()))
+    if in_flight:
+        prepare_worktree(str(repo), key, f"story/{key}", payload["repo_path"], "main", payload["receipts_dir"])
+        receipt = json.loads((Path(payload["receipts_dir"]) / f"{key}.prepare.json").read_text())
+        assert receipt["base"] == advanced
+    else:
+        assert payload["base_sha"] == base
+    summary = run_node("bmad-story-cycle", "summary", {
+        **payload, "review_status": "SKIPPED", "finish_output": "committed=true",
+    })
+    assert summary["final_status"] == "incomplete"
+    assert summary["commit_reason"] == "no_commits_beyond_base"
+
+
+def test_retry_refreshes_base_so_inherited_sibling_commit_does_not_prove_work(tmp_path, monkeypatch):
+    from the_edge_agent.bmad_epic_waves_integrate import prepare_worktree, read_receipt
+
+    repo = init_repo(tmp_path / "repo")
+    wt = tmp_path / "worktree"
+    receipts = tmp_path / "receipts"
+    key = "36-1-base"
+    branch = f"story/{key}"
+    original_base = git(repo, "rev-parse", "HEAD")
+    prepare_worktree(str(repo), key, branch, str(wt), "main", str(receipts))
+    (repo / "sibling.py").write_text("sibling = True\n")
+    git(repo, "add", "sibling.py")
+    git(repo, "commit", "-m", "sibling")
+    advanced = git(repo, "rev-parse", "HEAD")
+    payloads = {key: {"repo_path": str(wt), "story_key": key, "base_sha": original_base,
+                      "in_worktree": True, "receipts_dir": str(receipts),
+                      "review_handoff": "manual", "max_review_cycles": 0}}
+    actual_run = subprocess.run
+
+    def no_agents(command, **kwargs):
+        if "--from-dot" in command:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr=f"Failed: {key}\n")
+        return actual_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", no_agents)
+    run_node("bmad-epic-waves", "escalate_failed", {
+        "repo_path": str(repo), "target_branch": "main", "auto_model": True,
+        "run_waves_results": {"all_ok": False, "failed": [key]},
+        "worktrees": [{"key": key, "branch": branch, "path": str(wt)}],
+        "story_routes": {key: "small"}, "dot_payloads": payloads,
+        "tea_bin": "tea", "subgraph_path": "story.yaml", "epic_key": "epic-retry-test",
+    })
+    assert payloads[key]["base_sha"] == advanced
+    assert read_receipt(str(receipts), key, "prepare")["base"] == advanced
+    summary = run_node("bmad-story-cycle", "summary", {
+        **payloads[key], "review_status": "SKIPPED", "finish_output": "committed=true",
+    })
+    assert summary["final_status"] == "incomplete"
+    assert summary["commit_reason"] == "no_commits_beyond_base"
+
+
+def test_relative_receipts_directory_is_frozen_before_worktree_dispatch(tmp_path):
+    repo = init_repo(tmp_path / "repo")
+    result = run_node("bmad-epic-waves", "build_waves", graph_state(
+        repo, "DEPS: none", dry_run=False, integrate_in_flight=True,
+        worktree_base=str(tmp_path / "worktrees"), receipts_dir="../receipts",
+    ))
+    for payload in result["dot_payloads"].values():
+        assert payload["receipts_dir"] == str(tmp_path / "receipts")
+
+
+@pytest.mark.parametrize("failed_command", ["reset", "clean"])
+def test_retry_preparation_failure_preserves_receipt_and_never_dispatches(
+    tmp_path, monkeypatch, failed_command,
+):
+    from the_edge_agent.bmad_epic_waves_integrate import prepare_worktree
+
+    repo = init_repo(tmp_path / "repo")
+    wt, receipts = tmp_path / "worktree", tmp_path / "receipts"
+    key, branch = "36-1-base", "story/36-1-base"
+    prepare_worktree(str(repo), key, branch, str(wt), "main", str(receipts))
+    receipt_path = receipts / f"{key}.prepare.json"
+    previous = receipt_path.read_bytes()
+    actual_run = subprocess.run
+    dispatched = []
+
+    def fail_preparation(command, **kwargs):
+        if command[:2] == ["git", failed_command]:
+            if kwargs.get("check"):
+                raise subprocess.CalledProcessError(1, command, stderr="index locked")
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="index locked")
+        if "--from-dot" in command:
+            dispatched.append(command)
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+        return actual_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_preparation)
+    with pytest.raises(subprocess.CalledProcessError):
+        run_node("bmad-epic-waves", "escalate_failed", {
+            "repo_path": str(repo), "target_branch": "main", "auto_model": True,
+            "run_waves_results": {"all_ok": False, "failed": [key]},
+            "worktrees": [{"key": key, "branch": branch, "path": str(wt)}],
+            "story_routes": {key: "small"},
+            "dot_payloads": {key: {"repo_path": str(wt), "receipts_dir": str(receipts)}},
+            "tea_bin": "tea", "subgraph_path": "story.yaml",
+        })
+    assert receipt_path.read_bytes() == previous
+    assert not dispatched

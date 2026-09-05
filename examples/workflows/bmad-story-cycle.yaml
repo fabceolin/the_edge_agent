@@ -42,7 +42,8 @@ description: |
     test_command, target_branch, dev_model, review_model,
     create_if_missing (bool), max_review_cycles (int), in_worktree (bool),
     review_handoff (str, "block"|"manual"; default derivado de max_review_cycles),
-    receipts_dir (str, opcional): onde gravar o recibo JSON do desfecho da story,
+    base_sha (str, optional): frozen Git commit ID; worktrees require it unless a prepare receipt provides the base,
+    receipts_dir (str, opcional): diretório FORA da worktree para gravar o recibo JSON do desfecho da story,
     dev_provider (str, default "codex"), fix_provider (str, opcional; default dev_provider),
     frontier_provider (str, opcional; default dev_provider),
     dev_harness (str, default "codex", supported: "codex" or "claude"),
@@ -98,6 +99,25 @@ state_schema:
   verification_incomplete: bool
   finish_output: str
   final_status: str
+  base_sha: str
+  base_capture_error: str
+  head_sha: str
+  commit_sha: str
+  clean_worktree: bool
+  diff_base_sha: str
+  committed: bool
+  git_commit_proven: bool
+  commit_evidence: str
+  commit_reason: str
+  commit_error: str
+  worktree_clean: bool
+  commit_count: int
+  changed_files: list
+  implementation_files: list
+  marker_status: str
+  marker_claims: list
+  marker_divergence: bool
+  receipt_error: str
 
 settings:
   # POLÍTICA BALANCEADA — modelo e reasoning variam juntos por rota efetiva.
@@ -312,7 +332,9 @@ nodes:
           print(f"Review: {cycles} ciclo(s) e handoff={handoff} — o que não fechar sai como manual_review (status 'review', não 'done').")
       else:
           print(f"Review: até {cycles} ciclo(s), handoff=block (sem APPROVED não commita).")
-      return {"max_review_cycles": cycles, "review_handoff": handoff}
+      from the_edge_agent.bmad_story_commit_evidence import freeze_story_base
+      return {"max_review_cycles": cycles, "review_handoff": handoff,
+              **freeze_story_base(state)}
     goto: ensure_story_file
 
   # ============================================================================
@@ -735,11 +757,9 @@ nodes:
   - name: summary
     description: Sintetiza o status final da story
     run: |
-      import re
-      out = state.get("finish_output", {})
-      text = out.get("content", "") if isinstance(out, dict) else (str(out) if out else "")
-      committed_match = re.search(r'\bcommitted\s*[:=]\s*(true|false)\b', text, re.I)
-      committed = bool(committed_match and committed_match.group(1).lower() == "true")
+      from the_edge_agent.bmad_story_commit_evidence import collect_commit_evidence
+      evidence = collect_commit_evidence(state)
+      committed = evidence["committed"]
       status = state.get("review_status", "UNKNOWN")
       manual = state.get("review_handoff") == "manual"
       if state.get("final_status") == "missing_story_file":
@@ -747,9 +767,8 @@ nodes:
       elif status == "APPROVED" and committed:
           final = "completed"
       elif manual and committed and status in ("SKIPPED", "MANUAL_PENDING", "MAX_ATTEMPTS", "CHANGES_REQUESTED"):
-          # Terceiro desfecho, entre completed e incomplete: o código ESTÁ commitado e é
-          # integrável (por isso não é `incomplete`, que o --fail-on-state do epic-waves
-          # usa para barrar o merge), mas ninguém aprovou (por isso não é `completed`).
+          # Git prova contribuição local; só o módulo de integração decide o merge.
+          # Nenhum reviewer aprovou, então o status continua pendente de review humano.
           final = "manual_review"
       else:
           final = "incomplete"
@@ -761,23 +780,30 @@ nodes:
       if final == "manual_review":
           motivo = ("nenhum review automático rodou (max_review_cycles=0)" if status == "SKIPPED"
                     else f"os {state.get('max_review_cycles')} ciclo(s) automáticos não fecharam o review")
-          print(f"MANUAL_REVIEW_PENDING: {state.get('story_key')} — {motivo}. Código integrável, veredito com o humano.")
+          print(f"MANUAL_REVIEW_PENDING: {state.get('story_key')} — {motivo}. Contribuição local comprovada, veredito com o humano.")
 
       # Recibo: é por ele que o merge sabe marcar `review` em vez de `done` no
       # sprint-status, e que o relatório do épico consegue listar o que ficou pendente.
       receipts_dir = state.get("receipts_dir")
+      receipt_error = ""
       if receipts_dir:
           try:
               from the_edge_agent.bmad_epic_waves_integrate import write_receipt
+              from the_edge_agent.bmad_story_commit_evidence import validate_receipts_dir
+              validate_receipts_dir(state)
               write_receipt(receipts_dir, {
                   "key": state.get("story_key"), "stage": "story", "status": final,
                   "final_status": final, "review_status": status, "committed": committed,
                   "review_handoff": state.get("review_handoff") or "block",
                   "max_review_cycles": state.get("max_review_cycles"),
+                  "path": state.get("repo_path"), **evidence,
               })
           except Exception as exc:
-              print(f"aviso: recibo da story não gravado ({exc}) — o merge vai marcar 'done' pelo caminho normal.")
-      return {"final_status": final}
+              receipt_error = str(exc)
+              final = "incomplete"
+              print(f"recibo da story não gravado ({exc}) — integração bloqueada.")
+      print(f"Git evidence: {evidence['commit_reason']}; marker={evidence['marker_status']}; final_status={final}")
+      return {"final_status": final, **evidence, "receipt_error": receipt_error}
 
 edges:
   - from: __start__
