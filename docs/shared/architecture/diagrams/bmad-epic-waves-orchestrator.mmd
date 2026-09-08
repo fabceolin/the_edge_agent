@@ -1,0 +1,55 @@
+flowchart TD
+    START([tea run bmad-epic-waves<br/>arg=epic-N, repo_path]) --> DISC["discover_epic<br/>lê sprint-status, filtra stories do épico,<br/>detecta story files faltantes"]
+
+    DISC -->|"_skip_prep: nada a criar"| GI
+    DISC -->|"faltam story files"| PCR["prep_create<br/>dynamic_parallel, max_concurrency 4<br/>cria as stories faltantes"]
+
+    PCR --> PLK{"prep_lock<br/>lock cross-run em<br/>.claude/.bmad-epic-waves.lock"}
+    PLK -->|"não obteve o lock"| ABL["abort_lock<br/>final_status=lock_*"]:::abort
+    PLK -->|"dono do lock"| PRC["prep_reconcile<br/>LLM confere arquivos criados<br/>e marca sprint-status UMA vez"]
+
+    PRC --> PPR{"parse_reconcile"}
+    PPR -->|"ainda faltam stories"| ABM["abort_missing<br/>story_creation_incomplete"]:::abort
+    PPR --> PCM{"prep_commit<br/>git add nominal + commit<br/>libera o lock em todo caminho"}
+    PCM -->|"commit falhou"| ABC["abort_commit_failed"]:::abort
+    PCM --> CSP{"check_stop_after_prep"}
+    CSP -->|"stop_after_prep=true"| ENDP(["stopped_after_prep"]):::abort
+    CSP --> GI
+
+    GI{"graph_infer<br/>deps override?"}
+    GI -->|"args.deps fornecido"| BW
+    GI -->|"inferir"| GLM["graph_llm<br/>lê as stories e emite<br/>EDGE / EXTERNAL_BLOCKER /<br/>COMPLEXITY / RISK"]
+    GLM --> BW
+
+    BW["build_waves - determinístico<br/>layering topológico → ondas<br/>bloqueio cross-épico<br/>rota de modelo por story<br/>gera epic-N.dot + worktrees"]
+    BW -->|"dry_run=true"| ENDD(["dry_run: só o plano"]):::abort
+    BW --> RW
+
+    RW["run_waves<br/>tea run --from-dot<br/>topological sort + tmux<br/>--dot-max-parallel, --dot-start-wave"]
+    RW --> STORY[["por story: prepare && story-cycle && merge<br/>ver diagrama 2"]]:::sub
+    STORY --> ESC
+
+    ESC["escalate_failed<br/>só com auto_model:<br/>promove 1 rota e repete<br/>as stories que falharam"]
+    ESC --> ILK{"integrate_lock<br/>retoma o lock do repo principal"}
+    ILK -->|"sem lock"| ABD["abort_lock_after_dev<br/>nada mergeado,<br/>branches story/* intactas"]:::abort
+    ILK --> MW
+
+    MW{"merge_worktrees - serial<br/>prova de commit, git merge<br/>classify_conflict"}
+    MW -->|"conflito não elegível"| FC["fail-closed<br/>merge_conflicts p/ revisão humana"]:::abort
+    MW -->|"pending_resolution<br/>auto_resolve_conflicts"| RC["resolve_conflicts<br/>LLM junta os DOIS lados"]
+    MW -->|"tudo limpo"| MD
+    RC --> VR{"verify_resolution<br/>ancestralidade + marcadores + suíte"}
+    VR -->|"vermelho ou marcadores"| RST["git reset --hard post_merge_head<br/>vira merge_conflicts"]:::abort
+    VR --> MD
+
+    MD["migration_dag<br/>detecta múltiplas folhas de migration<br/>e resolve com o gerador do framework"]
+    MD --> MK["mark_done<br/>sprint-status das stories integradas"]
+    MK --> VE["verify_epic<br/>all_done + suíte verde +<br/>a suíte cobre o épico?"]
+    VE --> DR{"decide_retro"}
+    DR -->|"all_done e run_retrospective"| RR["retro_run<br/>escreve a retro,<br/>flippa epic-N para done,<br/>2 commits separados"]
+    DR --> SUM
+    RR --> SUM["summary"]
+    SUM --> FIM([final_status])
+
+    classDef abort fill:#fdecea,stroke:#c0392b,color:#7b241c
+    classDef sub fill:#e3f2fd,stroke:#1f6fb2,color:#0d3c61

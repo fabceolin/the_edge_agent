@@ -24,6 +24,22 @@ Coverage mapping and coverage gates are out of scope here. Use `trace` for cover
 
 **Recommendation**: {Approve | Approve with Comments | Request Changes | Block}
 
+<!-- COMPUTED, never chosen. steps-c/step-03f-aggregate-scores.md §3b derives this from the
+     deduped violation counts: any CRITICAL => Block; any HIGH => Request Changes; score < 70 =>
+     Request Changes; any remaining finding => Approve with Comments; otherwise Approve. Copy the
+     computed value into this line and into `## Decision` unchanged — the CLI rejects a report
+     whose two copies disagree, and a verdict picked by judgment beside a deterministic score is
+     how two reviewers reached 82 and 85 on the same files and still returned opposite outcomes.
+     A waiver changes the exit code, never this value. -->
+
+**Context Basis**: {none | pr_diff | pr_diff_truncated}
+
+**Context Waivers Applied**: 0
+
+<!-- What this review was judged against, resolved in step 1. `none` means no story, test design, or source accompanied the tests: the verdict speaks to how the tests are built, not to whether they match a requirement. -->
+
+<!-- Context can add findings and clarify impact. It cannot waive a rubric violation, change severity, or alter the score. This machine-readable value must remain 0. -->
+
 ### Key Strengths
 
 ✅ {strength_1}
@@ -44,23 +60,47 @@ Coverage mapping and coverage gates are out of scope here. Use `trace` for cover
 
 ## Quality Criteria Assessment
 
-| Criterion                            | Status                          | Violations | Notes        |
-| ------------------------------------ | ------------------------------- | ---------- | ------------ |
-| BDD Format (Given-When-Then)         | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Test IDs                             | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Priority Markers (P0/P1/P2/P3)       | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Hard Waits (sleep, waitForTimeout)   | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Determinism (no conditionals)        | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Isolation (cleanup, no shared state) | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Fixture Patterns                     | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Data Factories                       | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Network-First Pattern                | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Explicit Assertions                  | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
-| Test Length (≤300 lines)             | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {lines}    | {brief_note} |
-| Test Duration (≤1.5 min)             | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {duration} | {brief_note} |
-| Flakiness Patterns                   | {✅ PASS \| ⚠️ WARN \| ❌ FAIL} | {count}    | {brief_note} |
+| Criterion                            | Status                                           | Violations | Basis    | Notes        |
+| ------------------------------------ | ------------------------------------------------ | ---------- | -------- | ------------ |
+| BDD Format (Given-When-Then)         | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Test IDs                             | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Priority Markers (P0/P1/P2/P3)       | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Disabled or Focused Tests            | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {count}    | Absolute | {brief_note} |
+| Hard Waits (sleep, waitForTimeout)   | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {count}    | Absolute | {brief_note} |
+| Determinism (no conditionals)        | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Isolation (cleanup, no shared state) | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {count}    | Absolute | {brief_note} |
+| Fixture Patterns                     | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Data Factories                       | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Network-First Pattern                | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Playwright Utils Adoption            | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Pact.js Utils Adoption               | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+| Explicit Assertions                  | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {count}    | Absolute | {brief_note} |
+| Test Length (≤1000 lines)            | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {lines}    | Absolute | {brief_note} |
+| Test Duration (≤1.5 min)             | {✅ PASS \| ⚠️ WARN \| ❌ FAIL}                  | {duration} | Absolute | {brief_note} |
+| Flakiness Patterns                   | {✅ PASS \| ✅ PASS (n/a) \| ⚠️ WARN \| ❌ FAIL} | {count}    | {basis}  | {brief_note} |
+
+<!-- {basis} states what decided the row, per steps-c/criteria-registry.md: `Absolute`,
+     `Applicability: <what the file must do>`, or `Convention: <key> (<adopted> of <sampled> sampled)` —
+     that exact literal form, "sampled" spelled out both after the count and at the close, e.g.
+     `Convention: priorityMarkers ({adopted} of {sampled} sampled)`. When a headless run supplies a pre-computed
+     `convention_baseline` (see step-02-discover-tests.md §2b's CLI exception), `<sampled>` here MUST
+     equal the corpus's `sampled` value exactly, and `<adopted>` MUST be 0 for any mechanically-checked
+     key the run reports found zero real occurrences of — the CLI parses this line verbatim and rejects
+     a report that disagrees with what it actually measured. A `✅ PASS (n/a)` row MUST name why the
+     gate was closed and MUST deduct nothing — an absent convention or an inapplicable pattern is not a
+     finding. A bare WARN with no basis is the defect this column exists to prevent: it reads identically
+     in a repo that has the convention and one that has never used it, so the reader cannot tell drift
+     from the rubric's own preference. Never leave {basis} unfilled. -->
 
 **Total Violations**: {critical_count} Critical, {high_count} High, {medium_count} Medium, {low_count} Low
+
+<!-- Exactly one line below, exactly one of two literal forms — the CLI parses it and rejects any other
+     shape: `{sampled} test files sampled outside the review set`, or, only when the baseline could not
+     be measured, `unavailable: {reason}` in place of the whole value after the colon. Omit the line
+     entirely only when a headless run recorded baselineUnavailable AND you are citing no
+     "Convention: <key> (...)" fraction anywhere in the report; otherwise it is required. -->
+
+**Convention Baseline**: {sampled} test files sampled outside the review set
 
 ---
 
@@ -87,7 +127,15 @@ Final Score:             {final_score}/100
 Grade:                   {grade}
 ```
 
+<!-- This ledger is the workflow's only scoring model (see steps-c/step-03f-aggregate-scores.md).
+     Every bonus line is 0 or 5, never a partial value, and the six categories above are the
+     complete set. {grade} is exactly one of A, B, C, D, F, with no modifier such as A+ or B-.
+     The lines above must sum to {final_score}, which must equal the **Quality Score** line;
+     headless runners compute the authoritative result and normalize score and grade fields. -->
+
 ---
+
+<!-- **Row** is the criteria-registry identity that produced the finding (C1, H2, M4, ...), the same value the subagent violation carried. It is what makes one reviewer's finding comparable to another's: prose descriptions of a defect differ between runs and vendors, row identities do not. A finding with no row has no severity either, so it belongs in Best Practices or Recommendations as prose, not here. -->
 
 ## Critical Issues (Must Fix)
 
@@ -99,6 +147,7 @@ Grade:                   {grade}
 
 **Severity**: P0 (Critical)
 **Location**: `{filename}:{line_number}`
+**Row**: {registry_row_id}
 **Criterion**: {criterion_name}
 **Knowledge Base**: [{fragment_name}]({fragment_path})
 
@@ -141,6 +190,7 @@ Grade:                   {grade}
 
 **Severity**: {P1 (High) | P2 (Medium) | P3 (Low)}
 **Location**: `{filename}:{line_number}`
+**Row**: {registry_row_id}
 **Criterion**: {criterion_name}
 **Knowledge Base**: [{fragment_name}]({fragment_path})
 
@@ -239,13 +289,19 @@ Grade:                   {grade}
 
 ## Context and Integration
 
+### What the Context Said
+
+{If `context_basis` is `none`: state that no context was supplied, so nothing here checked the tests against a requirement.}
+
+{Otherwise, what the context artifacts established and how it bore on the findings: acceptance criteria the tests do or do not exercise, changed code paths no assertion touches, a story claim contradicted by a test. Context raises findings; it never waives one.}
+
 ### Related Artifacts
 
-{If story file found:}
+{If story file supplied:}
 
 - **Story File**: [{story_filename}]({story_path})
 
-{If test-design found:}
+{If test-design supplied:}
 
 - **Test Design**: [{test_design_filename}]({test_design_path})
 - **Risk Assessment**: {risk_level}
@@ -257,7 +313,7 @@ Grade:                   {grade}
 
 This review consulted the following knowledge base fragments:
 
-- **[test-quality.md](../../../agents/bmad-tea/resources/knowledge/test-quality.md)** - Definition of Done for tests (no hard waits, <300 lines, <1.5 min, self-cleaning)
+- **[test-quality.md](../../../agents/bmad-tea/resources/knowledge/test-quality.md)** - Definition of Done for tests (no hard waits, ≤1000 lines, <1.5 min, self-cleaning)
 - **[fixture-architecture.md](../../../agents/bmad-tea/resources/knowledge/fixture-architecture.md)** - Pure function → Fixture → mergeTests pattern
 - **[network-first.md](../../../agents/bmad-tea/resources/knowledge/network-first.md)** - Route intercept before navigate (race condition prevention)
 - **[data-factories.md](../../../agents/bmad-tea/resources/knowledge/data-factories.md)** - Factory functions with overrides, API-first setup
@@ -384,4 +440,30 @@ If you have questions or feedback on this review:
 3. Request clarification on specific violations
 4. Pair with QA engineer to apply patterns
 
-This review is guidance, not rigid rules. Context matters - if a pattern is justified, document it with a comment.
+This review applies the rubric consistently. Context can reveal additional findings and clarify impact; it cannot waive a violation, change severity, or alter the score. Formal risk acceptance belongs in trace or the release gate.
+
+---
+
+<!-- Machine-readable evidence manifest. Every file actually reviewed, one repo-relative path per line, nothing else in this section: headless runners parse it verbatim as the reviewed-file list. -->
+
+## Reviewed Files
+
+- {relative_path_1}
+- {relative_path_2}
+
+<!-- Machine-readable context manifest. Every context artifact actually read, one repo-relative path per line, or the single word `none`. Required whenever Context Basis is not `none`. These files were read, never scored: no path may appear in both this section and Reviewed Files. -->
+
+## Review Context
+
+- {context_path_1}
+- {context_path_2}
+
+<!-- Disclosure manifest. Present whenever anything a reader would expect in the reviewed set is not there; omit the whole section when nothing was excluded. One repo-relative path per line, each with one of the three reasons from step-02-discover-tests: `path does not exist`, `file could not be parsed`, or `format not scorable by the ledger`. When the run supplied an ---BEGIN UNSCORABLE--- block, reproduce every path in it here verbatim with the third reason, dropping none — the CLI rejects a report that dropped one. Nothing here was reviewed or scored, and no path here may appear in Reviewed Files. A manifest that silently omits a changed test artifact reads as though the diff held nothing else to review. -->
+
+## Excluded From Review Set
+
+- {unscorable_path_1} — format not scorable by the ledger
+- {missing_path_1} — path does not exist
+- {unparseable_path_1} — file could not be parsed
+
+`--test-glob` brings any of these into the review set when it should be scored.

@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 
+from story_automator.core.artifact_paths import implementation_artifacts_dir
 from story_automator.core.frontmatter import (
     extract_last_action,
     find_frontmatter_value,
@@ -20,6 +21,7 @@ from story_automator.core.runtime_policy import (
     summarize_state_policy_fields,
 )
 from story_automator.core.review_verify import verify_code_review_completion
+from story_automator.core.runtime_layout import active_marker_path, active_marker_project_entry
 from story_automator.core.success_verifiers import resolve_success_contract, run_success_verifier
 from story_automator.core.sprint import sprint_status_epic, sprint_status_get
 from story_automator.core.story_keys import normalize_story_key, sprint_status_file
@@ -41,6 +43,7 @@ from .orchestrator_epic_agents import (
     check_blocking_action,
     check_epic_complete_action,
     get_epic_stories_action,
+    retro_agent_action,
 )
 from .orchestrator_parse import parse_output_action
 
@@ -71,6 +74,7 @@ def cmd_orchestrator_helper(args: list[str]) -> int:
         "check-blocking": check_blocking_action,
         "agents-build": agents_build_action,
         "agents-resolve": agents_resolve_action,
+        "retro-agent": retro_agent_action,
     }
     handler = dispatch.get(action)
     if handler is None:
@@ -87,6 +91,7 @@ def _usage(code: int) -> int:
     print("  sprint-status exists", file=target)
     print("  sprint-status check-epic <epic>", file=target)
     print("  parse-output <file> <step>", file=target)
+    print("  marker path", file=target)
     print("  marker create --epic E --story S --remaining N --state-file F", file=target)
     print("  marker remove", file=target)
     print("  marker check", file=target)
@@ -107,6 +112,7 @@ def _usage(code: int) -> int:
     print("  check-blocking <story_id>", file=target)
     print("  agents-build --state-file path --complexity-file path --output path --config-json '{}'", file=target)
     print("  agents-resolve (--state-file path | --agents-file path) --story ID --task create|dev|auto|review", file=target)
+    print("  retro-agent --state-file path", file=target)
     return code
 
 
@@ -115,41 +121,56 @@ def _sprint_status(args: list[str]) -> int:
         print("Usage: orchestrator-helper sprint-status <get|exists|check-epic> [args]", file=__import__("sys").stderr)
         return 1
     project_root = get_project_root()
-    if args[0] == "get":
-        if len(args) < 2:
-            print("Usage: orchestrator-helper sprint-status get <story_key>", file=__import__("sys").stderr)
-            return 1
-        status = sprint_status_get(project_root, args[1])
-        if not status.found and status.reason:
-            print_json({"found": False, "status": status.status, "reason": status.reason})
+    try:
+        if args[0] == "get":
+            if len(args) < 2:
+                print("Usage: orchestrator-helper sprint-status get <story_key>", file=__import__("sys").stderr)
+                return 1
+            status = sprint_status_get(project_root, args[1])
+            if not status.found and status.reason:
+                print_json({"found": False, "status": status.status, "reason": status.reason})
+                return 0
+            if not status.found:
+                print_json({"found": False, "story": args[1], "status": "not_found"})
+                return 0
+            print_json({"found": True, "story": status.story, "status": status.status, "done": status.done})
             return 0
-        if not status.found:
-            print_json({"found": False, "story": args[1], "status": "not_found"})
+        if args[0] == "exists":
+            print("true" if file_exists(sprint_status_file(project_root)) else "false")
             return 0
-        print_json({"found": True, "story": status.story, "status": status.status, "done": status.done})
-        return 0
-    if args[0] == "exists":
-        print("true" if file_exists(sprint_status_file(project_root)) else "false")
-        return 0
-    if args[0] == "check-epic":
-        if len(args) < 2:
-            print("Usage: orchestrator-helper sprint-status check-epic <epic>", file=__import__("sys").stderr)
-            return 1
-        stories, done = sprint_status_epic(project_root, args[1])
-        if not stories:
-            print_json({"ok": False, "epic": args[1], "allStoriesDone": False, "reason": "no_stories_found", "count": 0})
+        if args[0] == "check-epic":
+            if len(args) < 2:
+                print("Usage: orchestrator-helper sprint-status check-epic <epic>", file=__import__("sys").stderr)
+                return 1
+            stories, done = sprint_status_epic(project_root, args[1])
+            if not stories:
+                print_json({"ok": False, "epic": args[1], "allStoriesDone": False, "reason": "no_stories_found", "count": 0})
+                return 0
+            print_json({"ok": True, "epic": args[1], "allStoriesDone": done == len(stories), "total": len(stories), "done": done, "count": len(stories), "stories": stories})
             return 0
-        print_json({"ok": True, "epic": args[1], "allStoriesDone": done == len(stories), "total": len(stories), "done": done, "count": len(stories), "stories": stories})
-        return 0
+    except (OSError, ValueError) as exc:
+        if args[0] == "get":
+            print_json({"found": False, "story": args[1] if len(args) > 1 else "", "status": "error", "reason": str(exc)})
+        elif args[0] == "exists":
+            print_json({"ok": False, "exists": False, "error": str(exc)})
+        elif args[0] == "check-epic":
+            print_json({"ok": False, "epic": args[1] if len(args) > 1 else "", "allStoriesDone": False, "reason": str(exc), "count": 0})
+        else:
+            print_json({"ok": False, "error": str(exc)})
+        return 1
     print("Usage: orchestrator-helper sprint-status <get|exists|check-epic> [args]", file=__import__("sys").stderr)
     return 1
 
 
 def _marker(args: list[str]) -> int:
     if not args:
-        print("Usage: orchestrator-helper marker <create|remove|check|heartbeat> [args]", file=__import__("sys").stderr)
+        print("Usage: orchestrator-helper marker <path|create|remove|check|heartbeat> [args]", file=__import__("sys").stderr)
         return 1
-    marker_file = Path(get_project_root()) / ".claude" / ".story-automator-active"
+    project_root = Path(get_project_root())
+    marker_file = active_marker_path(project_root)
+    if args[0] == "path":
+        print_json({"file": str(marker_file), "entry": active_marker_project_entry(project_root)})
+        return 0
     if args[0] == "create":
         options = {"epic": "", "story": "", "remaining": "0", "state-file": "", "project-slug": "", "pid": "0", "heartbeat": ""}
         idx = 1
@@ -195,7 +216,7 @@ def _marker(args: list[str]) -> int:
         atomic_write(marker_file, json.dumps(payload, indent=2) + "\n")
         print(f"Heartbeat updated: {payload['heartbeat']}")
         return 0
-    print("Usage: orchestrator-helper marker <create|remove|check|heartbeat> [args]", file=__import__("sys").stderr)
+    print("Usage: orchestrator-helper marker <path|create|remove|check|heartbeat> [args]", file=__import__("sys").stderr)
     return 1
 
 
@@ -286,7 +307,7 @@ def _state_update(args: list[str]) -> int:
     while idx < len(args):
         if args[idx] == "--set" and idx + 1 < len(args):
             key, value = args[idx + 1].split("=", 1)
-            replaced, count = re.subn(rf"(?m)^{re.escape(key)}:.*$", f"{key}: {value}", text)
+            replaced, count = re.subn(rf"(?m)^{re.escape(key)}:.*$", lambda m, k=key, v=value: f"{k}: {v}", text)
             if count:
                 text = replaced
                 updated.append(key)
@@ -353,7 +374,11 @@ def _commit_ready(args: list[str]) -> int:
         print_json({"ready": False, "reason": "story_id required"})
         return 1
     project_root = get_project_root()
-    status = sprint_status_get(project_root, args[0])
+    try:
+        status = sprint_status_get(project_root, args[0])
+    except (OSError, ValueError) as exc:
+        print_json({"ready": False, "reason": str(exc), "story": args[0]})
+        return 1
     if status.done:
         out, _ = run_cmd("git", "-C", project_root, "status", "--porcelain")
         if out.strip():
@@ -372,7 +397,11 @@ def _normalize_key(args: list[str]) -> int:
     fmt = "json"
     if len(args) >= 3 and args[1] == "--to":
         fmt = args[2]
-    result = normalize_story_key(get_project_root(), args[0])
+    try:
+        result = normalize_story_key(get_project_root(), args[0])
+    except (OSError, ValueError) as exc:
+        print_json({"ok": False, "error": str(exc), "input": args[0]})
+        return 1
     if result is None:
         print_json({"ok": False, "error": "unrecognized format", "input": args[0]})
         return 1
@@ -391,11 +420,15 @@ def _story_file_status(args: list[str]) -> int:
     if not args:
         print_json({"ok": False, "error": "story input required"})
         return 1
-    norm = normalize_story_key(get_project_root(), args[0])
-    if norm is None:
-        print_json({"ok": False, "error": "could not normalize story key", "input": args[0]})
+    try:
+        norm = normalize_story_key(get_project_root(), args[0])
+        if norm is None:
+            print_json({"ok": False, "error": "could not normalize story key", "input": args[0]})
+            return 1
+        matches = sorted(implementation_artifacts_dir(get_project_root()).glob(f"{norm.prefix}-*.md"))
+    except (OSError, ValueError) as exc:
+        print_json({"ok": False, "error": str(exc), "input": args[0]})
         return 1
-    matches = sorted((Path(get_project_root()) / "_bmad-output" / "implementation-artifacts").glob(f"{norm.prefix}-*.md"))
     if not matches:
         print_json({"ok": False, "error": "story file not found", "prefix": norm.prefix})
         return 1
@@ -459,7 +492,7 @@ def _verify_step(args: list[str]) -> int:
             contract=contract,
         )
         exit_code = 0
-    except (FileNotFoundError, PolicyError, ValueError) as exc:
+    except (FileNotFoundError, OSError, PolicyError, ValueError) as exc:
         payload = {"verified": False, "step": step, "input": story_key, "reason": "verifier_contract_invalid", "error": str(exc)}
         exit_code = 1
     print_json(payload)

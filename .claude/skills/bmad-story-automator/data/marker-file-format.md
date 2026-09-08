@@ -1,6 +1,10 @@
 # Marker File Format
 
-**Location:** `.claude/.story-automator-active` (relative to project root)
+**Location:** Resolved by `orchestrator-helper marker path` for the active runtime layout:
+- Claude: `.claude/.story-automator-active`
+- Codex: follows the active Codex skill root parent, usually `.agents/.story-automator-active` or `.codex/.story-automator-active`
+
+If a runtime is explicitly selected but the installed story-automator skill is discovered under another supported root, the marker follows that active skill root. Always use `orchestrator-helper marker path` rather than hard-coding the marker path.
 
 **Purpose:** Enables the Stop hook to prevent premature stopping during orchestration.
 

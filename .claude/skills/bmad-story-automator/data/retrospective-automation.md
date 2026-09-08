@@ -9,20 +9,18 @@ This file provides instructions for running retrospectives in YOLO mode (fully a
 1. **No User Input Expected**: The retrospective must complete autonomously
 2. **Data-Driven Decisions**: All decisions based on sprint-status, story files, and artifacts
 3. **Safe Failure**: If anything goes wrong, log and skip - never escalate
-4. **Claude Only**: Retrospectives DO NOT support Codex - always use Claude agent
+4. **Configured Agent**: Retrospectives inherit the configured primary agent unless `retro` is explicitly overridden
 
 ---
 
 ## Agent Constraints
-
-### MUST Use Claude
 
 Retrospectives have complex multi-agent "party mode" interactions that require:
 - Natural language dialogue synthesis
 - Multi-step reasoning across story analysis
 - Document generation with rich context
 
-Codex is **not compatible** with these requirements. Always spawn retrospective sessions with `--agent "claude"`.
+Retrospectives use the configured `agentConfig` retro selection. If no explicit `retro` override is present, they inherit the configured primary agent.
 
 ### Timeout Configuration
 
@@ -39,8 +37,8 @@ When spawning a retrospective in YOLO mode, use this prompt:
 ```
 Execute the BMAD retrospective workflow for epic {epic_number}.
 
-READ this skill first: .claude/skills/bmad-retrospective/SKILL.md
-READ this workflow file next: .claude/skills/bmad-retrospective/workflow.md
+READ this skill first: <installed-skill-root>/bmad-retrospective/SKILL.md
+READ this workflow file next: <installed-skill-root>/bmad-retrospective/workflow.md
 
 Run the retrospective in #YOLO mode.
 Assume the user will NOT provide any input to the retrospective directly.

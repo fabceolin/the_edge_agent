@@ -7,6 +7,7 @@
 ## When Primary Monitoring Fails
 
 Primary monitoring can fail in several ways:
+
 - Background task crashes (TaskOutput returns empty/error)
 - Network timeout during monitoring
 - Process killed unexpectedly
@@ -35,7 +36,7 @@ fi
 
 # STEP 3: ALWAYS verify source of truth regardless of session status
 # Story file check:
-story_file=$(ls _bmad-output/implementation-artifacts/{story_prefix}-*.md 2>/dev/null | head -1)
+story_file=$(find "{{implementation_artifacts}}" -maxdepth 1 -type f -name "{story_prefix}-*.md" 2>/dev/null | head -1)
 if [ -f "$story_file" ]; then
     # Story file exists - check its status field
 fi
@@ -51,13 +52,14 @@ is_done=$(echo "$status" | jq -r '.done')
 
 Signs that your monitoring task has crashed:
 
-| Signal | Meaning |
-|--------|---------|
-| `TaskOutput` returns empty 2+ times | Task may be dead |
-| Output file path doesn't exist | Task never wrote results |
-| "running" status but no progress | Task is stuck or dead |
+| Signal                              | Meaning                  |
+| ----------------------------------- | ------------------------ |
+| `TaskOutput` returns empty 2+ times | Task may be dead         |
+| Output file path doesn't exist      | Task never wrote results |
+| "running" status but no progress    | Task is stuck or dead    |
 
 **Recovery:**
+
 1. Do NOT wait indefinitely for dead monitoring task
 2. After 2+ empty TaskOutput results, switch to direct verification
 3. Use tmux session checks + source of truth verification
@@ -68,10 +70,12 @@ Signs that your monitoring task has crashed:
 ## Integration with Retry Logic
 
 **If fallback verification shows step succeeded:**
+
 - Proceed to next step (monitoring failed but workflow succeeded)
 - Log: "Monitoring failed but direct verification confirmed success"
 
 **If fallback verification shows step failed/incomplete:**
+
 - Apply normal retry/fallback strategy
 - Do NOT treat monitoring failure as step failure
 

@@ -49,7 +49,7 @@ Load the selected state document (resolved as `{state_path}` for this run). Extr
 - `epic`, `epicName`, `storyRange`
 - `status`, `currentStory`, `currentStep`
 - `stepsCompleted`, `lastUpdated`
-- `projectContext`, `aiCommand`, `overrides`
+- `projectContext`, `aiCommand`, `agentConfig`, `overrides`
 - `activeSessions`, `completedSessions`
 
 ### 3a. Helper CLI Contract Check (Required)
@@ -127,7 +127,7 @@ rm -f "$tmp_validation" "$tmp_sessions"
 | storyRange | ✅/❌ | array |
 | status | ✅/❌ | valid enum |
 | lastUpdated | ✅/❌ | ISO date |
-| aiCommand | ✅/❌ | non-empty string |
+| aiCommand or agentConfig | ✅/❌ | at least one runtime command source is present |
 
 **Valid status values:** INITIALIZING, READY, IN_PROGRESS, PAUSED, COMPLETE, ABORTED
 

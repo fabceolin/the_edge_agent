@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sys
 from pathlib import Path
 
+from ..core.runtime_layout import active_marker_path, runtime_provider
+from ..core.stop_hooks import HookConfigError, ensure_stop_hook
 from ..core.utils import (
-    ensure_dir,
-    file_exists,
     get_project_slug,
-    now_utc_z,
-    read_text,
     run_cmd,
-    write_atomic,
     write_json,
 )
 
@@ -31,8 +29,8 @@ def _workflow_doc_relative(doc_name: str) -> str:
         return str(doc_path.resolve())
 
 
-def _stop_hook_command(command: str) -> str:
-    command_parts = command.split()
+def _stop_hook_command(command: str, project_root: Path) -> str:
+    command_parts = shlex.split(command)
     if not command_parts:
         return command
     candidates = [
@@ -42,9 +40,9 @@ def _stop_hook_command(command: str) -> str:
     ]
     for candidate in candidates:
         if candidate and candidate.exists() and os.access(candidate, os.X_OK):
-            command_parts[0] = str(candidate)
-            return " ".join(command_parts)
-    return f"{shutil.which('python3') or 'python3'} -m story_automator {' '.join(command_parts[1:])}".strip()
+            command_parts[0] = str(candidate.resolve())
+            return shlex.join(["env", f"PROJECT_ROOT={project_root}", *command_parts])
+    return shlex.join(["env", f"PROJECT_ROOT={project_root}", shutil.which("python3") or "python3", "-m", "story_automator", *command_parts[1:]])
 
 
 def cmd_derive_project_slug(args: list[str]) -> int:
@@ -90,68 +88,55 @@ def cmd_ensure_stop_hook(args: list[str]) -> int:
     settings = ""
     command = ""
     timeout = 10
-    for idx, arg in enumerate(args):
+    idx = 0
+    while idx < len(args):
+        arg = args[idx]
         if arg == "--settings" and idx + 1 < len(args):
             settings = args[idx + 1]
+            idx += 2
         elif arg == "--command" and idx + 1 < len(args):
-            command = args[idx + 1]
+            idx += 1
+            command_parts: list[str] = []
+            while idx < len(args) and not args[idx].startswith("--"):
+                command_parts.append(args[idx])
+                idx += 1
+            if command_parts:
+                command = command_parts[0] if len(command_parts) == 1 else shlex.join(command_parts)
         elif arg == "--timeout" and idx + 1 < len(args):
             timeout = int(args[idx + 1])
-    if not settings or not command:
+            idx += 2
+        else:
+            idx += 1
+    if not command:
         write_json({"ok": False, "error": "missing_required_args"})
         return 1
-    command = _stop_hook_command(command)
-    ensure_dir(Path(settings).parent)
-    payload = {
-        "hooks": {
-            "Stop": [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": command,
-                            "timeout": timeout,
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-    path = Path(settings)
-    if not path.exists():
-        write_atomic(path, json.dumps(payload, indent=2))
-        write_json({"ok": True, "changed": True, "reason": "created", "path": str(path)})
-        return 0
-    try:
-        root = json.loads(path.read_text())
-    except json.JSONDecodeError:
-        write_json({"ok": False, "error": "invalid_json", "path": str(path)})
+    project_root = Path(os.environ.get("PROJECT_ROOT") or os.getcwd()).resolve()
+    provider = runtime_provider(project_root)
+    if provider == "claude" and not settings:
+        write_json({"ok": False, "error": "missing_required_args"})
         return 1
-    hooks = root.setdefault("hooks", {})
-    stop_hooks = hooks.setdefault("Stop", [])
-    exists = False
-    needs_update = False
-    for entry in stop_hooks:
-        for hook in entry.get("hooks", []):
-            existing = hook.get("command")
-            if existing == command or ("story-automator" in str(existing) and "stop-hook" in str(existing)):
-                exists = True
-                if existing != command:
-                    hook["command"] = command
-                    needs_update = True
-                if hook.get("timeout") != timeout:
-                    hook["timeout"] = timeout
-                    needs_update = True
-    if exists and not needs_update:
-        write_json({"ok": True, "changed": False, "reason": "already_configured", "path": str(path)})
-        return 0
-    if exists and needs_update:
-        write_atomic(path, json.dumps(root, indent=2))
-        write_json({"ok": True, "changed": False, "reason": "hook_normalized", "path": str(path)})
-        return 0
-    stop_hooks.append(payload["hooks"]["Stop"][0])
-    write_atomic(path, json.dumps(root, indent=2))
-    write_json({"ok": True, "changed": True, "reason": "added", "path": str(path)})
+    command = _stop_hook_command(command, project_root)
+    settings_path = Path(settings).expanduser().resolve() if settings else None
+    try:
+        result = ensure_stop_hook(
+            provider=provider,
+            project_root=project_root,
+            settings_path=settings_path,
+            command=command,
+            timeout=timeout,
+        )
+    except HookConfigError as exc:
+        write_json(
+            {
+                "ok": False,
+                "error": exc.code,
+                "path": str(exc.path),
+                "provider": provider,
+                "message": exc.message,
+            }
+        )
+        return 1
+    write_json({"ok": True, **result})
     return 0
 
 
@@ -159,7 +144,7 @@ def cmd_stop_hook(_: list[str]) -> int:
     sys.stdin.read()
     if os.environ.get("STORY_AUTOMATOR_CHILD", "").lower() == "true":
         return 0
-    marker = Path(os.getcwd()) / ".claude" / ".story-automator-active"
+    marker = active_marker_path()
     if not marker.exists():
         return 0
     try:

@@ -8,18 +8,25 @@ from typing import Any
 
 from .common import ensure_dir, file_exists, iso_now, read_text, write_atomic
 from .frontmatter import find_frontmatter_value
+from .runtime_layout import runtime_provider
 
 
 @dataclass
 class AgentTaskConfig:
     primary: str = ""
     fallback: Any = None
+    # Three-state field: `None` = key not provided (inherit defaultModel);
+    # `""`   = key present but normalized to a sentinel (explicit "use CLI
+    #          default" — must CLEAR an inherited defaultModel);
+    # `<id>` = explicit model override.
+    model: str | None = None
 
 
 @dataclass
 class AgentConfigResolved:
-    default_primary: str = "claude"
-    default_fallback: str = "codex"
+    default_primary: str = "auto"
+    default_fallback: str = "false"
+    default_model: str = ""
     per_task: dict[str, AgentTaskConfig] = field(default_factory=dict)
     complexity_overrides: dict[str, dict[str, AgentTaskConfig]] = field(default_factory=dict)
 
@@ -42,9 +49,20 @@ def save_presets_file(path: str | Path, data: dict[str, Any]) -> None:
 def parse_agent_config_json(raw: str) -> AgentConfigResolved:
     data = json.loads(raw)
     config = AgentConfigResolved()
-    config.default_primary = data.get("defaultPrimary") or data.get("primary") or "claude"
-    config.default_fallback = data.get("defaultFallback") or data.get("fallback") or "codex"
+    config.default_primary = data.get("defaultPrimary") or data.get("primary") or "auto"
+    if "defaultFallback" in data:
+        fallback_raw = data.get("defaultFallback")
+    elif "fallback" in data:
+        fallback_raw = data.get("fallback")
+    else:
+        fallback_raw = False
+    normalized_fallback = normalize_fallback_value(fallback_raw)
+    config.default_fallback = normalized_fallback or "false"
+    config.default_model = _normalize_model(data.get("defaultModel"))
     config.per_task = _parse_task_map(data.get("perTask"))
+    retro_task = _parse_task_entry(data.get("retro"))
+    if retro_task is not None:
+        config.per_task.setdefault("retro", retro_task)
     for level, value in (data.get("complexityOverrides") or {}).items():
         config.complexity_overrides[level] = _parse_task_map(value)
     for level in ("low", "medium", "high"):
@@ -60,10 +78,54 @@ def _parse_task_map(raw: Any) -> dict[str, AgentTaskConfig]:
         return {}
     output: dict[str, AgentTaskConfig] = {}
     for task, entry in raw.items():
-        if not isinstance(entry, dict):
+        parsed = _parse_task_entry(entry)
+        if parsed is None:
             continue
-        output[task] = AgentTaskConfig(primary=str(entry.get("primary", "")), fallback=entry.get("fallback"))
+        output[task] = parsed
     return output
+
+
+def _parse_task_entry(raw: Any) -> AgentTaskConfig | None:
+    if not isinstance(raw, dict):
+        return None
+    # Distinguish "model key absent" (None → inherit) from "model key present
+    # but a sentinel/empty value" ("" → explicit clear of inherited default).
+    model: str | None
+    if "model" in raw:
+        model = _normalize_model(raw.get("model"))
+    else:
+        model = None
+    return AgentTaskConfig(
+        primary=str(raw.get("primary", "")),
+        fallback=raw.get("fallback"),
+        model=model,
+    )
+
+
+# Tokens that mean "use the CLI's built-in default" — never persisted, never
+# forwarded as `--model`. Kept in one place (`MODEL_SENTINELS` /
+# `normalize_model`) so every layer agrees on what counts as an opt-out.
+MODEL_SENTINELS = frozenset({"false", "none", "null", "auto", "default"})
+
+
+def normalize_model(raw: Any) -> str:
+    """Return a real model ID, or `""` for any sentinel / falsy / non-string.
+
+    Used by every consumer (config parser, dict resolver, state serializer)
+    so the sentinel set stays in lock-step across layers.
+    """
+    if raw is None or raw is False:
+        return ""
+    value = str(raw).strip()
+    if not value:
+        return ""
+    if value.lower() in MODEL_SENTINELS:
+        return ""
+    return value
+
+
+# Backward-compatible private alias for in-module callers.
+_normalize_model = normalize_model
 
 
 def normalize_fallback_value(raw: Any) -> str:
@@ -71,21 +133,26 @@ def normalize_fallback_value(raw: Any) -> str:
         lower = raw.strip().lower()
         if lower in {"false", "none", "null"}:
             return "false"
-        return raw
+        return lower
     if isinstance(raw, bool):
         return "true" if raw else "false"
     return ""
 
 
-def resolve_agent_for_task(config: AgentConfigResolved, complexity: str, task: str) -> tuple[str, str]:
-    primary = config.default_primary or "claude"
-    fallback = config.default_fallback or "codex"
+def resolve_agent_for_task(config: AgentConfigResolved, complexity: str, task: str) -> tuple[str, str, str]:
+    primary = config.default_primary or "auto"
+    fallback = config.default_fallback or "false"
+    model = config.default_model or ""
     per_task = config.per_task.get(task)
     if per_task:
         if per_task.primary:
             primary = per_task.primary
         if per_task.fallback is not None:
             fallback = normalize_fallback_value(per_task.fallback)
+        # `is not None` so an explicit sentinel ("" after _normalize_model)
+        # clears an inherited defaultModel — the documented opt-out semantics.
+        if per_task.model is not None:
+            model = per_task.model
     by_level = config.complexity_overrides.get(complexity, {})
     override = by_level.get(task)
     if override:
@@ -93,7 +160,24 @@ def resolve_agent_for_task(config: AgentConfigResolved, complexity: str, task: s
             primary = override.primary
         if override.fallback is not None:
             fallback = normalize_fallback_value(override.fallback)
-    return primary or "claude", fallback or "codex"
+        if override.model is not None:
+            model = override.model
+    return _resolve_primary_agent(primary), _resolve_fallback_agent(fallback), model
+
+
+def _resolve_primary_agent(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"", "auto", "runtime"}:
+        return runtime_provider()
+    return value
+
+
+def _resolve_fallback_agent(raw: Any) -> str:
+    value = normalize_fallback_value(raw)
+    normalized = str(value).strip().lower()
+    if normalized in {"", "auto", "runtime"}:
+        return "false"
+    return normalized
 
 
 def extract_json_block(text: str) -> str:
@@ -114,8 +198,14 @@ def build_agents_file(state_file: str | Path, complexity_file: str | Path, outpu
         level = str(((story.get("complexity") or {}).get("level")) or "medium").strip().lower() or "medium"
         tasks = {}
         for task in ("create", "dev", "auto", "review"):
-            primary, fallback = resolve_agent_for_task(config, level, task)
-            tasks[task] = {"primary": primary, "fallback": False if fallback == "false" else fallback}
+            primary, fallback, model = resolve_agent_for_task(config, level, task)
+            entry: dict[str, Any] = {
+                "primary": primary,
+                "fallback": False if fallback == "false" else fallback,
+            }
+            if model:
+                entry["model"] = model
+            tasks[task] = entry
         stories.append(
             {
                 "storyId": story.get("storyId"),
@@ -160,6 +250,7 @@ def resolve_agents(agents_file: str | Path, story_id: str, task: str) -> dict[st
             "task": task,
             "primary": selection.get("primary"),
             "fallback": fallback,
+            "model": _normalize_model(selection.get("model")),
             "complexity": story.get("complexity"),
         }
     return {"ok": False, "error": "story_not_found"}

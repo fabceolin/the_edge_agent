@@ -55,7 +55,7 @@ After EVERY action:
 
 ### CRITICAL Escalation (Key Steps)
 
-1. Delete marker: `rm "{project_root}/.claude/.story-automator-active"`
+1. Delete marker: run `orchestrator-helper marker remove` via the installed story-automator helper
 2. Set state to PAUSED
 3. Present menu (stop hook won't interfere)
 4. On resume: recreate marker, set IN_PROGRESS

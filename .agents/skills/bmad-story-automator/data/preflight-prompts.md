@@ -45,12 +45,13 @@ Which AI coding agent should run your workflows?
 | **Claude** | `claude --dangerously-skip-permissions` | Natural language skill prompt | BMAD workflows |
 | **Codex** | `codex exec --full-auto` | Natural language skill prompt | OpenAI Codex users |
 
-**Primary Agent:** (default: claude)
-**Fallback Agent:** (default: codex) - Used when primary fails after retries
-**Enable Fallback:** (default: yes)
+**Primary Agent:** (default: auto, resolves from active runtime provider)
+**Fallback Agent:** (default: false, disabled unless configured)
+**Enable Fallback:** (default: no)
 
 Examples:
-- `claude` → Claude primary, Codex fallback (default)
+- `auto` → Active runtime provider, no fallback
+- `claude` → Claude primary, no fallback
 - `codex` → Codex primary, Claude fallback
 - `claude, none` → Claude only, no fallback
 - `codex, claude` → Codex primary, Claude fallback
@@ -61,8 +62,8 @@ Enter agent config or press Enter for defaults:
 Store response as `agentConfig` (v3.0.0):
 ```yaml
 agentConfig:
-  defaultPrimary: "claude"
-  defaultFallback: "codex"
+  defaultPrimary: "auto"
+  defaultFallback: false
   perTask: {}
   complexityOverrides: {}
 ```

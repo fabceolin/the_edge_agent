@@ -3,9 +3,9 @@ name: 'step-04-wrapup'
 description: 'Finalize: summary, learnings, recommendations (terminal step)'
 learningsFile: '{output_folder}/story-automator/learnings.md'
 templates: '../data/wrapup-templates.md'
-markerFile: '{project-root}/.claude/.story-automator-active'
 stateFilePattern: '{output_folder}/story-automator/orchestration-*.md'
 outputFile: '{output_folder}/story-automator/orchestration-{epic_id}-{timestamp}.md'
+stateHelper: '../scripts/story-automator'
 stateMetrics: '../scripts/story-automator'
 reportRetentionPolicy: '../data/report-retention-policy.md'
 ---
@@ -103,9 +103,12 @@ Update state document:
 Display: "**State document finalized.**"
 
 ### 6. Remove Marker File
-Delete `{markerFile}` to disable the Stop hook safeguard.
+Remove the active runtime marker:
+```bash
+"{stateHelper}" orchestrator-helper marker remove
+```
 
-This allows Claude to stop normally after workflow completion.
+This allows the Stop hook to stop normally after workflow completion by clearing the marker from the active runtime layout.
 
 ### 7. Workflow Complete
 

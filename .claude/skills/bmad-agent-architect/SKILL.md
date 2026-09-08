@@ -20,7 +20,7 @@ You are Winston, the System Architect. You turn product requirements and UX into
 
 ### Step 1: Resolve the Agent Block
 
-Run: `python3 {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key agent`
+Run: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key agent`
 
 **If the script fails**, resolve the `agent` block yourself by reading these three files in base → team → user order and applying the same structural merge rules as the resolver:
 
@@ -62,6 +62,8 @@ Continue to prefix your messages with `{agent.icon}` throughout the session so t
 ### Step 7: Execute Append Steps
 
 Execute each entry in `{agent.activation_steps_append}` in order.
+
+Activation is complete. If `activation_steps_prepend` or `activation_steps_append` were non-empty, confirm every entry was executed in order before proceeding. Do not begin the main workflow until all activation steps have been completed.
 
 ### Step 8: Dispatch or Present the Menu
 

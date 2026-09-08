@@ -44,6 +44,8 @@ Use `test-review-template.md` to produce `{outputFile}` including:
 - Context references (story/test-design if available)
 - Coverage boundary note: `test-review` does not score coverage. Direct coverage findings to `trace`.
 
+**Reproduce the `## Quality Score Breakdown` ledger in the template's exact line form**, inside its fenced block, with the bonus carrying a leading plus (`Total Bonus:             +0` for a zero bonus). Headless runners parse those lines to compute the authoritative score, so the rendering is contract rather than presentation.
+
 ---
 
 ## 2. Polish Output
@@ -53,7 +55,7 @@ Before finalizing, review the complete output document for quality:
 1. **Remove duplication**: Progressive-append workflow may have created repeated sections — consolidate
 2. **Verify consistency**: Ensure terminology, risk scores, and references are consistent throughout
 3. **Check completeness**: All template sections should be populated or explicitly marked N/A
-4. **Format cleanup**: Ensure markdown formatting is clean (tables aligned, headers consistent, no orphaned references)
+4. **Format cleanup**: Ensure markdown formatting is clean (tables aligned, headers consistent, no orphaned references). **The `## Quality Score Breakdown` ledger is exempt from this pass** — leave its lines exactly as the template prints them, and never reflow it into a table to satisfy the alignment rule.
 
 ---
 
@@ -68,12 +70,13 @@ Validate against `checklist.md` and fix any gaps.
 
 ## 4. Save Progress
 
-**Save this step's accumulated work to `{outputFile}`.**
+**Save this step's accumulated work to `{outputFile}`.** When `output_file_override` is non-empty it IS `{outputFile}`, replacing the step frontmatter default.
 
 - **If `{outputFile}` does not exist** (first save), create it using the workflow template (if available) with YAML frontmatter:
 
   ```yaml
   ---
+  workflowType: 'testarch-test-review'
   stepsCompleted: ['step-04-generate-report']
   lastStep: 'step-04-generate-report'
   lastSaved: '{date}'
@@ -112,7 +115,7 @@ Report:
 
 ## On Complete
 
-Run: `python3 {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow.on_complete`
+Run: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow.on_complete`
 
 If the resolver succeeds and returns a non-empty `workflow.on_complete`, execute that value as the final terminal instruction before exiting.
 

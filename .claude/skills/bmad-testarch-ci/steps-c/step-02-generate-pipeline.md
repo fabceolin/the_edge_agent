@@ -186,6 +186,16 @@ Write the selected pipeline configuration to the resolved output path from step 
 - **Backend (Go)**: Use `go test ./...` with coverage (`-coverprofile`), cache Go modules
 - **Backend (C#/.NET)**: Use `dotnet test` with coverage, restore NuGet packages
 - **Backend (Ruby)**: Use `bundle exec rspec` with coverage, cache `vendor/bundle`
+- **Mobile**: Two-tier pipeline, because the device layer is the expensive one. Load `mobile-ci-device-lab.md` before generating this leg; it carries the artifact, caching, and pinning details the rest of these bullets summarize:
+  - **Build artifact**: flows run against a release-shaped build (unsigned APK, simulator IPA) or a development build that the job installs. Never against a prebuilt development shell such as Expo Go: the native modules the flows need are absent, and it adds a dev server, a manifest exchange, and a third-party launch to the CI path that users never take.
+  - **Every push**: unit and component tests plus contract tests. No emulator, no app build. This is the gate people wait on.
+  - **PR**: build the app once, boot ONE emulator or simulator on the primary target, run `maestro test {maestro_root}/ --include-tags P0` (where `{maestro_root}` is the resolved Maestro root directory: `maestro/` or `.maestro/`). Skip the browser install entirely; there is no browser.
+  - **Nightly and release candidate**: full flow suite across the device matrix (primary, oldest supported OS, one small screen).
+  - **Runner**: Android emulators need a Linux runner with KVM (`ubuntu-latest` with `runs-on` hardware acceleration enabled); iOS simulators require a macOS runner, which is billed at a premium, so keep the macOS leg off the per-push path.
+  - **Install**: replace unpinned installer scripts with a release-pinned or checksum-verified release artifact (e.g., `export MAESTRO_VERSION=1.39.0; curl -fsSL "https://github.com/mobile-dev-inc/maestro/releases/download/cli-${MAESTRO_VERSION}/maestro.zip" -o maestro.zip` or pinned installer with SHA-256 verification) and cache `~/.maestro`. Then **assert the resolved version** in the job. A presence check does not catch drift, and package-manager and `curl | bash` installers both float.
+  - **Emulator step**: the `reactivecircus/android-emulator-runner` `script:` input is split on newlines and each line runs as its own `sh -c`, so `set -euo pipefail`, variables, `cd`, and multi-line blocks do not carry between lines. Emit a single line invoking a checked-in script. Cache the AVD snapshot with the split `actions/cache/restore` plus `actions/cache/save` form, pass `ram-size`/`disk-size`/`cores` on the AVD-creation step **only** (the action re-appends them to `config.ini` on every run, which makes the emulator reject the snapshot at boot), and put an image version component in the cache key.
+  - **Artifacts**: upload the per-step statuses, hierarchy dumps, screenshots, video, AND device logs on failure, resolving the newest run directory rather than globbing a flat filename that recent versions no longer write. The hierarchy dump captured at failure is what identifies a selector break; the failure screenshot is taken after teardown and frequently shows the launcher, so do not lead with it.
+  - **Cache**: Gradle or CocoaPods plus the JS toolchain for React Native and Expo.
 
 ### Contract Testing Pipeline (if `tea_use_pactjs_utils` enabled)
 
@@ -244,6 +254,8 @@ env:
 Required CI secrets: `PACT_BROKER_BASE_URL`, `PACT_BROKER_TOKEN`
 
 **If `tea_pact_mcp` is `"mcp"`:** Reference the SmartBear MCP `Can I Deploy` and `Matrix` tools for pipeline guidance in `pact-mcp.md`.
+
+**`tea_pact_mcp` defaults to `"mcp"`, and Pact artifacts are gated on relevance, not on this flag.** Follow `pact-mcp.md` § _When the Tools Are Not Reachable_: the probe is a tool-list check and never a broker call, its result is recorded once per run as `pact_mcp_reachable`, and the fallback order is provider source, then an OpenAPI spec, then `confidence-gate.md`. Report the outcome once and continue; never block, never retry, never present inferred provider states as broker data.
 
 ---
 

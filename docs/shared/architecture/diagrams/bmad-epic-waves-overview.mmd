@@ -1,0 +1,16 @@
+flowchart TD
+    A([Épico N<br/>tea run bmad-epic-waves]) --> B["1. Descobrir<br/>lê o sprint-status e separa<br/>as stories do épico"]
+    B --> C["2. Preparar<br/>cria as stories que faltam,<br/>reconcilia o status e commita"]
+    C --> D["3. Planejar<br/>infere as dependências entre as stories,<br/>deriva as ondas e escolhe o modelo de cada uma"]
+    D --> E["4. Executar em ondas<br/>uma worktree isolada por story,<br/>stories independentes em paralelo"]
+    E --> F["Por story:<br/>implementa → review adversarial → corrige →<br/>commita no próprio branch"]:::sub
+    F --> G["5. Integrar<br/>merge serializado no branch alvo<br/>e marcação do sprint-status"]
+    G --> H["6. Fechar o épico<br/>verifica tudo done + suíte verde,<br/>escreve a retrospective e flippa epic-N"]
+    H --> I([Épico done])
+
+    C -.->|"lock ocupado, story não criada"| X1["para sem tocar no repo"]:::guard
+    F -.->|"review não aprovou"| X2["a story não é integrada;<br/>o branch fica preservado"]:::guard
+    G -.->|"conflito ou suíte vermelha"| X3["fail-closed:<br/>merge revertido para revisão humana"]:::guard
+
+    classDef sub fill:#e3f2fd,stroke:#1f6fb2,color:#0d3c61
+    classDef guard fill:#fdecea,stroke:#c0392b,color:#7b241c

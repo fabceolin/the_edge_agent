@@ -50,7 +50,6 @@
       "success": {
         "verifier": "create_story_artifact",
         "config": {
-          "glob": "_bmad-output/implementation-artifacts/{story_prefix}-*.md",
           "expectedMatches": 1
         }
       }
@@ -118,7 +117,7 @@
       },
       "success": {
         "verifier": "review_completion",
-        "contractFile": ".claude/skills/bmad-story-automator-review/contract.json"
+        "contractFile": "<skills-root>/bmad-story-automator-review/contract.json"
       }
     },
     "retro": {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "BMAD Epic Waves"
+  short_description: "Run BMAD epics in dependency waves"
+  default_prompt: "Use $bmad-epic-waves to inspect and run the pending BMAD epics in dependency waves."

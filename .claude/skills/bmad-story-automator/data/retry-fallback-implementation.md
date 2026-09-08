@@ -34,10 +34,18 @@ while [ $attempt -lt $max_attempts ] && [ "$success" = "false" ]; do
         fi
     fi
 
-    # Execute workflow step
+    # Execute workflow step. The `--model` flag is included ONLY when the
+    # current attempt is using the primary agent (fallback retries fall back
+    # to the CLI default). `"$primary_model"` is always quoted so bracketed
+    # IDs like `claude-opus-4-7[1m]` survive shell expansion.
+    if should_apply_primary_model "$current_agent"; then
+        built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --model "$primary_model" --state-file "$state_file")
+    else
+        built_cmd=$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")
+    fi
     session=$("$scripts" tmux-wrapper spawn {step} {epic} {story_id} \
         --agent "$current_agent" \
-        --command "$("$scripts" tmux-wrapper build-cmd {step} {story_id} --agent "$current_agent" --state-file "$state_file")")
+        --command "$built_cmd")
     result=$("$scripts" monitor-session "$session" --json --agent "$current_agent")
 
     # Cleanup session

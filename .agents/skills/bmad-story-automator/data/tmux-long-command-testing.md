@@ -12,7 +12,7 @@ First, confirm the command itself is valid:
 
 ```bash
 # Build the command
-cmd=$("$scripts" tmux-wrapper build-cmd retro 2 --agent "claude")
+cmd=$("$scripts" tmux-wrapper build-cmd retro 2 --agent "codex")
 
 # Check for syntax issues
 echo "$cmd" | od -c | head -20  # Look for unexpected characters

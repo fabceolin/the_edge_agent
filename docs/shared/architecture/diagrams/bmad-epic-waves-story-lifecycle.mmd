@@ -1,0 +1,80 @@
+---
+title: Vida de uma story no bmad-epic-waves — do despacho na onda até done
+---
+flowchart TD
+    S0([story-key entra na onda W<br/>todas as dependências dela já integradas])
+
+    subgraph P1["1 · PREPARE — no repo principal, sob o lock"]
+        P1A["git worktree add story/key<br/>a partir do tip ATUAL do branch alvo"]
+        P1B{"branch story/key já tem<br/>commits não integrados?"}
+        P1C["retoma a worktree preservada<br/>status=resumed"]
+        P1D["recusa: árvore suja ou<br/>branch em outro caminho"]:::abort
+        P1B -->|"não"| P1A
+        P1B -->|"sim, mesma worktree e limpa<br/>reuse_preserved_worktrees"| P1C
+        P1B -->|"sim, mas suja/alheia"| P1D
+    end
+
+    S0 --> P1B
+    P1A --> C0
+    P1C --> C0
+
+    subgraph P2["2 · STORY-CYCLE — dentro da worktree isolada"]
+        IP["init_policy<br/>max_review_cycles + review_handoff<br/>0 ou 1 ciclo ⇒ handoff manual"]
+        IP --> C0
+        C0{"ensure_story_file<br/>o .md da story existe?"}
+        C0 -->|"não, create_if_missing=false"| CX["missing_story_file"]:::abort
+        C0 -->|"sim"| DEV
+        DEV["dev_story<br/>implementa e roda a suíte;<br/>modelo pela rota da story<br/>trivial · small · standard · frontier"]
+        DEV --> PD{"parse_dev<br/>saiu report FINAL_STATUS?"}
+        PD -->|"morreu sem report"| RT["retry único"] --> DEV
+        PD -->|"max_review_cycles = 0<br/>review automático desligado"| FS
+        PD -->|"ok, marca VERIFICATION_INCOMPLETE<br/>se o dev não terminou a verificação"| CR
+        CR["code_review<br/>review adversarial, sempre no topo<br/>de esforço, independente da rota"]
+        CR --> RS{"veredito"}
+        RS -->|"RETRY"| CR
+        RS -->|"CHANGES_REQUESTED<br/>e tentativa < max_review_cycles"| FX["fix_review<br/>1º fix: provider promovido<br/>2º fix ou finding estrutural: frontier"]
+        RS -->|"ciclos esgotados e handoff manual:<br/>UM fix final, sem re-review"| FX
+        FX --> PF{"post_fix"}
+        PF -->|"fix normal"| CR
+        PF -->|"fix final"| FS
+        RS -->|"BLOCKED sempre;<br/>MAX_ATTEMPTS com handoff=block"| SM
+        RS -->|"APPROVED"| FS
+        FS["finish_story<br/>reconfere a suíte e a File List,<br/>commit NOMINAL no branch story/key,<br/>Status da story → done (ou review,<br/>sem aprovação) · NÃO toca o sprint-status"]
+        FS --> SM["summary<br/>completed | manual_review | incomplete"]
+    end
+
+    SM --> G{"gate de integração<br/>tea run --fail-on-state<br/>final_status=incomplete"}
+    G -->|"exit ≠ 0 — o && nem chama o merge"| NG["story NÃO integrada<br/>branch story/key preservado"]:::abort
+    NG --> ESC{"escalate_failed<br/>auto_model ligado?"}
+    ESC -->|"sim, 1 vez"| ESY["promove uma rota<br/>e repete a story"] --> P1B
+    ESC -->|"não, ou já escalou"| ESN["fica para revisão humana"]:::abort
+
+    G -->|"exit 0"| M0
+
+    subgraph P3["3 · MERGE — serializado pelo lock cross-run"]
+        M0{"repo principal está<br/>no branch alvo e limpo?"}
+        M0 -->|"não"| MX1["wrong_branch · dirty_target<br/>branch e worktree mantidos"]:::abort
+        M0 -->|"sim"| M1{"o branch carrega commit<br/>além do base?"}
+        M1 -->|"não"| MX2["empty_branch<br/>o dev não commitou nada;<br/>NÃO vira done"]:::abort
+        M1 -->|"o tip já é ancestral do alvo"| MAL["already_merged — idempotente<br/>recibo + remove a worktree;<br/>o status fica para a varredura"]
+        M1 -->|"sim"| M2{"git merge --no-ff"}
+        M2 -->|"conflito"| MC["merge --abort<br/>fail-closed ou, se elegível,<br/>resolve_conflicts + verify_resolution"]:::abort
+        M2 -->|"limpo"| M3{"prova de ancestralidade<br/>o tip ficou alcançável?"}
+        M3 -->|"não"| MR["reset --hard pre_head<br/>no_ancestry"]:::abort
+        M3 -->|"sim"| MOK["merged<br/>escreve o recibo"]
+        MOK --> MS["sprint-status[key] = done<br/>(= review se manual_review:<br/>integrada, mas ninguém aprovou)<br/>falhou? merged_status_pending"]
+        MS --> MW["remove a worktree"]
+    end
+
+    MAL --> SW
+    MW --> SW["varredura no fim da execução<br/>merge_worktrees + mark_done recuperam<br/>o que ficou merged_status_pending"]
+    SW --> MG["migration_dag<br/>duas folhas de migration<br/>criadas por stories irmãs"]
+    MG --> V["verify_epic<br/>tudo done + suíte verde<br/>e a suíte cobre este épico"]
+    V --> DONE([story done<br/>e integrada no branch alvo])
+    V --> HUM([story em review<br/>integrada, aguardando o SEU veredito;<br/>o épico não fecha nem roda a retro]):::pending
+
+    classDef abort fill:#fdecea,stroke:#c0392b,color:#7b241c
+    classDef pending fill:#fef5e7,stroke:#b9770e,color:#7e5109
+    style P1 fill:#f7f7fb,stroke:#9aa3b2
+    style P2 fill:#eef6fd,stroke:#1f6fb2
+    style P3 fill:#f4f1fb,stroke:#7b5cb8

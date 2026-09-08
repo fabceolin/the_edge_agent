@@ -58,9 +58,10 @@ complexity_path_json=$(printf '%s' "$complexity_path" | jq -R '.')
 
 **Create marker file** (see `{markerFormat}` for JSON structure):
 ```bash
-# Ensure .claude/ exists and is gitignored
-mkdir -p .claude
-"{ensureMarkerGitignore}" ensure-marker-gitignore --gitignore ".gitignore" --entry ".claude/.story-automator-active"
+# Resolve the active marker path for the selected runtime layout and gitignore it.
+marker_info=$("{stateHelper}" orchestrator-helper marker path)
+marker_entry=$(echo "$marker_info" | jq -r '.entry')
+"{ensureMarkerGitignore}" ensure-marker-gitignore --gitignore ".gitignore" --entry "$marker_entry"
 
 # Create marker
 project_slug=$(echo "$("{deriveProjectSlug}" derive-project-slug --project-root "{project-root}")" | jq -r '.slug')

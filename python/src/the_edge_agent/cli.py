@@ -623,6 +623,26 @@ def check_fail_on_state(
     return None
 
 
+def failed_dot_predecessors(
+    node_id: str,
+    predecessors: Dict[str, List[str]],
+    node_outcomes: Dict[str, str],
+) -> List[str]:
+    """Return every predecessor without an explicitly safe outcome.
+
+    Outcomes are keyed by DOT node ID rather than display label because labels are
+    not required to be unique. Deliberate ``--dot-start-*`` skips are recorded as
+    ``resume-skipped`` and therefore do not poison the resumed dependency path.  A
+    missing or unfamiliar outcome is unsafe: continuation must fail closed rather
+    than dispatching a descendant without proof that its dependency integrated.
+    """
+    return [
+        predecessor
+        for predecessor in predecessors.get(node_id, [])
+        if node_outcomes.get(predecessor) not in {"succeeded", "resume-skipped"}
+    ]
+
+
 @app.command()
 def run(
     file: Optional[str] = typer.Argument(
@@ -810,6 +830,12 @@ def run(
         "--dot-max-parallel",
         help="Maximum parallel tmux windows for --from-dot mode (default: 3)",
     ),
+    dot_node_timeout: float = typer.Option(
+        54000.0,
+        "--dot-node-timeout",
+        help="Maximum seconds allowed for one DOT node (default: 54000)",
+        min=0.001,
+    ),
     dot_dry_run: bool = typer.Option(
         False,
         "--dot-dry-run",
@@ -840,7 +866,13 @@ def run(
         True,
         "--dot-stop-on-failure/--no-dot-stop-on-failure",
         help="Stop DOT execution after current phase if any node fails (default: True). "
-        "Use --no-dot-stop-on-failure to continue all phases regardless of failures.",
+        "The no-stop form is legacy continuation without dependency pruning.",
+    ),
+    dot_dependency_safe_continue: bool = typer.Option(
+        False,
+        "--dot-dependency-safe-continue",
+        help="Continue independent DOT paths after failure while pruning every descendant "
+        "without explicitly successful predecessors. Implies --no-dot-stop-on-failure.",
     ),
     # TEA-CLI-008: Exit condition based on final state
     fail_on_state: Optional[List[str]] = typer.Option(
@@ -999,12 +1031,18 @@ def run(
             # Build execution order using topological sort
             in_degree = defaultdict(int)
             adj = defaultdict(list)
-            all_nodes = set()
+            predecessors = defaultdict(list)
+            # Preserve declaration order. Resume-by-step and resume-by-label expose
+            # the position within a wave, so deriving it from a set makes the same
+            # DOT resume at different nodes across processes/hash seeds.
+            all_nodes: List[str] = []
+            all_node_ids: set[str] = set()
 
             for node_id, node in parsed.nodes.items():
                 if node.shape in ("ellipse", "circle", "point", "doublecircle"):
                     continue
-                all_nodes.add(node_id)
+                all_nodes.append(node_id)
+                all_node_ids.add(node_id)
                 in_degree[node_id] = 0
 
             for edge in parsed.edges:
@@ -1025,8 +1063,9 @@ def run(
                     "doublecircle",
                 ):
                     continue
-                if src in all_nodes and tgt in all_nodes:
+                if src in all_node_ids and tgt in all_node_ids:
                     adj[src].append(tgt)
+                    predecessors[tgt].append(src)
                     in_degree[tgt] += 1
 
             # Kahn's algorithm with levels
@@ -1047,13 +1086,14 @@ def run(
                 f"Graph loaded: {total_nodes} nodes in {len(levels)} phases", err=True
             )
 
-            # TEA-CLI-009: Build label-to-location mapping for --dot-start-from
-            label_map: Dict[str, Tuple[int, int]] = {}
+            # TEA-CLI-009: Build label-to-location mapping for --dot-start-from.
+            # Labels are presentation-only and need not be unique.
+            label_map: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
             for wave_idx, level in enumerate(levels, 1):
                 for step_idx, node_id in enumerate(level, 1):
                     node = parsed.nodes.get(node_id)
                     label = node.label if node else node_id
-                    label_map[label] = (wave_idx, step_idx)
+                    label_map[label].append((wave_idx, step_idx))
 
             # TEA-CLI-009: Validate and resolve start position
             start_wave = dot_start_wave
@@ -1084,7 +1124,18 @@ def run(
                     )
                     raise typer.Exit(1)
 
-                start_wave, start_step = label_map[dot_start_from]
+                locations = label_map[dot_start_from]
+                if len(locations) != 1:
+                    rendered = ", ".join(
+                        f"wave {wave}, step {step}" for wave, step in locations
+                    )
+                    typer.echo(
+                        f"Error: Label '{dot_start_from}' is ambiguous: {rendered}",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+
+                start_wave, start_step = locations[0]
                 typer.echo(
                     f"Resolved --dot-start-from '{dot_start_from}' to wave {start_wave}, step {start_step}",
                     err=True,
@@ -1162,7 +1213,9 @@ def run(
             results = []
             errors = []
             poll_interval = 5
-            timeout_secs = 54000
+            timeout_secs = dot_node_timeout
+            if dot_dependency_safe_continue:
+                dot_stop_on_failure = False
             # TEA-CLI-008: Generate unique run ID for exit code temp files
             import uuid
 
@@ -1172,6 +1225,10 @@ def run(
             stopped_due_to_failure = False
             # TEA-CLI-009: Track skipped nodes for final summary (AC-14)
             skipped_count = 0
+            # Outcomes are keyed by DOT IDs. Labels are presentation-only and may
+            # collide, so they cannot safely drive dependency pruning.
+            node_outcomes: Dict[str, str] = {}
+            dependency_blocked = []
 
             for phase_idx, level in enumerate(levels, 1):
                 # TEA-CLI-009: Skip entire waves before start_wave (AC-2)
@@ -1181,6 +1238,8 @@ def run(
                         err=True,
                     )
                     skipped_count += len(level)
+                    for node_id in level:
+                        node_outcomes[node_id] = "resume-skipped"
                     continue
 
                 phase_size = len(level)
@@ -1202,6 +1261,48 @@ def run(
                         if phase_idx == start_wave and step_idx < start_step:
                             typer.echo(f"  Skipping step {step_idx}: {label}", err=True)
                             skipped_count += 1
+                            node_outcomes[node_id] = "resume-skipped"
+                            continue
+
+                        blockers = (
+                            failed_dot_predecessors(
+                                node_id, predecessors, node_outcomes
+                            )
+                            if dot_dependency_safe_continue
+                            else []
+                        )
+                        if blockers:
+                            blocker_labels = [
+                                (parsed.nodes.get(item).label if parsed.nodes.get(item) else item)
+                                for item in blockers
+                            ]
+                            typer.echo(
+                                f"  Dependency-blocked: {label} [id={node_id}] "
+                                f"(unsafe predecessors: "
+                                + ", ".join(
+                                    f"{blocker_label}="
+                                    f"{node_outcomes.get(blocker_id, 'missing')}"
+                                    for blocker_id, blocker_label in zip(
+                                        blockers, blocker_labels
+                                    )
+                                )
+                                + ")",
+                                err=True,
+                            )
+                            node_outcomes[node_id] = "blocked"
+                            dependency_blocked.append(
+                                {
+                                    "node_id": node_id,
+                                    "node": label,
+                                    "predecessor_ids": blockers,
+                                    "predecessors": blocker_labels,
+                                    "predecessor_outcomes": [
+                                        node_outcomes.get(item, "missing")
+                                        for item in blockers
+                                    ],
+                                }
+                            )
+                            skipped_count += 1
                             continue
 
                         # Determine command: workflow mode or command mode
@@ -1218,8 +1319,7 @@ def run(
                                 cmd = analyzed.node_commands.get(label)
                             if not cmd:
                                 typer.echo(
-                                    f"  Warning: No command for '{label}', skipping",
-                                    err=True,
+                                    f"  ✗ Failed: {label} (No command)", err=True
                                 )
                                 results.append(
                                     {
@@ -1228,6 +1328,8 @@ def run(
                                         "error": "No command",
                                     }
                                 )
+                                node_outcomes[node_id] = "failed"
+                                errors.append({"node": label, "error": "No command"})
                                 continue
 
                         # TEA-CLI-008: Include unique index in window name to prevent collision (TECH-002)
@@ -1334,6 +1436,9 @@ def run(
                                     result_entry["error"] = error_msg
 
                                 results.append(result_entry)
+                                node_outcomes[node_id] = (
+                                    "succeeded" if node_success else "failed"
+                                )
                                 if not node_success:
                                     errors.append(
                                         {
@@ -1346,7 +1451,9 @@ def run(
                                 completed.append(window_name)
                             elif time.time() - start > timeout_secs:
                                 # Timeout case (AC-9 - preserve existing timeout logic)
-                                typer.echo(f"  ✗ Timeout: {label}", err=True)
+                                typer.echo(
+                                    f"  ✗ Failed: {label} (Timeout)", err=True
+                                )
                                 results.append(
                                     {
                                         "node": label,
@@ -1355,6 +1462,7 @@ def run(
                                     }
                                 )
                                 errors.append({"node": label, "error": "Timeout"})
+                                node_outcomes[node_id] = "failed"
                                 subprocess.run(
                                     f"tmux kill-window -t {dot_session}:{window_name}",
                                     shell=True,
@@ -1404,16 +1512,34 @@ def run(
                         err=True,
                     )
 
+            if dependency_blocked:
+                typer.echo("\nDependency-blocked nodes:", err=True)
+                for blocked in dependency_blocked:
+                    typer.echo(
+                        f"  - {blocked['node']} [id={blocked['node_id']}] "
+                        f"(unsafe predecessors: "
+                        + ", ".join(
+                            f"{label}={outcome}"
+                            for label, outcome in zip(
+                                blocked["predecessors"],
+                                blocked["predecessor_outcomes"],
+                            )
+                        )
+                        + ")",
+                        err=True,
+                    )
+
             # TEA-CLI-008: Show skipped phases if stopped due to failure (AC-11)
             if stopped_due_to_failure and skipped_phases:
                 phases_str = ", ".join(str(p) for p in skipped_phases)
                 typer.echo(f"\nSkipped phases: {phases_str}", err=True)
                 typer.echo(
-                    "  (Use --no-dot-stop-on-failure to continue all phases)", err=True
+                    "  (Use --dot-dependency-safe-continue to continue safe independent paths)",
+                    err=True,
                 )
 
             # AC-13: Exit code 1 when any node failed
-            if errors:
+            if errors or dependency_blocked:
                 raise typer.Exit(1)
             return
 

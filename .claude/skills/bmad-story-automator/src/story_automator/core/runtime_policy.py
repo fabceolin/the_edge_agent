@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .frontmatter import parse_simple_frontmatter
+from .runtime_layout import active_marker_path, bundled_story_skill_root, resolve_portable_path, resolve_skill_dir
 from .utils import ensure_dir, get_project_root, iso_now, md5_hex8, read_text, write_atomic
 
 VALID_TOP_LEVEL_KEYS = {"version", "snapshot", "runtime", "workflow", "steps"}
@@ -162,7 +163,7 @@ def resolve_policy_state_file(project_root: str | Path | None = None, state_file
     env_state = os.environ.get("STORY_AUTOMATOR_STATE_FILE", "").strip()
     if env_state:
         return str(_resolve_state_path(root, Path(env_state).expanduser(), allow_outside=False, label="env state file")), "env"
-    marker = root / ".claude" / ".story-automator-active"
+    marker = active_marker_path(root)
     if marker.is_file():
         try:
             payload = _read_json(marker)
@@ -209,18 +210,10 @@ def parser_runtime_config(policy: dict[str, Any]) -> dict[str, object]:
 
 def bundled_skill_root(project_root: str | Path | None = None) -> Path:
     root = Path(project_root or get_project_root()).resolve()
-    installed = root / ".claude" / "skills" / "bmad-story-automator"
-    if (installed / "data" / "orchestration-policy.json").is_file():
-        return installed
-    for parent in Path(__file__).resolve().parents:
-        candidates = (
-            parent / "skills" / "bmad-story-automator",
-            parent / "payload" / ".claude" / "skills" / "bmad-story-automator",
-        )
-        for candidate in candidates:
-            if (candidate / "data" / "orchestration-policy.json").is_file():
-                return candidate
-    raise PolicyError("bundled policy not found")
+    try:
+        return bundled_story_skill_root(root)
+    except FileNotFoundError as exc:
+        raise PolicyError("bundled policy not found") from exc
 
 
 def _read_json(path: str | Path) -> dict[str, Any]:
@@ -368,8 +361,11 @@ def _resolve_step_assets(step: str, assets: dict[str, Any], project_root: Path) 
     skill_name = str(assets.get("skillName") or "").strip()
     if not skill_name:
         raise PolicyError(f"missing skillName for {step}")
-    skills_root = (project_root / ".claude" / "skills").resolve()
-    skill_dir = _ensure_within(skills_root / skill_name, skills_root, f"skillName for {step}")
+    try:
+        skill_dir = resolve_skill_dir(project_root, skill_name)
+    except ValueError as exc:
+        raise PolicyError(str(exc)) from exc
+    skills_root = skill_dir.parent
     required = set(assets.get("required") or [])
     files = {
         "skill": _resolve_required_file(skill_dir / "SKILL.md", project_root, required, "skill", step),
@@ -410,6 +406,10 @@ def _resolve_candidate_file(
         path = _ensure_within(skill_dir / name, skill_dir, f"{asset} candidate for {step}")
         if path.is_file():
             return _display_path(path, project_root)
+    if asset == "workflow" and asset in required:
+        skill_file = skill_dir / "SKILL.md"
+        if skill_file.is_file():
+            return _display_path(skill_file, project_root)
     if asset in required:
         searched = ", ".join(str(skill_dir / str(name)) for name in candidates if isinstance(name, str) and name)
         raise PolicyError(f"missing required {asset} asset for {step}: {searched}")
@@ -417,6 +417,11 @@ def _resolve_candidate_file(
 
 
 def _resolve_data_path(path_value: str, *, project_root: Path, bundle_root: Path) -> str:
+    portable = resolve_portable_path(path_value, project_root)
+    if portable:
+        if not portable.is_file():
+            raise PolicyError(f"policy data file missing: {path_value}")
+        return str(portable)
     raw = Path(path_value)
     allowed_roots = (bundle_root.resolve(), project_root.resolve())
     if raw.is_absolute():

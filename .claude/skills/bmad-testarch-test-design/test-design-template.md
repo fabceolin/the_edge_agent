@@ -76,6 +76,21 @@ lastSaved: ''
 
 ---
 
+## NFR Planning
+
+**Purpose:** Capture epic-specific NFR thresholds, planned validation, and evidence expected for later `nfr-assess`. This is not a final evidence audit.
+
+| NFR Category    | Requirement / Threshold | Risk Link | Planned Validation                         | Evidence Needed                  |
+| --------------- | ----------------------- | --------- | ------------------------------------------ | -------------------------------- |
+| Security        | {Requirement}           | {R-ID}    | {API/E2E/SAST/DAST validation}             | {Test report, scan, audit log}   |
+| Performance     | {Requirement}           | {R-ID}    | {Load/stress/baseline validation}          | {k6/APM/Lighthouse report}       |
+| Reliability     | {Requirement}           | {R-ID}    | {Error/retry/failover validation}          | {Burn-in, logs, monitoring data} |
+| Maintainability | {Requirement}           | {R-ID}    | {Coverage/static analysis/docs validation} | {Coverage or quality report}     |
+
+**Unknown thresholds:** {List missing NFR thresholds or mark N/A. Do not invent values.}
+
+---
+
 ## Entry Criteria
 
 - [ ] Requirements and assumptions agreed upon by QA, Dev, PM
@@ -106,9 +121,10 @@ lastSaved: ''
 
 ## Test Coverage Plan
 
-### P0 (Critical) - Run on every commit
+### P0 (Critical)
 
-**Criteria**: Blocks core journey + High risk (≥6) + No workaround
+**Criteria**: Critical business, security, data-integrity, or compliance impact with no safe
+workaround. Risk score is supporting evidence and is not a required condition.
 
 | Requirement   | Test Level | Risk Link | Test Count | Owner | Notes   |
 | ------------- | ---------- | --------- | ---------- | ----- | ------- |
@@ -117,9 +133,10 @@ lastSaved: ''
 
 **Total P0**: {p0_count} tests, {p0_hours} hours
 
-### P1 (High) - Run on PR to main
+### P1 (High)
 
-**Criteria**: Important features + Medium risk (3-4) + Common workflows
+**Criteria**: Core, frequent, or complex behavior with material user reach and a limited workaround.
+Risk score is supporting evidence and is not a required condition.
 
 | Requirement   | Test Level | Risk Link | Test Count | Owner | Notes   |
 | ------------- | ---------- | --------- | ---------- | ----- | ------- |
@@ -128,9 +145,10 @@ lastSaved: ''
 
 **Total P1**: {p1_count} tests, {p1_hours} hours
 
-### P2 (Medium) - Run nightly/weekly
+### P2 (Medium)
 
-**Criteria**: Secondary features + Low risk (1-2) + Edge cases
+**Criteria**: Secondary behavior with narrower user reach and an acceptable workaround. Risk score
+is supporting evidence and is not a required condition.
 
 | Requirement   | Test Level | Risk Link | Test Count | Owner | Notes   |
 | ------------- | ---------- | --------- | ---------- | ----- | ------- |
@@ -139,9 +157,10 @@ lastSaved: ''
 
 **Total P2**: {p2_count} tests, {p2_hours} hours
 
-### P3 (Low) - Run on-demand
+### P3 (Low)
 
-**Criteria**: Nice-to-have + Exploratory + Performance benchmarks
+**Criteria**: Rare, cosmetic, or experimental behavior with minimal impact and an easy workaround.
+Risk score is supporting evidence and is not a required condition.
 
 | Requirement   | Test Level | Test Count | Owner | Notes   |
 | ------------- | ---------- | ---------- | ----- | ------- |
@@ -247,6 +266,7 @@ lastSaved: ''
 - [ ] No high-risk (≥6) items unmitigated
 - [ ] Security tests (SEC category) pass 100%
 - [ ] Performance targets met (PERF category)
+- [ ] Planned NFR evidence exists or `nfr-assess` has documented CONCERNS/waivers
 
 ---
 
@@ -295,8 +315,8 @@ lastSaved: ''
 
 ## Follow-on Workflows (Manual)
 
-- Run `*atdd` to generate failing P0 tests (separate workflow; not auto-run).
-- Run `*automate` for broader coverage once implementation exists.
+- Run `/bmad-testarch-atdd` to generate failing P0 tests (separate workflow; not auto-run).
+- Run `/bmad-testarch-automate` for broader coverage once implementation exists.
 
 ---
 

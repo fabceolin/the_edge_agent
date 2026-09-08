@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "story-automator"
-version = "1.14.2"
+version = "1.15.0"
 description = "Python parity port of the BMAD story automator helper"
 readme = "README.md"
 license = { file = "LICENSE" }

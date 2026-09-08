@@ -173,6 +173,28 @@ def help_flag(value: str) -> bool:
     return is_help_flag(value)
 
 
+def strip_inline_yaml_comment(raw: str) -> str:
+    text = raw.strip()
+    in_quote = ""
+    escaped = False
+    for idx, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_quote == '"':
+            escaped = True
+            continue
+        if char in {'"', "'"}:
+            if in_quote == char:
+                in_quote = ""
+            elif not in_quote:
+                in_quote = char
+            continue
+        if char == "#" and not in_quote and (idx == 0 or text[idx - 1].isspace()):
+            return text[:idx].rstrip()
+    return text
+
+
 def unquote_scalar(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:

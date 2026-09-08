@@ -26,6 +26,7 @@
 - [ ] Architecture documents reviewed (if available)
 - [ ] Existing test coverage analyzed
 - [ ] Knowledge base fragments loaded (risk-governance, probability-impact, test-levels, test-priorities)
+- [ ] `nfr-criteria.md` loaded for system-level mode, and for epic-level mode when NFRs are in scope
 
 ### Step 2: Risk Assessment
 
@@ -40,6 +41,15 @@
 - [ ] Timelines set for mitigations
 - [ ] Residual risk documented
 
+### Step 2A: NFR Planning
+
+- [ ] NFR categories in scope identified (security, performance, reliability, scalability, maintainability, compliance, custom)
+- [ ] NFR thresholds extracted from PRD, architecture, ADRs, epics, or stories
+- [ ] Unknown thresholds marked as UNKNOWN; no values guessed
+- [ ] Missing thresholds converted into risks, assumptions, blockers, or clarification items
+- [ ] Planned evidence sources identified for later `nfr-assess`
+- [ ] NFR-derived risks mapped into the normal risk register using SEC/PERF/OPS/TECH/DATA categories
+
 ### Step 3: Coverage Design
 
 - [ ] Acceptance criteria broken into atomic scenarios
@@ -47,6 +57,8 @@
 - [ ] No duplicate coverage across levels
 - [ ] Priority levels assigned (P0/P1/P2/P3)
 - [ ] P0 scenarios meet strict criteria (blocks core + high risk + no workaround)
+- [ ] NFR-derived risks mapped to planned validation scenarios
+- [ ] Planned NFR evidence artifacts documented without final PASS/CONCERNS/FAIL decisions
 - [ ] Data prerequisites identified
 - [ ] Tooling/access requirements documented when applicable
 - [ ] Execution order defined (smoke → P0 → P1 → P2/P3)
@@ -58,6 +70,7 @@
 - [ ] Execution order documented
 - [ ] Resource estimates calculated
 - [ ] Quality gate criteria defined
+- [ ] NFR planning summary included when NFRs are in scope
 - [ ] Output file written to correct location
 - [ ] Output file uses template structure
 
@@ -112,6 +125,8 @@
 - [ ] P1 pass rate threshold defined (typically ≥95%)
 - [ ] High-risk mitigation completion required
 - [ ] Coverage targets specified (≥80% recommended)
+- [ ] NFR evidence expectation defined for each in-scope NFR category
+- [ ] Full NFR evidence decision deferred to `nfr-assess`
 
 ## Quality Checks
 
@@ -139,11 +154,12 @@
 - [ ] **Priority sections (P0/P1/P2/P3) do NOT include execution context** (e.g., no "Run on every commit" in headers)
 - [ ] **Priority sections have only "Criteria" and "Purpose"** (no "Execution:" field)
 - [ ] **Execution Strategy section** is separate and handles timing based on infrastructure overhead
-- [ ] P0: Truly blocks core functionality + High-risk (≥6) + No workaround
-- [ ] P1: Important features + Medium-risk (3-4) + Common workflows
-- [ ] P2: Secondary features + Low-risk (1-2) + Edge cases
-- [ ] P3: Nice-to-have + Exploratory + Benchmarks
-- [ ] **Note at top of Test Coverage Plan**: Clarifies P0/P1/P2/P3 = priority/risk, NOT execution timing
+- [ ] P0: Critical business, security, data-integrity, or compliance impact + no safe workaround
+- [ ] P1: Core, frequent, or complex behavior + material user reach + limited workaround
+- [ ] P2: Secondary behavior + narrower user reach + an acceptable workaround
+- [ ] P3: Rare, cosmetic, or experimental behavior + minimal impact + an easy workaround
+- [ ] Risk score is supporting evidence and is not a mandatory condition for any priority
+- [ ] **Note at top of Test Coverage Plan**: Clarifies P0/P1/P2/P3 = priority, NOT execution timing
 
 ### Test Level Selection
 
@@ -161,6 +177,7 @@
 - [ ] probability-impact.md applied
 - [ ] test-levels-framework.md referenced
 - [ ] test-priorities-matrix.md used
+- [ ] nfr-criteria.md consulted for NFR planning when applicable
 - [ ] Additional fragments loaded as needed
 
 ### Status File Integration
@@ -171,8 +188,8 @@
 
 ### Workflow Dependencies
 
-- [ ] Can proceed to `*atdd` workflow with P0 scenarios
-- [ ] `*atdd` is a separate workflow and must be run explicitly (not auto-run)
+- [ ] Can proceed to `/bmad-testarch-atdd` workflow with P0 scenarios
+- [ ] `/bmad-testarch-atdd` is a separate workflow and must be run explicitly (not auto-run)
 - [ ] Can proceed to `automate` workflow with full coverage plan
 - [ ] Risk assessment informs `gate` workflow criteria
 - [ ] Integrates with `ci` workflow execution order
@@ -254,13 +271,13 @@
   - [ ] QA execution assumptions belong in QA doc instead
 - [ ] **NO test implementation code** (long examples belong in QA doc)
 - [ ] **NO test scripts** (no Playwright test(...) blocks, no assertions, no test setup code)
-- [ ] **NO NFR test examples** (NFR sections describe WHAT to test, not HOW to test)
+- [ ] **NFR Testability Requirements are concise** (WHAT architecture must provide, thresholds, planned evidence; no full audit tables)
 - [ ] **NO test scenario checklists** (belong in QA doc)
 - [ ] **NO bloat or repetition** (consolidate repeated notes, avoid over-explanation)
 - [ ] **Cross-references to QA doc** where appropriate (instead of duplication)
 - [ ] **RECIPE SECTIONS NOT IN ARCHITECTURE DOC:**
   - [ ] NO "Test Levels Strategy" section (unit/integration/E2E split belongs in QA doc only)
-  - [ ] NO "NFR Testing Approach" section with detailed test procedures (belongs in QA doc only)
+  - [ ] NO "NFR Testing Approach" section with detailed test procedures (use concise NFR Testability Requirements only)
   - [ ] NO "Test Environment Requirements" section (belongs in QA doc only)
   - [ ] NO "Recommendations for pre-implementation" section with test framework setup (belongs in QA doc only)
   - [ ] NO "Quality Gate Criteria" section (pass rates, coverage targets belong in QA doc only)
@@ -276,8 +293,9 @@
   - [ ] Backend/Architecture dependencies listed (what QA needs from other teams)
   - [ ] QA infrastructure setup listed (factories, fixtures, environments)
   - [ ] Code example with playwright-utils if config.tea_use_playwright_utils is true
-  - [ ] Test from '@seontechnologies/playwright-utils/api-request/fixtures'
+  - [ ] Test from '@seontechnologies/playwright-utils/api-request/fixtures', or from the project's merged-fixtures module
   - [ ] Expect from '@playwright/test' (playwright-utils does not re-export expect)
+  - [ ] No vanilla equivalent in any example when the flag is true: no raw `request.<method>`, no `page.route` on an application endpoint, no `page.waitForTimeout`, no `console.log` (per `playwright-utils-mandate.md`)
   - [ ] Code examples include assertions (no unused imports)
 - [ ] **Risk Assessment** section (brief, references Architecture doc)
   - [ ] High-priority risks table
@@ -287,6 +305,10 @@
   - [ ] Priority sections have ONLY "Criteria" (no execution context)
   - [ ] Note at top: "P0/P1/P2/P3 = priority, NOT execution timing"
   - [ ] Test tables with columns: Test ID | Requirement | Test Level | Risk Link | Notes
+- [ ] **NFR Test Coverage Plan** section
+  - [ ] Maps NFR category to requirement/threshold, planned validation, tool/level, evidence artifact, and priority
+  - [ ] Lists missing thresholds or missing evidence sources
+  - [ ] Does not assign final PASS/CONCERNS/FAIL status
 - [ ] **Execution Strategy** section (organized by TOOL TYPE)
   - [ ] Every PR: Playwright tests (~10-15 min)
   - [ ] Nightly: k6 performance tests (~30-60 min)
@@ -310,7 +332,7 @@
 - [ ] ❌ NO Test Environment Requirements as separate section (integrate into Dependencies)
 - [ ] ❌ NO Testability Assessment section (covered in Dependencies)
 - [ ] ❌ NO Test Levels Strategy section (obvious from test scenarios)
-- [ ] ❌ NO NFR Readiness Summary
+- [ ] ❌ NO full NFR Evidence Audit or final PASS/CONCERNS/FAIL decisions
 - [ ] ❌ NO Quality Gate Criteria section (teams decide for themselves)
 - [ ] ❌ NO Follow-on Workflows section (BMAD commands self-explanatory)
 - [ ] ❌ NO Approval section
@@ -393,7 +415,7 @@
 1. [ ] Review risk assessment with team
 2. [ ] Prioritize mitigation for high-priority risks (score ≥6)
 3. [ ] Allocate resources per estimates
-4. [ ] Run `*atdd` workflow to generate P0 tests (separate workflow; not auto-run)
+4. [ ] Run `/bmad-testarch-atdd` workflow to generate P0 tests (separate workflow; not auto-run)
 5. [ ] Set up test data factories and fixtures
 6. [ ] Schedule team review of test design document
 

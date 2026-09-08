@@ -7,6 +7,8 @@ for the --from-dot mode.
 
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -409,6 +411,33 @@ class TestDotStartFromOption(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("Resolved", result.output)
 
+    def test_dot_start_from_rejects_duplicate_label_as_ambiguous(self):
+        with tempfile.NamedTemporaryFile(suffix=".dot", mode="w", delete=False) as file:
+            file.write(
+                'digraph duplicate { a [label="same" shape=box command="true"]; '
+                'b [label="same" shape=box command="true"]; }\n'
+            )
+            path = file.name
+        try:
+            result = runner.invoke(
+                app,
+                [
+                    "run",
+                    "--from-dot",
+                    path,
+                    "--dot-start-from",
+                    "same",
+                    "--dot-dry-run",
+                ],
+            )
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("ambiguous", result.output.lower())
+        self.assertIn("wave 1, step 1", result.output)
+        self.assertIn("wave 1, step 2", result.output)
+
 
 # =============================================================================
 # Part E: Edge Cases and Boundary Tests
@@ -432,6 +461,37 @@ class TestEdgeCases(unittest.TestCase):
             ],
         )
         self.assertEqual(result.exit_code, 0)
+
+    def test_declared_wave_order_is_stable_across_hash_seeds(self):
+        with tempfile.NamedTemporaryFile(suffix=".dot", mode="w", delete=False) as file:
+            file.write(
+                'digraph stable { z [label="first" shape=box command="true"]; '
+                'a [label="second" shape=box command="true"]; }\n'
+            )
+            path = file.name
+        script = (
+            "from typer.testing import CliRunner; "
+            "from the_edge_agent.cli import app; "
+            f"r=CliRunner().invoke(app,['run','--from-dot',{path!r},'--dot-dry-run']); "
+            "print(r.exit_code); print(r.output)"
+        )
+        outputs = []
+        try:
+            for seed in ("1", "777"):
+                env = {**os.environ, "PYTHONHASHSEED": seed}
+                proc = subprocess.run(
+                    [sys.executable, "-c", script],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    env=env,
+                )
+                outputs.append(proc.stdout)
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertLess(outputs[0].index("first"), outputs[0].index("second"))
 
     def test_single_wave_start_wave_exceeds(self):
         """Test single-wave workflow with --dot-start-wave 2 (exceeds)."""

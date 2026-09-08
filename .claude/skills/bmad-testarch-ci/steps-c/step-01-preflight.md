@@ -51,9 +51,11 @@ Determine the project's test stack type (`test_stack_type`) using the following 
 
 1. If `test_stack_type` is explicitly set in config (not `"auto"`), use that value.
 2. Otherwise, auto-detect by scanning project manifests:
+   - **Mobile indicators**: `.maestro/` or `maestro/` flow directory, `app.json`/`app.config.*` declaring expo or react-native, `Podfile`, `android/app/build.gradle`, `*.xcodeproj`/`*.xcworkspace`, `pubspec.yaml`
    - **Frontend indicators**: `playwright.config.*`, `cypress.config.*`, `vite.config.*`, `next.config.*`, `src/components/`, `src/pages/`, `src/app/`
    - **Backend indicators**: `pyproject.toml`, `pom.xml`/`build.gradle`, `go.mod`, `*.csproj`/`*.sln`, `Gemfile`, `Cargo.toml`, `jest.config.*`, `vitest.config.*`, `src/routes/`, `src/controllers/`, `src/api/`, `Dockerfile`, `serverless.yml`
-   - **Both present** → `fullstack`
+   - **Mobile present** → `mobile` (check first; a React Native or Expo project carries frontend indicators too)
+   - **Both frontend and backend present** → `fullstack`
    - **Only frontend** → `frontend`
    - **Only backend** → `backend`
    - **Cannot determine** → default to `fullstack` and note assumption
@@ -66,6 +68,7 @@ Record detected `test_stack_type` in step output.
 
 - Check for framework configuration based on detected stack:
   - **Frontend/Fullstack**: `playwright.config.*` or `cypress.config.*` exists
+  - **Mobile**: `maestro/` or `.maestro/` directory exists, app unit/component test config exists (`jest.config.*`, `vitest.config.*`, `build.gradle` test block, XCTest target, or `test/` for Flutter), and `maestro` command is available
   - **Backend (Node.js)**: `jest.config.*` or `vitest.config.*` or test scripts in `package.json`
   - **Backend (Python)**: `pyproject.toml` with `[tool.pytest]` or `pytest.ini` or `setup.cfg` with pytest config
   - **Backend (Java/Kotlin)**: `pom.xml` with surefire/failsafe plugins or `build.gradle` with test task
@@ -119,6 +122,18 @@ Record detected `ci_platform` in step output.
   - **Go**: Read `go.mod` for Go version; note Go module cache path
   - **C#/.NET**: Read `*.csproj`/`global.json` for .NET SDK version; note NuGet cache
   - **Ruby**: Read `.ruby-version` or `Gemfile` for Ruby version; note Bundler cache
+
+---
+
+## 6b. Read TEA Config Flags
+
+From `{config_source}` read:
+
+- `tea_use_playwright_utils` — when true and the stack is Playwright, Step 3 drives burn-in selection through `runBurnIn` from `@seontechnologies/playwright-utils/burn-in` instead of `--only-changed`
+- `tea_use_pactjs_utils` — when true, Step 2 adds the contract-testing jobs, **but only if the repo actually has contract tests to run**. Check for a `pact/` or `tests/contract/` directory, `.pacttest.ts` files, or pact scripts in `package.json`, and check that `@seontechnologies/pactjs-utils` and `@pact-foundation/pact` are dependencies. A contract job wired into a pipeline with no contract tests fails every build on a missing script. When the flag is on and the artifacts are absent, skip the jobs and say so in the summary.
+- `ci_platform` — when set to anything other than `auto`, it overrides the detection in Step 5
+
+Also record whether `@seontechnologies/playwright-utils` is in `package.json`. If `tea_use_playwright_utils` is true and the package is absent, the pipeline cannot call the burn-in runner: note it and recommend the `framework` workflow rather than scaffolding a script that will not resolve.
 
 ---
 

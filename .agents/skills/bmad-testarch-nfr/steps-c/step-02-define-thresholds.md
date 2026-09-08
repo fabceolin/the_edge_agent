@@ -36,9 +36,20 @@ Establish the NFR categories to assess and the thresholds used for validation.
 
 **CRITICAL:** Follow this sequence exactly. Do not skip, reorder, or improvise.
 
+## 0. Check for Existing Test-Design NFR Plan
+
+Before deriving thresholds from raw documents, check if a `test-design` output exists with NFR planning:
+
+- Look for `test-design-architecture.md`, `test-design-qa.md`, or any test-design output in `{test_artifacts}/` that contains an NFR section.
+- If found, **load it as the primary source of NFR categories and thresholds**. Use those values directly; do not re-derive them from scratch.
+- Only fall back to raw documents (tech-spec, PRD, story) for categories or thresholds that are still missing or marked **UNKNOWN** in the test-design output.
+- If no test-design NFR plan exists, proceed with step 1 using raw documents.
+
+---
+
 ## 1. Select Categories
 
-Use the ADR Quality Readiness Checklist (8 categories):
+Use the ADR Quality Readiness Checklist (8 categories) as the elicitation source for thresholds:
 
 1. Testability & Automation
 2. Test Data Strategy
@@ -51,17 +62,19 @@ Use the ADR Quality Readiness Checklist (8 categories):
 
 Add any `custom_nfr_categories` if provided.
 
+**Note:** This workflow's automated evidence audit in Step 4 evaluates exactly four domains: Security, Performance, Reliability, and Maintainability. Security and Performance draw their thresholds from the ADR-8 list above. The Reliability worker consumes availability, error-rate, fault-tolerance, and MTTR thresholds. Disaster Recovery remains a separate ADR-8 category for RTO, RPO, backup, restore, and regional recovery evidence; no automated Step 4 worker evaluates it. Maintainability criteria (test coverage, code duplication, dependency vulnerabilities, structured logging, and error tracking) come directly from `nfr-criteria.md`. Thresholds gathered here for Test Data Strategy, Disaster Recovery, Monitorability, QoS/QoE, and Deployability are recorded for the report and are not evaluated by an automated subagent in this workflow.
+
 ---
 
 ## 2. Define Thresholds
 
-For each category, extract thresholds from:
+For each category, use thresholds from the test-design NFR plan (step 0) where available. For any remaining UNKNOWN or missing thresholds, extract from:
 
 - tech-spec (primary)
 - PRD (secondary)
-- story or test-design (feature-specific)
+- story (feature-specific)
 
-If a threshold is unknown, mark it **UNKNOWN** and plan to report **CONCERNS**.
+If a threshold is still unknown after checking all sources, mark it **UNKNOWN** and plan to report **CONCERNS**.
 
 ---
 

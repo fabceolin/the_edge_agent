@@ -120,7 +120,7 @@ Display:
 {if in-progress: Started: {started_date}}
 
 **Session 7: Advanced Patterns (ongoing)**
-{status_indicator} Menu-driven knowledge fragment exploration (42 fragments)
+{status_indicator} Menu-driven knowledge fragment exploration (59 fragments)
 {if completed: Score: {score}/100 | Completed: {completed_date}}
 {if in-progress: Started: {started_date}}
 
@@ -142,7 +142,7 @@ Display:
 
 **Before displaying menu options, check:**
 
-If all 7 sessions have status 'completed' AND certificate_generated != true:
+If all 7 sessions have status 'completed' AND summary_generated != true:
 
 - Display: "🎉 **Congratulations!** You've completed all 7 sessions!"
 - Skip session menu options
@@ -185,7 +185,7 @@ What would you like to do?"
 
 Display:
 
-"**Proceeding to generate your completion certificate...**"
+"**Proceeding to generate your completion summary...**"
 
 Load, read entire file, then execute {completionFile}
 

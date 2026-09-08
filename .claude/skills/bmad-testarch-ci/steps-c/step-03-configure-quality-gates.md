@@ -43,10 +43,29 @@ Use `{knowledgeIndex}` to load `ci-burn-in.md` guidance:
 - Run N-iteration burn-in for flaky detection
 - Gate promotion based on burn-in stability
 
+**If `tea_use_playwright_utils` is true and the stack is Playwright**, also load `burn-in.md` and `playwright-utils-mandate.md`, and drive selection with the utility instead of `--only-changed`:
+
+```typescript
+// playwright/scripts/burn-in-changed.ts
+import { runBurnIn } from '@seontechnologies/playwright-utils/burn-in';
+
+await runBurnIn({
+  configPath: 'playwright/config/.burn-in.config.ts',
+  baseBranch: 'main',
+});
+```
+
+The pipeline step then calls that script rather than composing a `--grep` by hand. `--only-changed` treats a config or type-definition edit as a reason to run the whole suite; the utility's skip patterns and percentage control are the reason the flag exists. This is a RECOMMENDED-level utility per the mandate: it needs a config file and a script, so scaffold both. If the user declines, keep the plain `npx playwright test` loop and say in the summary that burn-in selection stayed unfiltered.
+
+Skip this for Cypress, Maestro, and non-Playwright backend suites; those keep the `ci-burn-in.md` shape.
+
 **Stack-conditional burn-in:**
 
 - **Frontend or Fullstack** (`test_stack_type` is `frontend` or `fullstack`): Enable burn-in by default. Burn-in targets UI flakiness (race conditions, selector instability, timing issues).
 - **Backend only** (`test_stack_type` is `backend`): Skip burn-in by default. Backend tests (unit, integration, API) are deterministic and rarely exhibit UI-related flakiness. If the user explicitly requests burn-in for backend, honor that override.
+- **Mobile** (`test_stack_type` is `mobile`): Enable burn-in by default, and scope it to new and changed Maestro flows only. Device flows are the most flake-prone level in any suite (emulator boot, app install, animation timing, real network), so a new flow that has not survived repeated runs is not evidence. Never burn in the whole flow suite on a PR: run the changed flows N times on the primary target, and leave the full matrix to the nightly job.
+
+**The gate must be able to fail.** Per `evidence-integrity.md`, `continue-on-error` belongs on artifact collection and never on a step that runs tests, and a runner manifest that names a subset of the discovered test files is a silent coverage hole rather than a configuration choice. Reconcile the executed count against the discovered count in the job, so a suite that quietly stopped running most of itself fails instead of passing faster.
 
 **Security: Script injection prevention for reusable burn-in workflows:**
 

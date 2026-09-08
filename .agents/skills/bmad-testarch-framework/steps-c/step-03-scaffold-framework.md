@@ -136,7 +136,26 @@ Create the idiomatic test directory for the detected language:
 - **Ruby (RSpec)**: `spec/` with `spec/unit/`, `spec/integration/`, `spec/api/`, `spec/support/`
 - **Rust**: `tests/` for integration tests, inline `#[cfg(test)]` modules for unit tests
 
-**If `config.tea_use_pactjs_utils` is enabled and runtime is Node.js/TypeScript** (i.e., `{detected_stack}` is `frontend` or `fullstack`, or `{detected_stack}` is `backend` with Node.js/TypeScript runtime):
+**If {detected_stack} is `mobile`:**
+
+- `{maestro_root}/` — device flows, one journey per file (where `{maestro_root}` is `maestro/` or `.maestro/`)
+- `{maestro_root}/subflows/` — reusable sequences (login, onboarding dismissal, seed navigation) invoked via `runFlow`
+- `{maestro_root}/config.yaml` or `.maestro/config.yaml` — workspace config (flow include/exclude, execution order)
+- Plus the idiomatic unit and component test directory for the app's language:
+  - **React Native / Expo**: `__tests__/` or `src/**/*.test.tsx` with Jest or Vitest and React Native Testing Library
+  - **Native iOS**: `<App>Tests/` (XCTest unit) and `<App>UITests/` if XCUITest is also in use
+  - **Native Android**: `app/src/test/java/` (JUnit unit) and `app/src/androidTest/java/` (instrumented)
+  - **Flutter**: `test/` for unit and widget tests, `integration_test/` for integration
+
+Keep `{maestro_root}/subflows/` separate from the flow root so a flow count never counts shared setup as a test.
+
+**If `config.tea_use_pactjs_utils` is enabled AND contract testing is relevant to this project AND runtime is Node.js/TypeScript** (i.e., `{detected_stack}` is `frontend` or `fullstack`, or `{detected_stack}` is `backend` with Node.js/TypeScript runtime):
+
+**Relevance gate — check this before creating anything.** `tea_use_pactjs_utils` defaults to `true`, which means "use these utilities when contract tests are written", not "every project gets a Pact suite".
+
+Apply the gate in `pactjs-utils-mandate.md` § _Relevance Before Scaffolding_ exactly as written. It is the single source for this decision: sufficient signals, the weak signals that need corroboration, and the "no source in this repo and not started by this repo" disqualifier that separates a real boundary from a frontend calling its own backend. Do not restate or relax it here.
+
+**If the gate does not open, create no Pact artifacts.** Say in the setup summary that contract scaffolding was skipped because no consumer-provider boundary was found, and note that the `framework` workflow can add it later. A dead contract suite that fails CI for a boundary the project does not have is worse than no suite.
 
 Create Node.js/TypeScript contract testing directory structure per `pact-consumer-framework-setup.md`:
 
@@ -172,6 +191,16 @@ Create the idiomatic test config for the detected framework:
 - **xUnit**: `.csproj` test project with xUnit and coverlet dependencies
 - **RSpec**: `.rspec` config file with `spec_helper.rb` and `rails_helper.rb` (if Rails)
 
+**If {detected_stack} is `mobile`:**
+
+Create `{maestro_root}/config.yaml` (or `.maestro/config.yaml`):
+
+- **flows**: glob for the flow files to include, excluding `subflows/`
+- **includeTags / excludeTags**: so CI can run a risk-appropriate subset (`P0` on the PR gate, everything nightly)
+- **Execution**: leave flows order-independent; every flow starts with `clearState` per `maestro-flows.md`
+
+Also create the unit/component test config for the app's language (`jest.config.js` with the `react-native` preset, `vitest.config.ts`, or the platform-native equivalent). Per `mobile-test-strategy.md` the device suite is the smallest layer, so the unit config is not optional.
+
 ---
 
 ## 3. Environment Setup
@@ -194,28 +223,64 @@ Create the idiomatic version file for the detected language:
 - **C#/.NET**: `global.json` with SDK version if not already present
 - **Ruby**: `.ruby-version` with current stable Ruby
 
+**If {detected_stack} is `mobile`:**
+
+- `.nvmrc` when the app is React Native or Expo (the JS toolchain still applies)
+- Add `MAESTRO_APP_ID`, `MAESTRO_DRIVER_STARTUP_TIMEOUT`, and any test-account variables to `.env.example`
+- Never commit a test credential: `maestro-flows.md` H9 treats an inlined secret as a HIGH violation
+
 ---
 
 ## 4. Fixtures & Factories
 
-Read `{config_source}` and use `{knowledgeIndex}` to load fragments based on `config.tea_use_playwright_utils`:
+Read `{config_source}` and use `{knowledgeIndex}` to load fragments based on `{detected_stack}`:
 
-**If Playwright Utils enabled:**
+**If `{detected_stack}` is `mobile`:**
 
-- `overview.md`, `fixtures-composition.md`, `auth-session.md`, `api-request.md`, `recurse.md`, `log.md`, `burn-in.md`, `network-error-monitor.md`, `data-factories.md`
-- If `{detected_stack}` is `frontend` or `fullstack`, also load `intercept-network-call.md`
-- Recommend installing `@seontechnologies/playwright-utils`
+- `mobile-test-strategy.md` (CRITICAL: load this first — it decides which behaviors become device flows at all, and most should not)
+- `maestro-flows.md` (flow structure, selector hierarchy, `clearState` isolation, synchronization without sleeps, subflow composition, commands whose behavior differs by platform)
+- `mobile-ci-device-lab.md` (which build artifact the flows run against, and the CI mechanics around it)
+- `test-levels-framework.md`, `test-priorities-matrix.md`, `test-quality.md`
+- Do NOT load browser fragments: `network-first.md`, `playwright-config.md`, and `intercept-network-call.md` describe a DOM and a request interceptor a device flow does not have
 
-**If disabled:**
+**If `{detected_stack}` is `frontend`, `fullstack`, or `backend`:**
 
-- `fixture-architecture.md`, `data-factories.md`, `network-first.md`, `playwright-config.md`, `test-quality.md`
+- **If Playwright Utils enabled:**
+  - `playwright-utils-mandate.md` (load first — it is the binding rule for everything this workflow scaffolds)
+  - `overview.md`, `fixtures-composition.md`, `auth-session.md`, `api-request.md`, `recurse.md`, `log.md`, `burn-in.md`, `network-error-monitor.md`, `data-factories.md`
+  - If `{detected_stack}` is `frontend` or `fullstack`, also load `intercept-network-call.md`
+  - **Ask before installing, then install.** This step is the only place the workflow writes outside the test directory, so name what it will add and get a yes before touching `package.json`:
 
-**If Pact.js Utils enabled** (`config.tea_use_pactjs_utils`):
+    > `framework` will add `@seontechnologies/playwright-utils` as a dev dependency. Peer: `@playwright/test >= 1.54.1`. Optional, for schema validation: `ajv >= 8.0.0`, `zod >= 3.0.0`. Install it?
 
+    ```bash
+    npm install -D @seontechnologies/playwright-utils
+    ```
+
+    Skip the ask only when the package is already in `package.json`, or when the user asked for playwright-utils by name in this run.
+
+  - The install is not optional decoration once accepted: the framework this workflow produces is the playwright-utils framework, and every downstream workflow generates against it. **If the user declines, record it and fall through to the disabled branch for the whole scaffold.** Do not scaffold imports against a package the project does not have.
+
+- **If disabled:**
+  - `fixture-architecture.md`, `data-factories.md`, `network-first.md`, `playwright-config.md`, `test-quality.md`
+
+**If Pact.js Utils enabled** (`config.tea_use_pactjs_utils`) **and the relevance gate in section 1 opened**:
+
+- `pactjs-utils-mandate.md` (load first - it is the binding rule for every Pact artifact this workflow scaffolds, and it carries the relevance gate itself)
 - `pact-consumer-framework-setup.md` (CRITICAL: load this for directory structure, scripts, CI workflow, and PactV4 patterns — includes `fileParallelism: false` + `pool: 'forks'` + `singleFork: true`, determinism gate, and `jq` publish normalization)
-- `pactjs-utils-overview.md`, `pactjs-utils-consumer-helpers.md` (one-interaction-per-`it()` rule), `pactjs-utils-provider-verifier.md` (same `pool: 'forks'` + `singleFork` rule applies to consumer AND provider), `pactjs-utils-request-filter.md`, `contract-testing.md`
+- `pactjs-utils-overview.md`, `pactjs-utils-consumer-helpers.md` (one-interaction-per-`it()` rule), `pactjs-utils-provider-verifier.md` (same `pool: 'forks'` + `singleFork` rule applies to consumer AND provider), `pactjs-utils-request-filter.md`, `pactjs-utils-zod-to-pact.md`, `contract-testing.md`
 - `pact-broker-webhooks.md` — when scaffolding the provider repo and any CI step that depends on `can-i-deploy`
-- Recommend installing `@seontechnologies/pactjs-utils` and `@pact-foundation/pact`
+- **Ask before installing, then install.** Same rule as Playwright Utils, and the same reason: this writes to `package.json`.
+
+  > `framework` will add `@seontechnologies/pactjs-utils` and its peer `@pact-foundation/pact` as dev dependencies (`@pact-foundation/pact >= 16.2.0`). Install them?
+
+  ```bash
+  npm install -D @seontechnologies/pactjs-utils @pact-foundation/pact
+  ```
+
+  Skip the ask only when they are already in `package.json`, or when the user asked for contract testing by name in this run.
+
+- Every Pact artifact generated downstream imports from the package, so a declined install means the whole contract scaffold falls through to the disabled branch. Do not scaffold imports against a package the project does not have.
 - Ensure `jq` is available on CI runners (default on `ubuntu-latest`; document `brew install jq` for macOS dev machines) — required by `scripts/check-pact-determinism.sh` and `scripts/publish-pact.sh`
 
 **If Pact.js Utils disabled but contract testing relevant:**
@@ -226,11 +291,40 @@ Read `{config_source}` and use `{knowledgeIndex}` to load fragments based on `co
 
 - `pact-mcp.md`
 
+**`tea_pact_mcp` defaults to `"mcp"`, and Pact artifacts are gated on relevance, not on this flag.** Follow `pact-mcp.md` § _When the Tools Are Not Reachable_: the probe is a tool-list check and never a broker call, its result is recorded once per run as `pact_mcp_reachable`, and the fallback order is provider source, then an OpenAPI spec, then `confidence-gate.md`. Report the outcome once and continue; never block, never retry, never present inferred provider states as broker data.
+
 Implement:
 
 - Fixture index with `mergeTests`
 - Auto-cleanup hooks
 - Faker-based data factories with overrides
+
+**If Playwright Utils enabled, the fixture index is `{test_dir}/support/merged-fixtures.ts` and it is the only entry point tests import `test` from:**
+
+```typescript
+import { mergeTests } from '@playwright/test';
+import { log } from '@seontechnologies/playwright-utils';
+import { test as apiRequestFixture } from '@seontechnologies/playwright-utils/api-request/fixtures';
+import { test as recurseFixture } from '@seontechnologies/playwright-utils/recurse/fixtures';
+// Browser suites only:
+import { test as interceptFixture } from '@seontechnologies/playwright-utils/intercept-network-call/fixtures';
+import { test as networkErrorFixture } from '@seontechnologies/playwright-utils/network-error-monitor/fixtures';
+// Project-owned:
+import { test as authFixture } from './auth-fixture';
+
+export const test = mergeTests(apiRequestFixture, recurseFixture, interceptFixture, networkErrorFixture, authFixture);
+
+export { expect } from '@playwright/test';
+export { log };
+```
+
+`interceptFixture` and `networkErrorFixture` are browser-only: include them when `{detected_stack}` is `frontend` or `fullstack`, and drop both from the merge and the imports for a `backend` stack. Merging a browser fixture into an API-only suite pulls in a `page` dependency the suite never uses.
+
+Also scaffold `{test_dir}/support/auth-fixture.ts` from `auth-session.md` § _Custom Auth Provider Pattern_: an `AuthProvider` implementing all six members (`getEnvironment`, `getUserIdentifier`, `extractToken`, `extractCookies`, `isTokenExpired`, `manageAuthToken`), passed to `setAuthProvider`, then `base.extend(createAuthFixtures())`. Do not invent a shorter interface. Leave `manageAuthToken` and the cookie names as marked `TODO`s when the auth endpoint is unknown, and list them in the setup summary. Do not scaffold a form-driven login fixture in its place.
+
+Wire `authStorageInit()` and `configureAuthSession()` into `global-setup.ts`, and add the token storage directory to `.gitignore`.
+
+Skip this whole block for Maestro, Cypress, and non-Playwright backend stacks.
 
 ---
 
@@ -245,6 +339,15 @@ Create example tests in `{test_dir}/e2e/` demonstrating:
 - Factory usage
 - Network interception pattern (if applicable)
 
+**If Playwright Utils enabled**, the samples are the reference every later workflow copies from, so they must be exemplary rather than merely runnable. Each sample:
+
+- Imports `test` from `../support/merged-fixtures`, never from `@playwright/test`
+- Declares `interceptNetworkCall({ url })` before `page.goto`, and awaits it after, so the network-first principle is visible in the shape of the code
+- Uses `apiRequest` for setup and teardown, `recurse` for anything eventually consistent, `log.step` for milestones
+- Takes `authToken` from the auth fixture rather than driving a login form
+
+Ship at least one API sample and, for `frontend`/`fullstack`, one UI sample. A sample suite that demonstrates only vanilla Playwright while the config says otherwise teaches the wrong pattern to every workflow that reads it later.
+
 **If {detected_stack} is `backend` or `fullstack`:**
 
 Create example tests in the idiomatic location for the detected language:
@@ -255,6 +358,19 @@ Create example tests in the idiomatic location for the detected language:
 - **C#/.NET**: `tests/ExampleTests.cs` with xUnit `[Fact]`/`[Theory]` and fixture injection
 - **Ruby**: `spec/example_spec.rb` with RSpec `describe`/`context`/`it` and factory_bot
 
+**If {detected_stack} is `mobile`:**
+
+Create `maestro/example-flow.yaml` demonstrating the patterns in `maestro-flows.md`:
+
+- `clearState` then `launchApp` for isolation
+- Accessibility-id selectors, never `index:` or `point:`
+- `extendedWaitUntil` on a named condition instead of `sleep`
+- An `assertVisible` on the destination state, so the flow proves something
+- A `P0` tag so CI can select it
+- `${ENV_VAR}` for any credential
+
+Also create `maestro/subflows/login.yaml` showing `runFlow` composition with `env` passing, plus one unit or component example in the app's own framework so the sample suite reflects the real level distribution.
+
 Create helpers for:
 
 - API clients (if needed)
@@ -262,9 +378,9 @@ Create helpers for:
 - Auth helpers
 - Test data factories (language-idiomatic patterns)
 
-**If `config.tea_use_pactjs_utils` is enabled and runtime is Node.js/TypeScript** (i.e., `{detected_stack}` is `frontend` or `fullstack`, or `{detected_stack}` is `backend` with Node.js/TypeScript runtime):
+**If `config.tea_use_pactjs_utils` is enabled, the relevance gate in section 1 opened, and runtime is Node.js/TypeScript** (i.e., `{detected_stack}` is `frontend` or `fullstack`, or `{detected_stack}` is `backend` with Node.js/TypeScript runtime):
 
-Create Node.js/TypeScript contract test samples per `pact-consumer-framework-setup.md`:
+Create Node.js/TypeScript contract test samples per `pact-consumer-framework-setup.md`. Every sample follows `pactjs-utils-mandate.md`: `createProviderState` rather than a hand-cast `.given()`, `buildVerifierOptions` rather than a literal options object, `createRequestFilter` rather than bespoke auth middleware, and the `pact-consumer-di.md` injection so the sample exercises the real client instead of raw `fetch`. These samples are the reference every later workflow copies, so a raw-Pact sample teaches the wrong pattern permanently.
 
 - **Consumer test**: Example using PactV4 `addInteraction()` builder + `createProviderState` + real consumer code with URL injection (`.pacttest.ts` extension). **One `addInteraction()` per `it()` block** — never chain multiple interactions in a single test (PactV4 FFI drops them non-deterministically; see `pactjs-utils-consumer-helpers.md` Example 6).
 - **Support files**: Pact config factory (`pact-config.ts`), provider state factories (`provider-states.ts`), local consumer-helpers shim (`consumer-helpers.ts`)

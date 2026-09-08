@@ -95,7 +95,7 @@ Present this content (mostly autonomous, clear and educational):
 
 TEA is a comprehensive test architecture framework that provides:
 
-- **9 Workflows:** Teach Me Testing, Framework, Test Design, ATDD, Automate, Test Review, Trace, NFR Assessment, CI
+- **9 Workflows:** Teach Me Testing, Test Design, Framework, CI, ATDD, Automate, Test Review, NFR Evidence Audit, Trace
 - **35 Knowledge Fragments:** Distilled expertise on patterns, best practices, Playwright Utils
 - **Quality Standards:** Definition of Done with execution limits (no flaky tests, no hard waits, etc.)
 - **Risk-Based Testing:** P0-P3 matrix for prioritizing test coverage
@@ -113,7 +113,7 @@ Testing knowledge doesn't scale through manual teaching. TEA makes testing exper
 1. **TEA Lite (30 min):** Quick start - run Automate workflow, generate tests
 2. **TEA Solo:** Use workflows individually as needed
 3. **TEA Integrated:** Full lifecycle - Framework → Test Design → ATDD/Automate → Review → Trace
-4. **TEA Enterprise:** Add NFR Assessment + CI integration for compliance
+4. **TEA Enterprise:** Add NFR Evidence Audit + CI integration for compliance
 5. **TEA Brownfield:** Adapt TEA for existing test suites
 
 **Today we're experiencing TEA Lite!**"
@@ -175,7 +175,7 @@ Present this content:
 
 **4. Engagement models:** Choose how much TEA you need (Lite → Solo → Integrated → Enterprise → Brownfield)
 
-**5. Knowledge fragments:** 42 fragments for deep-dive topics when you need them
+**5. Knowledge fragments:** 59 fragments for deep-dive topics when you need them
 
 - Testing patterns (fixtures, network-first, data factories)
 - Playwright Utils (api-request, network-recorder, recurse)
@@ -308,7 +308,7 @@ duration: '30 min'
 
 ## Key Concepts Covered
 
-1. **TEA Framework:** 9 workflows + 42 knowledge fragments + quality standards
+1. **TEA Framework:** 9 workflows + 59 knowledge fragments + quality standards
 2. **Risk-Based Testing:** P0-P3 prioritization matrix
 3. **Quality Standards:** Definition of Done (no flaky tests, no hard waits, stateless, self-cleaning)
 4. **Engagement Models:** Lite, Solo, Integrated, Enterprise, Brownfield
@@ -366,7 +366,7 @@ duration: '30 min'
 **Session 2 or 3** - Review concepts or dive into architecture patterns
 
 {If experience_level == 'experienced':}
-**Session 7: Advanced Patterns** - Explore 42 knowledge fragments
+**Session 7: Advanced Patterns** - Explore 59 knowledge fragments
 
 ---
 

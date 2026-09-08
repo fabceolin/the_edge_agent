@@ -7,28 +7,25 @@ failed_layers: '' # set at runtime: comma-separated list of layers that failed o
 ## RULES
 
 - YOU MUST ALWAYS SPEAK OUTPUT in your Agent communication style with the config `{communication_language}`
-- The Blind Hunter subagent receives NO project context — diff only.
-- The Edge Case Hunter subagent receives diff and project read access.
-- The Acceptance Auditor subagent receives diff, spec, and context docs.
 - All review subagents must run at the same model capability as the current session.
+- Run subagents synchronously: launch them together, then wait for all results before continuing.
 
 ## INSTRUCTIONS
 
-1. If `{review_mode}` = `"no-spec"`, note to the user: "Acceptance Auditor skipped — no spec file provided."
+1. The review layers are `{workflow.review_layers}`, resolved during activation.
 
-2. Launch parallel subagents without conversation context. If subagents are not available, generate prompt files in `{implementation_artifacts}` — one per reviewer role below — and HALT. Ask the user to run each in a separate session (ideally a different LLM) and paste back the findings. When findings are pasted, resume from this point and proceed to step 3.
+2. For each layer in `{workflow.review_layers}`:
+   - `instruction` empty or missing → drop the layer silently (an override disabled it).
+   - `when` condition present and not satisfied by the current context (`{review_mode}`, `{spec_file}`) → drop the layer and tell the user, e.g. "Acceptance Auditor skipped — no spec file provided."
+   - otherwise → the layer is active.
 
-   - **Blind Hunter** — receives `{diff_output}` only. No spec, no context docs, no project access. Invoke via the `bmad-review-adversarial-general` skill.
+   If no layer is active, HALT with status `blocked` and blocking condition `no active review layers`.
 
-   - **Edge Case Hunter** — receives `{diff_output}` and read access to the project. Invoke via the `bmad-review-edge-case-hunter` skill.
+3. Execute all active layers in parallel wherever their execution methods allow: expand `{skill-root}` in each layer's `instruction` to this skill's absolute installed directory, then substitute the runtime placeholders (`{diff_output}`, `{spec_file}`). For an instruction that launches a reviewer subagent, launch that child with the prompt text after placeholder substitution; do not load the reviewer instruction file yourself. For any other customized instruction, execute it as written. Do not leave `{skill-root}` unresolved in a child prompt. If a layer's instruction requires subagents and subagents are not available, for each such layer write under `{implementation_artifacts}` the exact child prompt from that layer's instruction after placeholder substitution (not a path-only pointer), then HALT. Ask the user to run each in a separate session (ideally a different LLM) and paste back the findings. When findings are pasted, treat them as those layers' findings and resume from this point. This is the only allowed parent-side read of a reviewer instruction file.
 
-   - **Acceptance Auditor** (only if `{review_mode}` = `"full"`) — receives `{diff_output}`, the content of the file at `{spec_file}`, and any loaded context docs. Its prompt:
-     > You are an Acceptance Auditor. Review this diff against the spec and context docs. Check for: violations of acceptance criteria, deviations from spec intent, missing implementation of specified behavior, contradictions between spec constraints and actual code. Output findings as a Markdown list. Each finding: one-line title, which AC/constraint it violates, and evidence from the diff.
+4. **Layer failure handling**: If any layer fails, times out, or returns empty results, append the layer's `name` to `{failed_layers}` (comma-separated) and proceed with findings from the remaining layers.
 
-3. **Subagent failure handling**: If any subagent fails, times out, or returns empty results, append the layer name to `{failed_layers}` (comma-separated) and proceed with findings from the remaining layers.
-
-4. Collect all findings from the completed layers.
-
+5. Collect all findings from the completed layers, keeping track of each finding's originating layer `id`.
 
 ## NEXT
 

@@ -73,11 +73,11 @@ session_suffix=$(echo "{story_id}" | tr '.' '-')
 
 **ALWAYS use the status check script instead of raw pane capture.**
 
-Script: resolve the installed helper under `.claude/skills/bmad-story-automator/scripts/story-automator`
+Script: resolve the installed helper under the active installed skill root. Use `.claude/skills` for Claude, `.agents/skills` for Codex, or `.codex/skills` when that is the installed Codex skill root.
 
 ```bash
 # ALWAYS use absolute path - relative paths break when directory changes
-script="$(printf "%s" "{project_root}/.claude/skills/bmad-story-automator/scripts/story-automator")"
+script="$(printf "%s" "{project_root}/{installed-skill-root}/bmad-story-automator/scripts/story-automator")"
 "$script" tmux-status-check "SESSION_NAME"
 ```
 
@@ -120,7 +120,7 @@ The status check script automatically detects Claude vs Codex sessions:
 
 **For full output (when completed/stuck):**
 ```bash
-script="$(printf "%s" "{project_root}/.claude/skills/bmad-story-automator/scripts/story-automator")"
+script="$(printf "%s" "{project_root}/<installed-skill-root>/bmad-story-automator/scripts/story-automator")"
 "$script" tmux-status-check "SESSION_NAME" --full
 ```
 Returns: `idle,0,0,/tmp/sa-output-SESSION_NAME.txt,0,completed`
