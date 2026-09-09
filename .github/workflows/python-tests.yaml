@@ -2,46 +2,50 @@ name: Python Tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
-      - 'python/**'
-      - 'examples/**'
-      - '.github/workflows/python-tests.yaml'
+      - "python/**"
+      - "examples/**"
+      - ".github/workflows/python-tests.yaml"
+      - ".github/workflows/build-python-base.yaml"
+      - ".github/workflows/build-python-prolog.yaml"
   pull_request:
     paths:
-      - 'python/**'
-      - 'examples/**'
-      - '.github/workflows/python-tests.yaml'
+      - "python/**"
+      - "examples/**"
+      - ".github/workflows/python-tests.yaml"
+      - ".github/workflows/build-python-base.yaml"
+      - ".github/workflows/build-python-prolog.yaml"
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false  # Continue testing other versions if one fails
+      fail-fast: false # Continue testing other versions if one fails
       matrix:
-        python-version: ['3.11', '3.12', '3.13']
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        # Install graphviz for pygraphviz
-        sudo apt-get install -y libgraphviz-dev graphviz
-        # Install SWI-Prolog 9.x for janus-swi (shared script handles PPA + retries).
-        bash scripts/install-swi-prolog-from-ppa.sh swi-prolog
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        cd python && pip install -e .[dev,rag-chroma,graph-kuzu,tools,secrets]
-    - name: Download NLTK data
-      run: |
-        python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
-    - name: Run tests with pytest
-      run: |
-        cd python && pytest
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          # Install graphviz for pygraphviz
+          sudo apt-get install -y libgraphviz-dev graphviz
+          # Install SWI-Prolog 9.x for janus-swi (shared script handles PPA + retries).
+          bash scripts/install-swi-prolog-from-ppa.sh swi-prolog
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd python && pip install -e .[dev,rag-chroma,graph-kuzu,tools,secrets]
+      - name: Download NLTK data
+        run: |
+          python -c "import nltk; nltk.download('punkt_tab', quiet=True)"
+      - name: Run tests with pytest
+        run: |
+          cd python && pytest
